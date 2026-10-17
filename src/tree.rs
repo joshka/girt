@@ -468,27 +468,39 @@ impl EntryMode {
 #[non_exhaustive]
 pub enum TreeError {
     /// An entry identity differs from the selected tree format.
+    /// Use IDs in the selected tree format; do not truncate or pad digests.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// No space separates the mode from the name.
+    /// Report the original malformed payload; newly encoded entries need a mode followed by a
+    /// space.
     #[error("missing tree mode delimiter")]
     MissingModeDelimiter,
     /// The mode is empty or contains non-octal bytes.
+    /// Supply octal mode text or retain the unreadable stored object for diagnostics.
     #[error("unsupported or malformed tree entry mode")]
     UnsupportedMode,
     /// No NUL separates the name from the raw identity.
+    /// Report the malformed record; names and digest bytes need a NUL separator.
     #[error("missing tree name delimiter")]
     MissingNameDelimiter,
     /// Fewer than the selected format's raw identity bytes follow the name delimiter.
+    /// Read the full payload and verify its format; a larger parser tolerance cannot reconstruct
+    /// missing digest bytes.
     #[error("truncated tree entry object identity")]
     TruncatedObjectId,
     /// A name is empty, contains NUL or `/`, or is `.` or `..`.
+    /// Correct the component explicitly before construction; retain parsed bytes when inspecting
+    /// stored data.
     #[error("invalid tree entry name")]
     InvalidName,
     /// Two entries have byte-identical names, even if their modes differ.
+    /// Choose which same-name entry the intended snapshot contains before reconstructing it.
     #[error("duplicate tree entry name")]
     DuplicateName,
     /// Entries are not in Git's tree order.
+    /// Use [`Tree::new`] for intentional canonical construction; sorting an imported tree changes
+    /// its identity.
     #[error("tree entries are not in Git order")]
     Unsorted,
 }

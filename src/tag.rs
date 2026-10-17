@@ -291,6 +291,18 @@ impl Tag {
     /// # Errors
     ///
     /// Returns [`TagError::Tagger`] for malformed identity delimiters.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, Tag};
+    /// let target = ObjectId::for_blob(ObjectFormat::Sha1, b"manifest");
+    /// let bytes =
+    ///     format!("object {target}\ntype blob\ntag v1\ntagger A <a@example.com> invalid\n\nnote");
+    /// let tag = Tag::parse(ObjectFormat::Sha1, bytes.as_bytes())?;
+    /// let identity = tag.tagger()?.ok_or("tagger absent")?;
+    /// assert_eq!(identity.name, b"A");
+    /// assert!(identity.date().is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn tagger(&self) -> Result<Option<crate::IdentityRef<'_>>, TagError> {
         let headers = self
             .payload
@@ -313,6 +325,16 @@ impl Tag {
     /// identity/date rules. Extra lines must be nonempty, contain no NUL, CR, or LF, and cannot
     /// begin with a reserved header key (`object`, `type`, `tag`, `tagger`) followed by a space or
     /// end of line. Messages are unrestricted. Absent taggers are valid for this API.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, Tag, TagError};
+    /// let target = ObjectId::for_blob(ObjectFormat::Sha1, b"manifest");
+    /// let bytes = format!("object {target}\ntype blob\ntag two words\n\nnote");
+    /// let tag = Tag::parse(ObjectFormat::Sha1, bytes.as_bytes())?;
+    /// assert!(matches!(tag.validate(), Err(TagError::InvalidName)));
+    /// assert_eq!(tag.encode(), bytes.as_bytes());
+    /// # Ok::<(), girt::TagError>(())
+    /// ```
     pub fn validate(&self) -> Result<(), TagError> {
         self.to_fields()?.validate()
     }
@@ -338,6 +360,29 @@ impl Tag {
 ///
 /// Lexical details, such as date spelling and an omitted message separator, belong to the
 /// original [`Tag`] and are not retained by these fields.
+///
+/// Choose editable fields to create a new annotation. `name` is the tag object's header, not a
+/// `refs/tags/` path; publishing a reference and verifying any embedded signature are separate
+/// operations.
+///
+/// ```
+/// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+/// let target = ObjectId::for_blob(ObjectFormat::Sha1, b"manifest");
+/// let tag = Tag::new(TagFields {
+///     target,
+///     target_kind: ObjectKind::Blob,
+///     name: b"v1".to_vec(),
+///     tagger: None,
+///     extra_headers: vec![],
+///     message: b"Reviewed".to_vec(),
+/// })?;
+/// let mut edit = tag.to_fields()?;
+/// edit.message = b"Reviewed again".to_vec();
+/// let changed = Tag::new(edit)?;
+/// assert_eq!(changed.target(), target);
+/// assert_ne!(changed.id(), tag.id());
+/// # Ok::<(), girt::TagError>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TagFields {
     /// Target identity (which determines the constructed tag's format); zero IDs and missing
@@ -393,6 +438,19 @@ impl TagFields {
 ///
 /// This set is exhaustive: Git object framing and pack encodings define exactly these four
 /// fundamental kinds. A new hash algorithm does not add an object kind.
+///
+/// Use the stored kind to choose a payload codec after an object read. A hash or file name cannot
+/// supply this information, and blobs have no further structural codec.
+///
+/// ```
+/// use girt::{ObjectFormat, ObjectKind};
+/// let bytes = b"same payload";
+/// assert_ne!(
+///     ObjectFormat::Sha1.hash_object(ObjectKind::Blob, bytes),
+///     ObjectFormat::Sha1.hash_object(ObjectKind::Tag, bytes)
+/// );
+/// assert_eq!(ObjectKind::Commit.as_str(), "commit");
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectKind {
     /// File content.
@@ -432,24 +490,33 @@ impl ObjectKind {
 #[non_exhaustive]
 pub enum TagError {
     /// A header has no terminating LF and no message separator precedes it.
+    /// Read a complete target header with an LF terminator; retain damaged bytes for diagnostics.
     #[error("unterminated tag header")]
     UnterminatedHeader,
     /// A required header is missing or reordered.
+    /// Supply the leading object/type/tag records in the required order.
     #[error("missing or misplaced required tag header")]
     RequiredHeader,
     /// The target does not have the selected hexadecimal format.
+    /// Use the full target ID in the selected format.
     #[error("invalid or unsupported tag target identity")]
     InvalidObjectId,
     /// The declared target type is not blob, tree, commit, or tag.
+    /// Supply a supported logical object kind; verify the actual target separately through peeling.
     #[error("invalid tag target type")]
     InvalidObjectKind,
     /// Construction requires a nonempty name without ASCII whitespace or NUL.
+    /// Choose a nonempty annotation name without whitespace or NUL; reference-path validation is
+    /// separate.
     #[error("invalid tag name")]
     InvalidName,
     /// An extra line is empty, repeats a known header, or fails construction rules.
+    /// Correct extra-header framing and reserved names before construction.
     #[error("invalid or misplaced extra tag header")]
     InvalidHeader,
     /// Tagger identity or date parsing/validation failed; retains the shared metadata error.
+    /// Inspect the underlying identity/date error; raw imported tagger bytes remain available in
+    /// the original payload.
     #[error("invalid tagger metadata")]
     Tagger(#[source] CommitError),
 }

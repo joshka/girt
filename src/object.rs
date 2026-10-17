@@ -207,6 +207,14 @@ impl ObjectId {
     }
 
     /// Returns the all-zero sentinel for a selected format; no existence check occurs.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let absent = ObjectId::null(ObjectFormat::Sha1);
+    /// assert!(absent.is_null());
+    /// assert_ne!(absent, ObjectId::for_blob(ObjectFormat::Sha1, b""));
+    /// assert_ne!(absent, ObjectId::null(ObjectFormat::Sha256));
+    /// ```
     pub const fn null(format: ObjectFormat) -> Self {
         match format {
             ObjectFormat::Sha1 => Self::Sha1([0; 20]),
@@ -363,11 +371,33 @@ impl FromStr for ObjectId {
 }
 
 /// Invalid raw digest length or a string other than 40/64 ASCII hexadecimal digits.
+///
+/// Supply a complete hexadecimal ID, without whitespace or an abbreviation, and select the
+/// repository format. Parse failure does not say whether an object exists.
+///
+/// ```
+/// use girt::{ObjectFormat, ObjectId};
+/// assert!(ObjectId::from_hex(ObjectFormat::Sha1, "abcd").is_err());
+/// assert!(ObjectId::from_hex(ObjectFormat::Sha1, &"0".repeat(64)).is_err());
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("expected a format-sized digest or 40/64 hexadecimal digits")]
 pub struct ParseObjectIdError;
 
 /// An identity uses a format unsupported by the selected operation.
+///
+/// The caller combined identities from different hash spaces. Use the opened repository's format
+/// consistently. Rehashing only the outer payload does not convert embedded graph references.
+///
+/// ```
+/// use girt::{EntryMode, ObjectFormat, ObjectId, Tree, TreeEntry};
+/// let entry = TreeEntry {
+///     mode: EntryMode::Blob,
+///     name: b"file".to_vec(),
+///     id: ObjectId::for_blob(ObjectFormat::Sha256, b"content"),
+/// };
+/// assert!(Tree::new(ObjectFormat::Sha1, vec![entry]).is_err());
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("object format mismatch: expected {expected}, got {actual}")]
 pub struct ObjectFormatError {

@@ -429,6 +429,33 @@ impl Commit {
 ///
 /// This representation does not retain lexical details such as uppercase IDs or negative-zero
 /// offsets. Use the original [`Commit`] to preserve an existing object's bytes and identity.
+///
+/// Choose fields for an intentional edit or a newly constructed snapshot. Changing fields creates
+/// another object; callers must separately store it and decide which references to move. Parent
+/// order and actor choice remain caller decisions.
+///
+/// ```
+/// use girt::{Commit, CommitFields, CommitHeader, ObjectFormat, Signature, Tree};
+/// let person = Signature::parse(b"A <a@example.com> 60 +0000")?;
+/// let fields = CommitFields {
+///     tree: Tree::new(ObjectFormat::Sha1, vec![])?.id(),
+///     parents: vec![],
+///     author: person.clone(),
+///     committer: person,
+///     extra_headers: vec![CommitHeader {
+///         name: b"x-review".to_vec(),
+///         value: b"first\ncontinued".to_vec(),
+///     }],
+///     message: b"Snapshot\n".to_vec(),
+/// };
+/// let original = Commit::new(fields.clone())?;
+/// let mut edited = fields;
+/// edited.message = b"Reworded\n".to_vec();
+/// let replacement = Commit::new(edited)?;
+/// assert_eq!(replacement.tree(), original.tree());
+/// assert_ne!(replacement.id(), original.id());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommitFields {
     /// Referenced root tree; existence and type are not checked.
@@ -471,6 +498,40 @@ impl CommitFields {
 ///
 /// This is identity metadata, not a cryptographic signature. Fields are unchecked until used by
 /// [`Commit::new`] or [`crate::Tag::new`]; see [`Commit::validate`] for construction rules.
+///
+/// Use owned identities when constructing a commit or tag. Prefer [`IdentityRef`] for inspecting
+/// imported text without copying or requiring a usable date. A parsed signature can still violate
+/// construction rules; it is metadata about an actor, not proof of authorship.
+///
+/// ```
+/// use girt::{Commit, CommitError, CommitFields, ObjectFormat, ObjectKind, Signature};
+/// let author = Signature {
+///     name: b"A. Writer".to_vec(),
+///     email: b"a@example.com".to_vec(),
+///     seconds: 1_700_000_000,
+///     offset_minutes: 60,
+/// };
+/// let mut committer = author.clone();
+/// committer.seconds += 120; // A later recording time need not change the original author.
+/// let commit = Commit::new(CommitFields {
+///     tree: ObjectFormat::Sha1.hash_object(ObjectKind::Tree, b""),
+///     parents: vec![],
+///     author: author.clone(),
+///     committer,
+///     extra_headers: vec![],
+///     message: b"Import\n".to_vec(),
+/// })?;
+/// assert_eq!(
+///     commit.author()?.map(|identity| identity.name),
+///     Some(author.name.as_slice())
+/// );
+/// let recorded = commit
+///     .committer()?
+///     .ok_or(CommitError::RequiredHeader)?
+///     .signature()?;
+/// assert_eq!(recorded.seconds, author.seconds + 120);
+/// # Ok::<(), girt::CommitError>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Signature {
     /// Person's name bytes, excluding framing whitespace before the opening email delimiter.
@@ -502,6 +563,16 @@ impl Signature {
     /// Returns identity delimiter errors or date interpretation errors from [`IdentityRef`].
     /// No fallback date is invented. Use [`IdentityRef::parse`] to inspect name/email when the date
     /// is absent or malformed.
+    ///
+    /// ```
+    /// use girt::{CommitError, Signature};
+    /// assert_eq!(Signature::parse(b"A <a@example.com> -1 +0000")?.seconds, -1);
+    /// assert!(matches!(
+    ///     Signature::parse(b"A <a@example.com> unknown"),
+    ///     Err(CommitError::InvalidDate)
+    /// ));
+    /// # Ok::<(), girt::CommitError>(())
+    /// ```
     pub fn parse(bytes: &[u8]) -> Result<Self, CommitError> {
         IdentityRef::parse(bytes)?.signature()
     }
@@ -543,6 +614,22 @@ impl Signature {
 }
 
 /// An opaque extra commit header, including an optional multiline value.
+///
+/// Use extra headers for metadata that is not one of the required graph or identity records.
+/// Multiline values are unfolded bytes; construction adds continuation framing. A header named
+/// `gpgsig` is opaque data and is not verified by girt.
+///
+/// ```
+/// use girt::{CommitHeader, CommitPayload};
+/// let payload = CommitPayload::parse(b"x-review first\n continued\n\nbody")?;
+/// let header = payload.headers().next().ok_or("header absent")?;
+/// let editable = CommitHeader {
+///     name: header.name.to_vec(),
+///     value: header.unfolded_value(),
+/// };
+/// assert_eq!(editable.value, b"first\ncontinued");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommitHeader {
     /// Nonempty printable ASCII key without spaces; required commit keys are reserved.
@@ -559,24 +646,36 @@ pub struct CommitHeader {
 #[non_exhaustive]
 pub enum CommitError {
     /// A parent identity differs from the commit tree's format.
+    /// Use the same format for the tree and every parent.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// The blank line separating headers from message is missing.
+    /// Strict [`CommitPayload::parse`] requires the header/message blank line. Retain the bytes
+    /// through [`CommitPayload::from_bytes`] when inspecting a legacy payload without one.
     #[error("missing commit header/message separator")]
     MissingSeparator,
     /// A required graph record or requested construction identity is absent or misplaced.
+    /// Supply required graph records or construction identities; graph inspection may still be
+    /// possible without author fields.
     #[error("missing or misplaced required commit header")]
     RequiredHeader,
     /// A tree or parent identity does not have the selected hexadecimal format.
+    /// Check the repository format and full-width hexadecimal graph IDs.
     #[error("invalid or unsupported commit object identity")]
     InvalidObjectId,
     /// Identity framing is unreadable or name/email fails construction rules.
+    /// Correct newly supplied identity components; inspect imported names through [`IdentityRef`]
+    /// without rewriting them.
     #[error("invalid commit identity")]
     InvalidSignature,
     /// A date is unreadable or outside the supported seconds/offset range.
+    /// Supply a representable date or retain its raw bytes through [`IdentityRef`]; do not invent a
+    /// fallback timestamp.
     #[error("invalid or unsupported commit date")]
     InvalidDate,
     /// An extra header has invalid framing, a reserved key, or a disallowed value.
+    /// Correct reserved names or forbidden framing bytes before constructing the replacement
+    /// object.
     #[error("invalid or misplaced extra commit header")]
     InvalidHeader,
 }

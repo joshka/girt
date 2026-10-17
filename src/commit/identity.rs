@@ -31,6 +31,19 @@ pub struct IdentityRef<'a> {
 }
 
 /// A numerically interpreted Git identity date, independent of canonical construction policy.
+///
+/// Use this interpretation for arithmetic or display after deciding how the application presents
+/// pre-epoch dates and unusual offsets. The raw spelling remains on [`IdentityRef`]; converting
+/// dates is not a byte-preserving edit.
+///
+/// ```
+/// use girt::IdentityRef;
+/// let identity = IdentityRef::parse(b"A <a@example.com> -1 -0000")?;
+/// let date = identity.date()?;
+/// assert_eq!((date.seconds, date.offset_minutes), (-1, 0));
+/// assert!(identity.date_bytes.ends_with(b"-0000"));
+/// # Ok::<(), girt::CommitError>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct IdentityDate {
     /// Signed seconds since the Unix epoch; no display fallback is applied.
@@ -129,6 +142,17 @@ impl<'a> IdentityRef<'a> {
     ///
     /// Returns the date interpretation failures from [`Self::date`]. Construction validation is
     /// still separate; this conversion does not enforce canonical identity or offset rules.
+    ///
+    /// ```
+    /// use girt::{IdentityRef, Signature};
+    /// let imported = b"Writer <writer@example.com> 60 -0130";
+    /// let identity = IdentityRef::parse(imported)?;
+    /// let signature = identity.signature()?;
+    /// assert_eq!(signature.seconds, 60);
+    /// assert_eq!(signature.offset_minutes, -90);
+    /// assert_eq!(signature.email, b"writer@example.com");
+    /// # Ok::<(), girt::CommitError>(())
+    /// ```
     pub fn signature(self) -> Result<Signature, CommitError> {
         let date = self.date()?;
         Ok(Signature {
