@@ -6,9 +6,11 @@ use std::process::ExitCode;
 
 use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
-use girt::{Commit, Object, ObjectId, ObjectKind, Objects, Repository, Tag, Tree};
+use girt::{
+    Commit, ListLimits, Object, ObjectId, ObjectKind, ObjectStore, Objects, Repository, Tag, Tree,
+};
 
-use crate::common::{objects, read_limits, resolve, stdout, write_line};
+use crate::common::{not_cancelled, objects, read_limits, resolve, stdout, write_line};
 use crate::tree::write_entry;
 use crate::{Context, complete};
 
@@ -34,6 +36,29 @@ pub enum Command {
     /// Prints `<id> <kind> <size>`, then the payload and a newline; unknown input prints
     /// `<input> missing`.
     Batch(BatchArgs),
+    /// List every object, primary store and alternates: `<id> <kind> <size>` per line, sorted
+    /// by ID (like `git cat-file --batch-all-objects --batch-check`).
+    ///
+    /// Kinds and sizes come from stored headers; payloads are not decoded or verified. The
+    /// output is the same with `--git`.
+    List(ListArgs),
+    /// Count loose and packed objects in the primary store (like `git count-objects -v`).
+    ///
+    /// Prints `key value` lines with sizes in bytes; with `--git`, prints Git's `key: value`
+    /// lines with sizes in KiB. Garbage files are not counted, so the `garbage` and
+    /// `size-garbage` lines are omitted.
+    Count,
+}
+
+/// Arguments for `object list`.
+#[derive(Debug, clap::Args)]
+pub struct ListArgs {
+    /// List only objects in packs.
+    #[arg(long, conflicts_with = "loose")]
+    packed: bool,
+    /// List only loose objects.
+    #[arg(long)]
+    loose: bool,
 }
 
 /// Arguments for `object hash`.
@@ -93,6 +118,8 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
         Command::Cat(args) => cat(args, context),
         Command::Exists(args) => exists(args, context),
         Command::Batch(args) => batch(args, context),
+        Command::List(args) => list(&args, context),
+        Command::Count => count(context),
     }
 }
 
@@ -270,4 +297,113 @@ fn batch(args: BatchArgs, context: &Context) -> Result<ExitCode> {
     }
     out.flush()?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn list(args: &ListArgs, context: &Context) -> Result<ExitCode> {
+    let repository = context.repository()?;
+    let objects = objects(&repository)?;
+    let mut ids = if args.packed {
+        objects.packs().flat_map(|pack| pack.ids()).collect()
+    } else if args.loose {
+        let mut ids = Vec::new();
+        for store in objects.stores() {
+            ids.extend(loose_ids(&store)?);
+        }
+        ids
+    } else {
+        objects
+            .object_ids_controlled(ListLimits::default(), not_cancelled())
+            .wrap_err("listing objects")?
+    };
+    ids.sort_unstable();
+    ids.dedup();
+    let mut headers = objects
+        .headers_controlled(ids, read_limits(), not_cancelled())
+        .wrap_err("reading object headers")?;
+    headers.sort_unstable_by_key(|(id, _)| *id);
+    let mut out = io::BufWriter::new(stdout());
+    for (id, header) in headers {
+        let header = header.ok_or_else(|| eyre!("object {id} vanished while listing"))?;
+        writeln!(out, "{id} {} {}", header.kind().as_str(), header.size())?;
+    }
+    out.flush()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Loose object IDs in one store.
+pub(crate) fn loose_ids(store: &ObjectStore<'_>) -> Result<Vec<ObjectId>> {
+    store
+        .loose_objects()
+        .map(|object| Ok(object?.id()))
+        .collect::<Result<_, girt::ObjectReadError>>()
+        .wrap_err_with(|| format!("scanning {}", store.directory().display()))
+}
+
+fn count(context: &Context) -> Result<ExitCode> {
+    let repository = context.repository()?;
+    let objects = objects(&repository)?;
+    let mut stores = objects.stores();
+    let primary = stores
+        .next()
+        .ok_or_else(|| eyre!("object storage has no primary store"))?;
+    let (mut loose, mut loose_bytes) = (Vec::new(), 0);
+    for object in primary.loose_objects() {
+        let object =
+            object.wrap_err_with(|| format!("scanning {}", primary.directory().display()))?;
+        // Like Git, count disk usage; a file removed since the scan read it is not counted.
+        match std::fs::symlink_metadata(object.path()) {
+            Ok(metadata) => loose_bytes += disk_usage(&metadata),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).wrap_err_with(|| format!("reading {}", object.path().display()));
+            }
+        }
+        loose.push(object.id());
+    }
+    let packs: Vec<_> = primary.packs().collect();
+    let in_pack: usize = packs.iter().map(|pack| pack.object_count()).sum();
+    let pack_bytes: u64 = packs
+        .iter()
+        .map(|pack| pack.pack_bytes() + pack.index_bytes())
+        .sum();
+    let prune_packable = loose
+        .iter()
+        .filter(|&&id| packs.iter().any(|pack| pack.contains(id)))
+        .count();
+    let mut out = stdout();
+    if context.git {
+        writeln!(out, "count: {}", loose.len())?;
+        writeln!(out, "size: {}", loose_bytes / 1024)?;
+        writeln!(out, "in-pack: {in_pack}")?;
+        writeln!(out, "packs: {}", packs.len())?;
+        writeln!(out, "size-pack: {}", pack_bytes / 1024)?;
+        writeln!(out, "prune-packable: {prune_packable}")?;
+        for store in stores {
+            writeln!(out, "alternate: {}", store.directory().display())?;
+        }
+    } else {
+        writeln!(out, "loose {}", loose.len())?;
+        writeln!(out, "loose-bytes {loose_bytes}")?;
+        writeln!(out, "packed {in_pack}")?;
+        writeln!(out, "packs {}", packs.len())?;
+        writeln!(out, "pack-bytes {pack_bytes}")?;
+        writeln!(out, "prune-packable {prune_packable}")?;
+        for store in stores {
+            writeln!(out, "alternate {}", store.directory().display())?;
+        }
+    }
+    out.flush()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Allocated size, which Git reports for loose objects; the apparent size elsewhere.
+fn disk_usage(metadata: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::MetadataExt::blocks(metadata) * 512
+    }
+    #[cfg(not(unix))]
+    {
+        metadata.len()
+    }
 }

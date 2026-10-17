@@ -201,7 +201,8 @@ pub use object::{
 };
 pub(crate) use objects::UnverifiedObject;
 pub use objects::{
-    AlternateLimits, Object, ObjectReadError, Objects, PackLimits, ReadCommitError, ReadLimits,
+    AlternateLimits, IndexedPack, ListLimits, LooseIds, LooseObject, Object, ObjectHeader,
+    ObjectReadError, ObjectStore, Objects, PackIds, PackLimits, ReadCommitError, ReadLimits,
     ResolvePrefixError,
 };
 pub use pack::{

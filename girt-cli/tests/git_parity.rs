@@ -48,6 +48,10 @@ const CASES: &[Case] = &[
         git: &["cat-file", "--batch-check"],
         stdin: Some("HEAD\nv1\n"),
     },
+    case(
+        &["object", "list"],
+        &["cat-file", "--batch-all-objects", "--batch-check"],
+    ),
     case(&["tree", "list", "HEAD"], &["ls-tree", "HEAD"]),
     case(
         &["tree", "list", "--recursive", "HEAD"],
@@ -174,6 +178,113 @@ fn girt_matches_git() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+/// Lists and counts a store mixing packs, loose objects, a loose copy of a packed object and
+/// an alternate, as Git does.
+#[test]
+fn object_listing_matches_git_across_packs_and_alternates() {
+    let scratch = tempfile::tempdir().unwrap();
+    let repository = scratch.path().join("repo");
+    fixture(scratch.path(), &repository);
+    let git = |args: &[&str], stdin: Option<&str>| {
+        let output = run(
+            Command::new("git").args(args),
+            scratch.path(),
+            &repository,
+            stdin,
+        );
+        assert!(output.status.success(), "git {args:?}");
+        output.stdout
+    };
+    // Pack the first commit's objects, keep the second's loose and re-add one packed blob.
+    git(&["repack", "--quiet", "-d"], None);
+    fs::write(repository.join("loose.txt"), "loose only\n").unwrap();
+    let loose = String::from_utf8(git(&["hash-object", "-w", "loose.txt"], None)).unwrap();
+    let packed = git(&["rev-parse", "first:dir/b.txt"], None);
+    let packed = String::from_utf8(packed).unwrap();
+    let data = git(&["cat-file", "blob", packed.trim()], None);
+    let objects = repository.join(".git/objects");
+    // A loose copy of a packed object, written by Git under its own name.
+    fs::write(repository.join("copy.txt"), &data).unwrap();
+    git(&["hash-object", "-w", "copy.txt"], None);
+
+    let borrowed = scratch.path().join("borrowed.git");
+    let init = run(
+        Command::new("git").args(["init", "--quiet", "--bare", borrowed.to_str().unwrap()]),
+        scratch.path(),
+        scratch.path(),
+        None,
+    );
+    assert!(init.status.success());
+    let borrowed_git = |args: &[&str]| {
+        run(
+            Command::new("git").args(args),
+            scratch.path(),
+            &borrowed,
+            None,
+        )
+    };
+    fs::write(borrowed.join("only.txt"), "borrowed only\n").unwrap();
+    assert!(
+        borrowed_git(&["hash-object", "-w", "only.txt"])
+            .status
+            .success()
+    );
+    fs::write(
+        objects.join("info/alternates"),
+        format!("{}\n", borrowed.join("objects").display()),
+    )
+    .unwrap();
+
+    let compare = |girt_args: &[&str], git_args: &[&str]| {
+        let girt = run(
+            Command::new(env!("CARGO_BIN_EXE_girt"))
+                .arg("--git")
+                .args(girt_args),
+            scratch.path(),
+            &repository,
+            None,
+        );
+        let expected = String::from_utf8(git(git_args, None)).unwrap();
+        // girt does not report garbage files.
+        let expected: String = expected
+            .lines()
+            .filter(|line| !line.starts_with("garbage:") && !line.starts_with("size-garbage:"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        assert_eq!(
+            String::from_utf8(girt.stdout).unwrap(),
+            expected,
+            "girt --git {girt_args:?}: {}",
+            String::from_utf8_lossy(&girt.stderr)
+        );
+    };
+    compare(
+        &["object", "list"],
+        &["cat-file", "--batch-all-objects", "--batch-check"],
+    );
+    // After listing, which Git refuses for them: object-named directories and symlinks are garbage
+    // to Git, not loose objects.
+    fs::create_dir_all(objects.join("ef/0000000000000000000000000000000000000a")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        "missing",
+        objects.join("ef/0000000000000000000000000000000000000b"),
+    )
+    .unwrap();
+
+    compare(&["object", "count"], &["count-objects", "-v"]);
+
+    let packed_only = run(
+        Command::new(env!("CARGO_BIN_EXE_girt")).args(["object", "list", "--packed"]),
+        scratch.path(),
+        &repository,
+        None,
+    );
+    let listed = String::from_utf8(packed_only.stdout).unwrap();
+    assert!(listed.contains(packed.trim()));
+    assert!(!listed.contains(loose.trim()));
 }
 
 /// Builds a small repository: two commits with an edit, a rename, an ignored file and an

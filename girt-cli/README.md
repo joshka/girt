@@ -29,6 +29,7 @@ hyperfine 'girt object batch --check < ids' 'git cat-file --batch-check < ids'
 | `repo info`                                                         | `git rev-parse --git-dir --git-common-dir --show-toplevel --is-bare-repository --show-object-format` |
 | `init`                                                              | `git init`                                                                                           |
 | `object id` / `hash` / `show` / `info` / `cat` / `exists` / `batch` | `git rev-parse --verify` / `hash-object` / `cat-file -p` / `-t`, `-s` / raw / `-e` / `--batch`       |
+| `object list` / `count`                                             | `git cat-file --batch-all-objects --batch-check` / `git count-objects -v`                            |
 | `tree list`                                                         | `git ls-tree`                                                                                        |
 | `ref list` / `show` / `set` / `delete` / `log`                      | `git for-each-ref` / `rev-parse` / `update-ref` / `update-ref -d` / `reflog show`                    |
 | `log`                                                               | `git log`                                                                                            |
@@ -150,5 +151,8 @@ These come from the library and are listed in each command's `--help`:
   and `push` use the library's configured credential helpers, including `store`; they decline
   interactive credential prompts. Adding helpers to clone/discovery requires sharing the workflow
   adapter's helper selection and authentication retry policy.
+- `object count --git` omits Git's `garbage` and `size-garbage` lines: girt does not classify stray
+  files in object directories. An `.idx` without its `.pack` fails opening instead of counting as
+  garbage. Multi-pack indexes are not read, so `object list` and `count` see only `.idx` packs.
 - `maintenance run` deletes data. It requires `--yes`, and no other process may use the repository
   while it runs.
