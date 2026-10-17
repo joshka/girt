@@ -3,10 +3,10 @@
 //! A fetch has three phases, and this module exposes each of them:
 //!
 //! 1. **Transfer and validate.** Agree with the source on which objects to send, receive them,
-//!    check every received object's framing, delta chain and identity, and walk the history of each
-//!    selected tip to check that it is complete and well-formed. Nothing is written to the
-//!    destination. See [Limits and trust](crate::transport#limits-and-trust) for exactly what is
-//!    checked.
+//!    check every received object's framing, delta chain and identity, and walk the new history of
+//!    each selected tip, down to shallow boundaries and history the destination already has, to
+//!    check that it is complete and well-formed. Nothing is written to the destination. See [Limits
+//!    and trust](crate::transport#limits-and-trust) for exactly what is checked.
 //! 2. **Install.** Publish the validated pack, then its index, in the destination's object storage.
 //!    An interruption between the two leaves a pack that readers ignore.
 //! 3. **Publish.** Update remote-tracking references and tags, each conditional on the value it had
@@ -54,9 +54,11 @@
 //! A [`KnownHistory`] describes what the destination already has, so the source can leave it
 //! out. [`KnownHistory::default`] knows nothing and requests full history.
 //! [`KnownHistory::from_store`] offers commits reachable from the given tips as haves, up to
-//! [`FetchLimits::max_haves`]; [`KnownHistory::new`] reads and verifies a bounded local graph.
-//! Objects the received pack depends on, such as external delta bases in a thin pack, are checked
-//! against this history, and installation checks them again. Known history describes the
+//! [`FetchLimits::max_haves`]. Its tips must be values of the destination's references, because
+//! their existing history is trusted as complete: validation stops there rather than re-checking
+//! it. [`KnownHistory::new`] instead reads and verifies a bounded local graph. Objects the
+//! received pack depends on, such as external delta bases in a thin pack, are checked against
+//! this history, and installation checks them again. Known history describes the
 //! destination at one moment: keep garbage collection away from it until the fetch publishes.
 //!
 //! # Network downloads and worker threads

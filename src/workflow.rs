@@ -112,8 +112,8 @@
 //!    server can leave those objects out. HTTP and SSH ask for the upload-pack protocol named by
 //!    `protocol.version` (v2 when unset, as Git does) and accept a v0 or v1 answer.
 //! 5. **Validate and install.** Every received object's framing, delta chain and identity are
-//!    checked, and the history of every selected tip is walked to check that it is complete and
-//!    well-formed, before the pack is installed.
+//!    checked, and the new history of every selected tip, down to history the repository already
+//!    has, is walked to check that it is complete and well-formed, before the pack is installed.
 //! 6. **Publish.** First every planned change is checked against its refspec's rules, such as
 //!    fast-forwarding; if any check fails, no reference changes. Then stale references are pruned
 //!    in one transaction and the remaining references updated in a second, each conditional on the
@@ -433,8 +433,8 @@ pub fn fetch(
 ///
 /// # Examples
 ///
-/// Publish a new branch on `origin`. `expected: None` means the push fails if someone else
-/// created the branch first:
+/// Publish a new branch on `origin`. `expected: None` means the push is rejected if someone else
+/// created the branch first with a different commit:
 ///
 /// ```
 /// use girt::push::{ForcePolicy, PushCommand};

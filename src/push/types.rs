@@ -53,6 +53,10 @@ pub enum ForcePolicy {
 /// reference that must not exist yet, and the null ID as `new` to delete one. Get `expected` from
 /// the value you last saw on the remote, such as your remote-tracking reference; never guess it.
 ///
+/// The condition guards changes. If the reference already has the value `new`, nothing needs to
+/// change and the receiver reports `Ok` without comparing `expected`, so an `Ok` does not prove
+/// that the expectation matched.
+///
 /// # Examples
 ///
 /// ```
@@ -63,7 +67,7 @@ pub enum ForcePolicy {
 /// let old = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"old");
 /// let new = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"new");
 ///
-/// // Create `topic`; fails if it already exists.
+/// // Create `topic`; rejected if it already exists with a different value.
 /// let create = PushCommand::new(RefName::new("refs/heads/topic")?, None, new);
 /// // Fast-forward `main` from `old` to `new`.
 /// let update = PushCommand::new(RefName::new("refs/heads/main")?, Some(old), new);

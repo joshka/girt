@@ -61,9 +61,10 @@
 //! # Limits and trust
 //!
 //! A fetch validates what it receives, whatever its limits. Every received object's pack framing,
-//! checksum, delta chain and identity are checked. Then the history of every selected tip is
-//! walked, down to any declared shallow boundary: each object reached must be present and
-//! well-formed, with edges of the right kinds. Malformed objects outside that history, such as
+//! checksum, delta chain and identity are checked. Then the new history of every selected tip is
+//! walked, down to any declared shallow boundary and to history the destination already has, which
+//! is trusted rather than re-checked: each object reached must be present and well-formed, with
+//! edges of the right kinds. Malformed objects outside that history, such as
 //! unreachable extras a server included, are not parsed further and do not fail the fetch. Nothing
 //! is installed until validation succeeds, and changing the limits never relaxes these checks.
 //!

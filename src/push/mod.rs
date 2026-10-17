@@ -16,6 +16,8 @@
 //!
 //! A [`PushCommand`] says "if `name` is `expected`, make it `new`": `expected: None` creates a
 //! reference that must not exist, and the null ID deletes one. There is no unconditional push.
+//! A command whose reference already has the value `new` succeeds without comparing `expected`,
+//! since nothing changes.
 //! [`ForcePolicy::FastForwardOnly`] (the default) refuses at preparation to move a branch to a
 //! commit that doesn't descend from its old value, or to replace a tag; [`ForcePolicy::Allow`]
 //! permits it, still conditional on `expected`, like Git's `--force-with-lease`. Get `expected`

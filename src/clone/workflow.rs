@@ -31,8 +31,8 @@ use crate::{InitKind, ObjectKind, Repository};
 /// checkout, shallow/filter, alternates, hardlinks, mirror or submodule behavior is supported.
 /// Finish requires the existing reference backend. Native local clone reads girt storage directly
 /// and needs no Git executable. The optional SSH adapter requires macOS/Linux; HTTP is
-/// feature-gated and uses the caller's runtime. See the [module example](crate::clone#example) for
-/// a runnable local clone.
+/// feature-gated and uses the caller's runtime. See the [module
+/// example](crate::clone#example-cloning-a-local-repository) for a runnable local clone.
 pub struct CloneRequest {
     pub(super) destination: PathBuf,
     pub(super) kind: InitKind,
@@ -486,8 +486,9 @@ pub enum CloneTransferError {
 ///
 /// girt never deletes a destination it did not finish. `report.reserved` says whether this
 /// operation created the destination directory, and the other report fields say which phases
-/// completed, so the caller can decide whether to remove it, retry by fetching into it, or leave
-/// it for inspection.
+/// completed, so the caller can decide whether to remove it or leave it for inspection. Fetching
+/// into it does not finish it: the configuration, local branch and `HEAD` are published last, and
+/// a partially initialized repository needs repair first.
 #[derive(Debug, thiserror::Error)]
 #[error("clone failed")]
 #[non_exhaustive]

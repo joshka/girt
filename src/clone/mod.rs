@@ -28,7 +28,10 @@
 //! [`CloneFailure`] from preparation and [`CloneTransferError`] from receiving mean nothing was
 //! created. [`CloneError`] from [`CloneReady::finish`] carries a [`CloneReport`] saying which
 //! phases completed. girt never rolls back or deletes the destination: the caller decides whether
-//! to remove it, keep it for inspection, or finish it by fetching. See
+//! to remove it or keep it for inspection. A fetch cannot resume a failed clone: it neither repairs
+//! partial initialization nor writes the origin configuration, local branch and `HEAD` that
+//! `finish` publishes last. Removing the destination and cloning again is the simple recovery.
+//! See
 //! `examples/clone_repository.rs` for a disposable local workflow.
 //!
 //! # Example: cloning a local repository
