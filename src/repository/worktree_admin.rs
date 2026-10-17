@@ -73,7 +73,7 @@ pub(super) fn lock(registration: &Path) -> Result<AdminLock, WorktreeAdminError>
             source,
         }
     })?;
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
+    match crate::locks::lock_options().open(&path) {
         Ok(file) => {
             let identity = crate::locks::capture_identity(&path, &file).map_err(|source| {
                 WorktreeAdminError::Io {

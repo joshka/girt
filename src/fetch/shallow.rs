@@ -1,5 +1,5 @@
 //! Conditional publication of Git's shared shallow boundary file.
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -101,14 +101,7 @@ impl Lock {
         let _lock_operation = crate::locks::operation();
         let path = common_dir.join("shallow");
         let lock_path = std::path::absolute(common_dir.join("shallow.lock"))?;
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            options.share_mode(3); // Keep the held lock unreplaceable on Windows.
-        }
-        let file = options.open(&lock_path)?;
+        let file = crate::locks::unreplaceable_lock_options().open(&lock_path)?;
         let identity = crate::locks::capture_identity(&lock_path, &file)?;
         let file = crate::locks::SharedFile::from(file);
         let cleanup = crate::locks::Guard::new(&lock_path, &file, identity.clone());
@@ -210,7 +203,6 @@ mod tests {
             b"foreign"
         );
     }
-    #[cfg(unix)]
     #[test]
     fn cleanup_invalidates_shallow_publication_without_changing_roots() {
         let root = tempfile::tempdir().unwrap();

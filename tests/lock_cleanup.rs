@@ -1,5 +1,5 @@
 //! Original Git-generated storage fixtures; cleanup never edits their published bytes.
-#![cfg(unix)]
+#[cfg(unix)]
 #[path = "support/stand_in.rs"]
 mod stand_in;
 use std::process::{Command, Stdio};
@@ -26,7 +26,6 @@ fn git(root: &std::path::Path, args: &[&str]) {
     assert!(output.status.success(), "{:?}", output);
 }
 
-#[cfg(unix)]
 #[test]
 fn cleanup_invalidates_owned_edits_and_preserves_git_targets_and_replacements() {
     let _serial = CLEANUP_TEST.lock().unwrap();
@@ -153,6 +152,81 @@ fn git_interrupt_releases_index_lock_without_changing_published_index() {
     child.reaped = true;
     assert!(!root.path().join(".git/index.lock").exists());
     assert_eq!(std::fs::read(index).unwrap(), before);
+}
+
+#[test]
+fn git_takes_the_index_lock_while_a_cleaned_edit_is_still_held() {
+    let _serial = CLEANUP_TEST.lock().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    git(root.path(), &["init", "--template=", "-q"]);
+    std::fs::write(root.path().join("file"), b"retained edit fixture").unwrap();
+    let repo = girt::Repository::open(root.path()).unwrap();
+    let edit = repo.edit_index(girt::index::Limits::default()).unwrap();
+    let report = girt::locks::cleanup().unwrap();
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(report.removed, [repo.git_dir().join("index.lock")]);
+    // The old edit still holds its handle; the name must be free for Git regardless.
+    git(root.path(), &["add", "file"]);
+    let published = std::fs::read(repo.git_dir().join("index")).unwrap();
+    assert!(edit.commit().is_err());
+    assert_eq!(
+        std::fs::read(repo.git_dir().join("index")).unwrap(),
+        published
+    );
+    assert!(!repo.git_dir().join("index.lock").exists());
+    git(root.path(), &["ls-files", "--stage"]);
+}
+
+/// Observation of Git for Windows, not girt: termination leaves Git's own lock behind.
+#[cfg(windows)]
+#[test]
+fn git_terminated_on_windows_leaves_its_index_lock_and_published_index() {
+    let _serial = CLEANUP_TEST.lock().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    git(root.path(), &["init", "--template=", "-q"]);
+    std::fs::write(root.path().join("file"), b"git termination fixture").unwrap();
+    git(root.path(), &["add", "file"]);
+    let index = root.path().join(".git/index");
+    let before = std::fs::read(&index).unwrap();
+    std::fs::write(root.path().join(".gitattributes"), b"file filter=cleanup\n").unwrap();
+    std::fs::write(root.path().join("file"), b"changed fixture").unwrap();
+    let ready = root.path().join(".git/filter-ready");
+    // Git for Windows runs filters through its bundled shell after taking the index lock.
+    let filter = format!(
+        "sh -c 'echo ready >\"$1\"; sleep 20; cat' filter '{}'",
+        ready.to_str().unwrap().replace('\\', "/")
+    );
+    let mut child = command(root.path())
+        .args([
+            "-c",
+            &format!("filter.cleanup.clean={filter}"),
+            "add",
+            "file",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let end = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(ready.exists(), "filter did not start");
+    assert!(root.path().join(".git/index.lock").exists());
+    // Terminate Git and its filter shell, as a crash or task kill would; no handler runs.
+    let killed = Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &child.id().to_string()])
+        .output()
+        .unwrap();
+    assert!(killed.status.success(), "{killed:?}");
+    assert!(!child.wait().unwrap().success());
+    assert!(root.path().join(".git/index.lock").exists());
+    // Unregistered locks belong to Git; caller cleanup never removes them.
+    let report = girt::locks::cleanup().unwrap();
+    assert!(report.removed.is_empty() && report.failures.is_empty());
+    assert!(root.path().join(".git/index.lock").exists());
+    assert_eq!(std::fs::read(&index).unwrap(), before);
 }
 
 #[test]

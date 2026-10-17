@@ -6,7 +6,7 @@
     clippy::indexing_slicing,
     reason = "parses untrusted repository or network input (#103)"
 )]
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -1120,22 +1120,17 @@ impl Lock {
         let mut path = destination.as_os_str().to_os_string();
         path.push(".lock");
         let path = PathBuf::from(path);
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
         // Keep the owned Windows lock unreplaceable while its handle is open. Publication
         // uses a separate temporary file, so no delete sharing is needed on this handle.
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            options.share_mode(3); // FILE_SHARE_READ | FILE_SHARE_WRITE, excluding DELETE.
-        }
-        let file = options.open(&path).map_err(|source| {
-            if is_held(&source) {
-                ReferenceError::Locked(path.clone())
-            } else {
-                io_error(&path, source)
-            }
-        })?;
+        let file = crate::locks::unreplaceable_lock_options()
+            .open(&path)
+            .map_err(|source| {
+                if is_held(&source) {
+                    ReferenceError::Locked(path.clone())
+                } else {
+                    io_error(&path, source)
+                }
+            })?;
         let identity = crate::locks::capture_identity(&path, &file)
             .map_err(|source| io_error(&path, source))?;
         let file = crate::locks::SharedFile::from(file);
@@ -1656,24 +1651,9 @@ mod interrupt_cleanup_tests {
             fs::write(&destination, b"published bytes").unwrap();
             let lock = Lock::acquire(destination.clone()).unwrap();
             let report = crate::locks::cleanup_under(&directory).unwrap();
-            #[cfg(unix)]
-            assert_eq!(report.removed.len(), 1);
-            #[cfg(not(unix))]
-            assert_eq!(report.failures.len(), 1);
-            #[cfg(unix)]
+            assert_eq!(report.removed.len(), 1, "{:?}", report.failures);
             assert!(lock.publish_retaining_lock(b"unsafe replacement").is_err());
-            #[cfg(not(unix))]
-            assert!(lock.check_owned().is_ok());
             assert_eq!(fs::read(destination).unwrap(), b"published bytes");
-            #[cfg(not(unix))]
-            {
-                let path = lock.path.clone();
-                drop(lock);
-                assert!(
-                    !path.exists(),
-                    "unsupported cleanup must preserve ordinary Drop"
-                );
-            }
         }
     }
 }

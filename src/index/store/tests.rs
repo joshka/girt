@@ -861,3 +861,24 @@ fn caller_cleanup_waits_through_the_publication_checkpoint() {
         1
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn failed_delete_mark_after_rename_cannot_publish_over_a_new_lock() {
+    let (_root, repo) = repository(crate::ObjectFormat::Sha1);
+    let published = populated(&repo);
+    let index = repo.git_dir().join("index");
+    let lock = repo.git_dir().join("index.lock");
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    crate::locks::windows::FAIL_DELETE_MARK.with(|fail| fail.set(true));
+    let report = crate::locks::cleanup_under(repo.git_dir());
+    crate::locks::windows::FAIL_DELETE_MARK.with(|fail| fail.set(false));
+    assert_eq!(report.unwrap().failures.len(), 1);
+    fs::write(&lock, b"new owner").unwrap();
+    assert!(edit.commit().is_err());
+    assert_eq!(fs::read(&lock).unwrap(), b"new owner");
+    assert_eq!(fs::read(&index).unwrap(), published);
+    let edit = repo.edit_index(Limits::default());
+    assert!(edit.is_err(), "the new owner still holds the name");
+    fs::remove_file(&lock).unwrap();
+}
