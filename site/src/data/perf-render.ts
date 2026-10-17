@@ -18,6 +18,10 @@ export interface CellData {
   timeoutS: number | null;
   /** When this cell was measured. */
   when: string;
+  /** girt release the cell was measured on, if recorded. */
+  version: string | null;
+  /** Whether that release is older than the matrix's current release. */
+  stale: boolean;
   notes: string[];
 }
 
@@ -191,10 +195,12 @@ function cellHtml(row: RowData, column: ColumnData, state: ViewState): string {
         : cell.status === 'refused'
           ? 'refused'
           : 'no result';
-    return `<td><div ${attrs}><span class="jjp-time">${what}</span><span class="jjp-sub">${otherText}</span></div></td>`;
+    const staleFailure = cell.stale ? `<span class="jjp-sub">measured on girt ${escape(cell.version!)}</span>` : '';
+    return `<td><div ${attrs}><span class="jjp-time">${what}</span><span class="jjp-sub">${otherText}</span>${staleFailure}</div></td>`;
   }
   const ratio = other ? ` · ${(cell.g! / other).toFixed(2)}×` : '';
-  return `<td><div ${attrs}><span class="jjp-time">${formatMs(cell.g!)}</span><span class="jjp-sub">${otherText}${ratio}</span></div></td>`;
+  const stale = cell.stale ? `<span class="jjp-sub">measured on girt ${escape(cell.version!)}</span>` : '';
+  return `<td><div ${attrs}><span class="jjp-time">${formatMs(cell.g!)}</span><span class="jjp-sub">${otherText}${ratio}</span>${stale}</div></td>`;
 }
 
 /** "64–66 ms", or "2 min 7 s – 2 min 13 s" when the units differ. */
@@ -240,7 +246,7 @@ function detailHtml(payload: Payload, row: RowData): string {
       const extra = extraOf(cell, 'stock');
       const notes = [inputs, ...cell.notes.map(escape)].filter(Boolean).join('; ');
       return `<tr>
-        <th scope="row">${column.size}<span class="jjp-muted">${escape(column.name)}</span><span class="jjp-muted">${escape(cell.when)}</span></th>
+        <th scope="row">${column.size}<span class="jjp-muted">${escape(column.name)}</span><span class="jjp-muted">${escape(cell.when)}${cell.version ? `, girt ${escape(cell.version)}` : ''}</span></th>
         <td>${timeOf(cell, 'girt')}</td>
         <td>${timeOf(cell, 'stock')}</td>
         <td>${timeOf(cell, 'git')}</td>
@@ -317,5 +323,5 @@ export function tooltipHtml(row: RowData, size: Size, state: ViewState): string 
     git&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ${timeOf(cell, 'git')}<br>
     ${extra == null ? '' : `extra wait <b>${formatExtra(extra)}</b> vs ${baseName(state)}<br>`}
     ${cell.issues.length ? `tracking ${cell.issues.map((n) => `#${n}`).join(', ')}<br>` : ''}
-    <span class="jjp-muted">measured ${escape(cell.when)}; click the command for details</span>`;
+    <span class="jjp-muted">measured ${escape(cell.when)}${cell.version ? ` on girt ${escape(cell.version)}` : ''}; click the command for details</span>`;
 }

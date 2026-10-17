@@ -50,11 +50,12 @@ repository shapes, and a better set will replace them; read the numbers with tha
 ## Method
 
 Each tool runs against a fresh copy of the same repository. Caches are warm and machine load was not
-controlled, so treat small differences as noise. Times are medians. Most cells take six samples per
-tool; cells whose first sample takes more than 10 seconds take three, and more than 60 seconds take
-one, so their ratios are less precise. jj on girt is stopped once it takes twice as long as stock jj
-(at least 5 seconds). Some git commands do different work from their jj counterpart, and Git has no
-counterpart to `jj undo`, `jj op restore`, `jj git import` or colocated initialization.
+controlled, so treat small differences as noise; the provenance above gives the load range. Times
+are medians. Most cells take six samples per tool; cells whose first sample takes more than 10
+seconds take three, and more than 60 seconds take one, so their ratios are less precise. jj on girt
+is stopped once it takes twice as long as stock jj (at least 5 seconds). Some git commands do
+different work from their jj counterpart, and Git has no counterpart to `jj undo`, `jj op restore`,
+`jj git import` or colocated initialization.
 
 The harness is `scripts/jj-e2e/bench-ops.py` in the girt repository. Results and provenance live in
 `docs/jj-performance.json` and `docs/jj-performance-provenance.json`. The underlying gaps are
