@@ -104,6 +104,15 @@ impl<'a> CommitPayload<'a> {
     /// space extends the preceding record when one exists; orphan continuations, tab-leading
     /// lines and lines without a framing space remain opaque records. Unterminated final records
     /// are retained. This view performs no semantic validation and has no external effects.
+    ///
+    /// ```
+    /// use girt::CommitPayload;
+    /// let bytes = b"legacy-line-without-space";
+    /// assert!(CommitPayload::parse(bytes).is_err());
+    /// let inspectable = CommitPayload::from_bytes(bytes);
+    /// assert_eq!(inspectable.as_bytes(), bytes);
+    /// assert!(inspectable.message().is_empty());
+    /// ```
     pub fn from_bytes(bytes: &'a [u8]) -> Self {
         let mut headers: Vec<Range<usize>> = Vec::new();
         let mut start = 0;
@@ -179,6 +188,19 @@ impl<'a> CommitPayload<'a> {
     /// Select one occurrence to recover its candidate signing input, or select multiple spans
     /// explicitly when a signing format requires it. This operation does not infer which headers
     /// were signed, verify signatures, or validate decoded fields. The source remains unchanged.
+    ///
+    /// ```
+    /// use girt::CommitPayload;
+    /// let bytes = b"gpgsig first\n folded\nx keep\n\nmessage";
+    /// let view = CommitPayload::parse(bytes)?;
+    /// assert_eq!(
+    ///     view.without_headers(&[0]).ok_or("index absent")?,
+    ///     b"x keep\n\nmessage"
+    /// );
+    /// assert_eq!(view.as_bytes(), bytes); // Candidate signing input does not mutate stored data.
+    /// assert!(view.without_headers(&[9]).is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     #[expect(
         clippy::indexing_slicing,
         reason = "indices are checked against self.headers, whose spans lie in self.bytes in order"
@@ -207,6 +229,18 @@ impl<'a> CommitPayload<'a> {
 }
 
 /// A header occurrence borrowing its exact name and folded value from a [`CommitPayload`].
+///
+/// Use occurrence indices from [`CommitPayload::headers`] when removing a particular header.
+/// Repeated names remain distinct; folded values need explicit unfolding for interpretation.
+///
+/// ```
+/// use girt::CommitPayload;
+/// let view = CommitPayload::parse(b"x one\nx two\n folded\n\nbody")?;
+/// let second = view.headers().nth(1).ok_or("header absent")?;
+/// assert_eq!(second.name, b"x");
+/// assert_eq!(second.unfolded_value(), b"two\nfolded");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CommitHeaderRef<'a> {
     /// Whether the first physical line contains a framing space. Always true after strict

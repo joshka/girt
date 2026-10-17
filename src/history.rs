@@ -143,10 +143,12 @@ impl Default for HistoryLimits {
 }
 
 impl HistoryLimits {
-    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    /// Returns generous finite bounds for caller-approved ancestry queries.
     ///
-    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
-    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    /// Commit and parent bounds retain arithmetic headroom; object reads use
+    /// [`ReadLimits::trusted`]. A complete ancestry is collected in memory, so these values can
+    /// permit work beyond available resources. Prefer selected default-bound overrides when the
+    /// application needs predictable graph size or decoding cost.
     pub const fn trusted() -> Self {
         Self {
             max_commits: usize::MAX / 4,
@@ -607,16 +609,41 @@ fn check_cancelled(cancel: &AtomicBool, id: ObjectId) -> Result<(), HistoryError
 /// input to a commit, possibly by peeling a tag. [`Self::Limit`] calls for an explicit budget
 /// decision. Parsing and storage failures retain the offending ID and source. No variant authorizes
 /// ignoring an edge and treating an incomplete traversal as a complete answer.
+///
+/// ```
+/// use girt::{
+///     HistoryError, HistoryLimits, InitKind, ObjectFormat, ObjectId, PackLimits,
+///     Repository,
+/// };
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let missing = ObjectId::Sha1([1; 20]);
+/// let error = repo
+///     .objects(PackLimits::default())?
+///     .walk(&[missing], HistoryLimits::default())
+///     .expect_err("missing root");
+/// assert!(matches!(error, HistoryError::Missing(id) if id == missing));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum HistoryError {
     /// A root or reachable parent does not exist.
+    /// Obtain missing history or correct declared shallow boundaries; do not drop an edge from a
+    /// supposedly complete answer.
     #[error("missing commit {0}")]
     Missing(ObjectId),
     /// An object exists but is not a commit; tags are not peeled implicitly.
+    /// Resolve or peel the input to a verified commit before querying ancestry.
     #[error("object {0} is not a commit")]
     NotCommit(ObjectId),
     /// Storage verification or a per-read resource bound failed.
+    /// Inspect the identified object and storage source; budget refusal and corruption need
+    /// different responses.
     #[error("reading commit {id}")]
     Read {
         /// Object being read.
@@ -626,6 +653,7 @@ pub enum HistoryError {
         source: ObjectReadError,
     },
     /// Verified bytes do not have supported commit syntax.
+    /// Report the commit ID and parser cause; graph traversal cannot invent missing graph records.
     #[error("parsing commit {id}")]
     Parse {
         /// Object being parsed.
@@ -635,9 +663,12 @@ pub enum HistoryError {
         source: CommitError,
     },
     /// A graph bound was exhausted.
+    /// Choose a justified graph budget covering complete ancestries, not only expected endpoint
+    /// distance.
     #[error("history limit exceeded: {0}")]
     Limit(&'static str),
     /// Parent edges contain a cycle.
+    /// Report the cyclic graph; a larger budget cannot supply a valid ancestry ordering.
     #[error("cyclic commit ancestry")]
     Cycle,
 }

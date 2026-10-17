@@ -6,6 +6,19 @@ use crate::{
 };
 
 /// Work limits for resolving one object through a chain of annotated tags.
+///
+/// Choose edge count, total decoded payload and per-object work independently. A shallow tag chain
+/// can still contain a large annotation; a low depth limit does not cap its bytes.
+///
+/// ```
+/// use girt::{PeelLimits, ReadLimits};
+/// let limits = PeelLimits::default()
+///     .with_max_tags(8)
+///     .with_max_bytes(1024 * 1024)
+///     .with_read(ReadLimits::default().with_max_object_bytes(256 * 1024));
+/// assert_eq!(limits.max_tags, 8);
+/// assert!(limits.read.max_object_bytes < limits.max_bytes);
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct PeelLimits {
@@ -50,10 +63,18 @@ impl Default for PeelLimits {
 }
 
 impl PeelLimits {
-    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    /// Returns generous finite bounds for caller-approved tag chains.
     ///
-    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
-    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    /// This permits 10,000 tag objects and uses [`ReadLimits::trusted`] for each object. Large byte
+    /// limits can exceed available memory. Choose this after accepting that cost. To relax only one
+    /// dimension, start from [`Self::default`] instead; the example deliberately uses the generous
+    /// byte/read policy while keeping a smaller tag count.
+    ///
+    /// ```
+    /// use girt::PeelLimits;
+    /// let limits = PeelLimits::trusted().with_max_tags(100);
+    /// assert_eq!(limits.max_tags, 100);
+    /// ```
     pub const fn trusted() -> Self {
         Self {
             max_tags: 10_000,
@@ -99,6 +120,32 @@ pub struct PeeledObject {
 }
 
 /// A failed read-only resolution, with the exact link being examined.
+///
+/// Use the original tip, failing ID, parent tag and depth together when reporting a failed chain.
+/// No partial successful target is returned. Inspect the source category before deciding whether
+/// storage recovery, a larger budget, or cancellation policy applies.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, ObjectId, PackLimits, PeelFailure, PeelLimits, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// let missing = ObjectId::Sha1([1; 20]);
+/// let error = objects
+///     .peel(
+///         missing,
+///         PeelLimits::default(),
+///         &std::sync::atomic::AtomicBool::new(false),
+///     )
+///     .expect_err("not stored");
+/// assert_eq!(error.id, missing);
+/// assert!(matches!(error.source.as_ref(), PeelFailure::Missing));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[error("peeling {original} at {id}")]
 #[non_exhaustive]
@@ -121,18 +168,24 @@ pub struct PeelError {
 #[non_exhaustive]
 pub enum PeelFailure {
     /// The requested object is absent.
+    /// Obtain the missing object or report incomplete storage; no missing-object fetch is implicit.
     #[error("missing object")]
     Missing,
     /// Object verification, I/O, format, or per-read resource failure.
+    /// Inspect the storage source and distinguish its I/O, corruption, and budget failures.
     #[error(transparent)]
     Read(#[from] ObjectReadError),
     /// A tag's mandatory target records cannot be decoded.
+    /// Report the offending tag ID and parser source; do not silently skip the tag.
     #[error(transparent)]
     Tag(#[from] TagError),
     /// A terminal commit's graph records cannot be decoded.
+    /// Report the terminal commit ID and unreadable graph records.
     #[error(transparent)]
     Commit(#[from] crate::CommitError),
     /// Stored kind disagrees with the referring tag's declaration.
+    /// Inspect the referring tag and actual target; neither the declaration nor a ref hint
+    /// overrides verified kind.
     #[error("expected {expected:?}, found {actual:?}")]
     Kind {
         /// Declared kind.
@@ -141,15 +194,19 @@ pub enum PeelFailure {
         actual: ObjectKind,
     },
     /// The next tag edge exceeds `max_tags`.
+    /// Choose a larger tag-edge budget only after considering the input and resource cost.
     #[error("tag depth limit")]
     Depth,
     /// The total payload budget is exhausted.
+    /// Choose an aggregate payload budget independently of each per-read limit.
     #[error("tag-chain byte limit")]
     Bytes,
     /// A previously visited identity was encountered again.
+    /// Report the cyclic tag graph; restarting with larger limits cannot resolve it.
     #[error("tag cycle")]
     Cycle,
     /// Cancellation observed before or after a synchronous object read.
+    /// Retry only with a new cancellation decision; no partial target was returned.
     #[error("tag peeling cancelled")]
     Cancelled,
 }
