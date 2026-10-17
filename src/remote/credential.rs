@@ -297,12 +297,18 @@ impl std::fmt::Debug for CredentialHelper {
 /// - [`UnapprovedHelper`](Self::UnapprovedHelper): configuration names a helper the application did
 ///   not map to a program. Approve it, or deliberately leave it out.
 /// - [`Cancelled`](Self::Cancelled) and [`Deadline`](Self::Deadline): the user declined a prompt,
-///   the cancel flag was set, or time ran out. Treat it as an authentication failure, not a bug.
-/// - [`Io`](Self::Io) and [`Exit`](Self::Exit): a helper program could not run or failed. During
-///   [`CredentialSession::fill`] a failing helper is recorded in
-///   [`CredentialSession::helper_failures`] and later helpers still run; during
-///   [`CredentialSession::approve`] or [`CredentialSession::reject`] it stops the notifications,
-///   and helpers already notified are not rolled back.
+///   the cancel flag was set, or time ran out, interrupting the credential operation. This says
+///   nothing about whether the server accepts the credential: from [`CredentialSession::approve`]
+///   it follows an accepted credential, so don't erase it.
+/// - [`Exit`](Self::Exit): a helper program exited unsuccessfully. During
+///   [`CredentialSession::fill`] it is recorded in [`CredentialSession::helper_failures`] and later
+///   helpers still run.
+/// - [`Io`](Self::Io): a helper program could not be started or talked to, or the native credential
+///   store failed. This stops [`CredentialSession::fill`] immediately, so later helpers are not
+///   asked.
+///
+/// During [`CredentialSession::approve`] or [`CredentialSession::reject`], any failure stops the
+/// remaining notifications, and helpers already notified are not rolled back.
 /// - [`Protocol`](Self::Protocol): the context contains CR, LF or NUL, a helper's answer was
 ///   malformed, or `credential.*` configuration is invalid.
 ///

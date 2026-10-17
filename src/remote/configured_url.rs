@@ -3,9 +3,10 @@
 /// A value-free configured URL validation diagnostic.
 ///
 /// The URL in configuration is malformed, except for [`Unsupported`](Self::Unsupported), which
-/// marks valid Git syntax that girt does not interpret yet. Report malformed values to the user
-/// with the remote and key, and treat an unsupported value as a limitation of girt rather than a
-/// mistake in the configuration.
+/// marks a form girt does not interpret, such as a Windows UNC path or a value with control bytes.
+/// Such a value may or may not be valid for Git; girt has not decided. Report malformed values to
+/// the user with the remote and key, and hand unsupported values to whatever else the application
+/// uses to interpret configuration, or report them as unsupported by girt.
 ///
 /// # Examples
 ///

@@ -132,9 +132,10 @@ impl std::fmt::Debug for HttpRemote {
 /// Sanitized HTTP failures. Response bodies, URLs, header values and underlying client diagnostic
 /// strings are deliberately excluded because they may contain credentials.
 ///
-/// Constructing an endpoint fails only with [`Configuration`](Self::Configuration), before any
-/// request; configuration and policy checks during discovery, such as a refused redirect, can also
-/// report it. For a push, the receive-pack POST is the boundary: errors during discovery arrive
+/// Constructing an endpoint fails with [`Configuration`](Self::Configuration) or
+/// [`Limit`](Self::Limit), before any request; configuration and policy checks during discovery,
+/// such as a refused redirect, can also report `Configuration`. For a push, the receive-pack POST
+/// is the boundary: errors during discovery arrive
 /// inside [`PushError::NotSent`](crate::push::PushError::NotSent), and errors once the POST has
 /// started inside [`PushError::Uncertain`](crate::push::PushError::Uncertain), because the server
 /// may have applied it.
@@ -147,10 +148,16 @@ impl std::fmt::Debug for HttpRemote {
 ///   certificates. Retrying may help for transient failures.
 /// - [`Protocol`](Self::Protocol): the response is not a smart Git HTTP response, for example a
 ///   login page from a proxy or a dumb-HTTP server.
-/// - [`Limit`](Self::Limit), [`Cancelled`](Self::Cancelled) and [`Deadline`](Self::Deadline): a
-///   caller-set bound stopped the exchange.
-/// - [`Credential`](Self::Credential): a credential helper failed while the adapter reported the
-///   server's answer to it.
+/// - [`Limit`](Self::Limit): either a response exceeded a budget the caller chose, such as
+///   [`FetchLimits`](crate::fetch::FetchLimits), or an input exceeded one of girt's fixed caps: CA
+///   bundles (1 MiB), supplied headers (16 KiB), proxy credentials, redirects or credential size.
+///   For a fixed cap, shrink the input; raising a transfer budget won't help.
+/// - [`Cancelled`](Self::Cancelled) and [`Deadline`](Self::Deadline): the caller's control stopped
+///   the exchange.
+/// - [`Credential`](Self::Credential): a credential helper failed, was cancelled or timed out while
+///   the adapter reported the server's answer to it. That answer stands: after a successful
+///   response the credential was accepted, so don't treat this as a rejected credential, and it
+///   does not by itself justify retrying the transfer.
 ///
 /// # Examples
 ///

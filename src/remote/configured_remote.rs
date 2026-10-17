@@ -50,9 +50,10 @@ impl std::fmt::Debug for ConfiguredRemote {
 ///
 /// Report [`Url`](Self::Url), [`Refspec`](Self::Refspec) and [`TagOption`](Self::TagOption) as
 /// configuration mistakes, naming the remote, key and occurrence so the user can find the value.
-/// [`UnsupportedUrlSyntax`](Self::UnsupportedUrlSyntax) is different: the value is valid for Git
-/// but outside what girt interprets, so the caller should treat the whole remote as unsupported
-/// (for example, by falling back to another implementation) instead of calling it invalid.
+/// [`UnsupportedUrlSyntax`](Self::UnsupportedUrlSyntax) is different: the value is outside what
+/// girt interprets and may or may not be valid for Git, so the caller should treat the whole
+/// remote as unsupported (for example, by falling back to another implementation) rather than
+/// declaring it invalid.
 ///
 /// # Examples
 ///

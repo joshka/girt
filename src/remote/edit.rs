@@ -70,7 +70,10 @@ impl std::fmt::Debug for RemoteConfig<'_> {
 /// means the new name is taken. [`MissingOccurrence`](Self::MissingOccurrence) means the
 /// zero-based index is past the end of that list. [`AmbiguousSelector`](Self::AmbiguousSelector)
 /// means a branch section repeats `remote` or `pushRemote`, so girt won't guess which to update.
-/// [`Syntax`](Self::Syntax) and [`Refspec`](Self::Refspec) reject values that cannot be written.
+/// [`Syntax`](Self::Syntax) rejects bytes the configuration format cannot represent.
+/// [`Refspec`](Self::Refspec) rejects refspecs outside the strict subset girt can transfer with,
+/// including valid shorthand such as `main`; see [`RefspecError`] for remedies, and supply the
+/// equivalent full-name mapping where there is one.
 ///
 /// # Examples
 ///
