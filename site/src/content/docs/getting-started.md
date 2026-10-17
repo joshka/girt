@@ -3,9 +3,9 @@ title: Getting started
 description: Add girt to a Rust project, open a repository and read its history.
 ---
 
-This page adds girt to a project, opens an existing repository, resolves `HEAD` and walks its
-history. It changes nothing on disk. Then it points to the guides for writing objects, updating
-references and transfer.
+Add girt to a project, open an existing repository, resolve `HEAD` and walk its history. Nothing
+here writes to disk; the guides linked at the end cover writing objects, updating references and
+transfer.
 
 ## Requirements
 
@@ -30,8 +30,8 @@ The default build has no network transport. Enable the optional features you nee
 ## Read a repository
 
 This program prints the commit `HEAD` points to and counts the commits reachable from it. It follows
-at most five symbolic references from `HEAD`. An ordinary `HEAD` needs one hop, to its branch. The
-bound stops a symbolic reference cycle or an unexpectedly long chain.
+at most five symbolic references from `HEAD`. An ordinary `HEAD` needs one hop, to its branch; the
+limit stops a reference cycle or an unexpectedly long chain.
 
 ```rust
 use girt::refs::RefName;
@@ -77,13 +77,12 @@ Run it against any repository, including a linked worktree:
 cargo run -- /path/to/repo
 ```
 
-A few things in this example are typical of girt:
+The example shows four habits that run through girt's API:
 
 - **Budgets are explicit.** `PackLimits`, `ReadLimits` and `HistoryLimits` set budgets for the
-  inputs an operation accepts, such as object size, delta depth and the number of commits walked. An
-  input over budget is refused with an error. The budgets are not a cap on total memory use. The
-  defaults suit ordinary repositories. Raising them is a decision about how much you trust a
-  repository and how much work you'll accept.
+  inputs an operation accepts, such as object size, delta depth and the number of commits walked.
+  Input over budget is refused with an error. The budgets don't cap total memory use. The defaults
+  suit ordinary repositories; raise them only for repositories you trust with more work.
 - **Reading is separate from parsing.** [`Objects::read`] checks the object's framing and identity
   and returns its kind and exact bytes. Check the kind, then decode the bytes with [`Commit::parse`]
   for the repository's object format.
@@ -99,8 +98,8 @@ A few things in this example are typical of girt:
 
 ## Run the examples
 
-girt's [examples](https://github.com/joshka/girt/tree/main/examples) cover whole workflows. Most
-create disposable repositories, so they are safe to run from a source checkout:
+girt's [examples](https://github.com/joshka/girt/tree/main/examples) each run a complete workflow.
+Most create a disposable repository, so you can run them from a source checkout:
 
 ```sh
 git clone https://github.com/joshka/girt
