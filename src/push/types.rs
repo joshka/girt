@@ -81,9 +81,12 @@ impl PushCommand {
 
 /// Input, work and output bounds for preparation and a single receive-pack session.
 ///
-/// Push limits protect the pusher from its own repository as much as from the receiver: preparing
-/// a push reads and verifies every object it sends, and parses the receiver's advertisement and
-/// status. Use `default()` when either side is untrusted and `trusted()` otherwise, as
+/// Push limits bound work on both sides: preparing a push walks and decodes the history it sends
+/// and builds the pack, and sending parses the receiver's advertisement and status. Preparation
+/// copies eligible compressed entries after a CRC check rather than rehashing them, so the
+/// receiver, not the pusher, establishes those objects' identities; see
+/// [`PreparedPush::new`](super::PreparedPush::new) for the source storage assumptions. Use
+/// `default()` when either side is untrusted and `trusted()` otherwise, as
 /// [`crate::workflow::push`] does. See [Limits and trust](crate::transport#limits-and-trust).
 ///
 /// # Examples

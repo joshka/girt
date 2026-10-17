@@ -60,10 +60,12 @@
 //!
 //! # Limits and trust
 //!
-//! Every transfer validates everything it receives, whatever its limits: pack framing and
-//! checksums, each object's identity and syntax, delta chains, and that the history of every
-//! fetched tip is complete. Malformed input is always rejected, and nothing is installed until
-//! validation succeeds.
+//! A fetch validates what it receives, whatever its limits. Every received object's pack framing,
+//! checksum, delta chain and identity are checked. Then the history of every selected tip is
+//! walked, down to any declared shallow boundary: each object reached must be present and
+//! well-formed, with edges of the right kinds. Malformed objects outside that history, such as
+//! unreachable extras a server included, are not parsed further and do not fail the fetch. Nothing
+//! is installed until validation succeeds, and changing the limits never relaxes these checks.
 //!
 //! Resource limits answer a different question: how much *well-formed* work may the other side
 //! ask for? A valid pack can be 50 GB, hold ten million objects or chain deltas thousands deep.
@@ -84,9 +86,9 @@
 //! on the wire and a 256 MiB pack of at most one million objects, with each object at most 64 MiB
 //! and deltas at most 64 deep. `trusted()` raises the size and count limits until available memory
 //! and disk are what bound the work, matching Git; [`crate::workflow`] uses it for the remotes a
-//! user configured. It keeps a few limits that shape how girt works rather than how much it
-//! accepts, such as the number of commits offered during negotiation, worker threads and open
-//! files; each type's `trusted()` documents its values.
+//! user configured. It keeps some finite bounds: for example, delta chains and tag chains may be at
+//! most 10,000 deep, at most 256 commits are offered during negotiation, a transfer adds at most 8
+//! worker threads, and an object store may have at most 100,000 packs and 4,096 open files.
 //! The defaults also refuse large *trusted* repositories. The default
 //! [`PackLimits`](crate::PackLimits) admits 64 MiB of pack index, while a Linux kernel clone has
 //! about 300 MB, so use `trusted()` when opening big repositories you control, as in
@@ -96,8 +98,10 @@
 //! fails the transfer before anything is installed, with an error that names the bound, such as
 //! [`FetchError::Limit`](crate::fetch::FetchError::Limit); the repository is unchanged.
 //! [`FetchUpdateLimits`](crate::fetch::FetchUpdateLimits) apply later, in
-//! [`FetchReady::finish`](crate::fetch::FetchReady::finish), after the pack is installed: exceeding
-//! one there publishes no references, but leaves the installed objects, and reports them in
+//! [`FetchReady::finish`](crate::fetch::FetchReady::finish). Its snapshot limits bound opening the
+//! destination to check dependencies before installation; its verification and history limits
+//! bound checking the installed objects and fast-forwards afterwards. Exceeding either publishes
+//! no references. Read what was installed from the report in
 //! [`FetchFinishError`](crate::fetch::FetchFinishError). Limits bound input and work, not
 //! wall-clock time or total process memory: pair them with a deadline, and bound how many
 //! transfers run at once.
@@ -113,9 +117,12 @@
 //! filesystem call is not interrupted.
 //!
 //! What an interruption means depends on how far the transfer got. A fetch interrupted before
-//! installation leaves the repository unchanged; one interrupted after installation leaves the
-//! new objects in place but publishes no references, and reports what was done in
-//! [`FetchFinishError`](crate::fetch::FetchFinishError). A push interrupted before any command was
+//! installation leaves the repository unchanged. One interrupted during installation can leave a
+//! pack without its index, which readers ignore; see
+//! [`ReceivedFetch::install`](crate::fetch::ReceivedFetch::install). One interrupted after
+//! installation keeps the new objects, and [`FetchFinishError`](crate::fetch::FetchFinishError)
+//! reports what was done. Cancellation is not checked once a reference transaction has started,
+//! so a late cancellation does not stop publication. A push interrupted before any command was
 //! sent returns [`PushError::NotSent`](crate::push::PushError::NotSent): it attempted no reference
 //! updates, though a push to a local path may already have stored objects or run receive hooks
 //! there. One interrupted after sending began returns

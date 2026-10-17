@@ -132,10 +132,12 @@ impl std::fmt::Debug for HttpRemote {
 /// Sanitized HTTP failures. Response bodies, URLs, header values and underlying client diagnostic
 /// strings are deliberately excluded because they may contain credentials.
 ///
-/// [`Configuration`](Self::Configuration) errors happen before any request. Once a request may
-/// have been sent, a push reports any of these inside
-/// [`PushError::Uncertain`](crate::push::PushError::Uncertain) rather than
-/// [`PushError::NotSent`](crate::push::PushError::NotSent), because the server may have applied it.
+/// Constructing an endpoint fails only with [`Configuration`](Self::Configuration), before any
+/// request; configuration and policy checks during discovery, such as a refused redirect, can also
+/// report it. For a push, the receive-pack POST is the boundary: errors during discovery arrive
+/// inside [`PushError::NotSent`](crate::push::PushError::NotSent), and errors once the POST has
+/// started inside [`PushError::Uncertain`](crate::push::PushError::Uncertain), because the server
+/// may have applied it.
 ///
 /// # Examples
 ///

@@ -3,9 +3,11 @@
 Enable `girt`'s `http` feature for smart HTTP/HTTPS. Fetch and discovery speak upload-pack protocol
 v0, v1 or v2, as requested with `HttpRemote::with_protocol` (v0 by default; `workflow` follows
 `protocol.version`, v2 when unset) and as answered by the server. Push speaks receive-pack v0. The
-adapter performs a service advertisement GET and, when needed, one upload-pack or receive-pack POST.
-It does not model HTTP as a duplex stream. Each upload-pack request contains the complete wants,
-bounded have batch and `done`; known-only fetches and empty pushes stop after discovery.
+adapter does not model HTTP as a duplex stream. With v0 or v1, it performs a service advertisement
+GET and, when needed, one upload-pack or receive-pack POST; each upload-pack request contains the
+complete wants, bounded have batch and `done`. With v2, the GET returns the server's capabilities,
+an `ls-refs` POST lists references, including for discovery alone, and a `fetch` POST follows when
+objects are needed. Known-only fetches and empty pushes stop after listing references.
 
 ## Runtime and Processing
 
@@ -162,7 +164,8 @@ text remain server-controlled bytes for callers to handle.
 
 ## Limits and Interruption
 
-Discovery requires the exact service prelude and flush followed by a valid v0/v1 advertisement or v2
+A v0/v1 discovery response requires the exact service prelude and flush followed by a valid
+advertisement; a requested v2 response may instead begin directly with `version 2` and its
 capability list. Media types must match the requested smart Git service without parameters or
 duplicates. HTTP content encoding is rejected, avoiding a second decompression budget. Dumb HTTP is
 explicitly unsupported; existing object-format and push preparation constraints apply;
