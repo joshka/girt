@@ -105,7 +105,8 @@ impl Eq for Index {}
 
 /// Opaque optional extension preserved in its original position and byte representation.
 ///
-/// Optional payload semantics are not validated or used. The mandatory `link` extension is
+/// Optional payload semantics are not validated. Checked [`Index::write_tree_with`] reads `TREE`
+/// records only as claims it verifies against the entries. The mandatory `link` extension is
 /// validated during shared-index resolution; `sdir` marks validated sparse directory entries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Extension {

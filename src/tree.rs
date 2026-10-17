@@ -170,6 +170,20 @@ impl Tree {
         Ok(tree)
     }
 
+    /// Builds a tree from entries already validated and in Git order, as a directory of a
+    /// validated index is: index paths sort exactly as Git orders tree entries.
+    pub(crate) fn from_ordered(format: crate::ObjectFormat, entries: Vec<TreeEntry>) -> Self {
+        debug_assert!(entries.iter().all(|e| e.id.format() == format));
+        debug_assert!(validate_names(&entries).is_ok());
+        debug_assert!(entries.is_sorted_by(|a, b| a.git_cmp(b).is_lt()));
+        let original = encode_entries(&entries);
+        Self {
+            format,
+            entries,
+            original,
+        }
+    }
+
     /// Parses a tree payload, excluding the `tree <length>\0` object header.
     ///
     /// Copies names and IDs into owned entries. Does not sort or validate names or duplicates;

@@ -1591,3 +1591,153 @@ fn tree_identity_handles_deep_byte_paths_without_recursion() {
     }
     assert_eq!(index.tree_id(), Some(expected));
 }
+
+// Files in nested directories; the first entry of `a` lies in its subdirectory `a/b`.
+fn cached_tree_fixture(format: girt::ObjectFormat) -> (tempfile::TempDir, Repository) {
+    let (temporary, repo) = repository(format);
+    let root = repo.worktree().unwrap();
+    for (path, content) in [
+        ("a/b/1", "1\n"),
+        ("a/c", "c\n"),
+        ("b/1", "b\n"),
+        ("top", "t\n"),
+    ] {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+    git(root, &["add", "."]);
+    git(root, &["write-tree"]);
+    (temporary, repo)
+}
+
+fn exists(root: &Path, object: &str) -> bool {
+    command(root, &["cat-file", "-e", object])
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+/// Git invalidates only the changed path: `a` and the root must be written, while `a/b` and `b`
+/// are reused. The result and every written tree match Git's.
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn partially_valid_cache_tree_writes_the_changed_directories_like_git(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (_temporary, repo) = cached_tree_fixture(format);
+    let root = repo.worktree().unwrap();
+    fs::write(root.join("a/c"), b"changed\n").unwrap();
+    git(root, &["add", "a/c"]);
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    let id = index.write_tree(&repo).unwrap().to_string();
+    assert!(exists(root, &format!("{id}:a")));
+    assert_eq!(git(root, &["write-tree"]), format!("{id}\n").as_bytes());
+}
+
+/// A fully valid cache-tree is trusted for presence beneath its stored root, as Git trusts it:
+/// neither tool rewrites a subtree removed after the cache was recorded.
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn valid_cache_tree_reuses_stored_subtrees_like_git(#[case] format: girt::ObjectFormat) {
+    let (_temporary, repo) = cached_tree_fixture(format);
+    let root = repo.worktree().unwrap();
+    let expected = String::from_utf8(git(root, &["write-tree"])).unwrap();
+    let subtree =
+        String::from_utf8(git(root, &["rev-parse", &format!("{}:b", expected.trim())])).unwrap();
+    let subtree = subtree.trim();
+    fs::remove_file(
+        repo.git_dir()
+            .join("objects")
+            .join(&subtree[..2])
+            .join(&subtree[2..]),
+    )
+    .unwrap();
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(format!("{}\n", index.write_tree(&repo).unwrap()), expected);
+    assert!(!exists(root, subtree));
+    assert_eq!(git(root, &["write-tree"]), expected.as_bytes());
+    assert!(!exists(root, subtree));
+}
+
+/// A record whose entry count matches but whose identity is stale cannot change the result: the
+/// directories are computed from the entries and written.
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn stale_cache_tree_records_do_not_change_the_written_tree(#[case] format: girt::ObjectFormat) {
+    let (_temporary, repo) = cached_tree_fixture(format);
+    let root = repo.worktree().unwrap();
+    let cached = repo.read_index(Limits::default()).unwrap().unwrap();
+    let extension = cached
+        .extensions()
+        .iter()
+        .find(|e| e.signature() == *b"TREE")
+        .unwrap()
+        .data()
+        .to_vec();
+    fs::write(root.join("b/1"), b"changed\n").unwrap();
+    git(root, &["add", "b/1"]);
+    let changed = repo.read_index(Limits::default()).unwrap().unwrap();
+    let plain = Index::new(format, changed.entries().to_vec(), Limits::default())
+        .unwrap()
+        .encode(Limits::default())
+        .unwrap();
+    let content = &plain[..plain.len() - format.digest_len()];
+    let length = u32::try_from(extension.len()).unwrap().to_be_bytes();
+    let stale = resign(format, &[content, b"TREE", &length, &extension].concat());
+    let index = Index::parse(format, &stale, Limits::default()).unwrap();
+    let id = index.write_tree(&repo).unwrap();
+    assert_eq!(Some(id), changed.tree_id());
+    assert!(exists(root, &format!("{id}:b")));
+    assert_eq!(git(root, &["write-tree"]), format!("{id}\n").as_bytes());
+}
+
+/// An omitted intent-to-add entry after a claimed directory must not hide a stale claim: the
+/// directory is verified against its claim, and its missing blob is reported.
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn stale_claim_before_intent_to_add_still_checks_objects(#[case] format: girt::ObjectFormat) {
+    let (_temporary, repo) = repository(format);
+    let loose = repo.loose_objects();
+    let stored = loose.write_blob(b"stored\n").unwrap();
+    let claimed = loose
+        .write_tree(
+            &Tree::new(
+                format,
+                vec![girt::TreeEntry {
+                    name: b"file".to_vec(),
+                    mode: girt::EntryMode::Blob,
+                    id: stored,
+                }],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let missing = ObjectId::for_blob(format, b"missing\n");
+    let entries = vec![
+        Entry::new(b"a/file".to_vec(), Mode::Regular, missing),
+        Entry::new(b"b".to_vec(), Mode::Regular, ObjectId::null(format)).with_intent_to_add(true),
+    ];
+    let plain = Index::new(format, entries, Limits::default())
+        .unwrap()
+        .encode(Limits::default())
+        .unwrap();
+    let content = &plain[..plain.len() - format.digest_len()];
+    let extension = [b"\0-1 1\na\x001 0\n".as_slice(), claimed.as_bytes()].concat();
+    let length = u32::try_from(extension.len()).unwrap().to_be_bytes();
+    let index = Index::parse(
+        format,
+        &resign(format, &[content, b"TREE", &length, &extension].concat()),
+        Limits::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        index.write_tree(&repo),
+        Err(girt::index::WriteTreeError::MissingObject { id, .. }) if id == missing
+    ));
+}
