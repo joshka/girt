@@ -172,7 +172,7 @@ pub enum Backend {
 /// let main = RefName::new("refs/heads/main")?;
 /// assert_eq!(refs.read(&head)?, Some(Target::Symbolic(main)));
 /// // resolve follows names; object reads and tag peeling are separate operations.
-/// assert!(refs.resolve(&head, 5)?.id.is_none());
+/// assert!(refs.resolve(&head)?.id.is_none());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -282,7 +282,7 @@ impl std::fmt::Display for DisplayTarget<'_> {
 /// let refs = repo.references()?;
 /// let head = RefName::HEAD;
 /// let main = RefName::new("refs/heads/main")?;
-/// let terminal = refs.resolve(&head, 5)?;
+/// let terminal = refs.resolve(&head)?;
 /// assert_eq!(terminal.name, main);
 /// assert!(terminal.id.is_none());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -399,6 +399,9 @@ pub enum ReferenceError {
 }
 
 impl<'a> References<'a> {
+    /// The number of symbolic hops [`Self::resolve`] follows: four, as `git rev-parse` does.
+    pub const DEFAULT_SYMREF_DEPTH: usize = 4;
+
     pub(crate) fn new(repository: &'a Repository) -> Result<Self, ReferenceError> {
         Self::from_layout(
             repository.git_dir(),
@@ -519,6 +522,35 @@ impl<'a> References<'a> {
         }))
     }
 
+    /// Follows symbolic links as far as Git does and returns the terminal name and identity.
+    ///
+    /// Equivalent to [`Self::resolve_with`] with a depth of 4 ([`Self::DEFAULT_SYMREF_DEPTH`]):
+    /// `git rev-parse` resolves a chain of four symbolic references and reports a fifth as
+    /// dangling. Use [`Self::resolve_with`] to choose another depth.
+    ///
+    /// # Errors
+    ///
+    /// Reports the errors of [`Self::resolve_with`].
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let resolution = repo.references()?.resolve(&RefName::HEAD)?;
+    /// assert_eq!(resolution.name, RefName::branch("main")?);
+    /// assert_eq!(resolution.id, None); // Unborn.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn resolve(&self, name: &RefName) -> Result<Resolution, ReferenceError> {
+        self.resolve_with(name, Self::DEFAULT_SYMREF_DEPTH)
+    }
+
     /// Follows at most `max_depth` symbolic links and returns the terminal name and identity.
     ///
     /// A missing initial name or dangling/unborn target returns `id: None`; a missing object is
@@ -541,13 +573,17 @@ impl<'a> References<'a> {
     /// let refs = repo.references()?;
     /// let head = RefName::HEAD;
     /// let main = RefName::new("refs/heads/main")?;
-    /// let resolution = refs.resolve(&head, 5)?;
+    /// let resolution = refs.resolve(&head)?;
     /// assert_eq!(resolution.name, main);
     /// assert_eq!(resolution.id, None); // Resolution can succeed without a branch ID.
     ///
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn resolve(&self, name: &RefName, max_depth: usize) -> Result<Resolution, ReferenceError> {
+    pub fn resolve_with(
+        &self,
+        name: &RefName,
+        max_depth: usize,
+    ) -> Result<Resolution, ReferenceError> {
         let mut current = name.clone();
         let mut seen = Vec::new();
         loop {
@@ -1313,17 +1349,20 @@ mod tests {
         let (_temp, repo) = fixture();
         let refs = repo.references().unwrap();
         assert_eq!(
-            refs.resolve(&name(b"HEAD"), 1).unwrap(),
+            refs.resolve_with(&name(b"HEAD"), 1).unwrap(),
             Resolution {
                 name: name(b"refs/heads/main"),
                 id: None
             }
         );
         assert!(matches!(
-            refs.resolve(&name(b"HEAD"), 0),
+            refs.resolve_with(&name(b"HEAD"), 0),
             Err(ReferenceError::Depth(0))
         ));
-        assert_eq!(refs.resolve(&name(b"refs/absent"), 0).unwrap().id, None);
+        assert_eq!(
+            refs.resolve_with(&name(b"refs/absent"), 0).unwrap().id,
+            None
+        );
     }
 
     #[test]
@@ -1337,7 +1376,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            refs.resolve(&name(b"HEAD"), 32),
+            refs.resolve_with(&name(b"HEAD"), 32),
             Err(ReferenceError::Cycle(_))
         ));
         assert!(matches!(
@@ -1481,7 +1520,7 @@ mod chain_tests {
             refs.update_resolved_without_reflog(&head, ObjectId::Sha1([1; 20]), Expected::Absent),
             Err(ReferenceError::Depth(32))
         ));
-        assert_eq!(refs.resolve(&head, 34).unwrap().id, None);
+        assert_eq!(refs.resolve_with(&head, 34).unwrap().id, None);
         assert_eq!(
             fs::read_dir(root.path().join("refs/heads"))
                 .unwrap()

@@ -58,6 +58,7 @@ mod colocation;
 mod command_layout;
 mod discover;
 mod init;
+mod object_values;
 mod operation;
 mod reflog_policy;
 mod shallow;
@@ -868,8 +869,9 @@ impl Repository {
     ///
     /// On a branch, the resolution names the branch. A detached `HEAD` names `HEAD` itself. An
     /// unborn branch, one with no commits yet, resolves with `id: None`; the resolution still
-    /// names the branch. Follows at most five symbolic references, which covers an ordinary
-    /// `HEAD`. Use [`crate::refs::References::resolve`] to choose a different limit.
+    /// names the branch. Follows symbolic references as far as Git does; see
+    /// [`crate::refs::References::resolve`]. Use [`crate::refs::References::resolve_with`] to
+    /// choose a different limit.
     ///
     /// This reads references only. It doesn't check that the object exists or is a commit; use
     /// [`crate::Objects::read_commit`] for that.
@@ -891,7 +893,7 @@ impl Repository {
     ///
     /// Returns the failures of [`Self::references`] and [`crate::refs::References::resolve`].
     pub fn head(&self) -> Result<crate::refs::Resolution, crate::refs::ReferenceError> {
-        self.references()?.resolve(&crate::refs::RefName::HEAD, 5)
+        self.references()?.resolve(&crate::refs::RefName::HEAD)
     }
 
     /// Opens only the supplied location, without changing files.

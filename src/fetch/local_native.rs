@@ -441,7 +441,7 @@ fn advertise_store(
         .read(&head)
         .map_err(|_| FetchError::Protocol("local HEAD"))?;
     let head_id = refs
-        .resolve(&head, 32)
+        .resolve_with(&head, 32)
         .map_err(|_| FetchError::Protocol("local HEAD"))?
         .id;
     if let Some(id) = head_id {
@@ -462,7 +462,7 @@ fn advertise_store(
         let id = match reference.target {
             Target::Direct(id) => Some(id),
             Target::Symbolic(_) => {
-                refs.resolve(&reference.name, 32)
+                refs.resolve_with(&reference.name, 32)
                     .map_err(|_| FetchError::Protocol("local symbolic reference"))?
                     .id
             }

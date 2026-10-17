@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let repo = Repository::open(path)?;
             let t = phase("open", t);
             let refs = repo.references()?;
-            let head = refs.resolve(&RefName::HEAD, 10)?;
+            let head = refs.resolve_with(&RefName::HEAD, 10)?;
             let t = phase("resolve", t);
             let objects = repo.objects(PackLimits::trusted())?;
             let t = phase("objects", t);
@@ -368,7 +368,7 @@ fn direct_tips(repo: &Repository) -> Result<Vec<ObjectId>, Box<dyn std::error::E
 }
 
 fn head_id(repo: &Repository) -> Result<ObjectId, Box<dyn std::error::Error>> {
-    Ok(repo.references()?.resolve(&RefName::HEAD, 10)?.id.ok_or("unborn HEAD")?)
+    Ok(repo.references()?.resolve_with(&RefName::HEAD, 10)?.id.ok_or("unborn HEAD")?)
 }
 
 fn tree_of(repo: &Repository, objects: &girt::Objects, spec: &str) -> Result<ObjectId, Box<dyn std::error::Error>> {

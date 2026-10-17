@@ -76,7 +76,7 @@ fn push(
 fn tip(repo: &Repository, name: &str) -> Option<ObjectId> {
     repo.references()
         .unwrap()
-        .resolve(&RefName::new(name).unwrap(), 8)
+        .resolve_with(&RefName::new(name).unwrap(), 8)
         .unwrap()
         .id
 }

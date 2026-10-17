@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         message: b"Original fetch example\n".to_vec(),
     })?)?;
     source.references()?.update_without_reflog(
-        &RefName::new("refs/heads/main")?,
+        &RefName::branch("main")?,
         Target::Direct(commit),
         Expected::Absent,
     )?;

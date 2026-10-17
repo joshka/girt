@@ -4,7 +4,6 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use clap::{Parser, ValueEnum};
-use girt::refs::RefName;
 use girt::{AlternateLimits, PackLimits, ReadLimits, Repository};
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -34,11 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let operation = args.operation;
     let start = Instant::now();
     let repository = Repository::open(args.path)?;
-    let head = repository
-        .references()?
-        .resolve(&RefName::HEAD, 10)?
-        .id
-        .ok_or("unborn HEAD")?;
+    let head = repository.head()?.id.ok_or("unborn HEAD")?;
     let count = if operation == Operation::Repeat { 8 } else { 1 };
     for _ in 0..count {
         let mut objects = repository.objects_with(PackLimits::trusted())?;

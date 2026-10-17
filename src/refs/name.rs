@@ -73,6 +73,79 @@ impl RefName {
         Ok(Self(Cow::Owned(bytes.to_vec())))
     }
 
+    /// Validates `refs/heads/<name>`, the full name of the branch `name`.
+    ///
+    /// Equivalent to `RefName::new([b"refs/heads/", name].concat())`. `name` is the short branch
+    /// name as `git branch` spells it; a `refs/heads/` prefix in `name` is kept, not stripped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidRefName`] when the full name breaks Git's rules, as [`Self::new`] does.
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// assert_eq!(RefName::branch("topic")?, RefName::new("refs/heads/topic")?);
+    /// assert!(RefName::branch("bad..name").is_err());
+    /// # Ok::<(), girt::refs::InvalidRefName>(())
+    /// ```
+    pub fn branch(name: impl AsRef<[u8]>) -> Result<Self, InvalidRefName> {
+        Self::new([b"refs/heads/", name.as_ref()].concat())
+    }
+
+    /// Validates `refs/tags/<name>`, the full name of the tag `name`.
+    ///
+    /// Equivalent to `RefName::new([b"refs/tags/", name].concat())`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidRefName`] when the full name breaks Git's rules, as [`Self::new`] does.
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// assert_eq!(RefName::tag("v1.0")?, RefName::new("refs/tags/v1.0")?);
+    /// # Ok::<(), girt::refs::InvalidRefName>(())
+    /// ```
+    pub fn tag(name: impl AsRef<[u8]>) -> Result<Self, InvalidRefName> {
+        Self::new([b"refs/tags/", name.as_ref()].concat())
+    }
+
+    /// Validates `refs/remotes/<remote>/<branch>`, a remote-tracking branch.
+    ///
+    /// Equivalent to `RefName::new([b"refs/remotes/", remote, b"/", branch].concat())`. This is
+    /// the name the default fetch refspec `+refs/heads/*:refs/remotes/<remote>/*` writes; a
+    /// remote with a different configured refspec may track its branches elsewhere.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidRefName`] when the full name breaks Git's rules, as [`Self::new`] does,
+    /// including an empty `remote` or `branch`.
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// let tracking = RefName::remote_branch("origin", "main")?;
+    /// assert_eq!(tracking, RefName::new("refs/remotes/origin/main")?);
+    /// assert!(RefName::remote_branch("", "main").is_err());
+    /// # Ok::<(), girt::refs::InvalidRefName>(())
+    /// ```
+    pub fn remote_branch(
+        remote: impl AsRef<[u8]>,
+        branch: impl AsRef<[u8]>,
+    ) -> Result<Self, InvalidRefName> {
+        Self::new([b"refs/remotes/", remote.as_ref(), b"/", branch.as_ref()].concat())
+    }
+
+    /// Returns whether this is a branch, a name under `refs/heads/`.
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// assert!(RefName::branch("main")?.is_branch());
+    /// assert!(!RefName::HEAD.is_branch());
+    /// # Ok::<(), girt::refs::InvalidRefName>(())
+    /// ```
+    pub fn is_branch(&self) -> bool {
+        self.0.starts_with(b"refs/heads/")
+    }
+
     /// Borrows the original bytes, without normalization.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
@@ -116,6 +189,39 @@ mod tests {
         let bytes = name.into_bytes();
         assert_eq!(bytes, b"refs/heads/\xff");
         assert_eq!(bytes.as_ptr(), pointer);
+    }
+
+    #[rstest]
+    #[case::branch(RefName::branch("topic"), b"refs/heads/topic".as_slice())]
+    #[case::nested_branch(RefName::branch("a/b"), b"refs/heads/a/b".as_slice())]
+    #[case::non_utf8_branch(RefName::branch(b"\xff"), b"refs/heads/\xff".as_slice())]
+    #[case::tag(RefName::tag("v1"), b"refs/tags/v1".as_slice())]
+    #[case::remote_branch(RefName::remote_branch("origin", "main"), b"refs/remotes/origin/main".as_slice())]
+    fn builds_conventional_names(
+        #[case] name: Result<RefName, InvalidRefName>,
+        #[case] expected: &[u8],
+    ) {
+        assert_eq!(name.unwrap().as_bytes(), expected);
+    }
+
+    #[rstest]
+    #[case::empty_branch(RefName::branch(""))]
+    #[case::branch_component(RefName::branch("a//b"))]
+    #[case::branch_lock(RefName::branch("main.lock"))]
+    #[case::tag_dots(RefName::tag("a..b"))]
+    #[case::empty_remote(RefName::remote_branch("", "main"))]
+    #[case::empty_remote_branch(RefName::remote_branch("origin", ""))]
+    fn rejects_invalid_conventional_names(#[case] name: Result<RefName, InvalidRefName>) {
+        assert_eq!(name, Err(InvalidRefName));
+    }
+
+    #[rstest]
+    #[case::branch(b"refs/heads/main", true)]
+    #[case::head(b"HEAD", false)]
+    #[case::tag(b"refs/tags/main", false)]
+    #[case::tracking(b"refs/remotes/origin/main", false)]
+    fn recognizes_branches(#[case] bytes: &[u8], #[case] expected: bool) {
+        assert_eq!(RefName::new(bytes).unwrap().is_branch(), expected);
     }
 
     #[rstest]

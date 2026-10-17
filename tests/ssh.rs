@@ -284,7 +284,7 @@ fn ssh_bad_pack_never_reaches_publication(#[case] format: girt::ObjectFormat, #[
 fn tip(repo: &Repository, name: &str) -> ObjectId {
     repo.references()
         .unwrap()
-        .resolve(&RefName::new(name).unwrap(), 8)
+        .resolve_with(&RefName::new(name).unwrap(), 8)
         .unwrap()
         .id
         .unwrap()

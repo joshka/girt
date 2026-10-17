@@ -659,9 +659,9 @@ mod tests {
             .output()
             .unwrap();
         assert!(!output.status.success());
-        assert!(refs.resolve(&RefName::HEAD, 32).unwrap().id.is_some());
+        assert!(refs.resolve_with(&RefName::HEAD, 32).unwrap().id.is_some());
         prepared.publish().unwrap();
-        assert!(refs.resolve(&RefName::HEAD, 32).unwrap().id.is_none());
+        assert!(refs.resolve_with(&RefName::HEAD, 32).unwrap().id.is_none());
     }
 
     #[test]
@@ -691,6 +691,6 @@ mod tests {
         assert_eq!(outcomes[0].logs[0].1, LogOutcome::NotAttempted);
         assert_eq!(outcomes[0].logs[1].1, LogOutcome::Appended);
         assert_eq!(refs.reflog(&head).unwrap(), before);
-        assert!(refs.resolve(&head, 32).unwrap().id.is_none());
+        assert!(refs.resolve_with(&head, 32).unwrap().id.is_none());
     }
 }

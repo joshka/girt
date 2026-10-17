@@ -39,9 +39,10 @@ pub enum Command {
     },
     /// Point a reference at an object (like `git update-ref`).
     ///
-    /// Symbolic references such as `HEAD` are followed and their target is updated. A reflog
-    /// entry is appended using `user.name`/`user.email` (or `GIT_COMMITTER_NAME`/`_EMAIL`), with
-    /// the current time in UTC (`+0000`): girt does not read the local time zone.
+    /// Symbolic references such as `HEAD` are followed and their target is updated. Where
+    /// `core.logAllRefUpdates` logs the reference, as Git decides, a reflog entry is appended
+    /// using `user.name`/`user.email` (or `GIT_COMMITTER_NAME`/`_EMAIL`), with the current time
+    /// in UTC (`+0000`): girt does not read the local time zone.
     Set {
         /// Full reference name, e.g. `refs/heads/main`.
         #[arg(add = ArgValueCandidates::new(complete::references))]
@@ -98,14 +99,19 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
             let id = common::resolve(&repository, &value)?;
             check_target(&repository, &references, &name, id)?;
             let expected = match (expect, create_only) {
-                (Some(old), _) => Expected::Value(Target::Direct(parse_id(&old)?)),
+                (Some(old), _) => Expected::Value(Target::Direct(parse_id(&repository, &old)?)),
                 (None, true) => Expected::Absent,
                 (None, false) => Expected::Any,
             };
-            let reflog = Reflog::Append {
-                committer: committer(&repository, context)?,
-                message: message.into_bytes(),
-            };
+            // Git decides logging per name; the terminal name keeps a branch reached through an
+            // unlogged alias logged.
+            let destination = ref_name(&name)?;
+            let destination = references
+                .resolve(&destination)
+                .map_or(destination, |resolution| resolution.name);
+            let reflog = repository
+                .reflog_for(&destination, committer(&repository, context)?, message)
+                .wrap_err("reading core.logAllRefUpdates")?;
             edit(
                 &references,
                 &name,
@@ -116,7 +122,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
         }
         Command::Delete { name, expect } => {
             let expected = match expect {
-                Some(old) => Expected::Value(Target::Direct(parse_id(&old)?)),
+                Some(old) => Expected::Value(Target::Direct(parse_id(&repository, &old)?)),
                 None => Expected::Exists,
             };
             edit(&references, &name, None, expected, Reflog::Delete)
@@ -125,8 +131,9 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
     }
 }
 
-fn parse_id(hex: &str) -> Result<ObjectId> {
-    hex.parse()
+fn parse_id(repository: &Repository, hex: &str) -> Result<ObjectId> {
+    repository
+        .object_id_from_hex(hex)
         .map_err(|_| eyre!("`{hex}` is not a full object ID"))
 }
 
@@ -143,14 +150,14 @@ fn check_target(
         .header(id, ReadLimits::trusted())
         .wrap_err_with(|| format!("reading {id}"))?
         .ok_or_else(|| eyre!("object {id} does not exist"))?;
-    let destination = references.resolve(&ref_name(name)?, 5).map_or_else(
-        |_| name.as_bytes().to_vec(),
-        |resolution| resolution.name.as_bytes().to_vec(),
-    );
-    if destination.starts_with(b"refs/heads/") && object.kind() != ObjectKind::Commit {
+    let name = ref_name(name)?;
+    let destination = references
+        .resolve(&name)
+        .map_or(name, |resolution| resolution.name);
+    if destination.is_branch() && object.kind() != ObjectKind::Commit {
         bail!(
             "{} must point at a commit, not a {:?}",
-            display_bytes(&destination),
+            display_bytes(destination.as_bytes()),
             object.kind()
         );
     }

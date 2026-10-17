@@ -51,7 +51,7 @@ pub enum Dereference {
 ///     .with_dereference(girt::refs::Dereference::Follow);
 /// refs.transaction(&[edit])?;
 /// assert_eq!(refs.read(&head)?, Some(Target::Symbolic(main.clone())));
-/// assert_eq!(refs.resolve(&head, 5)?.id, Some(id));
+/// assert_eq!(refs.resolve(&head)?.id, Some(id));
 /// assert_eq!(refs.reflog(&head)?.ok_or("HEAD log missing")?.len(), 1);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -90,6 +90,112 @@ impl RefEdit {
             reflog,
             dereference: crate::refs::Dereference::Stored,
         }
+    }
+
+    /// Creates `name` pointing at `id`, requiring that it doesn't exist yet.
+    ///
+    /// Equivalent to `RefEdit::new(name, Some(Target::Direct(id)), Expected::Absent, reflog)`,
+    /// like `git update-ref <name> <id> ""`. Pass [`Repository::reflog_for`] as `reflog` to log
+    /// as Git would by default. Use [`Self::new`] for a symbolic target.
+    ///
+    /// [`Repository::reflog_for`]: crate::Repository::reflog_for
+    ///
+    /// ```
+    /// use girt::refs::{RefEdit, RefName, Reflog, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"release notes")?;
+    /// let refs = repo.references()?;
+    /// let tag = RefName::tag("notes")?;
+    /// refs.transaction(&[RefEdit::create(tag.clone(), id, Reflog::Preserve)])?;
+    /// assert_eq!(refs.read(&tag)?, Some(Target::Direct(id)));
+    /// // A second create fails its precondition instead of replacing the tag.
+    /// assert!(
+    ///     refs.transaction(&[RefEdit::create(tag, id, Reflog::Preserve)])
+    ///         .is_err()
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn create(name: RefName, id: ObjectId, reflog: Reflog) -> Self {
+        Self::new(name, Some(Target::Direct(id)), Expected::Absent, reflog)
+    }
+
+    /// Moves `name` from `old` to `new`, requiring that it still points directly at `old`.
+    ///
+    /// Equivalent to
+    /// `RefEdit::new(name, Some(Target::Direct(new)), Expected::Value(Target::Direct(old)),
+    /// reflog)`, like `git update-ref <name> <new> <old>`. Note the argument order: `old` comes
+    /// first here. This is a compare-and-swap, not a fast-forward check. A symbolic `name`
+    /// fails the precondition; add [`Dereference::Follow`] with [`Self::with_dereference`] to
+    /// move the branch it names.
+    ///
+    /// ```
+    /// use girt::refs::{RefEdit, RefName, Reflog, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repo.loose_objects();
+    /// let (first, second) = (loose.write_blob(b"one")?, loose.write_blob(b"two")?);
+    /// let refs = repo.references()?;
+    /// let branch = RefName::branch("topic")?;
+    /// refs.transaction(&[RefEdit::create(branch.clone(), first, Reflog::Preserve)])?;
+    /// refs.transaction(&[RefEdit::update(
+    ///     branch.clone(),
+    ///     first,
+    ///     second,
+    ///     Reflog::Preserve,
+    /// )])?;
+    /// assert_eq!(refs.read(&branch)?, Some(Target::Direct(second)));
+    /// // `first` is stale now, so repeating the move fails without changing the branch.
+    /// assert!(
+    ///     refs.transaction(&[RefEdit::update(branch, first, second, Reflog::Preserve)])
+    ///         .is_err()
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn update(name: RefName, old: ObjectId, new: ObjectId, reflog: Reflog) -> Self {
+        Self::new(
+            name,
+            Some(Target::Direct(new)),
+            Expected::Value(Target::Direct(old)),
+            reflog,
+        )
+    }
+
+    /// Deletes `name`, requiring that it still points directly at `old`.
+    ///
+    /// Equivalent to `RefEdit::new(name, None, Expected::Value(Target::Direct(old)), reflog)`, like
+    /// `git update-ref -d <name> <old>`. Git deletes a branch's reflog with the branch; pass
+    /// [`Reflog::Delete`] for that, or [`Reflog::Preserve`] to keep any log.
+    ///
+    /// ```
+    /// use girt::refs::{RefEdit, RefName, Reflog};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"draft")?;
+    /// let refs = repo.references()?;
+    /// let branch = RefName::branch("draft")?;
+    /// refs.transaction(&[RefEdit::create(branch.clone(), id, Reflog::Preserve)])?;
+    /// refs.transaction(&[RefEdit::delete(branch.clone(), id, Reflog::Delete)])?;
+    /// assert_eq!(refs.read(&branch)?, None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn delete(name: RefName, old: ObjectId, reflog: Reflog) -> Self {
+        Self::new(name, None, Expected::Value(Target::Direct(old)), reflog)
     }
 
     /// Sets [`Self::name`].

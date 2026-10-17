@@ -135,7 +135,7 @@ fn imports_packed_source_and_all_object_kinds(#[case] ofs: bool) {
     assert_eq!(
         repo.references()
             .unwrap()
-            .resolve(&RefName::HEAD, 8)
+            .resolve_with(&RefName::HEAD, 8)
             .unwrap()
             .id,
         None
@@ -243,7 +243,7 @@ fn repeated_and_incremental_fetches_allow_conditional_updates() {
         .repo
         .references()
         .unwrap()
-        .resolve(&branch, 8)
+        .resolve_with(&branch, 8)
         .unwrap()
         .id
         .unwrap();
@@ -276,7 +276,7 @@ fn repeated_and_incremental_fetches_allow_conditional_updates() {
         Expected::Value(Target::Direct(old)),
     );
     updated.unwrap();
-    assert_eq!(refs.resolve(&branch, 8).unwrap().id, Some(next));
+    assert_eq!(refs.resolve_with(&branch, 8).unwrap().id, Some(next));
     git(root.path(), &["fsck", "--strict", "--no-reflogs"], b"");
     assert!(!root.path().join("logs").exists());
     verify_contents(&fixture, &repo);
@@ -715,7 +715,7 @@ fn installation_rechecks_known_objects_before_publication(#[case] corrupt: bool)
         local
             .references()
             .unwrap()
-            .resolve(&RefName::HEAD, 8)
+            .resolve_with(&RefName::HEAD, 8)
             .unwrap()
             .id,
         None

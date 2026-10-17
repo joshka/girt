@@ -15,8 +15,8 @@ reads the reflog:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
-    use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+    use girt::refs::{RefEdit, RefName, Reflog};
+    use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature};
     let directory = tempfile::tempdir()?;
     let repo = Repository::init(
         ObjectFormat::Sha1,
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seconds: 1_700_000_000,
         offset_minutes: 0,
     };
-    let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    let tree = loose.write_tree(&repo.new_tree(vec![])?)?;
     let id = loose.write_commit(&Commit::new(CommitFields {
         tree,
         parents: vec![],
@@ -40,11 +40,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         message: b"Initial snapshot\n".to_vec(),
     })?)?;
     let refs = repo.references()?;
-    let main = RefName::new("refs/heads/main")?;
-    let edit = RefEdit::new(
+    let main = RefName::branch("main")?;
+    let edit = RefEdit::create(
         main.clone(),
-        Some(Target::Direct(id)),
-        Expected::Absent,
+        id,
         Reflog::Append {
             committer: person,
             message: b"commit (initial)".to_vec(),
@@ -66,7 +65,9 @@ branch edit logs only the branch. To update through `HEAD` and log the symbolic 
 ## Update an observed value
 
 When moving an existing branch, first read its stored target and choose
-`Expected::Value(observed_target)` for the edit. For a complete compare-and-swap update example, see
+`Expected::Value(observed_target)` for the edit. `RefEdit::update(name, old, new, reflog)` builds
+that edit for a direct ID, and `RefEdit::delete(name, old, reflog)` removes the branch only if it
+still holds `old`. For a complete compare-and-swap update example, see
 [References::transaction](https://docs.rs/girt/latest/girt/refs/struct.References.html#method.transaction).
 The transaction compares that value under its locks, so if the branch moved after your read, the
 update fails instead of overwriting the newer value. The other preconditions:
@@ -90,17 +91,21 @@ itself before attempting its conditional update.
 `read` returns the stored direct ID or symbolic name. `resolve` follows symbolic names to a terminal
 name and optional ID;
 [`Repository::head`](https://docs.rs/girt/latest/girt/repository/struct.Repository.html) resolves
-`HEAD` with a default limit. An absent terminal name can be an ordinary unborn branch; it is not an
-object-storage error. `Objects::peel` then follows annotated tag objects if required. A lightweight
-tag names its target directly; an annotated tag reference names a stored `Tag` object. Listing
-references excludes pseudorefs such as `HEAD`.
+`HEAD` with Git's default limit of four symbolic hops. An absent terminal name can be an ordinary
+unborn branch; it is not an object-storage error. `Objects::peel` then follows annotated tag objects
+if required. A lightweight tag names its target directly; an annotated tag reference names a stored
+`Tag` object. Listing references excludes pseudorefs such as `HEAD`. `list_namespace` selects whole
+`/` components; `list_prefix` selects names by byte prefix, such as `refs/heads/fe` for every branch
+starting `fe`.
 
 ## Choose and interpret logging
 
 Low-level transactions take explicit `Reflog` policy. They don't read Git config or take an identity
-from the environment. `Append` records even an unchanged ID; `AppendIfChanged` records stored-target
-changes. `Preserve` leaves existing logs untouched. The example supplies a fixed identity and
-timestamp for reproducibility; an application supplies its actual actor and time.
+from the environment. `Repository::reflog_for` returns the policy Git's `core.logAllRefUpdates`
+would choose for a name: `AppendIfChanged` with the identity and message you supply, or `Preserve`.
+`Append` records even an unchanged ID; `AppendIfChanged` records stored-target changes. `Preserve`
+leaves existing logs untouched. The example supplies a fixed identity and timestamp for
+reproducibility; an application supplies its actual actor and time.
 
 A reflog records the values a name has held, oldest first. It says nothing about commit ancestry.
 Zero IDs represent creation or deletion. Old objects may already be unavailable. For bounded

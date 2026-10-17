@@ -14,18 +14,23 @@
 //! | Inspect the stored value, including symbolic names | [`References::read`] |
 //! | Follow symbolic names to a terminal name and optional ID | [`References::resolve`] |
 //! | Enumerate `refs/` names, excluding `HEAD` | [`References::list`] |
+//! | Enumerate one namespace, or names by byte prefix | [`References::list_namespace`], [`References::list_prefix`] |
 //! | Publish with preconditions and explicit history policy | [`References::transaction`] |
 //! | Inspect complete interpreted history | [`References::reflog`] |
 //! | Recover bounded imported records and detect incompleteness | [`imported_reflog`](References::imported_reflog) |
 //!
 //! # Names, reads, and updates
 //!
-//! - [`RefName`] validates a full reference name. [`References`] reads stored [`Target`] values and
-//!   resolves symbolic chains without loading their objects. [`References::read_observation`]
-//!   captures a stored target together with its backend-provided peeled hint.
+//! - [`RefName`] validates a full reference name; [`RefName::branch`], [`RefName::tag`] and
+//!   [`RefName::remote_branch`] build the conventional ones from short names. [`References`] reads
+//!   stored [`Target`] values and resolves symbolic chains without loading their objects.
+//!   [`References::read_observation`] captures a stored target together with its backend-provided
+//!   peeled hint.
 //! - [`References::transaction`] checks a batch of [`RefEdit`] values before sequential
-//!   publication. Choose [`Reflog`] policy explicitly and inspect [`RefEditOutcome`] after a
-//!   partial failure; the no-reflog methods deliberately omit history.
+//!   publication. [`RefEdit::create`], [`RefEdit::update`] and [`RefEdit::delete`] build the common
+//!   direct edits. Choose [`Reflog`] policy explicitly, or take Git's from
+//!   [`Repository::reflog_for`](crate::Repository::reflog_for), and inspect [`RefEditOutcome`]
+//!   after a partial failure; the no-reflog methods deliberately omit history.
 //! - [`References::imported_reflog`] reads existing history for retention or analysis.
 //!   [`ImportedReflog::is_complete`] distinguishes a full read from recovered records.
 //! - [`reftable`] exposes bounded stack snapshots and compaction for repositories using that
@@ -117,7 +122,7 @@
 //!
 //! let main = RefName::new("refs/heads/main")?;
 //! assert_eq!(references.read(&main)?, Some(Target::Direct(commit)));
-//! let resolved = references.resolve(&head, 5)?;
+//! let resolved = references.resolve(&head)?;
 //! assert_eq!((resolved.name, resolved.id), (main.clone(), Some(commit)));
 //! assert_eq!(references.reflog(&main)?.map(|log| log.len()), Some(1));
 //! # Ok::<(), Box<dyn std::error::Error>>(())

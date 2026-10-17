@@ -610,7 +610,7 @@ fn native_fetch_and_push_preserve_git_objects_and_refs(
         pushed
             .references()
             .unwrap()
-            .resolve(&RefName::new("refs/heads/main").unwrap(), 8)
+            .resolve_with(&RefName::new("refs/heads/main").unwrap(), 8)
             .unwrap()
             .id,
         Some(id)
