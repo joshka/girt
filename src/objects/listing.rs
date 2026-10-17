@@ -205,11 +205,12 @@ impl<'a> ObjectStore<'a> {
 
     /// Scans this store's loose objects lazily, one directory entry at a time.
     ///
-    /// Yields each file under a two-hex-digit fan-out directory whose name completes a full
-    /// identity in this store's format; other names, such as temporary files, are skipped
-    /// without error. Order follows the file system and is unspecified; sort if order matters.
-    /// No file is opened, so a yielded entry proves only that its name exists, not that its
-    /// contents are valid.
+    /// Yields each regular file under a two-hex-digit fan-out directory whose name completes a
+    /// full identity in this store's format. Other names, such as temporary files, and
+    /// directories or symlinks with object names are skipped without error, as Git skips them.
+    /// Order follows the file system and is unspecified; sort if order matters. No file is
+    /// opened, so a yielded entry proves only that its name exists, not that its contents are
+    /// valid.
     ///
     /// The scan is live, unlike the reader's pinned packs: files written or removed during the
     /// scan may or may not appear, and a fan-out directory removed meanwhile is skipped. A
@@ -473,6 +474,15 @@ impl LooseIds<'_> {
                             prefix.truncate(2);
                             id
                         });
+                    // Git counts directories and symlinks with object names as garbage.
+                    let found = match found {
+                        Some(id) => entry
+                            .file_type()
+                            .map_err(|source| at(&directory, source))?
+                            .is_file()
+                            .then_some(id),
+                        None => None,
+                    };
                     let path = found.is_some().then(|| entry.path());
                     self.state = State::Objects {
                         fanouts,

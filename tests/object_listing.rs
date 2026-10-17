@@ -156,6 +156,13 @@ fn loose_scan_skips_non_object_names() {
     fs::create_dir_all(dir.join("zz")).unwrap();
     fs::write(dir.join("zz/00000000000000000000000000000000000000"), b"").unwrap();
     fs::write(dir.join("cd"), b"not a directory").unwrap();
+    fs::create_dir_all(dir.join("ef/0000000000000000000000000000000000000a")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        "missing",
+        dir.join("ef/0000000000000000000000000000000000000b"),
+    )
+    .unwrap();
     let objects = repo.objects(PackLimits::default()).unwrap();
     let store = objects.stores().next().unwrap();
     let found: Vec<_> = store.loose_objects().map(Result::unwrap).collect();

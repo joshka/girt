@@ -237,14 +237,7 @@ fn object_listing_matches_git_across_packs_and_alternates() {
     )
     .unwrap();
 
-    let cases: [(&[&str], &[&str]); 2] = [
-        (
-            &["object", "list"],
-            &["cat-file", "--batch-all-objects", "--batch-check"],
-        ),
-        (&["object", "count"], &["count-objects", "-v"]),
-    ];
-    for (girt_args, git_args) in cases {
+    let compare = |girt_args: &[&str], git_args: &[&str]| {
         let girt = run(
             Command::new(env!("CARGO_BIN_EXE_girt"))
                 .arg("--git")
@@ -254,7 +247,7 @@ fn object_listing_matches_git_across_packs_and_alternates() {
             None,
         );
         let expected = String::from_utf8(git(git_args, None)).unwrap();
-        // girt does not count garbage files; this fixture has none.
+        // girt does not report garbage files.
         let expected: String = expected
             .lines()
             .filter(|line| !line.starts_with("garbage:") && !line.starts_with("size-garbage:"))
@@ -266,7 +259,22 @@ fn object_listing_matches_git_across_packs_and_alternates() {
             "girt --git {girt_args:?}: {}",
             String::from_utf8_lossy(&girt.stderr)
         );
-    }
+    };
+    compare(
+        &["object", "list"],
+        &["cat-file", "--batch-all-objects", "--batch-check"],
+    );
+    // After listing, which Git refuses for them: object-named directories and symlinks are garbage
+    // to Git, not loose objects.
+    fs::create_dir_all(objects.join("ef/0000000000000000000000000000000000000a")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        "missing",
+        objects.join("ef/0000000000000000000000000000000000000b"),
+    )
+    .unwrap();
+
+    compare(&["object", "count"], &["count-objects", "-v"]);
 
     let packed_only = run(
         Command::new(env!("CARGO_BIN_EXE_girt")).args(["object", "list", "--packed"]),
