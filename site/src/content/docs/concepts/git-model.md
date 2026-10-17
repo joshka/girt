@@ -29,7 +29,7 @@ pointing directly at its target.
 
 See [objects and history](/girt/guides/objects-and-history/) for a complete program that stores a
 file, constructs commits, reads the snapshot back, and finds a branch point. The
-[commit codec](https://docs.rs/girt/latest/girt/struct.Commit.html) docs describe which
+[commit codec](https://docs.rs/girt/latest/girt/commit/struct.Commit.html) docs describe which
 representations it accepts.
 
 ## An ID is a name for content, not proof of storage
@@ -60,8 +60,8 @@ and committer identity metadata does not prove authorship.
 Choose the stage your task needs. A history walk needs readable commit graph records; a tool
 constructing a replacement commit needs valid construction fields. Neither result proves that every
 referenced tree or blob is present. Check the detailed
-[commit contract](https://docs.rs/girt/latest/girt/struct.Commit.html) before converting imported
-data.
+[commit contract](https://docs.rs/girt/latest/girt/commit/struct.Commit.html) before converting
+imported data.
 
 ## Physical storage can change without changing content
 
@@ -69,20 +69,21 @@ Loose storage keeps an individually compressed object in a path derived from its
 objects and may encode one as a delta against another. Their indexes locate IDs by offset. Repacking
 changes physical representation while preserving logical object identities.
 
-Keep one [`Objects`](https://docs.rs/girt/latest/girt/struct.Objects.html) reader for related reads:
-the packs it opened stay usable even if the repository is repacked. It sees new packs only after a
-refresh or in a new reader, but it reads loose files live. A loose-only object can disappear from an
-old reader if repacking removes its loose file after publishing a new pack. Refresh the reader to
-discover that pack before retrying. Refreshing a reader does not refresh repository configuration or
-shallow boundaries. Alternates add borrowed object stores to lookup; being able to read them does
-not authorize pruning them.
+Keep one [`Objects`](https://docs.rs/girt/latest/girt/objects/struct.Objects.html) reader for
+related reads: the packs it opened stay usable even if the repository is repacked. It sees new packs
+only after a refresh or in a new reader, but it reads loose files live. A loose-only object can
+disappear from an old reader if repacking removes its loose file after publishing a new pack.
+Refresh the reader to discover that pack before retrying. Refreshing a reader does not refresh
+repository configuration or shallow boundaries. Alternates add borrowed object stores to lookup;
+being able to read them does not authorize pruning them.
 
-Opening ([`PackLimits`](https://docs.rs/girt/latest/girt/struct.PackLimits.html)) and decoding
-([`ReadLimits`](https://docs.rs/girt/latest/girt/struct.ReadLimits.html)) have separate resource
-budgets. A small final payload can require substantial delta reconstruction, and a large pack does
-not necessarily require holding all pack bytes in memory. The budgets limit specific work and
-allocations; they do not cap total process memory or time. See
-[object storage](https://docs.rs/girt/latest/girt/struct.Objects.html) for visibility and limits.
+Opening ([`PackLimits`](https://docs.rs/girt/latest/girt/objects/struct.PackLimits.html)) and
+decoding ([`ReadLimits`](https://docs.rs/girt/latest/girt/objects/struct.ReadLimits.html)) have
+separate resource budgets. A small final payload can require substantial delta reconstruction, and a
+large pack does not necessarily require holding all pack bytes in memory. The budgets limit specific
+work and allocations; they do not cap total process memory or time. See
+[object storage](https://docs.rs/girt/latest/girt/objects/struct.Objects.html) for visibility and
+limits.
 
 ## References connect content to user-visible names
 
@@ -95,8 +96,9 @@ available in storage.
 Store the objects before publishing a reference to them. Give the update a precondition so you don't
 silently overwrite a change another writer made in between. Reference transactions do not prove
 object existence, kind, ancestry, or authorization. Files-backed batches can have partial
-publication; inspect their outcomes before deciding how to recover. The [references
-guide](/girt/guides/refs/) shows how to publish a reference and choose whether to log the change.
+publication; inspect their outcomes before deciding how to recover. The
+[references guide](/girt/guides/refs/) shows how to publish a reference and choose whether to log
+the change.
 
 ## Repository metadata supplies context
 

@@ -39,35 +39,77 @@ for a push to a local path, in the destination):
 
 ## Fetch from a configured remote
 
-Add a remote, then fetch. In this example, `path` is an existing repository and `url` is the
-remote's URL as bytes, for example `b"https://example.com/project.git"`.
+Add dependencies with `cargo add girt tempfile`. Each program below runs against disposable local
+repositories, without network access. This first program creates a source commit, adds its
+repository as a remote, then fetches it. For a network remote, pass its URL as bytes instead of the
+local path.
 
 ```rust
-use girt::Repository;
-use girt::remote::RemoteConfig;
-use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use girt::refs::{Expected, RefName, Target};
+    use girt::remote::RemoteConfig;
+    use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
+    use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
 
-// Record the remote in the repository's own config file, as `git remote add` would.
-let mut edit = Repository::open(&path)?.edit_config(1 << 20)?;
-RemoteConfig::new(edit.document_mut()).add(
-    b"origin",
-    url,
-    &[b"+refs/heads/*:refs/remotes/origin/*"],
-)?;
-edit.commit()?;
+    let directory = tempfile::tempdir()?;
+    let source = Repository::init(
+        ObjectFormat::Sha1,
+        directory.path().join("source.git"),
+        InitKind::Bare,
+    )?;
+    let path = directory.path().join("destination.git");
+    Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+    let loose = source.loose_objects();
+    let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    let author = Signature {
+        name: b"Example".to_vec(),
+        email: b"example@example.com".to_vec(),
+        seconds: 1_700_000_000,
+        offset_minutes: 0,
+    };
+    let commit = loose.write_commit(&Commit::new(CommitFields {
+        tree,
+        parents: vec![],
+        author: author.clone(),
+        committer: author,
+        extra_headers: vec![],
+        message: b"Initial commit\n".to_vec(),
+    })?)?;
+    source.references()?.update_without_reflog(
+        &RefName::new("refs/heads/main")?,
+        Target::Direct(commit),
+        Expected::Absent,
+    )?;
+    let url = source
+        .git_dir()
+        .to_str()
+        .ok_or("non-UTF-8 source path")?
+        .as_bytes();
 
-// A `Repository` holds a configuration snapshot, so reopen it to see the new remote.
-let repo = Repository::open(&path)?;
-let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).prune(true);
-let outcome = workflow::fetch(
-    &repo,
-    "origin",
-    &options,
-    &Environment::from_process(),
-    &mut NoCallbacks,
-)?;
-for change in &outcome.updated {
-    println!("{:?}: {:?} -> {:?}", change.name, change.old, change.new);
+    // Record the remote in the repository's own config file, as `git remote add` would.
+    let mut edit = Repository::open(&path)?.edit_config(1 << 20)?;
+    RemoteConfig::new(edit.document_mut()).add(
+        b"origin",
+        url,
+        &[b"+refs/heads/*:refs/remotes/origin/*"],
+    )?;
+    edit.commit()?;
+
+    // A `Repository` holds a configuration snapshot, so reopen it to see the new remote.
+    let repo = Repository::open(&path)?;
+    let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).prune(true);
+    let outcome = workflow::fetch(
+        &repo,
+        "origin",
+        &options,
+        &Environment::from_process(),
+        &mut NoCallbacks,
+    )?;
+    for change in &outcome.updated {
+        println!("{:?}: {:?} -> {:?}", change.name, change.old, change.new);
+    }
+    assert_eq!(outcome.updated.len(), 1);
+    Ok(())
 }
 ```
 
@@ -122,27 +164,75 @@ remote applies a command only if the reference still has the expected value. Thi
 succeeds without comparing the expected value, since nothing needs to change. `ForcePolicy`
 separately decides whether a branch may move to a commit that does not descend from its old value.
 
-In this example, `commit` is the `ObjectId` of a commit in `repo`:
+This program creates a commit in `repo` and pushes it to an empty local remote:
 
 ```rust
-use girt::push::{ForcePolicy, PushCommand};
-use girt::refs::RefName;
-use girt::workflow::{self, Environment, NoCallbacks, PushOptions};
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use girt::push::{ForcePolicy, PushCommand};
+    use girt::refs::{RefName, Target};
+    use girt::workflow::{self, Environment, NoCallbacks, PushOptions};
+    use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
 
-let topic = RefName::new("refs/heads/topic")?;
-let command = PushCommand::new(topic, None, commit).with_force(ForcePolicy::FastForwardOnly);
-let report = workflow::push(
-    &repo,
-    "origin",
-    vec![command],
-    &PushOptions::default(),
-    &Environment::from_process(),
-    &mut NoCallbacks,
-)?;
-if !report.all_succeeded() {
-    for status in &report.refs {
-        println!("{:?}: {:?}", status.command.name, status.status);
+    let directory = tempfile::tempdir()?;
+    let destination = Repository::init(
+        ObjectFormat::Sha1,
+        directory.path().join("destination.git"),
+        InitKind::Bare,
+    )?;
+    let path = directory.path().join("source.git");
+    Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+    let repo = Repository::open(&path)?;
+    let loose = repo.loose_objects();
+    let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    let author = Signature {
+        name: b"Example".to_vec(),
+        email: b"example@example.com".to_vec(),
+        seconds: 1_700_000_000,
+        offset_minutes: 0,
+    };
+    let commit = loose.write_commit(&Commit::new(CommitFields {
+        tree,
+        parents: vec![],
+        author: author.clone(),
+        committer: author,
+        extra_headers: vec![],
+        message: b"Initial commit\n".to_vec(),
+    })?)?;
+    let mut edit = repo.edit_config(1 << 20)?;
+    girt::remote::RemoteConfig::new(edit.document_mut()).add(
+        b"origin",
+        destination
+            .git_dir()
+            .to_str()
+            .ok_or("non-UTF-8 destination path")?
+            .as_bytes(),
+        &[],
+    )?;
+    edit.commit()?;
+    let repo = Repository::open(&path)?;
+
+    let topic = RefName::new("refs/heads/topic")?;
+    let command =
+        PushCommand::new(topic.clone(), None, commit).with_force(ForcePolicy::FastForwardOnly);
+    let report = workflow::push(
+        &repo,
+        "origin",
+        vec![command],
+        &PushOptions::default(),
+        &Environment::from_process(),
+        &mut NoCallbacks,
+    )?;
+    if !report.all_succeeded() {
+        for status in &report.refs {
+            println!("{:?}: {:?}", status.command.name, status.status);
+        }
     }
+    assert!(report.all_succeeded());
+    assert_eq!(
+        destination.references()?.read(&topic)?,
+        Some(Target::Direct(commit))
+    );
+    Ok(())
 }
 ```
 
@@ -184,41 +274,98 @@ which phases completed. girt never deletes a partially created destination for y
 limits and controls:
 
 ```rust
-use std::collections::BTreeSet;
-use std::sync::atomic::AtomicBool;
-use std::time::{Duration, Instant};
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use girt::refs::{Expected, RefName, Target};
+    use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+    use std::collections::BTreeSet;
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
 
-use girt::fetch::{FetchLimits, FetchRequest, FetchUpdateLimits, KnownHistory, LocalFetchObserver};
-use girt::refs::Reflog;
-use girt::remote::Remote;
-use girt::transport::TransportControl;
+    use girt::fetch::{
+        FetchLimits, FetchRequest, FetchUpdateLimits, KnownHistory, LocalFetchObserver,
+    };
+    use girt::refs::Reflog;
+    use girt::remote::Remote;
+    use girt::transport::TransportControl;
 
-let origin = Remote::find(repo.config(), b"origin")?.ok_or("no origin")?;
-// Capture the destination's references. No forced destinations are authorized here, so `+`
-// refspecs still refuse non-fast-forward updates.
-let request = FetchRequest::prepare(
-    repo.clone(),
-    origin.fetch_refspecs().clone(),
-    BTreeSet::new(),
-    Reflog::Preserve,
-)?;
+    let directory = tempfile::tempdir()?;
+    let source = Repository::init(
+        ObjectFormat::Sha1,
+        directory.path().join("source.git"),
+        InitKind::Bare,
+    )?;
+    let path = directory.path().join("destination.git");
+    Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+    let loose = source.loose_objects();
+    let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    let author = Signature {
+        name: b"Example".to_vec(),
+        email: b"example@example.com".to_vec(),
+        seconds: 1_700_000_000,
+        offset_minutes: 0,
+    };
+    let commit = loose.write_commit(&Commit::new(CommitFields {
+        tree,
+        parents: vec![],
+        author: author.clone(),
+        committer: author,
+        extra_headers: vec![],
+        message: b"Initial commit\n".to_vec(),
+    })?)?;
+    source.references()?.update_without_reflog(
+        &RefName::new("refs/heads/main")?,
+        Target::Direct(commit),
+        Expected::Absent,
+    )?;
+    let mut edit = Repository::open(&path)?.edit_config(1 << 20)?;
+    girt::remote::RemoteConfig::new(edit.document_mut()).add(
+        b"origin",
+        b"local-source",
+        &[b"refs/heads/*:refs/remotes/origin/*"],
+    )?;
+    edit.commit()?;
+    let repo = Repository::open(&path)?;
+    let source_path = source.git_dir();
 
-// Transfer and validate. The deadline covers this call only.
-let cancel = AtomicBool::new(false);
-let control = TransportControl::new(&cancel)
-    .with_deadline(Some(Instant::now() + Duration::from_secs(120)));
-let ready = request.receive_local(
-    source_path,
-    &KnownHistory::default(),
-    FetchLimits::default(),
-    control,
-    LocalFetchObserver::default(),
-)?;
+    let origin = Remote::find(repo.config(), b"origin")?.ok_or("no origin")?;
+    // Capture the destination's references. No forced destinations are authorized here, so `+`
+    // refspecs still refuse non-fast-forward updates.
+    let request = FetchRequest::prepare(
+        repo.clone(),
+        origin.fetch_refspecs().clone(),
+        BTreeSet::new(),
+        Reflog::Preserve,
+    )?;
 
-// Install and publish, checking `cancel` between steps.
-match ready.finish(FetchUpdateLimits::default(), &cancel) {
-    Ok(report) => println!("published {} references", report.references.len()),
-    Err(error) => eprintln!("partial effects: {:?}; failure: {}", error.report, error.source),
+    // Transfer and validate. The deadline covers this call only.
+    let cancel = AtomicBool::new(false);
+    let control = TransportControl::new(&cancel)
+        .with_deadline(Some(Instant::now() + Duration::from_secs(120)));
+    let ready = request.receive_local(
+        source_path,
+        &KnownHistory::default(),
+        FetchLimits::default(),
+        control,
+        LocalFetchObserver::default(),
+    )?;
+
+    // Install and publish, checking `cancel` between steps.
+    match ready.finish(FetchUpdateLimits::default(), &cancel) {
+        Ok(report) => println!("published {} references", report.references.len()),
+        Err(error) => {
+            eprintln!(
+                "partial effects: {:?}; failure: {}",
+                error.report, error.source
+            );
+            return Err(error.into());
+        }
+    }
+    assert_eq!(
+        repo.references()?
+            .read(&RefName::new("refs/remotes/origin/main")?)?,
+        Some(Target::Direct(commit)),
+    );
+    Ok(())
 }
 ```
 
