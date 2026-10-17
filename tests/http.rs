@@ -110,9 +110,9 @@ fn real_git_sha256_http_fetch_installs_objects() {
         .unwrap();
     assert!(
         destination
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -232,7 +232,7 @@ fn command(name: &str, expected: Option<ObjectId>, new: ObjectId) -> PushCommand
 fn prepared(f: &Fixture, commands: Vec<PushCommand>, roots: &[ObjectId]) -> PreparedPush {
     let limits = PushLimits::default().with_compression(PackCompression::Delta(Default::default()));
     PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
+        &f.repo.objects_with(PackLimits::default()).unwrap(),
         commands,
         roots,
         limits,
@@ -266,11 +266,11 @@ fn next(f: &Fixture) -> ObjectId {
     id
 }
 fn verify(f: &Fixture, repo: &Repository) {
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     for (id, kind, data) in &f.records {
         assert_eq!(
             objects
-                .read(*id, ReadLimits::default())
+                .read_with(*id, ReadLimits::default())
                 .unwrap()
                 .unwrap()
                 .data(),
@@ -287,13 +287,13 @@ fn verify(f: &Fixture, repo: &Repository) {
     }
     assert!(
         objects
-            .read(f.ordinary, ReadLimits::default())
+            .read_with(f.ordinary, ReadLimits::default())
             .unwrap()
             .is_some()
     );
     assert!(
         objects
-            .read(f.delta, ReadLimits::default())
+            .read_with(f.delta, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -355,7 +355,7 @@ fn real_git_full_incremental_and_known_only_fetch() {
             .any(|r| r.kind == girt::fetch::AdvertisementKind::PeeledHint)
     );
     let known = KnownHistory::new(
-        &dest.objects(PackLimits::default()).unwrap(),
+        &dest.objects_with(PackLimits::default()).unwrap(),
         received.wants(),
         limits,
         &cancel,
@@ -432,9 +432,9 @@ fn real_git_full_incremental_and_known_only_fetch() {
         .install(&dest, girt::PackLimits::default(), &cancel)
         .unwrap();
     assert!(
-        dest.objects(PackLimits::default())
+        dest.objects_with(PackLimits::default())
             .unwrap()
-            .read(new, ReadLimits::default())
+            .read_with(new, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -451,7 +451,7 @@ fn failed_worker_validation_releases_negotiated_history(
     let cancel = AtomicBool::new(false);
     let known = Arc::new(
         KnownHistory::new(
-            &f.repo.objects(PackLimits::default()).unwrap(),
+            &f.repo.objects_with(PackLimits::default()).unwrap(),
             &[tip(&f.repo, "refs/heads/main")],
             limits,
             &cancel,
@@ -492,7 +492,7 @@ fn discarding_download_releases_negotiated_history() {
     let limits = FetchLimits::default();
     let known = Arc::new(
         KnownHistory::new(
-            &f.repo.objects(PackLimits::default()).unwrap(),
+            &f.repo.objects_with(PackLimits::default()).unwrap(),
             &[tip(&f.repo, "refs/heads/main")],
             limits,
             &cancel,
@@ -800,7 +800,7 @@ fn mixed_push_commands_and_deletion_agree_with_git(#[case] format: girt::ObjectF
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let id = tip(&source.repo, "refs/heads/main");
-    let objects = source.repo.objects(PackLimits::default()).unwrap();
+    let objects = source.repo.objects_with(PackLimits::default()).unwrap();
     let initial = PreparedPush::new(
         &objects,
         vec![command("refs/for/main", None, id)],
@@ -880,7 +880,7 @@ fn push_options_require_advertisement_and_reach_git() {
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let id = tip(&source.repo, "refs/heads/main");
-    let objects = source.repo.objects(PackLimits::default()).unwrap();
+    let objects = source.repo.objects_with(PackLimits::default()).unwrap();
     let prepare = || {
         PreparedPush::new(
             &objects,
@@ -922,7 +922,7 @@ fn stale_wire_lease_preserves_independent_success(#[case] format: girt::ObjectFo
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let id = tip(&source.repo, "refs/heads/main");
-    let objects = source.repo.objects(PackLimits::default()).unwrap();
+    let objects = source.repo.objects_with(PackLimits::default()).unwrap();
     let initial = PreparedPush::new(
         &objects,
         vec![command("refs/heads/main", None, id)],
@@ -1502,7 +1502,7 @@ fn cancellation_during_stalled_upload_is_uncertain() {
         .collect();
     let id = source.loose_objects().write_blob(&payload).unwrap();
     let prepared = PreparedPush::new(
-        &source.objects(PackLimits::default()).unwrap(),
+        &source.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/tags/large", None, id)],
         &[],
         PushLimits::default(),
@@ -2218,7 +2218,7 @@ fn progress_prepared(limits: PushLimits) -> PreparedPush {
 fn plain_prepared(limits: PushLimits) -> PreparedPush {
     let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     PreparedPush::new(
-        &source.repo.objects(PackLimits::default()).unwrap(),
+        &source.repo.objects_with(PackLimits::default()).unwrap(),
         vec![command(
             "refs/heads/main",
             None,
@@ -2792,7 +2792,7 @@ fn requested_protocol_discovers_and_fetches_incrementally(
 
     let known = Arc::new(
         KnownHistory::new(
-            &dest.objects(PackLimits::default()).unwrap(),
+            &dest.objects_with(PackLimits::default()).unwrap(),
             received.wants(),
             limits,
             &cancel,
@@ -2817,9 +2817,9 @@ fn requested_protocol_discovers_and_fetches_incrementally(
         .install(&dest, PackLimits::default(), &cancel)
         .unwrap();
     assert!(
-        dest.objects(PackLimits::default())
+        dest.objects_with(PackLimits::default())
             .unwrap()
-            .read(new, ReadLimits::default())
+            .read_with(new, ReadLimits::default())
             .unwrap()
             .is_some()
     );

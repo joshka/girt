@@ -6,7 +6,45 @@
 //! does not refresh configuration or shallow boundaries. Choose [`PackLimits`] for opening and
 //! [`ReadLimits`] for individual decoding work. These bounds are not a process-wide memory quota.
 //!
-//! # Read a blob with an explicit absence branch
+//! # Default and explicit limits
+//!
+//! The short names use the `Default` limits and never cancel: [`crate::Repository::objects`],
+//! [`Objects::read`], and the typed reads below. Each has a `_with` form that takes the limits,
+//! such as [`Objects::read_with`]. The short form is the `_with` call with default arguments, so
+//! it is as safe for untrusted repositories. Use a `_with` form to change a bound, and the
+//! `_controlled` forms to cancel a read.
+//!
+//! # Typed reads
+//!
+//! [`Objects::read_commit`], [`Objects::read_tree`], [`Objects::read_tag`] and
+//! [`Objects::read_blob`] check the kind and parse the payload, and treat absence as an error.
+//! Use them for identities that came from a reference, a commit or a tree entry:
+//!
+//! ```
+//! use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+//! let directory = tempfile::tempdir()?;
+//! let repo = Repository::init(
+//!     ObjectFormat::Sha1,
+//!     directory.path().join("r.git"),
+//!     InitKind::Bare,
+//! )?;
+//! let loose = repo.loose_objects();
+//! let blob = loose.write_blob(b"notes\n")?;
+//! let entry = TreeEntry {
+//!     name: b"notes.txt".to_vec(),
+//!     mode: EntryMode::Blob,
+//!     id: blob,
+//! };
+//! let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![entry])?)?;
+//!
+//! let objects = repo.objects()?;
+//! let tree = objects.read_tree(tree)?;
+//! let entry = &tree.entries()[0];
+//! assert_eq!(objects.read_blob(entry.id)?, b"notes\n");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Read any object with an explicit absence branch
 //!
 //! ```
 //! use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
@@ -17,9 +55,9 @@
 //!     InitKind::Bare,
 //! )?;
 //! let id = repo.loose_objects().write_blob(b"notes\n")?;
-//! let objects = repo.objects(PackLimits::default())?;
+//! let objects = repo.objects_with(PackLimits::default())?;
 //! let object = objects
-//!     .read(id, ReadLimits::default())?
+//!     .read_with(id, ReadLimits::default())?
 //!     .ok_or("missing blob")?;
 //! assert_eq!(object.kind(), ObjectKind::Blob);
 //! assert_eq!(object.data(), b"notes\n");
@@ -29,8 +67,9 @@
 //!
 //! [`Object`] owns verified, uncompressed bytes. Storage verification establishes kind, framing,
 //! and identity, not payload syntax or validity of referenced objects. Check the kind before using
-//! [`crate::Tree::parse`], [`crate::Commit::parse`], or [`crate::Tag::parse`]. Blob bytes need no
-//! codec. Packed payloads can share cache storage; borrowing [`Object::data`] avoids copying it.
+//! [`crate::Tree::parse`], [`crate::Commit::parse`], or [`crate::Tag::parse`], or use a typed read
+//! that does both. Blob bytes need no codec. Packed payloads can share cache storage; borrowing
+//! [`Object::data`] avoids copying it.
 //!
 //! # Enumerate stored objects
 //!
@@ -66,6 +105,7 @@ mod alternates;
 mod header;
 mod listing;
 mod prefix;
+mod typed;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -75,6 +115,7 @@ pub use alternates::AlternateLimits;
 pub use header::ObjectHeader;
 pub use listing::{IndexedPack, ListLimits, LooseIds, LooseObject, ObjectStore, PackIds};
 pub use prefix::ResolvePrefixError;
+pub use typed::{ReadBlobError, ReadCommitError, ReadTagError, ReadTreeError};
 
 use crate::pack::FilePack;
 use crate::pack::reader::check_cancelled;
@@ -98,9 +139,9 @@ use crate::{LooseObjects, ObjectFormat, ObjectId, ObjectKind};
 ///     InitKind::Bare,
 /// )?;
 /// let id = repo.loose_objects().write_blob(b"payload\n")?;
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let object = objects
-///     .read(id, ReadLimits::default())?
+///     .read_with(id, ReadLimits::default())?
 ///     .ok_or("missing blob")?;
 /// assert_eq!(object.data(), b"payload\n");
 /// assert_eq!(object.id(), id);
@@ -140,9 +181,9 @@ impl Object {
     ///     InitKind::Bare,
     /// )?;
     /// let id = repo.loose_objects().write_blob(b"payload")?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let object = objects
-    ///     .read(id, ReadLimits::default())?
+    ///     .read_with(id, ReadLimits::default())?
     ///     .ok_or("blob absent")?;
     /// let retained = object.clone();
     /// let owned = object.into_data(); // A shared payload may be copied; the other owner stays usable.
@@ -512,9 +553,9 @@ impl ReadLimits {
 /// let tree = Tree::new(ObjectFormat::Sha1, vec![])?;
 /// let id = repository.loose_objects().write_tree(&tree)?;
 ///
-/// let objects = repository.objects(PackLimits::default())?;
+/// let objects = repository.objects_with(PackLimits::default())?;
 /// let object = objects
-///     .read(id, ReadLimits::default())?
+///     .read_with(id, ReadLimits::default())?
 ///     .expect("tree was just written");
 /// assert_eq!(object.kind(), ObjectKind::Tree);
 /// assert!(
@@ -524,7 +565,7 @@ impl ReadLimits {
 /// );
 ///
 /// let missing = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"never written");
-/// assert!(objects.read(missing, ReadLimits::default())?.is_none());
+/// assert!(objects.read_with(missing, ReadLimits::default())?.is_none());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
@@ -689,7 +730,7 @@ impl Objects {
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
-    /// let mut objects = repo.objects(PackLimits::default())?;
+    /// let mut objects = repo.objects_with(PackLimits::default())?;
     /// let retained = objects.clone();
     /// let data = b"published only in a new pack";
     /// let id = ObjectId::for_blob(ObjectFormat::Sha1, data);
@@ -713,17 +754,17 @@ impl Objects {
     /// // Private fixture only: shared installation requires a coordinated publication path.
     /// std::fs::write(base.with_extension("pack"), pack)?;
     /// std::fs::write(base.with_extension("idx"), index)?;
-    /// assert!(objects.read(id, ReadLimits::default())?.is_none());
+    /// assert!(objects.read_with(id, ReadLimits::default())?.is_none());
     /// objects.refresh(PackLimits::default(), AlternateLimits::default())?;
     /// assert_eq!(
     ///     objects
-    ///         .read(id, ReadLimits::default())?
+    ///         .read_with(id, ReadLimits::default())?
     ///         .ok_or("missing")?
     ///         .data(),
     ///     data
     /// );
     /// // The clone retains the old generation.
-    /// assert!(retained.read(id, ReadLimits::default())?.is_none());
+    /// assert!(retained.read_with(id, ReadLimits::default())?.is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn refresh(
@@ -945,11 +986,11 @@ impl Objects {
     /// // Private fixture only; shared repositories need a validated installation path.
     /// std::fs::write(base.with_extension("pack"), bytes)?;
     /// std::fs::write(base.with_extension("idx"), index)?;
-    /// let objects = repo.objects(girt::PackLimits::default())?;
+    /// let objects = repo.objects_with(girt::PackLimits::default())?;
     /// objects.verify_packs(&std::sync::atomic::AtomicBool::new(false))?;
     /// assert!(
     ///     objects
-    ///         .read(input.id, girt::ReadLimits::default())?
+    ///         .read_with(input.id, girt::ReadLimits::default())?
     ///         .is_some()
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1006,17 +1047,17 @@ impl Objects {
     ///     InitKind::Bare,
     /// )?;
     /// let id = repo.loose_objects().write_blob(b"payload\n")?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let limits = ReadLimits::default().with_max_object_bytes(1024);
     /// assert_eq!(
-    ///     objects.read(id, limits)?.ok_or("missing blob")?.data(),
+    ///     objects.read_with(id, limits)?.ok_or("missing blob")?.data(),
     ///     b"payload\n"
     /// );
     /// let absent = girt::ObjectId::for_blob(ObjectFormat::Sha1, b"not written");
-    /// assert!(objects.read(absent, limits)?.is_none());
+    /// assert!(objects.read_with(absent, limits)?.is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn read(
+    pub fn read_with(
         &self,
         id: ObjectId,
         limits: ReadLimits,
@@ -1052,7 +1093,7 @@ impl Objects {
     ///     InitKind::Bare,
     /// )?;
     /// let stored = repo.loose_objects().write_blob(b"payload\n")?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// assert!(objects.contains(stored)?);
     ///
     /// // Hash first, then store only what the repository lacks.
@@ -1079,61 +1120,19 @@ impl Objects {
         Ok(id == self.format.hash_object(ObjectKind::Tree, b""))
     }
 
-    /// Reads and parses the commit `id`.
+    /// Reads an exact object by full identity with [`ReadLimits::default`]; returns `None` only
+    /// when absent.
     ///
-    /// Use this when `id` came from a reference or a history walk and must be a commit. Unlike
-    /// [`Self::read`], a missing object is an error, because a commit you were pointed at should
-    /// exist. Use [`Self::read`] to test whether an object exists or to accept any kind.
-    ///
-    /// ```
-    /// use girt::{
-    ///     Commit, CommitFields, InitKind, ObjectFormat, PackLimits, ReadLimits, Repository,
-    ///     Signature, Tree,
-    /// };
-    ///
-    /// let directory = tempfile::tempdir()?;
-    /// let path = directory.path().join("repo.git");
-    /// let repository = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
-    /// let loose = repository.loose_objects();
-    /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
-    /// let person = Signature {
-    ///     name: b"A. Writer".to_vec(),
-    ///     email: b"writer@example.com".to_vec(),
-    ///     seconds: 1_700_000_000,
-    ///     offset_minutes: 0,
-    /// };
-    /// let id = loose.write_commit(&Commit::new(CommitFields {
-    ///     tree,
-    ///     parents: vec![],
-    ///     author: person.clone(),
-    ///     committer: person,
-    ///     extra_headers: vec![],
-    ///     message: b"first\n".to_vec(),
-    /// })?)?;
-    ///
-    /// let objects = repository.objects(PackLimits::default())?;
-    /// let commit = objects.read_commit(id, ReadLimits::default())?;
-    /// assert_eq!(commit.message(), b"first\n");
-    /// assert!(objects.read_commit(tree, ReadLimits::default()).is_err());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
+    /// Equivalent to `self.read_with(id, ReadLimits::default())`; see [`Self::read_with`] for store
+    /// precedence and damage handling. The default limits refuse payloads over 64 MiB. Use
+    /// [`Self::read_commit`], [`Self::read_tree`], [`Self::read_tag`] or
+    /// [`Self::read_blob`] when the kind is known.
     ///
     /// # Errors
     ///
-    /// Returns [`ReadCommitError::Missing`] if no store has `id`, [`ReadCommitError::Kind`] if
-    /// `id` names another kind of object, [`ReadCommitError::Parse`] for a malformed commit, and
-    /// [`ReadCommitError::Read`] for the failures of [`Self::read`].
-    pub fn read_commit(
-        &self,
-        id: ObjectId,
-        limits: ReadLimits,
-    ) -> Result<crate::Commit, ReadCommitError> {
-        let object = self.read(id, limits)?.ok_or(ReadCommitError::Missing(id))?;
-        let kind = object.kind();
-        if kind != ObjectKind::Commit {
-            return Err(ReadCommitError::Kind { id, kind });
-        }
-        Ok(crate::Commit::parse(self.format, object.data())?)
+    /// Returns the errors of [`Self::read_with`].
+    pub fn read(&self, id: ObjectId) -> Result<Option<Object>, ObjectReadError> {
+        self.read_with(id, ReadLimits::default())
     }
 
     /// Reads with cooperative cancellation between stores, pack lookups and decode chunks.
@@ -1155,13 +1154,13 @@ impl Objects {
     ///     InitKind::Bare,
     /// )?;
     /// let id = repo.loose_objects().write_blob(b"payload")?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let cancelled = std::sync::atomic::AtomicBool::new(true);
     /// assert!(matches!(
     ///     objects.read_controlled(id, ReadLimits::default(), &cancelled),
     ///     Err(girt::ObjectReadError::Cancelled)
     /// ));
-    /// assert!(objects.read(id, ReadLimits::default())?.is_some());
+    /// assert!(objects.read_with(id, ReadLimits::default())?.is_some());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn read_controlled(
@@ -1633,29 +1632,6 @@ impl Store {
             pack_marks,
         })
     }
-}
-
-/// [`Objects::read_commit`] failed to produce a commit.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum ReadCommitError {
-    /// No store has the object.
-    #[error("commit {0} is missing")]
-    Missing(ObjectId),
-    /// The object exists but is not a commit.
-    #[error("object {id} is a {kind:?}, not a commit")]
-    Kind {
-        /// The requested object.
-        id: ObjectId,
-        /// The kind it has.
-        kind: ObjectKind,
-    },
-    /// The commit bytes are malformed.
-    #[error(transparent)]
-    Parse(#[from] crate::CommitError),
-    /// Reading the object failed.
-    #[error(transparent)]
-    Read(#[from] ObjectReadError),
 }
 
 /// Failures opening or reading a repository object store; absence is `Ok(None)`.

@@ -88,7 +88,7 @@ fn source_in(parent: &Path, format: ObjectFormat) -> Repository {
 }
 fn checkout(repo: &Repository, baseline: Option<ObjectId>, target: ObjectId) {
     let report = repo
-        .checkout_tree(
+        .checkout_tree_with(
             baseline,
             Some(target),
             Limits::default(),
@@ -274,7 +274,7 @@ fn missing_index_requires_empty_explicit_baseline() {
     let repo = Repository::open(&dest).unwrap();
     let target = tree(source.worktree().unwrap());
     let error = repo
-        .checkout_tree(
+        .checkout_tree_with(
             Some(target),
             Some(target),
             Limits::default(),
@@ -334,7 +334,7 @@ fn checkout_drops_git_monitor_caches_and_git_rebuilds_them(
     assert!(cache_status(root, monitor).is_empty());
     assert_monitor_caches(&repo);
     let report = repo
-        .raw_status(
+        .raw_status_with(
             girt::status::Baseline::Head,
             girt::status::Untracked::RawFilesWithoutIgnores,
             Default::default(),

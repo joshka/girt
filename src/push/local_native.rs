@@ -180,13 +180,13 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
         // Like Git, the destination's existing objects are trusted to have complete history, so
         // the pack may omit anything reachable from these roots.
         let store = repository
-            .objects(prepared.limits.destination_packs)
+            .objects_with(prepared.limits.destination_packs)
             .map_err(|error| {
                 PushError::NotSent(PushFailure::install(FetchError::Destination(error)))
             })?;
         for &root in &prepared.receiver_roots {
             let present = store
-                .read(root, prepared.limits.read)
+                .read_with(root, prepared.limits.read)
                 .map_err(|error| {
                     PushError::NotSent(PushFailure::install(FetchError::Destination(error)))
                 })?
@@ -223,7 +223,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
     };
     let (received, unstored_empty_tree) = if !prepared.pack.is_empty() {
         let store = repository
-            .objects(prepared.limits.destination_packs)
+            .objects_with(prepared.limits.destination_packs)
             .map_err(|error| {
                 PushError::NotSent(PushFailure::install(FetchError::Destination(error)))
             })?;
@@ -508,13 +508,13 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 && deny_non_fast_forwards
             {
                 let objects = repository
-                    .objects(prepared.limits.destination_packs)
+                    .objects_with(prepared.limits.destination_packs)
                     .map_err(|error| PushError::Uncertain {
                         cause: PushFailure::install(FetchError::Destination(error)),
                         report: Box::new(report.clone()),
                     })?;
                 let fast_forward = objects
-                    .is_ancestor(old, command.new, crate::HistoryLimits::default())
+                    .is_ancestor_with(old, command.new, crate::HistoryLimits::default())
                     .unwrap_or(false);
                 if !fast_forward {
                     report.refs[index].status =

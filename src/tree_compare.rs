@@ -10,7 +10,8 @@
 //! existence; use content reads or verification when that is required. Changed tree payloads are
 //! verified, but leaf targets are not read. Gitlinks remain leaves.
 //!
-//! See the runnable [`Objects::compare_trees`] example for repository setup.
+//! See the runnable [`Objects::compare_trees_with`] example for repository setup.
+//! [`Objects::compare_trees`] uses default limits and never cancels.
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -77,7 +78,7 @@ pub struct TreeValue {
 ///         id: blob,
 ///     }],
 /// )?)?;
-/// let changes = repo.objects(Default::default())?.compare_trees(
+/// let changes = repo.objects_with(Default::default())?.compare_trees_with(
 ///     None,
 ///     Some(tree),
 ///     Default::default(),
@@ -115,7 +116,7 @@ pub struct TreeValue {
 /// let old = tree(vec![entry(b"path", id, EntryMode::Blob)])?;
 /// let child = tree(vec![entry(b"file", id, EntryMode::Blob)])?;
 /// let new = tree(vec![entry(b"path", child, EntryMode::Tree)])?;
-/// let changes = repo.objects(Default::default())?.compare_trees(
+/// let changes = repo.objects_with(Default::default())?.compare_trees_with(
 ///     Some(old),
 ///     Some(new),
 ///     Default::default(),
@@ -265,8 +266,8 @@ fn file_type(mode: EntryMode) -> FileType {
 ///
 /// let id = loose.write_blob(b"data")?;
 /// let root = tree(vec![entry(b"file", id, EntryMode::Blob)])?;
-/// let objects = repo.objects(Default::default())?;
-/// let result = objects.compare_trees(
+/// let objects = repo.objects_with(Default::default())?;
+/// let result = objects.compare_trees_with(
 ///     None,
 ///     Some(root),
 ///     TreeCompareLimits::default().with_max_changes(0),
@@ -276,7 +277,7 @@ fn file_type(mode: EntryMode) -> FileType {
 /// // Equal tree identities skip traversal, even under this output budget.
 /// assert!(
 ///     objects
-///         .compare_trees(
+///         .compare_trees_with(
 ///             Some(root),
 ///             Some(root),
 ///             TreeCompareLimits::default().with_max_changes(0),
@@ -427,10 +428,10 @@ impl Objects {
     /// };
     /// let (old, new) = (tree(b"draft\n")?, tree(b"final\n")?);
     ///
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let cancel = AtomicBool::new(false);
     /// let limits = TreeCompareLimits::default();
-    /// let changes = objects.compare_trees(Some(old), Some(new), limits, &cancel)?;
+    /// let changes = objects.compare_trees_with(Some(old), Some(new), limits, &cancel)?;
     /// assert_eq!(changes.len(), 1);
     /// assert_eq!(changes[0].path, b"notes.txt");
     /// assert_ne!(
@@ -441,12 +442,12 @@ impl Objects {
     /// // `None` stands for an empty tree on either side.
     /// assert!(
     ///     objects
-    ///         .compare_trees(None, None, limits, &cancel)?
+    ///         .compare_trees_with(None, None, limits, &cancel)?
     ///         .is_empty()
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn compare_trees(
+    pub fn compare_trees_with(
         &self,
         old: Option<ObjectId>,
         new: Option<ObjectId>,
@@ -520,6 +521,28 @@ impl Objects {
         budget.check()?;
         Ok(changes)
     }
+
+    /// Compares two trees with [`TreeCompareLimits::default`] and no cancellation.
+    ///
+    /// Equivalent to `self.compare_trees_with(old, new, TreeCompareLimits::default(), &never)` with
+    /// a flag that is never set; see [`Self::compare_trees_with`] for ordering and
+    /// verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::compare_trees_with`] except cancellation.
+    pub fn compare_trees(
+        &self,
+        old: Option<ObjectId>,
+        new: Option<ObjectId>,
+    ) -> Result<Vec<TreeChange>, TreeCompareError> {
+        self.compare_trees_with(
+            old,
+            new,
+            TreeCompareLimits::default(),
+            &AtomicBool::new(false),
+        )
+    }
 }
 
 fn tree_id(value: Option<TreeValue>) -> Option<ObjectId> {
@@ -585,7 +608,7 @@ impl Budget<'_> {
         let mut read = self.remaining.read;
         read.max_object_bytes = read.max_object_bytes.min(self.remaining.max_tree_bytes);
         let object = objects
-            .read(id, read)
+            .read_with(id, read)
             .map_err(|source| TreeCompareError::Read {
                 id,
                 path: path.to_vec(),
@@ -656,9 +679,9 @@ fn charge(remaining: &mut usize, count: usize, name: &'static str) -> Result<(),
 ///     directory.path().join("r"),
 ///     InitKind::Bare,
 /// )?;
-/// let objects = repo.objects(Default::default())?;
+/// let objects = repo.objects_with(Default::default())?;
 /// assert!(matches!(
-///     objects.compare_trees(None, None, Default::default(), &AtomicBool::new(true)),
+///     objects.compare_trees_with(None, None, Default::default(), &AtomicBool::new(true)),
 ///     Err(TreeCompareError::Cancelled)
 /// ));
 /// # Ok::<(), Box<dyn std::error::Error>>(())

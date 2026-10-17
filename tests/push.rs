@@ -54,7 +54,7 @@ fn command(name: &str, expected: Option<ObjectId>, new: ObjectId) -> PushCommand
 fn prepare(repo: &Repository, commands: Vec<PushCommand>) -> PreparedPush {
     let roots: Vec<_> = commands.iter().filter_map(|c| c.expected).collect();
     PreparedPush::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         commands,
         &roots,
         PushLimits::default(),
@@ -103,21 +103,24 @@ fn next(f: &Fixture) -> ObjectId {
 }
 fn verify(f: &Fixture, dest: &Repository) {
     assert!(f.index_path.exists());
-    let objects = dest.objects(PackLimits::default()).unwrap();
+    let objects = dest.objects_with(PackLimits::default()).unwrap();
     assert!(
         objects
-            .read(f.ordinary, ReadLimits::default())
+            .read_with(f.ordinary, ReadLimits::default())
             .unwrap()
             .is_some()
     );
     assert!(
         objects
-            .read(f.delta, ReadLimits::default())
+            .read_with(f.delta, ReadLimits::default())
             .unwrap()
             .is_some()
     );
     for (id, kind, data) in &f.records {
-        let object = objects.read(*id, ReadLimits::default()).unwrap().unwrap();
+        let object = objects
+            .read_with(*id, ReadLimits::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(object.kind(), *kind);
         assert_eq!(object.data(), data);
         assert_eq!(
@@ -161,9 +164,9 @@ fn prepares_commit_with_unstored_canonical_empty_tree(#[case] format: &str) {
             .exists()
     );
     assert!(
-        repo.objects(PackLimits::default())
+        repo.objects_with(PackLimits::default())
             .unwrap()
-            .read(empty_tree, ReadLimits::default())
+            .read_with(empty_tree, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -180,7 +183,7 @@ fn prepares_commit_with_unstored_canonical_empty_tree(#[case] format: &str) {
         .parse()
         .unwrap();
     let prepared = PreparedPush::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, commit)],
         &[],
         PushLimits::default(),
@@ -325,9 +328,9 @@ fn native_push_rejects_hidden_ref_without_publishing_it() {
     assert!(matches!(report.refs[0].status, Some(Status::Rejected(_))));
     assert_eq!(tip(&dest, "refs/secret/main"), None);
     assert!(
-        dest.objects(PackLimits::default())
+        dest.objects_with(PackLimits::default())
             .unwrap()
-            .read(id, ReadLimits::default())
+            .read_with(id, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -561,11 +564,14 @@ fn publishes_nested_tags_trees_binary_blobs_symlinks_and_external_gitlinks() {
         ),
         b"binary\0\xff"
     );
-    let reader = dest.objects(PackLimits::default()).unwrap();
-    assert_eq!(reader.read(external, ReadLimits::default()).unwrap(), None);
+    let reader = dest.objects_with(PackLimits::default()).unwrap();
+    assert_eq!(
+        reader.read_with(external, ReadLimits::default()).unwrap(),
+        None
+    );
     assert_eq!(
         reader
-            .read(nested, ReadLimits::default())
+            .read_with(nested, ReadLimits::default())
             .unwrap()
             .unwrap()
             .kind(),
@@ -617,7 +623,7 @@ fn tag_replacement_requires_explicit_force_but_creation_does_not() {
     )
     .unwrap();
     let c = command("refs/tags/published", Some(old), new);
-    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let objects = f.repo.objects_with(PackLimits::default()).unwrap();
     assert!(matches!(
         PreparedPush::new(
             &objects,
@@ -682,9 +688,9 @@ fn interrupted_before_spawn_changes_no_destination_storage(#[case] cancelled: bo
     ));
     assert_eq!(tip(&dest, "refs/heads/main"), None);
     assert!(
-        dest.objects(PackLimits::default())
+        dest.objects_with(PackLimits::default())
             .unwrap()
-            .read(main(&f), ReadLimits::default())
+            .read_with(main(&f), ReadLimits::default())
             .unwrap()
             .is_none()
     );
@@ -709,7 +715,7 @@ fn exclusion_reduces_incremental_and_noop_packs() {
     let new = next(&f);
     let commands = vec![command("refs/heads/main", Some(old), new)];
     let full = PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
+        &f.repo.objects_with(PackLimits::default()).unwrap(),
         commands.clone(),
         &[],
         PushLimits::default(),
@@ -749,7 +755,7 @@ fn arbitrary_local_possession_is_not_receiver_knowledge() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let prepared = PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
+        &f.repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, main(&f))],
         &[main(&f)],
         PushLimits::default(),
@@ -779,7 +785,7 @@ fn receiver_root_missing_locally_preserves_full_forced_transfer() {
         (command("refs/tags/foreign", Some(foreign), main(&f))).with_force(ForcePolicy::Allow),
     ];
     let prepared = PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
+        &f.repo.objects_with(PackLimits::default()).unwrap(),
         commands.clone(),
         &[foreign],
         PushLimits::default(),
@@ -787,7 +793,7 @@ fn receiver_root_missing_locally_preserves_full_forced_transfer() {
     )
     .unwrap();
     let full = PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
+        &f.repo.objects_with(PackLimits::default()).unwrap(),
         commands,
         &[],
         PushLimits::default(),
@@ -1021,7 +1027,7 @@ fn delta_push_then_incremental_update_preserves_payloads() {
     let fixture = Fixture::new(girt::ObjectFormat::Sha1, false, 12);
     let (_root, dest) = destination(true);
     let cancel = AtomicBool::new(false);
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let commands = vec![
         command("refs/heads/main", None, main(&fixture)),
         command("refs/tags/packed", None, fixture.records.last().unwrap().0),
@@ -1054,7 +1060,7 @@ fn delta_push_then_incremental_update_preserves_payloads() {
         command("refs/tags/new-a", None, first),
         command("refs/tags/new-b", None, second),
     ];
-    let refreshed = fixture.repo.objects(PackLimits::default()).unwrap();
+    let refreshed = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let update = PreparedPush::new(
         &refreshed,
         updates.clone(),
@@ -1108,7 +1114,7 @@ fn non_tip_receiver_boundary_does_not_scan_old_trees() {
     std::fs::remove_file(dest.object_dir().join(&old_tree[..2]).join(&old_tree[2..])).unwrap();
     // The new commit forks from c1, which is not an advertised tip.
     let prepared = PreparedPush::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, ids[3])],
         &[ids[2]],
         PushLimits::default(),
@@ -1162,9 +1168,9 @@ fn pre_receive_rejection_discards_quarantined_objects() {
     );
     assert_eq!(tip(&dest, "refs/heads/main"), None);
     assert!(
-        dest.objects(PackLimits::default())
+        dest.objects_with(PackLimits::default())
             .unwrap()
-            .read(main(&f), ReadLimits::default())
+            .read_with(main(&f), ReadLimits::default())
             .unwrap()
             .is_none()
     );
@@ -1202,9 +1208,9 @@ fn update_hook_observes_published_objects_without_quarantine() {
     );
     assert_eq!(tip(&dest, "refs/heads/main"), None);
     assert!(
-        dest.objects(PackLimits::default())
+        dest.objects_with(PackLimits::default())
             .unwrap()
-            .read(main(&f), ReadLimits::default())
+            .read_with(main(&f), ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -1248,9 +1254,9 @@ fn cancellation_during_pre_receive_leaves_primary_storage_unchanged() {
     );
     assert_eq!(tip(&dest, "refs/heads/main"), None);
     assert!(
-        dest.objects(PackLimits::default())
+        dest.objects_with(PackLimits::default())
             .unwrap()
-            .read(main(&f), ReadLimits::default())
+            .read_with(main(&f), ReadLimits::default())
             .unwrap()
             .is_none()
     );
@@ -1267,7 +1273,7 @@ fn hook_output_limit_truncates_without_aborting_publication() {
         "#!/bin/sh\nprintf 01234567890123456789\nprintf 01234567890123456789 >&2\ncat >/dev/null\n",
     );
     let prepared = PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
+        &f.repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, main(&f))],
         &[],
         PushLimits::default().with_max_status_bytes(30),
@@ -1303,9 +1309,9 @@ fn pre_receive_creating_objects_is_explicitly_unsupported() {
     ));
     assert_eq!(tip(&dest, "refs/heads/main"), None);
     assert!(
-        dest.objects(PackLimits::default())
+        dest.objects_with(PackLimits::default())
             .unwrap()
-            .read(main(&f), ReadLimits::default())
+            .read_with(main(&f), ReadLimits::default())
             .unwrap()
             .is_none()
     );
@@ -1338,7 +1344,7 @@ fn accepted_quarantine_can_read_primary_alternates_with_special_path_bytes(
     let dest = Repository::open(root.path()).unwrap();
     let old = main(&f);
     let seed = PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
+        &f.repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, old)],
         &[],
         PushLimits::default(),
@@ -1355,7 +1361,7 @@ fn accepted_quarantine_can_read_primary_alternates_with_special_path_bytes(
         ),
     );
     let prepared = PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
+        &f.repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", Some(old), new)],
         &[old],
         PushLimits::default(),
@@ -1455,7 +1461,7 @@ fn post_hooks_drain_excess_output_and_preserve_background_work_like_git() {
         );
         if native {
             let prepared = PreparedPush::new(
-                &f.repo.objects(PackLimits::default()).unwrap(),
+                &f.repo.objects_with(PackLimits::default()).unwrap(),
                 vec![command("refs/heads/main", None, main(&f))],
                 &[],
                 PushLimits::default().with_max_status_bytes(30),
@@ -1508,7 +1514,7 @@ fn deep_receiver_boundary_matches_git(#[case] remove_old_tree: bool) {
     remove_deep_old_tree(&source, &dest, remove_old_tree);
     remove_deep_old_tree(&source, &git_dest, remove_old_tree);
     let prepared = PreparedPush::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, ids[1002])],
         &[ids[1001]],
         PushLimits::default(),
@@ -1602,7 +1608,7 @@ fn non_tip_receiver_boundary_in_alternate() {
     )
     .unwrap();
     let prepared = PreparedPush::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, ids[3])],
         &[ids[2]],
         PushLimits::default(),
@@ -1651,7 +1657,7 @@ fn receiver_boundary_after_4096_roots_matches_git() {
     std::fs::remove_file(dest.object_dir().join(&tree[..2]).join(&tree[2..])).unwrap();
     std::fs::remove_file(git_dest.object_dir().join(&tree[..2]).join(&tree[2..])).unwrap();
     let prepared = PreparedPush::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, new)],
         &roots,
         PushLimits::default(),
@@ -1745,7 +1751,7 @@ fn deep_receiver_boundary_with_quarantine() {
         ),
     );
     let prepared = PreparedPush::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, ids[1002])],
         &[ids[1001]],
         PushLimits::default(),

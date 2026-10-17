@@ -90,7 +90,7 @@ fn resolves_ambiguous_loose_packed_and_alternate_ids_like_git() {
                     b"",
                 );
             }
-            let objects = repo.objects(PackLimits::default()).unwrap();
+            let objects = repo.objects_with(PackLimits::default()).unwrap();
             assert_eq!(objects.prefix_matches(prefix).unwrap(), expected);
             match objects.resolve_prefix(prefix).unwrap_err() {
                 ResolvePrefixError::Ambiguous { candidates, .. } => {
@@ -138,7 +138,7 @@ fn resolves_ambiguous_loose_packed_and_alternate_ids_like_git() {
         .unwrap();
         // Duplicate loose/alternate copies must not manufacture ambiguity.
         borrower.loose_objects().write_blob(a.1.as_bytes()).unwrap();
-        let objects = borrower.objects(PackLimits::default()).unwrap();
+        let objects = borrower.objects_with(PackLimits::default()).unwrap();
         assert_eq!(objects.prefix_matches(prefix).unwrap(), expected);
         assert_eq!(
             objects
@@ -176,7 +176,7 @@ fn auto_width_tracks_git_packed_object_count_boundaries() {
             let path = dir.path().join("repo");
             let repo = Repository::init(format, &path, InitKind::Bare).unwrap();
             short_ids_git::populate(&path, count);
-            let objects = repo.objects(PackLimits::default()).unwrap();
+            let objects = repo.objects_with(PackLimits::default()).unwrap();
             let id = ObjectId::for_blob(format, &0u32.to_le_bytes());
             let git_short = git(&path, &["rev-parse", "--short", &id.to_string()], b"");
             assert_eq!(
@@ -213,7 +213,7 @@ fn auto_width_tracks_git_packed_object_count_boundaries() {
                     "../../repo/objects\n",
                 )
                 .unwrap();
-                let borrowed = borrower.objects(PackLimits::default()).unwrap();
+                let borrowed = borrower.objects_with(PackLimits::default()).unwrap();
                 assert_eq!(
                     borrowed
                         .abbreviate(id, borrowed.auto_abbrev_len())

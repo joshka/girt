@@ -31,7 +31,7 @@ fn retention(c: &mut Criterion) {
     assert!(
         history
             .objects()
-            .read(history.ids[255], girt::ReadLimits::default())
+            .read_with(history.ids[255], girt::ReadLimits::default())
             .unwrap()
             .is_some()
     );

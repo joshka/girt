@@ -48,7 +48,7 @@ impl Fixture {
 
     fn compare(&self, old: Option<ObjectId>, new: Option<ObjectId>) -> Vec<TreeChange> {
         self.objects()
-            .compare_trees(
+            .compare_trees_with(
                 old,
                 new,
                 TreeCompareLimits::default(),
@@ -210,7 +210,7 @@ fn identical_roots_are_not_validated(#[case] kind: &str, #[case] bytes: Option<&
     };
     assert!(
         f.objects()
-            .compare_trees(Some(id), Some(id), limits, &AtomicBool::new(false))
+            .compare_trees_with(Some(id), Some(id), limits, &AtomicBool::new(false))
             .unwrap()
             .is_empty()
     );
@@ -240,7 +240,7 @@ fn missing_nested_tree_has_identity_and_byte_path() {
     let root = f.tree(vec![named(b"\xff", EntryMode::Tree, identity(5))]);
     let error = f
         .objects()
-        .compare_trees(
+        .compare_trees_with(
             None,
             Some(root),
             TreeCompareLimits::default(),
@@ -259,7 +259,7 @@ fn wrong_kind_nested_tree_is_contextual() {
     let root = f.tree(vec![named(b"nested", EntryMode::Tree, blob)]);
     let error = f
         .objects()
-        .compare_trees(
+        .compare_trees_with(
             None,
             Some(root),
             TreeCompareLimits::default(),
@@ -289,7 +289,7 @@ fn invalid_trees_are_not_silently_normalized(
     let root = f.tree(vec![named(b"nested", EntryMode::Tree, bad)]);
     let error = f
         .objects()
-        .compare_trees(
+        .compare_trees_with(
             None,
             Some(root),
             TreeCompareLimits::default(),
@@ -309,7 +309,7 @@ fn corrupt_storage_retains_source() {
     std::fs::write(f.0.path().join(&hex[..2]).join(&hex[2..]), b"corrupt").unwrap();
     let error = f
         .objects()
-        .compare_trees(
+        .compare_trees_with(
             None,
             Some(root),
             TreeCompareLimits::default(),
@@ -340,7 +340,7 @@ fn zero_budgets_reject_before_result_growth(
     let f = Fixture::new();
     let root = f.single(Some((EntryMode::Blob, 1)));
     assert!(
-        matches!(f.objects().compare_trees(None,Some(root),limits,&AtomicBool::new(false)),Err(TreeCompareError::Limit(name)) if name == bound)
+        matches!(f.objects().compare_trees_with(None,Some(root),limits,&AtomicBool::new(false)),Err(TreeCompareError::Limit(name)) if name == bound)
     );
 }
 
@@ -359,7 +359,7 @@ fn exact_limits_succeed() {
     };
     assert_eq!(
         f.objects()
-            .compare_trees(None, Some(root), limits, &AtomicBool::new(false))
+            .compare_trees_with(None, Some(root), limits, &AtomicBool::new(false))
             .unwrap()
             .len(),
         1
@@ -374,7 +374,7 @@ fn bytes_are_bounded_during_storage_read(#[case] limits: TreeCompareLimits) {
     let root = f.single(Some((EntryMode::Blob, 1)));
     assert!(matches!(
         f.objects()
-            .compare_trees(None, Some(root), limits, &AtomicBool::new(false)),
+            .compare_trees_with(None, Some(root), limits, &AtomicBool::new(false)),
         Err(TreeCompareError::Read { .. })
     ));
 }
@@ -389,7 +389,7 @@ fn cumulative_bytes_include_both_sides() {
         ..TreeCompareLimits::default()
     };
     assert!(
-        matches!(f.objects().compare_trees(Some(old),Some(new),limits,&AtomicBool::new(false)),Err(TreeCompareError::Read {id,..}) if id == new)
+        matches!(f.objects().compare_trees_with(Some(old),Some(new),limits,&AtomicBool::new(false)),Err(TreeCompareError::Read {id,..}) if id == new)
     );
 }
 
@@ -417,7 +417,7 @@ fn depth_limit_precedes_queue_growth() {
     };
     assert!(matches!(
         f.objects()
-            .compare_trees(None, Some(root), limits, &AtomicBool::new(false)),
+            .compare_trees_with(None, Some(root), limits, &AtomicBool::new(false)),
         Err(TreeCompareError::Limit("depth"))
     ));
 }
@@ -432,7 +432,7 @@ fn cancellation_precedes_identity_skips_and_reads(
 ) {
     let f = Fixture::new();
     assert!(matches!(
-        f.objects().compare_trees(
+        f.objects().compare_trees_with(
             old,
             new,
             TreeCompareLimits::default(),
@@ -477,7 +477,7 @@ fn deep_tree_uses_an_explicit_stack() {
     };
     let changes = f
         .objects()
-        .compare_trees(None, Some(root), limits, &AtomicBool::new(false))
+        .compare_trees_with(None, Some(root), limits, &AtomicBool::new(false))
         .unwrap();
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].path.len(), 4004);
@@ -487,7 +487,7 @@ fn deep_tree_uses_an_explicit_stack() {
 fn equal_sha256_roots_do_not_bypass_format_validation() {
     let fixture = Fixture::new();
     let id = ObjectId::Sha256([1; 32]);
-    let result = fixture.objects().compare_trees(
+    let result = fixture.objects().compare_trees_with(
         Some(id),
         Some(id),
         TreeCompareLimits::default(),

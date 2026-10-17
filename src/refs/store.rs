@@ -768,8 +768,8 @@ impl<'a> References<'a> {
     /// refs.delete_without_reflog(&name, Expected::Value(Target::Direct(id)))?;
     /// assert!(refs.read(&name)?.is_none());
     /// assert!(
-    ///     repo.objects(girt::PackLimits::default())?
-    ///         .read(id, girt::ReadLimits::default())?
+    ///     repo.objects_with(girt::PackLimits::default())?
+    ///         .read_with(id, girt::ReadLimits::default())?
     ///         .is_some()
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())

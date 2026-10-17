@@ -37,7 +37,7 @@ fn selection_fallback_hashes_each_copy_and_clones_skip_damage() {
     fs::write(&second, identity_damage).unwrap();
     fs::remove_file(&fixture.index_path).unwrap();
     fs::remove_file(fixture.index_path.with_extension("pack")).unwrap();
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let clone = objects.clone();
     let cancel = AtomicBool::new(false);
     assert!(
@@ -46,11 +46,15 @@ fn selection_fallback_hashes_each_copy_and_clones_skip_damage() {
             .is_err()
     );
     counters::reset();
-    assert!(clone.read(fixture.ordinary, ReadLimits::default()).is_err());
+    assert!(
+        clone
+            .read_with(fixture.ordinary, ReadLimits::default())
+            .is_err()
+    );
     assert_eq!(counters::OS_READS.with(|reads| reads.get()), 0);
     assert_eq!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -68,12 +72,12 @@ fn rehash(bytes: &mut [u8]) {
 #[test]
 fn independently_refreshed_clones_share_new_pack_damage() {
     let fixture = Fixture::new(ObjectFormat::Sha1, true, 4);
-    let mut first = fixture.repo.objects(PackLimits::default()).unwrap();
+    let mut first = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let mut second = first.clone();
     counters::reset();
     assert_eq!(
         first
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -104,7 +108,7 @@ fn independently_refreshed_clones_share_new_pack_damage() {
         .unwrap();
     assert_eq!(
         first
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -113,7 +117,7 @@ fn independently_refreshed_clones_share_new_pack_damage() {
     counters::reset();
     assert_eq!(
         second
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),

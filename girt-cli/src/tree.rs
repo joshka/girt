@@ -4,10 +4,10 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 
 use clap_complete::ArgValueCompleter;
-use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
-use girt::{EntryMode, ObjectId, ObjectKind, Objects, Tree, TreeEntry};
+use color_eyre::eyre::{Result, WrapErr as _};
+use girt::{EntryMode, ObjectId, Objects, ReadLimits, Tree, TreeEntry};
 
-use crate::common::{objects, read_limits, resolve_tree, stdout, write_path};
+use crate::common::{resolve_tree, stdout, write_path};
 use crate::{Context, complete};
 
 /// Tree commands.
@@ -43,7 +43,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
 
 fn list(args: ListArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = objects(&repository)?;
+    let objects = repository.objects()?;
     let id = resolve_tree(&repository, &objects, &args.rev)?;
     let mut out = stdout();
     walk(&objects, id, &mut Vec::new(), &args, context.git, &mut out)?;
@@ -79,14 +79,9 @@ fn walk(
 }
 
 fn read_tree(objects: &Objects, id: ObjectId) -> Result<Tree> {
-    let object = objects
-        .read(id, read_limits())
-        .wrap_err_with(|| format!("reading {id}"))?
-        .ok_or_else(|| eyre!("missing tree {id}"))?;
-    if object.kind() != ObjectKind::Tree {
-        bail!("{id} is a {}, not a tree", object.kind().as_str());
-    }
-    Tree::parse(object.object_format(), object.data()).wrap_err_with(|| format!("parsing {id}"))
+    objects
+        .read_tree_with(id, ReadLimits::trusted())
+        .wrap_err_with(|| format!("reading tree {id}"))
 }
 
 /// Writes one `<mode> <kind> <id>\t<path>` line, quoting the path like Git when `git` is set.

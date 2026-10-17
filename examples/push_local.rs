@@ -6,8 +6,8 @@ use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits, send_local}
 use girt::refs::RefName;
 use girt::transport::TransportControl;
 use girt::{
-    Commit, CommitFields, EntryMode, ObjectKind, PackLimits, ReadLimits, Repository, Signature,
-    Tag, TagFields, Tree, TreeEntry,
+    Commit, CommitFields, EntryMode, ObjectKind, Repository, Signature, Tag, TagFields, Tree,
+    TreeEntry,
 };
 
 fn repository() -> Result<(tempfile::TempDir, Repository), Box<dyn std::error::Error>> {
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         message: b"First publication\n".to_vec(),
     })?)?;
     let cancel = AtomicBool::new(false);
-    let objects = source.objects(PackLimits::default())?;
+    let objects = source.objects()?;
     let commands = vec![
         PushCommand::new(RefName::new("refs/heads/main")?, None, commit)
             .with_force(ForcePolicy::FastForwardOnly),
@@ -70,8 +70,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("native local push rejected updates: {report:?}").into());
     }
     let restored = destination
-        .objects(PackLimits::default())?
-        .read(blob, ReadLimits::default())?
+        .objects()?
+        .read(blob)?
         .ok_or("missing pushed blob")?;
     assert_eq!(
         restored.data(),

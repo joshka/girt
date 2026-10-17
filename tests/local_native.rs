@@ -100,7 +100,7 @@ fn native_push_creates_and_deletes_git_reflog_with_explicit_identity(#[case] for
     let command = PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
         .with_force(ForcePolicy::FastForwardOnly);
     let cancel = AtomicBool::new(false);
-    let objects = source.objects(PackLimits::default()).unwrap();
+    let objects = source.objects_with(PackLimits::default()).unwrap();
     let prepared =
         PreparedPush::new(&objects, vec![command], &[], PushLimits::default(), &cancel).unwrap();
     assert!(matches!(
@@ -197,7 +197,7 @@ fn native_current_branch_policies_distinguish_updates_and_deletes() {
     .unwrap();
     let id = commit(&source);
     let cancel = AtomicBool::new(false);
-    let objects = source.objects(PackLimits::default()).unwrap();
+    let objects = source.objects_with(PackLimits::default()).unwrap();
     let update = PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
         .with_force(ForcePolicy::FastForwardOnly);
     let prepared =
@@ -293,7 +293,7 @@ fn native_push_uses_explicit_inherited_receive_config(#[case] format: ObjectForm
     let id = commit(&source);
     let name = RefName::new("refs/heads/topic").unwrap();
     let cancel = AtomicBool::new(false);
-    let objects = source.objects(PackLimits::default()).unwrap();
+    let objects = source.objects_with(PackLimits::default()).unwrap();
     let create = PreparedPush::new(
         &objects,
         vec![PushCommand::new(name.clone(), None, id).with_force(ForcePolicy::FastForwardOnly)],
@@ -378,7 +378,7 @@ fn native_hidden_ref_rejects_independently_of_visible_ref() {
             .with_force(ForcePolicy::FastForwardOnly)
     });
     let cancel = AtomicBool::new(false);
-    let objects = source.objects(PackLimits::default()).unwrap();
+    let objects = source.objects_with(PackLimits::default()).unwrap();
     let prepared = PreparedPush::new(
         &objects,
         commands.to_vec(),
@@ -432,7 +432,7 @@ fn native_stale_expectation_is_distinct_from_receiver_rejection(
     ];
     let cancel = AtomicBool::new(false);
     let prepared = PreparedPush::new(
-        &source.objects(PackLimits::default()).unwrap(),
+        &source.objects_with(PackLimits::default()).unwrap(),
         commands,
         &[],
         PushLimits::default(),
@@ -481,7 +481,7 @@ fn native_warn_mode_reports_accepted_current_branch_update() {
         .unwrap();
     let cancel = AtomicBool::new(false);
     let prepared = PreparedPush::new(
-        &source.objects(PackLimits::default()).unwrap(),
+        &source.objects_with(PackLimits::default()).unwrap(),
         vec![
             PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
                 .with_force(ForcePolicy::FastForwardOnly),
@@ -532,7 +532,7 @@ fn invalid_receive_boolean_refuses_before_native_installation(#[case] key: &str)
         .unwrap();
     let cancel = AtomicBool::new(false);
     let prepared = PreparedPush::new(
-        &source.objects(PackLimits::default()).unwrap(),
+        &source.objects_with(PackLimits::default()).unwrap(),
         vec![
             PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
                 .with_force(ForcePolicy::FastForwardOnly),
@@ -552,9 +552,9 @@ fn invalid_receive_boolean_refuses_before_native_installation(#[case] key: &str)
         Err(PushError::NotSent(PushFailure::Unsupported(_)))
     ));
     assert!(
-        dest.objects(PackLimits::default())
+        dest.objects_with(PackLimits::default())
             .unwrap()
-            .read(id, Default::default())
+            .read_with(id, Default::default())
             .unwrap()
             .is_none()
     );
@@ -589,7 +589,7 @@ fn native_fetch_and_push_preserve_git_objects_and_refs(
     assert_eq!(git_cat_file(&fetched, id), git_cat_file(&source, id));
     let command = PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
         .with_force(ForcePolicy::FastForwardOnly);
-    let objects = source.objects(PackLimits::default()).unwrap();
+    let objects = source.objects_with(PackLimits::default()).unwrap();
     let prepared = PreparedPush::new(
         &objects,
         vec![command],
@@ -631,7 +631,7 @@ fn native_push_deletes_one_ref_and_creates_another(
     let source = repository(&root, "source", format, backend);
     let dest = repository(&root, "dest", format, backend);
     let id = commit(&source);
-    let objects = source.objects(PackLimits::default()).unwrap();
+    let objects = source.objects_with(PackLimits::default()).unwrap();
     let cancel = AtomicBool::new(false);
     let old = PushCommand::new(RefName::new("refs/for/main").unwrap(), None, id)
         .with_force(ForcePolicy::FastForwardOnly);
@@ -813,9 +813,9 @@ fn native_fetch_materializes_absent_canonical_empty_tree(#[case] format: ObjectF
         .install(&destination, PackLimits::default(), &cancel)
         .unwrap();
     let tree = destination
-        .objects(PackLimits::default())
+        .objects_with(PackLimits::default())
         .unwrap()
-        .read(empty_tree, Default::default())
+        .read_with(empty_tree, Default::default())
         .unwrap()
         .unwrap();
     assert_eq!(tree.kind(), girt::ObjectKind::Tree);
@@ -939,7 +939,7 @@ fn native_push_accepts_history_reaching_unstored_empty_tree(#[case] format: Obje
     ];
     let cancel = AtomicBool::new(false);
     let prepared = PreparedPush::new(
-        &source.objects(PackLimits::default()).unwrap(),
+        &source.objects_with(PackLimits::default()).unwrap(),
         commands,
         &[child],
         PushLimits::default(),
@@ -1116,7 +1116,7 @@ fn pre_receive_rejection_does_not_materialize_unstored_empty_tree(#[case] format
     std::fs::write(&path, format!("#!/bin/sh\ntest -f \"$GIT_OBJECT_DIRECTORY/{relative_tree}\" || exit 9\ngit cat-file -e {tree} || exit 9\nprintf visible >hook-observed\ncat >/dev/null\nexit 1\n")).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     let prepared = PreparedPush::new(
-        &source.objects(PackLimits::default()).unwrap(),
+        &source.objects_with(PackLimits::default()).unwrap(),
         vec![
             PushCommand::new(RefName::new(b"refs/heads/copy").unwrap(), None, parent)
                 .with_force(ForcePolicy::FastForwardOnly),
@@ -1279,7 +1279,7 @@ fn native_push_opens_destination_within_destination_pack_limits(
         offset_minutes: 0,
     };
     let cancel = AtomicBool::new(false);
-    let objects = source.objects(PackLimits::default()).unwrap();
+    let objects = source.objects_with(PackLimits::default()).unwrap();
     let prepared = PreparedPush::new(
         &objects,
         vec![command],

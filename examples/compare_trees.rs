@@ -2,14 +2,10 @@
 //! Use `-` for either empty side. Without arguments, compare two disposable sample trees.
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
 
 use clap::Parser;
 use girt::display::quote_path;
-use girt::{
-    EntryMode, InitKind, ObjectId, PackLimits, Repository, Tree, TreeCompareLimits, TreeEntry,
-    TreeValue,
-};
+use girt::{EntryMode, InitKind, ObjectId, Repository, Tree, TreeEntry, TreeValue};
 
 /// One side of a comparison: a tree ID, or `-` for an empty side.
 #[derive(Clone, Copy, Debug)]
@@ -73,13 +69,8 @@ fn main() -> girt::Result<()> {
             )?)?;
             (repo, Some(old), Some(new))
         };
-    let objects = repo.objects(PackLimits::default())?;
-    let changes = objects.compare_trees(
-        old,
-        new,
-        TreeCompareLimits::default(),
-        &AtomicBool::new(false),
-    )?;
+    let objects = repo.objects()?;
+    let changes = objects.compare_trees(old, new)?;
     for change in changes {
         // Git's quoting keeps non-UTF-8 names and control bytes distinguishable on a terminal.
         println!(

@@ -53,10 +53,10 @@
 //! };
 //! let (old, new) = (tree(b"apples\npears\n")?, tree(b"apples\nplums\n")?);
 //!
-//! let objects = repo.objects(PackLimits::default())?;
+//! let objects = repo.objects_with(PackLimits::default())?;
 //! let cancel = AtomicBool::new(false);
 //! let changes =
-//!     objects.compare_trees(Some(old), Some(new), TreeCompareLimits::default(), &cancel)?;
+//!     objects.compare_trees_with(Some(old), Some(new), TreeCompareLimits::default(), &cancel)?;
 //! let limits = DiffLimits::default();
 //! let content = BlobContent::read(
 //!     &objects,

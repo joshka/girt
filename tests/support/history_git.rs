@@ -98,7 +98,7 @@ impl History {
     pub fn objects(&self) -> girt::Objects {
         Repository::open(self.root.path())
             .unwrap()
-            .objects(girt::PackLimits::default())
+            .objects_with(girt::PackLimits::default())
             .unwrap()
     }
     pub fn is_ancestor(&self, left: ObjectId, right: ObjectId) -> bool {

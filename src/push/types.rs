@@ -22,7 +22,7 @@ use crate::{ObjectId, PackCompression, PackWriteLimits, ReadLimits};
 /// # girt::workflow::fetch(&repo, "origin", &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]), &girt::workflow::Environment::default(), &mut girt::workflow::NoCallbacks)?;
 /// // `repo` has fetched `main`; `rewritten` does not descend from it.
 /// let rewritten = commit(&repo, &[], "Rewritten history")?;
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let cancel = AtomicBool::new(false);
 /// let name = RefName::new("refs/heads/main")?;
 ///
@@ -475,7 +475,7 @@ pub struct RefRewrite {
 /// ];
 ///
 /// let cancel = AtomicBool::new(false);
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let prepared = PreparedPush::new(&objects, commands, &[main], PushLimits::default(), &cancel)?;
 /// let request = LocalPushRequest::new(&prepared);
 /// let report = send_local(upstream.git_dir(), request, TransportControl::new(&cancel), |_| {})?;
@@ -573,7 +573,7 @@ impl PushReport {
 /// # let (directory, _, repo, _, _) = include!("../doctest/remote.rs");
 ///
 /// let cancel = AtomicBool::new(false);
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let prepared = PreparedPush::new(&objects, Vec::new(), &[], PushLimits::default(), &cancel)?;
 /// let missing = directory.path().join("missing.git");
 /// let result = send_local(
@@ -661,7 +661,7 @@ pub enum PushError {
 ///     PushCommand::new(main.clone(), None, first),
 ///     PushCommand::new(main, None, second),
 /// ];
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let result = PreparedPush::new(
 ///     &objects,
 ///     commands,

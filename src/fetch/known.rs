@@ -63,7 +63,7 @@ use crate::{IdMap, IdSet, Object, ObjectId, ObjectKind, Objects};
 /// let full = fetch(&KnownHistory::default())?.received().object_count();
 ///
 /// // Offer the local tip as history the destination already has.
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let known = KnownHistory::from_store(objects, &[main], FetchLimits::default(), &cancel)?;
 /// let incremental = fetch(&known)?.received().object_count();
 /// assert!(incremental < full, "{incremental} objects instead of {full}");
@@ -116,7 +116,7 @@ impl KnownObjects for KnownHistory {
         }
         self.store
             .as_ref()?
-            .read(id, crate::ReadLimits::trusted())
+            .read_with(id, crate::ReadLimits::trusted())
             .ok()
             .flatten()
             .map(Cow::Owned)
@@ -173,7 +173,7 @@ fn ancestor_entry(
     bytes: &mut usize,
 ) -> Result<Option<Ancestor>, Error> {
     let read = discovery_read(limits, *bytes);
-    let Ok(Some(object)) = store.read(id, read) else {
+    let Ok(Some(object)) = store.read_with(id, read) else {
         return Ok(None);
     };
     *bytes = bytes
@@ -211,7 +211,7 @@ fn discover_tree_boundaries(
 ) -> Result<(), Error> {
     check_cancelled(cancel)?;
     let read = discovery_read(limits, *bytes);
-    let Ok(Some(object)) = store.read(tree, read) else {
+    let Ok(Some(object)) = store.read_with(tree, read) else {
         return Ok(());
     };
     *bytes = bytes
@@ -236,7 +236,7 @@ fn discover_tree_boundaries(
     for id in trees.into_iter().take(DISCOVERY_SUBTREES) {
         check_cancelled(cancel)?;
         let read = discovery_read(limits, *bytes);
-        let Ok(Some(object)) = store.read(id, read) else {
+        let Ok(Some(object)) = store.read_with(id, read) else {
             continue;
         };
         *bytes = bytes
@@ -455,7 +455,7 @@ impl KnownHistory {
                 break;
             }
             check_cancelled(cancel)?;
-            let Ok(Some(object)) = store.read(id, limits.known_read) else {
+            let Ok(Some(object)) = store.read_with(id, limits.known_read) else {
                 continue;
             };
             if object.kind() != ObjectKind::Commit {
@@ -545,7 +545,7 @@ impl KnownHistory {
     /// # let (_directory, upstream, _, main, _) = include!("../doctest/remote.rs");
     ///
     /// // Read and verify everything reachable from `main`, within the limits.
-    /// let objects = upstream.objects(PackLimits::default())?;
+    /// let objects = upstream.objects_with(PackLimits::default())?;
     /// let known = KnownHistory::new(
     ///     &objects,
     ///     &[main],
@@ -788,7 +788,7 @@ fn walk(
         let object = if proof.is_none() {
             Some(
                 store
-                    .read(id, read)
+                    .read_with(id, read)
                     .map_err(|source| Error::LocalRead { id, source })?
                     .ok_or(Error::Missing(id))?,
             )
@@ -927,7 +927,7 @@ mod tests {
     fn ancestor_graph() -> (tempfile::TempDir, Objects, ObjectId, ObjectId) {
         let (root, objects, parent, _) = graph();
         let object = objects
-            .read(parent, crate::ReadLimits::default())
+            .read_with(parent, crate::ReadLimits::default())
             .unwrap()
             .unwrap();
         let mut fields = Commit::parse(ObjectFormat::Sha1, object.data())
@@ -1028,7 +1028,7 @@ mod tests {
     fn wide_ancestor_graph() -> (tempfile::TempDir, Objects, Vec<ObjectId>, ObjectId) {
         let (root, objects, parent, _) = ancestor_graph();
         let object = objects
-            .read(parent, crate::ReadLimits::default())
+            .read_with(parent, crate::ReadLimits::default())
             .unwrap()
             .unwrap();
         let mut fields = Commit::parse(ObjectFormat::Sha1, object.data())

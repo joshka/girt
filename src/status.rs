@@ -1,7 +1,10 @@
 //! Read-only staged changes and literal working-tree observations.
 //!
 //! Call [`Repository::raw_status`](crate::Repository::raw_status) with [`Baseline`] to choose the
-//! comparison tree and [`Untracked`] to choose whether raw untracked leaves are listed. [`Report`]
+//! comparison tree and [`Untracked`] to choose whether raw untracked leaves are listed. It uses
+//! default [`Limits`] and never cancels;
+//! [`Repository::raw_status_with`](crate::Repository::raw_status_with) takes limits and a
+//! cancellation flag. [`Report`]
 //! separates staged, unstaged, unmerged, unchecked gitlink, and boundary observations. Empty
 //! change lists do not establish Git-default cleanliness or authorize checkout.
 //!
@@ -26,10 +29,8 @@
 //! report is an observation; nothing is refreshed or written:
 //!
 //! ```
-//! use std::sync::atomic::AtomicBool;
-//!
 //! use girt::index::{Entry, Mode};
-//! use girt::status::{Baseline, Change, Limits, Untracked};
+//! use girt::status::{Baseline, Change, Untracked};
 //! use girt::{InitKind, ObjectFormat, Repository};
 //!
 //! # if cfg!(not(any(target_os = "linux", target_os = "macos"))) {
@@ -49,12 +50,7 @@
 //! std::fs::write(worktree.join("hello.txt"), b"working\n")?;
 //! std::fs::write(worktree.join("scratch.txt"), b"new\n")?;
 //!
-//! let report = repository.raw_status(
-//!     Baseline::Head,
-//!     Untracked::RawFilesWithoutIgnores,
-//!     Limits::default(),
-//!     &AtomicBool::new(false),
-//! )?;
+//! let report = repository.raw_status(Baseline::Head, Untracked::RawFilesWithoutIgnores)?;
 //! // HEAD is unborn, so the whole index is staged relative to an empty tree.
 //! assert_eq!(report.staged[0].path, b"hello.txt");
 //! assert_eq!(report.unstaged[0].path, b"hello.txt");

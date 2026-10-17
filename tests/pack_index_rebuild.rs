@@ -89,12 +89,15 @@ fn overwrite(path: &Path, bytes: &[u8]) {
 
 /// Checks the rebuilt index with Git, then reads every fixture object through it with girt.
 fn verify_pack(fixture: &Fixture) {
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let read: Vec<_> = fixture
         .records
         .iter()
         .map(|(id, _, _)| {
-            let object = objects.read(*id, ReadLimits::default()).unwrap().unwrap();
+            let object = objects
+                .read_with(*id, ReadLimits::default())
+                .unwrap()
+                .unwrap();
             (object.id(), object.kind(), object.into_data())
         })
         .collect();

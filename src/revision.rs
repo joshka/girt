@@ -67,7 +67,7 @@
 //! # let main = RefName::new("refs/heads/main")?;
 //! # repo.references()?.transaction(&[RefEdit::new(main, Some(Target::Direct(second)),
 //! #     Expected::Absent, Reflog::Preserve)])?;
-//! let objects = repo.objects(PackLimits::default())?;
+//! let objects = repo.objects_with(PackLimits::default())?;
 //! let resolver = Resolver::new(&repo, &objects)?;
 //!
 //! let parent = resolver.resolve(&"main~1".parse::<Revision>()?)?;

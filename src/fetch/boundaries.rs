@@ -143,7 +143,7 @@ impl TreeBoundaries {
     fn read(&mut self, known: &KnownHistory, id: ObjectId, kind: ObjectKind) -> Option<Object> {
         self.objects = self.objects.checked_sub(1)?;
         let read = super::known::discovery_read(self.limits, self.bytes);
-        let object = known.store.as_ref()?.read(id, read).ok().flatten()?;
+        let object = known.store.as_ref()?.read_with(id, read).ok().flatten()?;
         self.bytes = self.bytes.checked_sub(object.data().len())?;
         (object.kind() == kind).then_some(object)
     }
@@ -283,7 +283,7 @@ mod tests {
         let tree: ObjectId = git(root.path(), &["rev-parse", "HEAD^{tree}"])
             .parse()
             .unwrap();
-        let objects = repo.objects(Default::default()).unwrap();
+        let objects = repo.objects_with(Default::default()).unwrap();
         let known =
             KnownHistory::from_store_roots(objects, &[commit], &AtomicBool::new(false)).unwrap();
         (root, known, commit, tree)

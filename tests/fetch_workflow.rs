@@ -180,9 +180,9 @@ fn stored(repository: &Repository, refname: &str) -> Option<Target> {
 fn assert_available(repository: &Repository, id: ObjectId) {
     assert!(
         repository
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .read(id, ReadLimits::default())
+            .read_with(id, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -225,7 +225,7 @@ fn initial_multiple_refs_exclusions_and_incremental_fetch_agree_with_git() {
     assert_available(&repository, source.tag);
     source.set("refs/heads/main", source.second);
     let known = KnownHistory::new(
-        &repository.objects(PackLimits::default()).unwrap(),
+        &repository.objects_with(PackLimits::default()).unwrap(),
         &[source.first],
         FetchLimits::default(),
         &AtomicBool::new(false),
@@ -513,7 +513,7 @@ fn known_only_unchanged_fetch_does_not_write_refs_or_logs() {
         .modified()
         .unwrap();
     let known = KnownHistory::new(
-        &repository.objects(PackLimits::default()).unwrap(),
+        &repository.objects_with(PackLimits::default()).unwrap(),
         &[source.first],
         FetchLimits::default(),
         &AtomicBool::new(false),
@@ -1065,7 +1065,7 @@ fn missing_known_dependency_prevents_publication() {
     let specs = ["refs/heads/main:refs/remotes/origin/main"];
     fetch(&repository, &source, &specs);
     let known = KnownHistory::new(
-        &repository.objects(PackLimits::default()).unwrap(),
+        &repository.objects_with(PackLimits::default()).unwrap(),
         &[source.first],
         FetchLimits::default(),
         &AtomicBool::new(false),
@@ -1324,9 +1324,9 @@ fn corrupt_loose_shadow_does_not_block_publication() {
     assert!(stored(&repository, "refs/remotes/origin/main").is_some());
     assert!(
         repository
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .read(source.blob, ReadLimits::default())
+            .read_with(source.blob, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -1364,7 +1364,7 @@ fn retained_workflow_rejects_known_dependencies_before_acquiring_marker() {
     let specs = ["refs/heads/main:refs/remotes/origin/main"];
     fetch(&repository, &source, &specs);
     let known = KnownHistory::new(
-        &repository.objects(PackLimits::default()).unwrap(),
+        &repository.objects_with(PackLimits::default()).unwrap(),
         &[source.first],
         FetchLimits::default(),
         &AtomicBool::new(false),
@@ -1509,7 +1509,7 @@ fn received_history_matches_git_fetch_exactly(#[case] format: &str) {
         &["refs/heads/main:refs/remotes/origin/main"],
     );
     let known = KnownHistory::from_store(
-        repository.objects(PackLimits::default()).unwrap(),
+        repository.objects_with(PackLimits::default()).unwrap(),
         &[source.first],
         FetchLimits::default(),
         &AtomicBool::new(false),
@@ -1663,9 +1663,9 @@ fn received_proof_does_not_trust_an_earlier_mislabelled_pack(#[case] format: &st
     install_mislabelled_commit(&source, &repository);
     assert!(
         repository
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .read(source.first, ReadLimits::default())
+            .read_with(source.first, ReadLimits::default())
             .is_err()
     );
     ready
@@ -1675,9 +1675,9 @@ fn received_proof_does_not_trust_an_earlier_mislabelled_pack(#[case] format: &st
         stored(&repository, "refs/remotes/origin/main"),
         Some(Target::Direct(source.first))
     );
-    let objects = repository.objects(PackLimits::default()).unwrap();
+    let objects = repository.objects_with(PackLimits::default()).unwrap();
     let first = objects
-        .read(source.first, ReadLimits::default())
+        .read_with(source.first, ReadLimits::default())
         .unwrap()
         .unwrap();
     assert_eq!(first.id(), source.first);
@@ -1769,13 +1769,13 @@ fn fetch_ancestry_matches_git(
     let h = history_git::History::new(&parents, true);
     assert_eq!(
         h.objects()
-            .is_ancestor(h.ids[old], h.ids[new], girt::HistoryLimits::default())
+            .is_ancestor_with(h.ids[old], h.ids[new], girt::HistoryLimits::default())
             .unwrap(),
         h.is_ancestor(h.ids[old], h.ids[new])
     );
     assert_eq!(
         h.objects()
-            .merge_bases(h.ids[old], h.ids[new], girt::HistoryLimits::default())
+            .merge_bases_with(h.ids[old], h.ids[new], girt::HistoryLimits::default())
             .unwrap(),
         h.query("merge-base", &[h.ids[old], h.ids[new]])
     );
@@ -1793,7 +1793,7 @@ fn fetch_ancestry_matches_git(
     fetch(&repository, &source, &specs);
     let repository = Repository::open(repository.git_dir()).unwrap();
     let known = KnownHistory::from_store(
-        repository.objects(PackLimits::default()).unwrap(),
+        repository.objects_with(PackLimits::default()).unwrap(),
         &[source.first],
         FetchLimits::default(),
         &AtomicBool::new(false),

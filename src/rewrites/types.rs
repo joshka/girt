@@ -35,7 +35,7 @@ use crate::{
 ///     ObjectFormat::Sha1,
 ///     vec![entry(b"source", edited), entry(b"copy", original)],
 /// )?)?;
-/// let copies = repo.objects(Default::default())?.detect_rewrites(
+/// let copies = repo.objects_with(Default::default())?.detect_rewrites(
 ///     Some(old),
 ///     Some(new),
 ///     Options::default().with_copies(Copies::Modified),
@@ -147,7 +147,7 @@ impl Options {
     /// let id = loose.write_blob(b"")?;
     /// let old = tree(vec![entry(b"old", id, EntryMode::Blob)])?;
     /// let new = tree(vec![entry(b"new", id, EntryMode::Blob)])?;
-    /// let objects = repo.objects(Default::default())?;
+    /// let objects = repo.objects_with(Default::default())?;
     /// assert!(
     ///     objects
     ///         .detect_rewrites(
@@ -216,7 +216,7 @@ impl Options {
     /// let after = loose.write_blob(b"after\0binary")?;
     /// let old = tree(vec![entry(b"old", before, EntryMode::Blob)])?;
     /// let new = tree(vec![entry(b"new", after, EntryMode::Blob)])?;
-    /// let objects = repo.objects(Default::default())?;
+    /// let objects = repo.objects_with(Default::default())?;
     /// let options = Options::default()
     ///     .with_approximate_binary(false)
     ///     .with_candidate_limit(0);
@@ -294,14 +294,16 @@ impl Default for Options {
 /// let id = loose.write_blob(b"same")?;
 /// let old = tree(vec![entry(b"old", id, EntryMode::Blob)])?;
 /// let new = tree(vec![entry(b"new", id, EntryMode::Blob)])?;
-/// let result = repo.objects(Default::default())?.detect_rewrites_or_exact(
-///     Some(old),
-///     Some(new),
-///     Options::default().with_candidate_limit(0),
-///     Limits::default().with_max_pairs(0),
-///     None,
-///     &cancel,
-/// );
+/// let result = repo
+///     .objects_with(Default::default())?
+///     .detect_rewrites_or_exact(
+///         Some(old),
+///         Some(new),
+///         Options::default().with_candidate_limit(0),
+///         Limits::default().with_max_pairs(0),
+///         None,
+///         &cancel,
+///     );
 /// assert!(matches!(result, Err(Error::Limit("pairs"))));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -448,7 +450,7 @@ impl Kind {
 ///     entry(b"source", after, EntryMode::Blob),
 ///     entry(b"copy", after, EntryMode::Blob),
 /// ])?;
-/// let records = repo.objects(Default::default())?.detect_rewrites(
+/// let records = repo.objects_with(Default::default())?.detect_rewrites(
 ///     Some(old),
 ///     Some(new),
 ///     Options::default()
@@ -553,7 +555,7 @@ impl InexactSkipped {
 ///     directory.path().join("r"),
 ///     InitKind::Bare,
 /// )?;
-/// let result = repo.objects(Default::default())?.detect_rewrites(
+/// let result = repo.objects_with(Default::default())?.detect_rewrites(
 ///     None,
 ///     None,
 ///     Options::default().with_similarity(0),

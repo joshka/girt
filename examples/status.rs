@@ -1,9 +1,8 @@
 //! Run without arguments for a disposable fixture, or pass an existing repository path.
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 
 use clap::Parser;
-use girt::status::{Baseline, Limits, Untracked};
+use girt::status::{Baseline, Untracked};
 use girt::{InitKind, Repository};
 
 #[derive(Parser)]
@@ -20,12 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => Repository::open(path)?,
         None => fixture(&temp)?,
     };
-    let report = repository.raw_status(
-        Baseline::Head,
-        Untracked::RawFilesWithoutIgnores,
-        Limits::default(),
-        &AtomicBool::new(false),
-    )?;
+    let report = repository.raw_status(Baseline::Head, Untracked::RawFilesWithoutIgnores)?;
     println!(
         "Literal bytes and POSIX modes; ignores/attributes/config normalization are not applied."
     );

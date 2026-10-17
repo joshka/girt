@@ -24,7 +24,7 @@ use super::{FetchLimits, KnownHistory, LocalFetchProgress, ValidationProgress};
 /// assert!(full.known.is_none());
 ///
 /// // An incremental one, excluding what the destination already has:
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let known = KnownHistory::new(
 ///     &objects,
 ///     &[tip],

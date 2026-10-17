@@ -26,7 +26,7 @@ impl Fixture {
         let target = make_tree(&repo, count, b'n');
         let old = update.then_some(old_tree);
         if update {
-            repo.checkout_tree(None, old, Default::default(), &AtomicBool::new(false))
+            repo.checkout_tree_with(None, old, Default::default(), &AtomicBool::new(false))
                 .unwrap();
         }
         Self {
@@ -65,7 +65,7 @@ fn benchmark(c: &mut Criterion) {
                 |f| {
                     black_box(
                         f.repo
-                            .checkout_tree(
+                            .checkout_tree_with(
                                 f.old,
                                 Some(f.target),
                                 Default::default(),

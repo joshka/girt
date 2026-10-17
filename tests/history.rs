@@ -20,24 +20,24 @@ fn criss_cross_matches_git(
     );
     let objects = h.objects();
     let mut reachable = objects
-        .walk(&[h.ids[3], h.ids[4]], HistoryLimits::default())
+        .walk_with(&[h.ids[3], h.ids[4]], HistoryLimits::default())
         .unwrap();
     reachable.sort();
     assert_eq!(reachable, h.query("rev-list", &[h.ids[3], h.ids[4]]));
     assert_eq!(
         objects
-            .merge_bases(h.ids[3], h.ids[4], HistoryLimits::default())
+            .merge_bases_with(h.ids[3], h.ids[4], HistoryLimits::default())
             .unwrap(),
         h.query("merge-base", &[h.ids[3], h.ids[4]])
     );
     assert!(
         objects
-            .is_ancestor(h.ids[1], h.ids[4], HistoryLimits::default())
+            .is_ancestor_with(h.ids[1], h.ids[4], HistoryLimits::default())
             .unwrap()
     );
     assert!(
         !objects
-            .is_ancestor(h.ids[3], h.ids[4], HistoryLimits::default())
+            .is_ancestor_with(h.ids[3], h.ids[4], HistoryLimits::default())
             .unwrap()
     );
     assert_eq!(h.query("merge-base", &[h.ids[1], h.ids[4]]), vec![h.ids[1]]);
@@ -59,7 +59,9 @@ fn breadth_first_order(
     let roots: Vec<_> = roots.iter().map(|&i| h.ids[i]).collect();
     let expected: Vec<_> = expected.iter().map(|&i| h.ids[i]).collect();
     assert_eq!(
-        h.objects().walk(&roots, HistoryLimits::default()).unwrap(),
+        h.objects()
+            .walk_with(&roots, HistoryLimits::default())
+            .unwrap(),
         expected
     );
 }
@@ -85,13 +87,13 @@ fn endpoint_queries(
     assert_eq!(h.is_ancestor(h.ids[left], h.ids[right]), ancestor);
     assert_eq!(
         h.objects()
-            .merge_bases(h.ids[left], h.ids[right], HistoryLimits::default())
+            .merge_bases_with(h.ids[left], h.ids[right], HistoryLimits::default())
             .unwrap(),
         expected
     );
     assert_eq!(
         h.objects()
-            .is_ancestor(h.ids[left], h.ids[right], HistoryLimits::default())
+            .is_ancestor_with(h.ids[left], h.ids[right], HistoryLimits::default())
             .unwrap(),
         ancestor
     );
@@ -106,7 +108,7 @@ fn graph_limits(#[case] max_commits: usize, #[case] max_parents: usize, #[case] 
         .with_max_commits(max_commits)
         .with_max_parents(max_parents);
     assert!(
-        matches!(h.objects().walk(&[h.ids[1]],limits), Err(HistoryError::Limit(name)) if name == expected)
+        matches!(h.objects().walk_with(&[h.ids[1]],limits), Err(HistoryError::Limit(name)) if name == expected)
     );
 }
 
@@ -123,7 +125,7 @@ fn missing_parent_is_an_error_even_for_identical_endpoints() {
     )
     .unwrap();
     assert!(
-        matches!(h.objects().merge_bases(h.ids[1],h.ids[1],HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == h.ids[0])
+        matches!(h.objects().merge_bases_with(h.ids[1],h.ids[1],HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == h.ids[0])
     );
 }
 
@@ -140,7 +142,7 @@ fn invalid_objects(#[case] kind: &str, #[case] data: &[u8], #[case] parse: bool)
     let id: ObjectId = std::str::from_utf8(&out).unwrap().trim().parse().unwrap();
     let error = h
         .objects()
-        .walk(&[id], HistoryLimits::default())
+        .walk_with(&[id], HistoryLimits::default())
         .unwrap_err();
     assert_eq!(matches!(error, HistoryError::Parse { .. }), parse);
     assert_eq!(matches!(error, HistoryError::NotCommit(_)), !parse);
@@ -152,7 +154,7 @@ fn per_object_limits_preserve_storage_error() {
     let mut limits = HistoryLimits::default();
     limits.read.max_object_bytes = 1;
     assert!(matches!(
-        h.objects().walk(&h.ids, limits),
+        h.objects().walk_with(&h.ids, limits),
         Err(HistoryError::Read { .. })
     ));
 }
@@ -164,7 +166,7 @@ fn exact_limits_accept_duplicate_edges() {
         .with_max_commits(2)
         .with_max_parents(2);
     assert_eq!(
-        h.objects().walk(&[h.ids[1]], limits).unwrap(),
+        h.objects().walk_with(&[h.ids[1]], limits).unwrap(),
         vec![h.ids[1], h.ids[0]]
     );
 }
@@ -183,7 +185,7 @@ fn corrupt_parent_preserves_storage_error() {
     std::fs::write(path, b"invalid zlib").unwrap();
     assert!(matches!(
         h.objects()
-            .is_ancestor(h.ids[1], h.ids[1], HistoryLimits::default()),
+            .is_ancestor_with(h.ids[1], h.ids[1], HistoryLimits::default()),
         Err(HistoryError::Read { .. })
     ));
 }

@@ -179,8 +179,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report = repo.collect_garbage(&mut PrivateFixture, &policy, &cancel)?;
     assert_eq!(report.pruned.unwrap().deleted, [id]);
     assert!(
-        repo.objects(Default::default())?
-            .read(id, Default::default())?
+        repo.objects()?
+            .read(id)?
             .is_none()
     );
     Ok(())

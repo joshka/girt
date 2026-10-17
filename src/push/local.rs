@@ -41,7 +41,7 @@ use crate::transport::TransportControl;
 /// edit.commit()?;
 ///
 /// let topic = RefName::new("refs/heads/topic")?;
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let cancel = AtomicBool::new(false);
 /// let prepared = PreparedPush::new(
 ///     &objects,
@@ -187,7 +187,7 @@ impl<'a> LocalPushRequest<'a> {
 /// # let commit = include!("../doctest/commit.rs");
 /// # girt::workflow::fetch(&repo, "origin", &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]), &girt::workflow::Environment::default(), &mut girt::workflow::NoCallbacks)?;
 /// let next = commit(&repo, &[main], "Next commit")?;
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let cancel = AtomicBool::new(false);
 /// let command = PushCommand::new(RefName::new("refs/heads/main")?, Some(main), next);
 /// let prepared = PreparedPush::new(&objects, vec![command], &[main], PushLimits::default(), &cancel)?;

@@ -150,7 +150,7 @@ fn prepare(f: &Fixture, roots: &[ObjectId], depth: usize) -> PreparedPush {
 fn prepare_with_limits(f: &Fixture, roots: &[ObjectId], limits: PushLimits) -> PreparedPush {
     let repo = Repository::open(&f.source).unwrap();
     PreparedPush::new(
-        &repo.objects(PackLimits::trusted()).unwrap(),
+        &repo.objects_with(PackLimits::trusted()).unwrap(),
         vec![
             PushCommand::new(RefName::new("refs/heads/main").unwrap(), Some(f.old), f.new)
                 .with_force(ForcePolicy::FastForwardOnly),
@@ -403,7 +403,7 @@ fn corrupt_external_base_refuses_preparation_and_preserves_receiver(#[case] form
     std::fs::write(path, bytes).unwrap();
     let repo = Repository::open(&f.source).unwrap();
     let result = PreparedPush::new(
-        &repo.objects(PackLimits::trusted()).unwrap(),
+        &repo.objects_with(PackLimits::trusted()).unwrap(),
         vec![
             PushCommand::new(RefName::new("refs/heads/main").unwrap(), Some(f.old), f.new)
                 .with_force(ForcePolicy::FastForwardOnly),

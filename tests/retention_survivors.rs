@@ -86,10 +86,10 @@ fn packs(root: &Path) -> Vec<PathBuf> {
 fn read(root: &Path, object: ObjectId, bound: ReadLimits) -> Result<Vec<u8>, String> {
     let repo = Repository::open(root).map_err(|e| e.to_string())?;
     let objects = repo
-        .objects(PackLimits::default())
+        .objects_with(PackLimits::default())
         .map_err(|e| e.to_string())?;
     objects
-        .read(object, bound)
+        .read_with(object, bound)
         .map_err(|e| e.to_string())?
         .map(|o| o.data().to_vec())
         .ok_or_else(|| "missing object".into())

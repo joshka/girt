@@ -3,15 +3,16 @@
 use std::io::Write;
 use std::ops::Range;
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
 
 use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _};
 use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
 use girt::display::quote_path;
 use girt::rewrites::{Copies, Kind, Limits, Options};
-use girt::{ChangeStatus, EntryMode, ObjectId, Objects, TreeChange, TreeCompareLimits, TreeValue};
+use girt::{ChangeStatus, EntryMode, ObjectId, Objects, ReadLimits, TreeChange, TreeValue};
 
-use crate::common::{not_cancelled, objects, read_limits, resolve_tree, stdout};
+use crate::common::{resolve_tree, stdout};
 use crate::{Context, complete};
 
 /// Lines of unchanged context around each patch hunk.
@@ -75,7 +76,7 @@ impl Entry {
 
 pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = objects(&repository)?;
+    let objects = repository.objects()?;
     let old = resolve_tree(&repository, &objects, &args.a)?;
     let new = resolve_tree(&repository, &objects, &args.b)?;
     let entries = compare(&objects, old, new, args.renames || args.copies, args.copies)?;
@@ -124,12 +125,7 @@ fn compare(
     copies: bool,
 ) -> Result<Vec<Entry>> {
     let changes = objects
-        .compare_trees(
-            Some(old),
-            Some(new),
-            TreeCompareLimits::default(),
-            not_cancelled(),
-        )
+        .compare_trees(Some(old), Some(new))
         .wrap_err("comparing trees")?;
     if !renames {
         return Ok(changes.into_iter().map(Entry::Change).collect());
@@ -146,7 +142,7 @@ fn compare(
             options,
             Limits::default(),
             None,
-            not_cancelled(),
+            &AtomicBool::new(false),
         )
         .wrap_err("detecting renames")?;
     let find = |path: &[u8]| changes.iter().find(|change| change.path == path);
@@ -327,7 +323,7 @@ fn write_file_patch(
         &new_bytes,
         BinaryMode::Auto,
         limits,
-        not_cancelled(),
+        &AtomicBool::new(false),
     )
     .wrap_err("diffing contents")?
     {
@@ -359,7 +355,7 @@ fn read_side(objects: &Objects, value: Option<TreeValue>) -> Result<Vec<u8>> {
         return Ok(format!("Subproject commit {}\n", value.id).into_bytes());
     }
     let object = objects
-        .read(value.id, read_limits())
+        .read_with(value.id, ReadLimits::trusted())
         .wrap_err_with(|| format!("reading {}", value.id))?
         .ok_or_else(|| color_eyre::eyre::eyre!("missing object {}", value.id))?;
     Ok(object.into_data())

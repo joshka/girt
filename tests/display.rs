@@ -136,7 +136,7 @@ fn change_letters_match_git_diff_tree() {
     let renamed = lines(git(f.root.path(), &[&args[..], &["-M"]].concat(), b""));
 
     let changes = objects
-        .compare_trees(Some(old), Some(new), Default::default(), &cancel)
+        .compare_trees_with(Some(old), Some(new), Default::default(), &cancel)
         .unwrap();
     let ours: Vec<String> = changes
         .iter()
@@ -204,7 +204,7 @@ fn dates_match_git_log(#[case] date: &str) {
 
     let parsed = f
         .objects()
-        .read_commit(commit, ReadLimits::default())
+        .read_commit_with(commit, ReadLimits::default())
         .unwrap();
     let date = parsed.author().unwrap().unwrap().date().unwrap();
 

@@ -51,7 +51,7 @@ use crate::refs::RefName;
 /// use girt::{PackLimits, Repository};
 ///
 /// let repo = Repository::open("project")?;
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// // Publish the commit at the tip of the local `topic` branch.
 /// let Some(Target::Direct(tip)) = repo
 ///     .references()?

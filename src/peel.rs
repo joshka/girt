@@ -97,7 +97,7 @@ impl PeelLimits {
 ///     InitKind::Bare,
 /// )?;
 /// let blob = repo.loose_objects().write_blob(b"manifest")?;
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let result = objects.peel(blob, PeelLimits::default(), &AtomicBool::new(false))?;
 /// assert_eq!(result.original, blob);
 /// assert_eq!(result.target, blob);
@@ -133,7 +133,7 @@ pub struct PeeledObject {
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let missing = ObjectId::Sha1([1; 20]);
 /// let error = objects
 ///     .peel(
@@ -258,7 +258,7 @@ impl Objects {
     ///     message: b"Release pointer".to_vec(),
     /// })?;
     /// let tip = loose.write_tag(&outer)?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let peeled = objects.peel(tip, PeelLimits::default(), &AtomicBool::new(false))?;
     /// assert_eq!(peeled.tags, [tip, inner]);
     /// assert_eq!(peeled.target, blob);
@@ -274,7 +274,7 @@ impl Objects {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(target: "girt", "objects.peel",
             outcome = "incomplete", failure_class = tracing::field::Empty);
-        let operation = || peel(id, limits, cancel, |id, read| self.read(id, read));
+        let operation = || peel(id, limits, cancel, |id, read| self.read_with(id, read));
         #[cfg(feature = "tracing")]
         let result = span.in_scope(operation);
         #[cfg(not(feature = "tracing"))]

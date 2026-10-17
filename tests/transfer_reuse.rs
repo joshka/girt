@@ -202,7 +202,7 @@ fn local_noop_fetch_reads_no_objects() {
     let source = fixture(ObjectFormat::Sha1);
     let repo = Repository::open(source.path()).unwrap();
     let known = KnownHistory::from_store(
-        repo.objects(PackLimits::trusted()).unwrap(),
+        repo.objects_with(PackLimits::trusted()).unwrap(),
         &[tip(source.path())],
         FetchLimits::trusted(),
         &AtomicBool::new(false),
@@ -229,7 +229,7 @@ fn local_fetch_of_one_commit_reads_only_new_closure() {
     );
     let dest = Repository::open(&path).unwrap();
     let known = KnownHistory::from_store(
-        dest.objects(PackLimits::trusted()).unwrap(),
+        dest.objects_with(PackLimits::trusted()).unwrap(),
         &[tip(&path)],
         FetchLimits::trusted(),
         &AtomicBool::new(false),
@@ -260,7 +260,7 @@ fn local_fetch_stops_at_haves_but_sends_other_history() {
         .write_blob(b"destination only")
         .unwrap();
     let known = KnownHistory::new(
-        &dest.objects(PackLimits::trusted()).unwrap(),
+        &dest.objects_with(PackLimits::trusted()).unwrap(),
         &[unrelated],
         FetchLimits::trusted(),
         &AtomicBool::new(false),
@@ -280,7 +280,7 @@ fn push_reuses_deltas_and_reconstructs_a_delta_without_its_base(#[case] format: 
     let source = fixture(format);
     let root = tempfile::tempdir().unwrap();
     let repo = Repository::open(source.path()).unwrap();
-    let objects = repo.objects(PackLimits::trusted()).unwrap();
+    let objects = repo.objects_with(PackLimits::trusted()).unwrap();
     let dest = Repository::init(format, root.path().join("full.git"), InitKind::Bare).unwrap();
     let full = PreparedPush::new(
         &objects,
@@ -518,7 +518,7 @@ fn unreferenced_commit_does_not_prove_complete_history(
         git(&path, &["fsck", "--strict"]);
     } else {
         let known = KnownHistory::from_store(
-            dest.objects(PackLimits::trusted()).unwrap(),
+            dest.objects_with(PackLimits::trusted()).unwrap(),
             &[old],
             FetchLimits::trusted(),
             &AtomicBool::new(false),
@@ -642,7 +642,7 @@ fn mislabelled_delta_base_cannot_misdirect_a_fetched_delta(#[case] format: Objec
     )
     .unwrap();
     let known = KnownHistory::from_store(
-        dest.objects(PackLimits::trusted()).unwrap(),
+        dest.objects_with(PackLimits::trusted()).unwrap(),
         &[],
         FetchLimits::trusted(),
         &AtomicBool::new(false),
@@ -889,7 +889,7 @@ fn tree_reference_does_not_prove_its_missing_blob_exists(
         git(&path, &["fsck", "--strict"]);
     } else {
         let known = KnownHistory::from_store(
-            dest.objects(PackLimits::trusted()).unwrap(),
+            dest.objects_with(PackLimits::trusted()).unwrap(),
             &[tree],
             FetchLimits::trusted(),
             &AtomicBool::new(false),
@@ -951,7 +951,7 @@ fn store_assisted_fetch_materializes_the_canonical_empty_tree(
             ],
         );
         KnownHistory::new(
-            &dest.objects(PackLimits::trusted()).unwrap(),
+            &dest.objects_with(PackLimits::trusted()).unwrap(),
             &[tip(source.path())],
             FetchLimits::trusted(),
             &AtomicBool::new(false),
@@ -959,7 +959,7 @@ fn store_assisted_fetch_materializes_the_canonical_empty_tree(
         .unwrap()
     } else {
         KnownHistory::from_store(
-            dest.objects(PackLimits::trusted()).unwrap(),
+            dest.objects_with(PackLimits::trusted()).unwrap(),
             &[],
             FetchLimits::trusted(),
             &AtomicBool::new(false),

@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
 use clap_complete::{ArgValueCandidates, ArgValueCompleter};
@@ -15,9 +16,7 @@ use girt::refs::RefName;
 use girt::status::{Baseline, Change, Untracked, WorktreeChange};
 use girt::{ChangeStatus, ObjectId, Repository, WorktreeRetirement, WorktreeState};
 
-use crate::common::{
-    display_bytes, not_cancelled, objects, resolve_ref, resolve_tree, stdout, write_path,
-};
+use crate::common::{display_bytes, resolve_ref, resolve_tree, stdout, write_path};
 use crate::{Context, complete};
 
 /// Maximum registrations listed by `worktree list`.
@@ -158,7 +157,7 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
         Untracked::Omit
     };
     let report = repository
-        .raw_status(Baseline::Head, policy, Default::default(), not_cancelled())
+        .raw_status(Baseline::Head, policy)
         .wrap_err("computing status")?;
 
     let mut lines: BTreeMap<Vec<u8>, [char; 2]> = BTreeMap::new();
@@ -363,7 +362,7 @@ pub fn ignore(command: IgnoreCommand, context: &Context) -> Result<ExitCode> {
 
 pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = objects(&repository)?;
+    let objects = repository.objects()?;
     let tree = |revision: &str| -> Result<Option<ObjectId>> {
         if revision == "HEAD" {
             let references = repository.references().wrap_err("opening references")?;
@@ -389,7 +388,7 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
         baseline,
         target,
         Default::default(),
-        not_cancelled(),
+        &AtomicBool::new(false),
         |done, total| progress.update("Updating files", done, Some(total)),
     ) {
         Ok(report) => report,
@@ -470,7 +469,7 @@ fn list_worktrees(repository: &Repository, git: bool) -> Result<()> {
         rows.push((main.to_owned(), common.to_owned(), None));
     }
     for worktree in repository
-        .worktrees(MAX_WORKTREES, not_cancelled())
+        .worktrees(MAX_WORKTREES, &AtomicBool::new(false))
         .wrap_err("listing worktrees")?
     {
         let state = match worktree.state {
@@ -487,7 +486,7 @@ fn list_worktrees(repository: &Repository, git: bool) -> Result<()> {
         .map(|(path, ..)| path.as_os_str().len())
         .max()
         .unwrap_or(0);
-    let objects = crate::common::objects(repository)?;
+    let objects = repository.objects()?;
     let abbrev = crate::common::abbrev_len(repository, &objects)?;
     let mut formatted = Vec::new();
     for (path, git_dir, state) in rows {
@@ -551,7 +550,7 @@ fn registration(repository: &Repository, name: &str) -> Result<PathBuf> {
     }
     let wanted = std::fs::canonicalize(name).ok();
     for worktree in repository
-        .worktrees(MAX_WORKTREES, not_cancelled())
+        .worktrees(MAX_WORKTREES, &AtomicBool::new(false))
         .wrap_err("listing worktrees")?
     {
         if wanted.is_some()

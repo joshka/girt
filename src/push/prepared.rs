@@ -37,7 +37,7 @@ use crate::{ObjectId, Objects};
 /// # girt::workflow::fetch(&repo, "origin", &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]), &girt::workflow::Environment::default(), &mut girt::workflow::NoCallbacks)?;
 /// let next = commit(&repo, &[main], "Next commit")?;
 /// let command = PushCommand::new(RefName::new("refs/heads/main")?, Some(main), next);
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let cancel = AtomicBool::new(false);
 ///
 /// // With no roots the whole history is sent.
@@ -341,7 +341,7 @@ impl PreparedPush {
     /// # let commit = include!("../doctest/commit.rs");
     /// let tip = commit(&repo, &[], "Review me")?;
     /// let command = PushCommand::new(RefName::new("refs/for/main")?, None, tip);
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let prepared = PreparedPush::new(
     ///     &objects,
     ///     vec![command],

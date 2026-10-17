@@ -102,7 +102,7 @@ fn rewrites(c: &mut Criterion) {
     for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
         for (label, count, edited) in [("exact", 32, false), ("edited", 32, true)] {
             let f = Fixture::new(format, count, edited);
-            let objects = f.repo.objects(PackLimits::default()).unwrap();
+            let objects = f.repo.objects_with(PackLimits::default()).unwrap();
             let cancel = AtomicBool::new(false);
             let run = || {
                 objects
@@ -129,7 +129,7 @@ fn rewrites(c: &mut Criterion) {
             });
         }
         let f = Fixture::new(format, 1001, true);
-        let objects = f.repo.objects(PackLimits::default()).unwrap();
+        let objects = f.repo.objects_with(PackLimits::default()).unwrap();
         let cancel = AtomicBool::new(false);
         let run = || {
             objects.detect_rewrites(

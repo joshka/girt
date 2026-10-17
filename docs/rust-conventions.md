@@ -38,6 +38,26 @@ identity. The request exposes separate configuration and identity setters; contr
 observers remain separate. jj's workflow adapter supplies its existing configuration/identity
 policy. Avoid a context that also owns transport runtimes, retention or publication state.
 
+## Default and Explicit Forms
+
+Limits and cancellation are caller decisions, but most callers want the defaults. Name the forms
+consistently so each is easy to find next to the others:
+
+- `verb(inputs)` is the default form. It passes `Default::default()` for every limits argument and a
+  flag that is never set. It never uses `trusted()` bounds, so it is as safe on untrusted input as
+  the explicit call with default limits. Its Rustdoc names the `_with` call it wraps.
+- `verb_with(inputs, limits)` is the explicit form. When the operation is cancellable it also takes
+  the flag: `verb_with(inputs, limits, cancel)`.
+- `verb_controlled(inputs, limits, cancel)` remains the cancellable form for operations whose
+  `_with` form takes no flag, such as `Objects::read_controlled`.
+
+The default form drops only limits and cancellation; choices such as a status baseline or a checkout
+target remain arguments. Give common entry points this pair, not every operation that takes limits;
+an operation without a default form keeps its plain name with explicit arguments. Typed reads
+(`read_commit`, `read_tree`, `read_tag`, `read_blob`) follow the same pattern and treat absence as
+an error. Callers that never cancel an operation without a default form pass
+`&AtomicBool::new(false)`; do not export a shared never-set static, because any caller could set it.
+
 ## Domain Types at API Boundaries
 
 - Use domain types when a primitive would admit invalid choices, obscure meaning, or allow unrelated

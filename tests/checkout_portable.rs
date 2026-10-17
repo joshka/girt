@@ -15,7 +15,7 @@ fn cancellation_precedes_index_access() {
     .unwrap();
     std::fs::write(repo.git_dir().join("index"), b"invalid").unwrap();
     let failure = repo
-        .checkout_tree(None, None, Limits::default(), &AtomicBool::new(true))
+        .checkout_tree_with(None, None, Limits::default(), &AtomicBool::new(true))
         .unwrap_err();
     assert!(matches!(*failure.cause, Error::Cancelled));
     assert_eq!(failure.report.stage, Stage::Preparation);

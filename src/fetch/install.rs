@@ -561,7 +561,7 @@ impl ReceivedFetch {
             };
             if !self.dependencies.is_empty() {
                 let objects = repository
-                    .objects(snapshot_limits)
+                    .objects_with(snapshot_limits)
                     .map_err(FetchError::Destination)?;
                 // Presence and header kind only: publication reads unproven dependencies with
                 // checked reads, and existing references make the rest complete.
@@ -768,9 +768,9 @@ mod shallow_tests {
         let (_, retention) = received
             .install_retained(&repo, crate::PackLimits::default(), &AtomicBool::new(false))
             .unwrap();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         let object = objects
-            .read(
+            .read_with(
                 crate::ObjectId::for_blob(format, b"owned local payload"),
                 crate::ReadLimits::default(),
             )

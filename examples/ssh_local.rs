@@ -10,11 +10,11 @@ mod supported {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
+    use girt::Repository;
     use girt::fetch::{FetchLimits, KnownHistory, receive_ssh};
     use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits, send_ssh};
     use girt::refs::RefName;
     use girt::transport::TransportControl;
-    use girt::{PackLimits, Repository};
 
     use super::ssh_git;
 
@@ -65,7 +65,7 @@ mod supported {
             std::time::Instant::now() + std::time::Duration::from_secs(30),
         ));
         let prepared = PreparedPush::new(
-            &source_repo.objects(PackLimits::default())?,
+            &source_repo.objects()?,
             vec![
                 PushCommand::new(RefName::new("refs/tags/example")?, None, id)
                     .with_force(ForcePolicy::FastForwardOnly),
@@ -96,7 +96,7 @@ mod supported {
         // A second fetch can reuse verified local history without borrowing its initiating scope.
         // Prepare history outside the executor: it reads, hashes and walks local objects.
         let known = Arc::new(KnownHistory::new(
-            &source_repo.objects(PackLimits::default())?,
+            &source_repo.objects()?,
             &[id],
             FetchLimits::default(),
             &cancel,

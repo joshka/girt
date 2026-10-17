@@ -118,7 +118,7 @@ fn transfer_headers_read_each_chain_link_once(#[case] format: &str) {
     assert!(deepest >= Some(10), "fixture chains too shallow:\n{depths}");
     let objects = Repository::open(dir.path())
         .unwrap()
-        .objects(Default::default())
+        .objects_with(Default::default())
         .unwrap();
     let cancel = AtomicBool::new(false);
     counters::reset();
@@ -169,7 +169,7 @@ fn remembered_chains_keep_depth_limits() {
     .unwrap();
     let objects = Repository::open(dir.path())
         .unwrap()
-        .objects(Default::default())
+        .objects_with(Default::default())
         .unwrap();
     let cancel = AtomicBool::new(false);
     for &(id, ..) in &expected {

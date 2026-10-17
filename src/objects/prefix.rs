@@ -183,7 +183,7 @@ impl Objects {
     /// let dir = tempfile::tempdir()?;
     /// let repo = Repository::init(ObjectFormat::Sha1, dir.path().join("repo"), InitKind::Bare)?;
     /// let id = repo.loose_objects().write_blob(b"hello")?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let prefix = ObjectIdPrefix::from_hex(repo.object_format(), "b6fc4")?;
     /// assert_eq!(objects.resolve_prefix(prefix)?, id);
     /// assert_eq!(objects.abbreviate(id, 4)?.to_string(), "b6fc");
@@ -301,7 +301,7 @@ mod tests {
         for id in [a, b] {
             fs::write(bucket.join(&id.to_string()[2..]), b"").unwrap();
         }
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         let prefix = ObjectIdPrefix::from_hex(crate::ObjectFormat::Sha1, "abcd").unwrap();
         let error = objects.resolve_prefix(prefix).unwrap_err();
         let message = error.to_string();
@@ -336,7 +336,7 @@ mod tests {
         let bucket = repo.object_dir().join("ab");
         fs::create_dir(&bucket).unwrap();
         fs::write(bucket.join(&a.to_string()[2..]), b"").unwrap();
-        let mut objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let mut objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         assert_eq!(objects.abbreviate(a, 4).unwrap().hex_len(), 4);
         let retained = objects.clone();
         fs::write(bucket.join(&b.to_string()[2..]), b"").unwrap();
@@ -384,7 +384,7 @@ mod tests {
         fs::write(repo.object_dir().join("ab").join(&a.to_string()[2..]), b"").unwrap();
         let broken = alternate.object_dir().join("ab");
         fs::write(&broken, b"").unwrap();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         assert!(objects.abbreviate(a, 4).is_err());
         fs::remove_file(&broken).unwrap();
         fs::create_dir(&broken).unwrap();

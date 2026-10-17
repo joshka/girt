@@ -55,7 +55,7 @@ impl Fixture {
     }
     fn checkout(&self, old: Option<ObjectId>, new: Option<ObjectId>) -> Result<Report, Failure> {
         self.repo
-            .checkout_tree(old, new, Limits::default(), &AtomicBool::new(false))
+            .checkout_tree_with(old, new, Limits::default(), &AtomicBool::new(false))
     }
     fn initial(&self, name: &[u8], mode: EntryMode, bytes: &[u8]) -> ObjectId {
         let tree = self.tree(name, mode, bytes);
@@ -89,7 +89,7 @@ fn updates_raw_content_and_modes(
     );
     let status = f
         .repo
-        .raw_status(
+        .raw_status_with(
             crate::status::Baseline::Tree(Some(target)),
             crate::status::Untracked::Omit,
             crate::status::Limits::default(),
@@ -575,7 +575,7 @@ fn exhausted_preparation_limits_preserve_worktree(#[case] limits: Limits) {
     let new = f.tree(b"file", EntryMode::Blob, b"new");
     let failure = f
         .repo
-        .checkout_tree(None, Some(new), limits, &AtomicBool::new(false))
+        .checkout_tree_with(None, Some(new), limits, &AtomicBool::new(false))
         .unwrap_err();
     assert!(failure.report.applied.is_empty());
     assert!(!f.root().join("file").exists());
@@ -592,7 +592,7 @@ fn exhausted_worktree_budget_does_not_remove_files() {
     };
     let failure = f
         .repo
-        .checkout_tree(Some(old), None, limits, &AtomicBool::new(false))
+        .checkout_tree_with(Some(old), None, limits, &AtomicBool::new(false))
         .unwrap_err();
     assert!(failure.report.applied.is_empty());
     assert_eq!(fs::read(f.root().join("file")).unwrap(), b"old");
@@ -792,7 +792,7 @@ fn target_verification_budget_is_checked_before_installation() {
     };
     let failure = f
         .repo
-        .checkout_tree(None, Some(new), limits, &AtomicBool::new(false))
+        .checkout_tree_with(None, Some(new), limits, &AtomicBool::new(false))
         .unwrap_err();
     assert_eq!(failure.report.stage, Stage::Preparation);
     assert!(!f.root().join("file").exists());

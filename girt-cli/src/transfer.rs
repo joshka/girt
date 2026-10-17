@@ -192,14 +192,14 @@ fn check_out_head(destination: &std::path::Path, context: &Context) -> Result<()
     let mut progress = crate::progress::Progress::new(context.progress);
     let repository = Repository::open_with_config(destination, &context.config_inputs()?)
         .wrap_err("opening the clone")?;
-    let objects = crate::common::objects(&repository)?;
+    let objects = repository.objects()?;
     let tree = crate::common::resolve_tree(&repository, &objects, "HEAD")?;
     repository
         .checkout_tree_with_progress(
             None,
             Some(tree),
             Default::default(),
-            crate::common::not_cancelled(),
+            &AtomicBool::new(false),
             |done, total| progress.update("Updating files", done, Some(total)),
         )
         .map_err(|failure| eyre!("{failure}"))?;
@@ -326,7 +326,7 @@ fn push_command(
         Some((source, destination)) => (source, Some(destination)),
         None => (spec, None),
     };
-    let objects = crate::common::objects(repository)?;
+    let objects = repository.objects()?;
     let source_ref = if source.is_empty() {
         None
     } else {

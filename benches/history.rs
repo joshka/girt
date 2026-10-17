@@ -31,7 +31,7 @@ fn history(c: &mut Criterion) {
         c.bench_function(&format!("history/{shape}/walk-packed-256"), |b| {
             b.iter(|| {
                 objects
-                    .walk(black_box(&[h.ids[255]]), HistoryLimits::default())
+                    .walk_with(black_box(&[h.ids[255]]), HistoryLimits::default())
                     .unwrap()
             })
         });
@@ -58,14 +58,14 @@ fn history(c: &mut Criterion) {
         c.bench_function(&format!("history/{shape}/walk-shallow-packed-256"), |b| {
             b.iter(|| {
                 shallow
-                    .walk(black_box(&[h.ids[255]]), HistoryLimits::default())
+                    .walk_with(black_box(&[h.ids[255]]), HistoryLimits::default())
                     .unwrap()
             })
         });
         c.bench_function(&format!("history/{shape}/merge-bases-packed-256"), |b| {
             b.iter(|| {
                 objects
-                    .merge_bases(
+                    .merge_bases_with(
                         black_box(h.ids[254]),
                         black_box(h.ids[255]),
                         HistoryLimits::default(),
@@ -107,7 +107,7 @@ fn prepare_one_commit(h: &history_git::History) -> (tempfile::TempDir, girt::fet
     let repo = girt::Repository::open(&dest).unwrap();
     let cancel = std::sync::atomic::AtomicBool::new(false);
     let known = KnownHistory::from_store(
-        repo.objects(girt::PackLimits::default()).unwrap(),
+        repo.objects_with(girt::PackLimits::default()).unwrap(),
         &[h.ids[254]],
         FetchLimits::default(),
         &cancel,

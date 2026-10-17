@@ -33,9 +33,9 @@
 //!     InitKind::Worktree,
 //! )?;
 //! let id = repository.loose_objects().write_blob(b"hello Git\n")?;
-//! let objects = repository.objects(PackLimits::default())?;
+//! let objects = repository.objects_with(PackLimits::default())?;
 //! let blob = objects
-//!     .read(id, ReadLimits::default())?
+//!     .read_with(id, ReadLimits::default())?
 //!     .ok_or("blob missing")?;
 //! assert_eq!(blob.kind(), ObjectKind::Blob);
 //! assert_eq!(blob.data(), b"hello Git\n");
@@ -209,8 +209,8 @@ pub use object::{
 pub(crate) use objects::UnverifiedObject;
 pub use objects::{
     AlternateLimits, IndexedPack, ListLimits, LooseIds, LooseObject, Object, ObjectHeader,
-    ObjectReadError, ObjectStore, Objects, PackIds, PackLimits, ReadCommitError, ReadLimits,
-    ResolvePrefixError,
+    ObjectReadError, ObjectStore, Objects, PackIds, PackLimits, ReadBlobError, ReadCommitError,
+    ReadLimits, ReadTagError, ReadTreeError, ResolvePrefixError,
 };
 pub use pack::{
     DeltaOptions, DeltaStats, PackCompression, PackObject, PackWriteError, PackWriteLimits,

@@ -3,9 +3,7 @@
 use std::sync::atomic::AtomicBool;
 
 use girt::content_diff::{BinaryMode, BlobContent, ContentDiff, DiffLimits, diff};
-use girt::{
-    EntryMode, InitKind, PackLimits, ReadLimits, Repository, Tree, TreeCompareLimits, TreeEntry,
-};
+use girt::{EntryMode, InitKind, ReadLimits, Repository, Tree, TreeEntry};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -33,11 +31,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: new_blob,
         }],
     )?)?;
-    let objects = repo.objects(PackLimits::default())?;
+    let objects = repo.objects()?;
     let cancel = AtomicBool::new(false);
     let limits = DiffLimits::default();
-    let changes =
-        objects.compare_trees(Some(old), Some(new), TreeCompareLimits::default(), &cancel)?;
+    let changes = objects.compare_trees(Some(old), Some(new))?;
     for change in changes {
         println!(
             "{}: {:?} -> {:?}",

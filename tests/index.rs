@@ -593,7 +593,7 @@ fn sparse_index_is_preserved_then_expanded_without_materializing(
     );
     edit.commit().unwrap();
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
-    let objects = repo.objects(girt::PackLimits::default()).unwrap();
+    let objects = repo.objects_with(girt::PackLimits::default()).unwrap();
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     edit.expand_sparse(
         &objects,
@@ -639,7 +639,7 @@ fn raw_workflows_refuse_extended_flags_without_mutation(
     let before = fs::read(repo.git_dir().join("index")).unwrap();
     let cancel = std::sync::atomic::AtomicBool::new(false);
     assert!(matches!(
-        repo.raw_status(
+        repo.raw_status_with(
             girt::status::Baseline::Tree(Some(tree)),
             girt::status::Untracked::Omit,
             girt::status::Limits::default(),
@@ -648,7 +648,7 @@ fn raw_workflows_refuse_extended_flags_without_mutation(
         Err(girt::status::Error::Unsupported { .. })
     ));
     let failure = repo
-        .checkout_tree(Some(tree), None, girt::checkout::Limits::default(), &cancel)
+        .checkout_tree_with(Some(tree), None, girt::checkout::Limits::default(), &cancel)
         .unwrap_err();
     assert!(matches!(
         *failure.cause,

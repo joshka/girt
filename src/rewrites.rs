@@ -44,7 +44,7 @@
 //! let old = tree(b"old.txt", &lines)?;
 //! let new = tree(b"new.txt", &[&lines[..], b"one more line\n"].concat())?;
 //!
-//! let objects = repo.objects(PackLimits::default())?;
+//! let objects = repo.objects_with(PackLimits::default())?;
 //! let rewrites = objects.detect_rewrites(
 //!     Some(old),
 //!     Some(new),

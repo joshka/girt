@@ -173,10 +173,10 @@ fn isolated_copy(pack: &Path) -> (tempfile::TempDir, Repository) {
 
 fn read_from(repo: &Repository, id: ObjectId) -> Result<Option<Vec<u8>>, String> {
     let objects = repo
-        .objects(PackLimits::trusted())
+        .objects_with(PackLimits::trusted())
         .map_err(|e| e.to_string())?;
     objects
-        .read(id, ReadLimits::trusted())
+        .read_with(id, ReadLimits::trusted())
         .map(|object| object.map(|object| object.data().to_vec()))
         .map_err(|e| e.to_string())
 }
@@ -477,9 +477,9 @@ fn published_pack_is_readable_by_a_cold_reader_with_default_depth() {
     let (_dir, published) = isolated_copy(&pack);
     for (id, content) in ids.iter().zip(&contents) {
         // A fresh store per read, so no warmed base cache can mask the chain depth.
-        let objects = published.objects(PackLimits::trusted()).unwrap();
+        let objects = published.objects_with(PackLimits::trusted()).unwrap();
         let read = objects
-            .read(*id, ReadLimits::default())
+            .read_with(*id, ReadLimits::default())
             .map_err(|e| e.to_string());
         assert_eq!(
             read.map(|o| o.map(|o| o.data().to_vec())),

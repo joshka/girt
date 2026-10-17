@@ -9,8 +9,7 @@
 //!
 //! ```
 //! use girt::{
-//!     Commit, CommitFields, HistoryLimits, InitKind, ObjectFormat, PackLimits, Repository,
-//!     Signature, Tree,
+//!     Commit, CommitFields, HistoryLimits, InitKind, ObjectFormat, Repository, Signature, Tree,
 //! };
 //! let directory = tempfile::tempdir()?;
 //! let repo = Repository::init(
@@ -39,16 +38,13 @@
 //! let base = commit(vec![], b"base\n")?;
 //! let left = commit(vec![base], b"left\n")?;
 //! let right = commit(vec![base], b"right\n")?;
-//! let objects = repo.objects(PackLimits::default())?;
-//! assert_eq!(
-//!     objects.walk(&[left], HistoryLimits::default())?,
-//!     [left, base]
-//! );
-//! assert!(objects.is_ancestor(base, right, HistoryLimits::default())?);
-//! assert_eq!(
-//!     objects.merge_bases(left, right, HistoryLimits::default())?,
-//!     [base]
-//! );
+//! let objects = repo.objects()?;
+//! assert_eq!(objects.walk(&[left])?, [left, base]);
+//! assert!(objects.is_ancestor(base, right)?);
+//! assert_eq!(objects.merge_bases(left, right)?, [base]);
+//! // The `_with` forms take the bounds the short forms fill in.
+//! let limits = HistoryLimits::default().with_max_commits(10);
+//! assert_eq!(objects.walk_with(&[right], limits)?, [right, base]);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -66,9 +62,11 @@
 //!
 //! # Work and failures
 //!
-//! [`HistoryLimits`] bounds distinct commits, parent occurrences, and each object read. The current
-//! queries collect a complete graph in memory; `walk` is not a lazy iterator. Ancestry tests
-//! validate both complete ancestries even for equal endpoints or an early match. Size budgets
+//! [`HistoryLimits`] bounds distinct commits, parent occurrences, and each object read. Each query
+//! uses [`HistoryLimits::default`] and has a `_with` form, such as [`Objects::walk_with`], that
+//! takes explicit limits.
+//! The current queries collect a complete graph in memory; `walk` is not a lazy iterator. Ancestry
+//! tests validate both complete ancestries even for equal endpoints or an early match. Size budgets
 //! therefore need to cover the graph, not just the distance between two commits.
 //!
 //! [`HistoryError`] distinguishes missing or wrong-kind commits, malformed payloads, cycles, I/O,
@@ -201,16 +199,19 @@ impl Objects {
     /// let first = commit(vec![], b"first\n")?;
     /// let second = commit(vec![first], b"second\n")?;
     ///
-    /// let objects = repository.objects(PackLimits::default())?;
+    /// let objects = repository.objects_with(PackLimits::default())?;
     /// assert_eq!(
-    ///     objects.walk(&[second], HistoryLimits::default())?,
+    ///     objects.walk_with(&[second], HistoryLimits::default())?,
     ///     [second, first]
     /// );
     /// // Supplied root order wins over ancestry: the walk is not topological.
     /// let limits = HistoryLimits::default();
-    /// assert_eq!(objects.walk(&[first, second], limits)?, [first, second]);
-    /// assert!(objects.is_ancestor(first, second, HistoryLimits::default())?);
-    /// assert!(!objects.is_ancestor(second, first, HistoryLimits::default())?);
+    /// assert_eq!(
+    ///     objects.walk_with(&[first, second], limits)?,
+    ///     [first, second]
+    /// );
+    /// assert!(objects.is_ancestor_with(first, second, HistoryLimits::default())?);
+    /// assert!(!objects.is_ancestor_with(second, first, HistoryLimits::default())?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -219,7 +220,7 @@ impl Objects {
     /// Returns [`HistoryError`] on any reachable missing, non-commit, malformed or corrupt object,
     /// cycle, or exhausted bound. No partial result is returned and no files are changed. Commit
     /// syntax uses [`Commit::parse`] without additional field validation; trees are not read.
-    pub fn walk(
+    pub fn walk_with(
         &self,
         roots: &[ObjectId],
         limits: HistoryLimits,
@@ -269,13 +270,13 @@ impl Objects {
     /// # let base = commit(vec![], b"base\n")?;
     /// # let left = commit(vec![base], b"left\n")?;
     /// # let right = commit(vec![base], b"right\n")?;
-    /// # let objects = repo.objects(PackLimits::default())?;
-    /// assert!(objects.is_ancestor(base, left, HistoryLimits::default())?);
-    /// assert!(objects.is_ancestor(left, left, HistoryLimits::default())?);
-    /// assert!(!objects.is_ancestor(left, right, HistoryLimits::default())?);
+    /// # let objects = repo.objects_with(PackLimits::default())?;
+    /// assert!(objects.is_ancestor_with(base, left, HistoryLimits::default())?);
+    /// assert!(objects.is_ancestor_with(left, left, HistoryLimits::default())?);
+    /// assert!(!objects.is_ancestor_with(left, right, HistoryLimits::default())?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn is_ancestor(
+    pub fn is_ancestor_with(
         &self,
         ancestor: ObjectId,
         descendant: ObjectId,
@@ -351,12 +352,12 @@ impl Objects {
     /// # let base = commit(vec![], b"base\n")?;
     /// # let left = commit(vec![base], b"left\n")?;
     /// # let right = commit(vec![base], b"right\n")?;
-    /// # let objects = repo.objects(PackLimits::default())?;
-    /// assert_eq!(objects.merge_bases(left, right, HistoryLimits::default())?, [base]);
-    /// assert_eq!(objects.merge_bases(left, left, HistoryLimits::default())?, [left]);
+    /// # let objects = repo.objects_with(PackLimits::default())?;
+    /// assert_eq!(objects.merge_bases_with(left, right, HistoryLimits::default())?, [base]);
+    /// assert_eq!(objects.merge_bases_with(left, left, HistoryLimits::default())?, [left]);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn merge_bases(
+    pub fn merge_bases_with(
         &self,
         left: ObjectId,
         right: ObjectId,
@@ -407,6 +408,49 @@ impl Objects {
         crate::trace::finish(&span, &result, crate::trace::history);
 
         result
+    }
+
+    /// Collects the commits reachable from `roots` with [`HistoryLimits::default`].
+    ///
+    /// Equivalent to `self.walk_with(roots, HistoryLimits::default())`; see [`Self::walk_with`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::walk_with`].
+    pub fn walk(&self, roots: &[ObjectId]) -> Result<Vec<ObjectId>, HistoryError> {
+        self.walk_with(roots, HistoryLimits::default())
+    }
+
+    /// Tests ancestry with [`HistoryLimits::default`].
+    ///
+    /// Equivalent to `self.is_ancestor_with(ancestor, descendant, HistoryLimits::default())`; see
+    /// [`Self::is_ancestor_with`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::is_ancestor_with`].
+    pub fn is_ancestor(
+        &self,
+        ancestor: ObjectId,
+        descendant: ObjectId,
+    ) -> Result<bool, HistoryError> {
+        self.is_ancestor_with(ancestor, descendant, HistoryLimits::default())
+    }
+
+    /// Finds every best common ancestor with [`HistoryLimits::default`].
+    ///
+    /// Equivalent to `self.merge_bases_with(left, right, HistoryLimits::default())`; see
+    /// [`Self::merge_bases_with`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::merge_bases_with`].
+    pub fn merge_bases(
+        &self,
+        left: ObjectId,
+        right: ObjectId,
+    ) -> Result<Vec<ObjectId>, HistoryError> {
+        self.merge_bases_with(left, right, HistoryLimits::default())
     }
 }
 
@@ -623,8 +667,8 @@ fn check_cancelled(cancel: &AtomicBool, id: ObjectId) -> Result<(), HistoryError
 /// )?;
 /// let missing = ObjectId::Sha1([1; 20]);
 /// let error = repo
-///     .objects(PackLimits::default())?
-///     .walk(&[missing], HistoryLimits::default())
+///     .objects_with(PackLimits::default())?
+///     .walk_with(&[missing], HistoryLimits::default())
 ///     .expect_err("missing root");
 /// assert!(matches!(error, HistoryError::Missing(id) if id == missing));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -705,7 +749,7 @@ mod tests {
             crate::InitKind::Bare,
         )
         .unwrap();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         objects.is_ancestor_verified(
             graph.ids[old],
             graph.ids[new],
@@ -768,7 +812,7 @@ mod tests {
     fn verified_query_hashes_the_matching_commit() {
         let (_root, repo, ids) = stored_history();
         std::fs::copy(loose_path(&repo, ids[0]), loose_path(&repo, ids[1])).unwrap();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         assert!(
             matches!(objects.is_ancestor_verified(ids[1], ids[2], HistoryLimits::default(), &AtomicBool::new(false), |_, _| Ok(None)), Err(HistoryError::Read { id, .. }) if id == ids[1])
         );
@@ -779,7 +823,7 @@ mod tests {
         let (_root, repo, ids) = stored_history();
         std::fs::write(repo.git_dir().join("shallow"), format!("{}\n", ids[1])).unwrap();
         let repo = crate::Repository::open(repo.git_dir()).unwrap();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         let oracle = std::process::Command::new("git")
             .arg("-C")
             .arg(repo.git_dir())
@@ -821,7 +865,7 @@ mod tests {
     #[test]
     fn cancellation_during_verified_walk_prevents_an_answer() {
         let (_root, repo, ids) = stored_history();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         let cancel = AtomicBool::new(false);
         let result = objects.is_ancestor_verified(
             ids[0],
@@ -858,7 +902,7 @@ mod tests {
     #[test]
     fn verified_query_keeps_per_read_budget() {
         let (_root, repo, ids) = stored_history();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         let mut limits = HistoryLimits::default();
         limits.read.max_object_bytes = 1;
         assert!(matches!(
@@ -885,7 +929,7 @@ mod tests {
     fn verified_query_does_not_read_beyond_matching_commit() {
         let (_root, repo, ids) = stored_history();
         std::fs::remove_file(loose_path(&repo, ids[0])).unwrap();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         assert!(
             objects
                 .is_ancestor_verified(

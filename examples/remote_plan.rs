@@ -7,7 +7,7 @@ use girt::fetch::{AdvertisedRef, Advertisement};
 use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits};
 use girt::refs::RefName;
 use girt::remote::{Mapping, RefSource, Remote};
-use girt::{InitKind, ObjectId, PackLimits, Repository};
+use girt::{InitKind, ObjectId, Repository};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let push_plan = remote.push_refspecs().map(&local_sources)?;
     let commands = creation_commands(&push_plan)?;
     assert_eq!(commands[0].name.as_bytes(), b"refs/tags/published");
-    let objects = repo.objects(PackLimits::default())?;
+    let objects = repo.objects()?;
     let cancel = AtomicBool::new(false);
     let _prepared = PreparedPush::new(&objects, commands, &[], PushLimits::default(), &cancel)?;
     // Sending would be a separate, authorized call to push::send_local/send_http/send_ssh.

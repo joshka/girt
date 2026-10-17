@@ -176,9 +176,9 @@
 //!     std::fs::write(&path, &pack)?;
 //!     std::fs::write(path.with_extension("idx"), &index)?;
 //!
-//!     let objects = repo.objects(Default::default())?;
+//!     let objects = repo.objects_with(Default::default())?;
 //!     let rescued = objects
-//!         .read(id, Default::default())?
+//!         .read_with(id, Default::default())?
 //!         .expect("loose duplicate");
 //!     assert_eq!(rescued.data(), content);
 //!     // The damaged bytes remain invalid despite the successful content rescue.

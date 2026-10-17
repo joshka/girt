@@ -162,7 +162,7 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
         // Storage synthesizes Git's canonical empty tree when it is not stored.
         let object = self
             .store
-            .read(id, limits)
+            .read_with(id, limits)
             .map_err(|source| Error::Read { id, source })?;
         if object.is_some() {
             self.reads += 1;

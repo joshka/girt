@@ -128,9 +128,9 @@ impl<'r> Resolver<'r> {
                 }
                 Range::Symmetric { left, right } => {
                     let (left, right) = (commit(left)?, commit(right)?);
-                    let bases = self
-                        .objects
-                        .merge_bases(left, right, HistoryLimits::trusted())?;
+                    let bases =
+                        self.objects
+                            .merge_bases_with(left, right, HistoryLimits::trusted())?;
                     selection.include.extend([left, right]);
                     selection.exclude.extend(bases);
                 }
@@ -294,7 +294,7 @@ impl<'r> Resolver<'r> {
 
     fn read(&self, id: ObjectId) -> Result<Object, RevisionError> {
         self.objects
-            .read(id, self.read_limits)?
+            .read_with(id, self.read_limits)?
             .ok_or(RevisionError::MissingObject(id))
     }
 

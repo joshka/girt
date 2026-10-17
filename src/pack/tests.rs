@@ -752,11 +752,11 @@ fn rejects_external_base_even_when_it_exists_in_another_pack(#[case] format: Obj
     )
     .unwrap();
     assert!(
-        matches!(objects.read(id, ReadLimits::default()), Err(Error::MissingBase(found)) if found == base)
+        matches!(objects.read_with(id, ReadLimits::default()), Err(Error::MissingBase(found)) if found == base)
     );
     assert_eq!(
         objects
-            .read(base, ReadLimits::default())
+            .read_with(base, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),

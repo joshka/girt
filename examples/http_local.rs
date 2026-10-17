@@ -8,12 +8,12 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use girt::Repository;
 use girt::fetch::{FetchLimits, KnownHistory, receive_http};
 use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits, send_http};
 use girt::refs::RefName;
 use girt::transport::TransportControl;
 use girt::transport::http::HttpRemote;
-use girt::{PackLimits, Repository};
 
 fn git(path: &std::path::Path, args: &[&str]) {
     let status = Command::new("git")
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let prepared = PreparedPush::new(
-        &source_repo.objects(PackLimits::default())?,
+        &source_repo.objects()?,
         vec![
             PushCommand::new(RefName::new("refs/tags/example")?, None, id)
                 .with_force(ForcePolicy::FastForwardOnly),
@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A second fetch can reuse verified local history without borrowing its initiating scope.
     // Prepare history outside the executor: it reads, hashes and walks local objects.
     let known = Arc::new(KnownHistory::new(
-        &source_repo.objects(PackLimits::default())?,
+        &source_repo.objects()?,
         &[id],
         FetchLimits::default(),
         &cancel,

@@ -186,9 +186,10 @@ impl References<'_> {
     ///     directory.path().join("r"),
     ///     InitKind::Bare,
     /// )?;
-    /// let report = repo
-    ///     .references()?
-    ///     .pack(&repo.objects(PackLimits::default())?, PackRefsOptions::ALL)?;
+    /// let report = repo.references()?.pack(
+    ///     &repo.objects_with(PackLimits::default())?,
+    ///     PackRefsOptions::ALL,
+    /// )?;
     /// assert!(report.rewritten);
     /// assert_eq!(report.packed, 0);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -479,7 +480,7 @@ impl crate::Repository {
     ///     directory.path().join("r"),
     ///     InitKind::Bare,
     /// )?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let report = repo.auto_pack_references(&objects)?;
     /// // Enabled by default, but nothing is loose yet.
     /// assert!(!report.is_some_and(|report| report.rewritten));
@@ -602,7 +603,7 @@ mod tests {
         HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
         let repository = Repository::open(repo).unwrap();
         let result = repository.references().unwrap().pack(
-            &repository.objects(PackLimits::default()).unwrap(),
+            &repository.objects_with(PackLimits::default()).unwrap(),
             PackRefsOptions::ALL,
         );
         HOOK.with(|slot| *slot.borrow_mut() = None);

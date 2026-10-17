@@ -178,7 +178,7 @@
 //! # source.references()?.update_without_reflog(&main, Target::Direct(commit), Expected::Absent)?;
 //! # let destination_path = directory.path().join("remote.git");
 //! # let destination = Repository::init(ObjectFormat::Sha1, destination_path, InitKind::Bare)?;
-//! # let objects = source.objects(PackLimits::default())?;
+//! # let objects = source.objects_with(PackLimits::default())?;
 //! # let command = PushCommand::new(main.clone(), None, commit).with_force(ForcePolicy::FastForwardOnly);
 //! let cancel = AtomicBool::new(false);
 //! let prepared = PreparedPush::new(

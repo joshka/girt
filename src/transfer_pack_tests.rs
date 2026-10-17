@@ -303,7 +303,9 @@ fn held_packed_refs_lock_leaves_references_loose() {
     let before = layout(&fixture.girt);
 
     let repository = Repository::open(&fixture.girt).unwrap();
-    let objects = repository.objects(crate::PackLimits::trusted()).unwrap();
+    let objects = repository
+        .objects_with(crate::PackLimits::trusted())
+        .unwrap();
     let result = repository.auto_pack_references(&objects);
     assert!(
         matches!(
@@ -343,7 +345,9 @@ fn auto_pack_references_matches_git_maintenance(
         }
     }
     let repository = Repository::open(&fixture.girt).unwrap();
-    let objects = repository.objects(crate::PackLimits::trusted()).unwrap();
+    let objects = repository
+        .objects_with(crate::PackLimits::trusted())
+        .unwrap();
     let report = repository.auto_pack_references(&objects).unwrap();
     // A no-op fetch runs Git's automatic maintenance, gated by the same configuration.
     git(&fixture.oracle, &["fetch", "-q", "origin", SPECS[0]]);

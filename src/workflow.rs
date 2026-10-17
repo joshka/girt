@@ -1744,7 +1744,7 @@ impl Repository {
     ) -> Result<FetchOutcome, TransferError> {
         let (endpoint, _) = self.endpoint(remote_name, Direction::Fetch, environment)?;
         let objects = self
-            .objects(crate::PackLimits::trusted())
+            .objects_with(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;
         // One listing supplies the have tips, force authorization and the snapshot every
         // reference edit is conditional on.
@@ -1872,7 +1872,7 @@ impl Repository {
         // maintaining them. A fresh snapshot includes the received pack, needed to peel new tags.
         #[cfg(test)]
         pack_tests::BEFORE_AUTO_PACK.with(|hook| hook.take().map(|hook| hook()));
-        if let Ok(objects) = self.objects(crate::PackLimits::trusted()) {
+        if let Ok(objects) = self.objects_with(crate::PackLimits::trusted()) {
             let _ = self.auto_pack_references(&objects);
         }
         Ok(FetchOutcome {
@@ -1972,7 +1972,7 @@ impl Repository {
     ) -> Result<PushReport, TransferError> {
         let (endpoint, _) = self.endpoint(remote_name, Direction::Push, environment)?;
         let objects = self
-            .objects(crate::PackLimits::trusted())
+            .objects_with(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;
         let format = objects.object_format();
         let mut limits = PushLimits::trusted();
@@ -1993,7 +1993,7 @@ impl Repository {
             let mut source = source.borrow_mut();
             if source.is_none() {
                 *source = Some(
-                    self.objects(crate::PackLimits::trusted())
+                    self.objects_with(crate::PackLimits::trusted())
                         .map_err(TransferError::local)?,
                 );
             }

@@ -171,7 +171,7 @@ fn storage(c: &mut Criterion) {
             .join(format!("pack-{}", written.checksum));
         std::fs::write(base.with_extension("pack"), &pack).unwrap();
         std::fs::write(base.with_extension("idx"), &index).unwrap();
-        let objects = repo.objects(PackLimits::default()).unwrap();
+        let objects = repo.objects_with(PackLimits::default()).unwrap();
         eprintln!(
             "storage_formats/{label}: 16x16384 bytes, pack={}, index={}, deltas={}, max_depth={}",
             pack.len(),
@@ -181,7 +181,7 @@ fn storage(c: &mut Criterion) {
         );
         group.throughput(Throughput::Bytes((pack.len() + index.len()) as u64));
         group.bench_function(BenchmarkId::new("open_validate_warm", &label), |b| {
-            b.iter(|| repo.objects(black_box(PackLimits::default())).unwrap());
+            b.iter(|| repo.objects_with(black_box(PackLimits::default())).unwrap());
         });
         group.throughput(Throughput::Bytes(16 * 16384));
         group.bench_function(BenchmarkId::new("read_all_delta_warm", &label), |b| {
@@ -189,7 +189,7 @@ fn storage(c: &mut Criterion) {
                 for input in &inputs {
                     black_box(
                         objects
-                            .read(input.id, ReadLimits::default())
+                            .read_with(input.id, ReadLimits::default())
                             .unwrap()
                             .unwrap(),
                     );

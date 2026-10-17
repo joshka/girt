@@ -62,21 +62,20 @@ handle work in [408](https://github.com/joshka/girt/issues/408).
 <!-- ergonomics-status: supported -->
 
 Supported for the revision grammar implemented by `revision`. Resolving to Blob checks the kind;
-reading by ID alone does not. Verbosity: separate handles, limits and the missing-object case.
+reading by ID alone does not; `read_blob` checks the kind and reports a missing object as an error.
+Verbosity: separate object and resolver handles.
 
 ```rust,no_run
 use girt::revision::Resolver;
-use girt::{ObjectKind, PackLimits, ReadLimits, Repository};
+use girt::{ObjectKind, Repository};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repository::open("repo")?;
-    let objects = repo.objects(PackLimits::default())?;
+    let objects = repo.objects()?;
     let resolver = Resolver::new(&repo, &objects)?;
     let id = resolver.resolve_to(&"HEAD:src/lib.rs".parse()?, ObjectKind::Blob)?;
-    let blob = objects
-        .read(id, ReadLimits::default())?
-        .ok_or("missing blob")?;
-    println!("{} bytes", blob.data().len());
+    let blob = objects.read_blob(id)?;
+    println!("{} bytes", blob.len());
     Ok(())
 }
 ```
@@ -94,21 +93,17 @@ exclusions. Missing capability: a lazy date-ordered excluding walk; parsing a ra
 include/exclude roots.
 
 ```rust,no_run
-use girt::{HistoryLimits, PackLimits, Repository};
+use girt::Repository;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repository::open("repo")?;
-    let objects = repo.objects(PackLimits::default())?;
+    let objects = repo.objects()?;
     let root = repo
         .references()?
         .resolve(&girt::refs::RefName::HEAD, 5)?
         .id
         .ok_or("unborn HEAD")?;
-    for id in objects
-        .walk(&[root], HistoryLimits::default())?
-        .into_iter()
-        .take(20)
-    {
+    for id in objects.walk(&[root])?.into_iter().take(20) {
         println!("{id}");
     }
     Ok(())
@@ -125,7 +120,7 @@ Desired sketch: `git.log("main").exclude("release").date_order().take(20)`. Gap 
 
 Partial: the compiled snippet resolves both commits to trees, compares them and reads changed blob
 contents. It emits debug representations of edit ranges, not unified patches. Gitlinks need an
-explicit submodule policy. Verbosity includes TreeCompareLimits, ReadLimits, DiffLimits, a false
+explicit submodule policy. Verbosity includes the content diff's ReadLimits, DiffLimits and a false
 AtomicBool. Byte vectors and repeated ObjectFormat occur only in the linked fixture and are excluded
 from the cost count.
 
@@ -134,18 +129,16 @@ use std::sync::atomic::AtomicBool;
 
 use girt::content_diff::{BinaryMode, BlobContent, DiffLimits, diff};
 use girt::revision::Resolver;
-use girt::{ObjectKind, PackLimits, ReadLimits, Repository, TreeCompareLimits};
+use girt::{ObjectKind, ReadLimits, Repository};
 
 fn compare(repo: &Repository) -> girt::Result<()> {
-    let objects = repo.objects(PackLimits::default())?;
+    let objects = repo.objects()?;
     let resolver = Resolver::new(repo, &objects)?;
     let old = resolver.resolve_to(&"HEAD~1".parse()?, ObjectKind::Tree)?;
     let new = resolver.resolve_to(&"HEAD".parse()?, ObjectKind::Tree)?;
     let cancel = AtomicBool::new(false);
     let limits = DiffLimits::default();
-    for change in
-        objects.compare_trees(Some(old), Some(new), TreeCompareLimits::default(), &cancel)?
-    {
+    for change in objects.compare_trees(Some(old), Some(new))? {
         let content = BlobContent::read(
             &objects,
             &change,
@@ -179,22 +172,15 @@ Desired sketch: `objects.diff_with_renames(old_tree, new_tree)?`. Gap closure:
 <!-- ergonomics-status: partial -->
 
 Partial: raw status compares HEAD, index and literal working-tree bytes. It deliberately uses
-`RawFilesWithoutIgnores`; ignored files and normalization need application policy. Limits and a
-false AtomicBool are verbosity; ignore-aware status is a capability gap.
+`RawFilesWithoutIgnores`; ignored files and normalization need application policy. Ignore-aware
+status is a capability gap.
 
 ```rust,no_run
-use std::sync::atomic::AtomicBool;
-
 use girt::Repository;
-use girt::status::{Baseline, Limits, Untracked};
+use girt::status::{Baseline, Untracked};
 
 fn status(repo: &Repository) -> girt::Result<()> {
-    let report = repo.raw_status(
-        Baseline::Head,
-        Untracked::RawFilesWithoutIgnores,
-        Limits::default(),
-        &AtomicBool::new(false),
-    )?;
+    let report = repo.raw_status(Baseline::Head, Untracked::RawFilesWithoutIgnores)?;
     println!("{report:#?}");
     Ok(())
 }
@@ -489,15 +475,15 @@ Desired sketch: `git.config().string("user", None, "email")`. Gap closure: remai
 <!-- ergonomics-status: supported -->
 
 Supported within the documented revision grammar; unsupported expressions return errors. Verbose:
-objects and resolver handles and PackLimits.
+objects and resolver handles.
 
 ```rust,no_run
+use girt::Repository;
 use girt::revision::Resolver;
-use girt::{PackLimits, Repository};
 
 fn main() -> girt::Result<()> {
     let repo = Repository::open("repo")?;
-    let objects = repo.objects(PackLimits::default())?;
+    let objects = repo.objects()?;
     let resolver = Resolver::new(&repo, &objects)?;
     let id = resolver.resolve(&"HEAD~1".parse()?)?;
     println!("{id}");
@@ -515,12 +501,10 @@ Desired sketch: `git.rev_parse("HEAD~1")?`. Gap closure:
 
 Partial: checkout_tree updates raw files and the index from explicit baseline/target tree IDs under
 exclusive ownership. It does not switch HEAD. A branch switch must coordinate HEAD, dirty state,
-index and files; moving a symref alone is insufficient. Verbosity: explicit limits, cancellation and
-tree lookup; missing capability: branch switch orchestration.
+index and files; moving a symref alone is insufficient. Verbosity: tree lookup; missing capability:
+branch switch orchestration.
 
 ```rust,no_run
-use std::sync::atomic::AtomicBool;
-
 use girt::{ObjectId, Repository};
 
 fn checkout(
@@ -529,7 +513,7 @@ fn checkout(
     new: ObjectId,
 ) -> girt::Result<()> {
     // Caller holds exclusive ownership and supplies the actual baseline tree.
-    let report = repo.checkout_tree(old, Some(new), Default::default(), &AtomicBool::new(false))?;
+    let report = repo.checkout_tree(old, Some(new))?;
     println!("{report:?}");
     Ok(())
 }

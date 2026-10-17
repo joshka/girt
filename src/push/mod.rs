@@ -106,7 +106,7 @@
 //! let destination =
 //!     Repository::init(ObjectFormat::Sha1, directory.path().join("remote.git"), InitKind::Bare)?;
 //! let cancel = AtomicBool::new(false);
-//! let objects = source.objects(PackLimits::default())?;
+//! let objects = source.objects_with(PackLimits::default())?;
 //! let command = PushCommand::new(main.clone(), None, commit).with_force(ForcePolicy::FastForwardOnly);
 //! let prepared = PreparedPush::new(
 //!     &objects, vec![command], &[], PushLimits::default(), &cancel,

@@ -64,7 +64,7 @@ fn damage(fixture: &Fixture, rehash: bool, edit: impl FnOnce(&Layout, &mut Vec<u
 }
 
 fn open(fixture: &Fixture) -> Result<Objects, ObjectReadError> {
-    fixture.repo.objects(PackLimits::default())
+    fixture.repo.objects_with(PackLimits::default())
 }
 
 fn corrupt_artifacts(result: Result<Objects, ObjectReadError>) -> &'static str {
@@ -84,7 +84,7 @@ fn girt_reads(fixture: &Fixture, objects: &Objects) -> Vec<bool> {
         .records
         .iter()
         .map(
-            |(id, kind, data)| match objects.read(*id, ReadLimits::default()) {
+            |(id, kind, data)| match objects.read_with(*id, ReadLimits::default()) {
                 Ok(Some(object)) => {
                     assert_eq!(
                         (object.id(), object.kind(), object.data()),
@@ -135,7 +135,7 @@ fn fails_reads_like_git(fixture: &Fixture) -> usize {
 
 /// The read error for `id` with all of its causes.
 fn read_error(objects: &Objects, id: girt::ObjectId) -> String {
-    let error = objects.read(id, ReadLimits::default()).unwrap_err();
+    let error = objects.read_with(id, ReadLimits::default()).unwrap_err();
     let mut message = error.to_string();
     let mut source = std::error::Error::source(&error);
     while let Some(cause) = source {
@@ -169,7 +169,12 @@ fn damaged_index_checksum_reads_like_git_and_fails_verification(#[case] format: 
     assert!(git_reads(&fixture).into_iter().all(|read| read));
     // Both a whole entry and a delta read through the damaged index.
     for id in [fixture.ordinary, fixture.delta] {
-        assert!(objects.read(id, ReadLimits::default()).unwrap().is_some());
+        assert!(
+            objects
+                .read_with(id, ReadLimits::default())
+                .unwrap()
+                .is_some()
+        );
     }
     assert!(matches!(
         objects.verify_packs(&AtomicBool::new(false)),
@@ -308,7 +313,7 @@ fn damaged_name_never_reads_wrong_content(#[case] format: ObjectFormat, #[case] 
     let damaged = girt::ObjectId::from_bytes(format, &damaged.unwrap()).unwrap();
     let (objects, failed) = reads_like_git(&fixture);
     assert_eq!(failed, 1);
-    assert!(objects.read(damaged, ReadLimits::default()).is_err());
+    assert!(objects.read_with(damaged, ReadLimits::default()).is_err());
     if !rehash {
         assert!(matches!(
             objects.verify_packs(&AtomicBool::new(false)),

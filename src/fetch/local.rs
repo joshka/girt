@@ -82,8 +82,12 @@ use crate::transport::TransportControl;
 /// let installed = received.install(&repo, PackLimits::default(), &cancel)?;
 /// assert_eq!(installed.objects, 2);
 /// // The objects are readable, but no reference was created.
-/// let objects = repo.objects(PackLimits::default())?;
-/// assert!(objects.read(main, girt::ReadLimits::default())?.is_some());
+/// let objects = repo.objects_with(PackLimits::default())?;
+/// assert!(
+///     objects
+///         .read_with(main, girt::ReadLimits::default())?
+///         .is_some()
+/// );
 /// assert!(repo.references()?.list()?.is_empty());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

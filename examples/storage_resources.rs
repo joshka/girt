@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Repository::open(args.repository)?;
     let id = args.id;
     let baseline = handles();
-    let failed = repository.objects(PackLimits::default().with_max_index_bytes(0));
+    let failed = repository.objects_with(PackLimits::default().with_max_index_bytes(0));
     assert!(matches!(
         failed,
         Err(girt::ObjectReadError::Limit("pack index bytes"))
@@ -119,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let read = start.elapsed();
     let start = Instant::now();
     let second = clone
-        .read(id, ReadLimits::default())?
+        .read_with(id, ReadLimits::default())?
         .ok_or("object missing")?;
     let reread = start.elapsed();
     assert_eq!(object, second);

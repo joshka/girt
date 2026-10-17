@@ -57,7 +57,7 @@ impl Repository {
     ///     directory.path().join("repo"),
     ///     girt::InitKind::Worktree,
     /// )?;
-    /// let report = repository.raw_status(
+    /// let report = repository.raw_status_with(
     ///     Baseline::Head,
     ///     Untracked::Omit,
     ///     Limits::default(),
@@ -70,7 +70,7 @@ impl Repository {
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn raw_status(
+    pub fn raw_status_with(
         &self,
         baseline: Baseline,
         untracked: Untracked,
@@ -88,6 +88,24 @@ impl Repository {
                 reason: "descriptor-relative worktree traversal requires macOS/Linux",
             })
         }
+    }
+
+    /// Reports raw status with [`Limits::default`] and no cancellation.
+    ///
+    /// Equivalent to `self.raw_status_with(baseline, untracked, Limits::default(), &never)` with a
+    /// flag that is never set; see [`Self::raw_status_with`] for the raw-content policy, platform
+    /// support and concurrency checks. `baseline` and `untracked` remain the caller's choice.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::raw_status_with`] except cancellation.
+    pub fn raw_status(&self, baseline: Baseline, untracked: Untracked) -> Result<Report, Error> {
+        self.raw_status_with(
+            baseline,
+            untracked,
+            Limits::default(),
+            &AtomicBool::new(false),
+        )
     }
 }
 
@@ -139,7 +157,7 @@ mod supported {
             super::super::worktree::validate_path(&entry.path)?;
             charge(&mut limits.max_path_bytes, entry.path.len(), "path bytes")?;
         }
-        let objects = repo.objects(limits.packs).map_err(Error::Objects)?;
+        let objects = repo.objects_with(limits.packs).map_err(Error::Objects)?;
         check(cancel)?;
         let head = match baseline {
             Baseline::Head => Some(resolve_head(repo)?),
@@ -158,7 +176,7 @@ mod supported {
                 })
                 .transpose()?,
         };
-        let leaves = objects.compare_trees(None, tree, limits.trees, cancel)?;
+        let leaves = objects.compare_trees_with(None, tree, limits.trees, cancel)?;
         let mut staged: BTreeMap<Vec<u8>, (Option<TreeValue>, Option<TreeValue>)> = leaves
             .into_iter()
             .map(|change| (change.path, (change.new, None)))
@@ -241,7 +259,7 @@ mod supported {
         let mut read = limits.read;
         read.max_object_bytes = read.max_object_bytes.min(limits.max_object_bytes);
         let object = objects
-            .read(id, read)
+            .read_with(id, read)
             .map_err(|source| Error::Object {
                 id,
                 path: path.to_vec(),

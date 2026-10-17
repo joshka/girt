@@ -17,16 +17,16 @@ mod pack_git;
 
 fn http(c: &mut Criterion) {
     let f = pack_git::Fixture::new(girt::ObjectFormat::Sha1, true, 16);
-    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let objects = f.repo.objects_with(PackLimits::default()).unwrap();
     assert!(
         objects
-            .read(f.ordinary, ReadLimits::default())
+            .read_with(f.ordinary, ReadLimits::default())
             .unwrap()
             .is_some()
     );
     assert!(
         objects
-            .read(f.delta, ReadLimits::default())
+            .read_with(f.delta, ReadLimits::default())
             .unwrap()
             .is_some()
     );

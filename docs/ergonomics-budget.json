@@ -13,9 +13,9 @@
     "empty_vectors": 0
   },
   "Read a file at a revision": {
-    "lines": 13,
-    "imported_names": 5,
-    "defaults": 2,
+    "lines": 11,
+    "imported_names": 3,
+    "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
@@ -26,9 +26,9 @@
     "empty_vectors": 0
   },
   "Log first N in date order with exclusions": {
-    "lines": 18,
-    "imported_names": 3,
-    "defaults": 2,
+    "lines": 14,
+    "imported_names": 1,
+    "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
@@ -39,9 +39,9 @@
     "empty_vectors": 0
   },
   "Diff two commits: tree and content": {
-    "lines": 32,
-    "imported_names": 11,
-    "defaults": 4,
+    "lines": 30,
+    "imported_names": 9,
+    "defaults": 2,
     "never_cancel": 1,
     "byte_vectors": 0,
     "object_formats": 0,
@@ -52,10 +52,10 @@
     "empty_vectors": 0
   },
   "Status": {
-    "lines": 13,
-    "imported_names": 5,
-    "defaults": 1,
-    "never_cancel": 1,
+    "lines": 7,
+    "imported_names": 3,
+    "defaults": 0,
+    "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
     "identity_literals": 0,
@@ -157,8 +157,8 @@
   },
   "Rev-parse": {
     "lines": 10,
-    "imported_names": 3,
-    "defaults": 1,
+    "imported_names": 2,
+    "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
@@ -169,10 +169,10 @@
     "empty_vectors": 0
   },
   "Checkout or switch branch": {
-    "lines": 11,
-    "imported_names": 3,
-    "defaults": 1,
-    "never_cancel": 1,
+    "lines": 10,
+    "imported_names": 2,
+    "defaults": 0,
+    "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
     "identity_literals": 0,

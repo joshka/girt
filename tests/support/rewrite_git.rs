@@ -88,7 +88,7 @@ impl Fixture {
     pub fn objects(&self) -> Objects {
         Repository::open(self.root.path())
             .unwrap()
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
     }
 }

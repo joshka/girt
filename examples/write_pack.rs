@@ -2,10 +2,7 @@
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 
-use girt::{
-    ObjectId, ObjectKind, PackLimits, PackObject, PackWriteLimits, ReadLimits, Repository,
-    write_pack,
-};
+use girt::{ObjectId, ObjectKind, PackObject, PackWriteLimits, Repository, write_pack};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -43,10 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.path().join("export.idx"),
         repo_path.join(format!("{basename}.idx")),
     )?;
-    let objects = repo.objects(PackLimits::default())?;
-    let restored = objects
-        .read(id, ReadLimits::default())?
-        .ok_or("exported object missing")?;
+    let objects = repo.objects()?;
+    let restored = objects.read(id)?.ok_or("exported object missing")?;
     assert_eq!(restored.kind(), ObjectKind::Blob);
     assert_eq!(restored.data(), payload);
     println!(

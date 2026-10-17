@@ -726,9 +726,9 @@ impl RepositoryMetadata {
 /// assert_eq!(repository.worktree(), Some(path.canonicalize()?.as_path()));
 ///
 /// let id = repository.loose_objects().write_blob(b"hello\n")?;
-/// let objects = repository.objects(PackLimits::default())?;
+/// let objects = repository.objects_with(PackLimits::default())?;
 /// let object = objects
-///     .read(id, ReadLimits::default())?
+///     .read_with(id, ReadLimits::default())?
 ///     .expect("blob was just written");
 /// assert_eq!(
 ///     (object.kind(), object.data()),
@@ -1061,7 +1061,7 @@ impl Repository {
     /// let path = directory.path().join("r.git");
     /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
     /// let mut repo = repo;
-    /// let objects = repo.objects(girt::PackLimits::default())?;
+    /// let objects = repo.objects_with(girt::PackLimits::default())?;
     /// let boundary = girt::ObjectId::Sha1([1; 20]); // Declaration only; not checked against objects here.
     /// std::fs::write(repo.common_dir().join("shallow"), format!("{boundary}\n"))?;
     /// repo.refresh_shallow(4096, &std::sync::atomic::AtomicBool::new(false))?;
@@ -1141,19 +1141,45 @@ impl Repository {
     /// let path = directory.path().join("r.git");
     /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
     /// let id = repo.loose_objects().write_blob(b"retained reader")?;
-    /// let objects = repo.objects(girt::PackLimits::default())?;
+    /// let objects = repo.objects_with(girt::PackLimits::default())?;
     /// let limits = girt::ReadLimits::default();
     /// assert_eq!(
-    ///     objects.read(id, limits)?.ok_or("blob absent")?.data(),
+    ///     objects.read_with(id, limits)?.ok_or("blob absent")?.data(),
     ///     b"retained reader"
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn objects(
+    pub fn objects_with(
         &self,
         limits: crate::PackLimits,
     ) -> Result<crate::Objects, crate::ObjectReadError> {
         self.objects_with_alternates(limits, crate::AlternateLimits::default())
+    }
+
+    /// Opens object storage with [`crate::PackLimits::default`] and default alternate bounds.
+    ///
+    /// Equivalent to `self.objects_with(PackLimits::default())`; see [`Self::objects_with`]. Pass
+    /// limits to [`Self::objects_with`] for repositories with more than 256 packs or 64 MiB of
+    /// pack indexes.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::objects_with`].
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"defaults")?;
+    /// assert_eq!(repo.objects()?.read_blob(id)?, b"defaults");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn objects(&self) -> Result<crate::Objects, crate::ObjectReadError> {
+        self.objects_with(crate::PackLimits::default())
     }
 
     /// Opens object storage with aggregate pack and alternate-discovery bounds.

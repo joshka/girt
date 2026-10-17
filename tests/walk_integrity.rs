@@ -201,17 +201,17 @@ fn packed_history() -> (tempfile::TempDir, PathBuf, ObjectId, ObjectId, ObjectId
 fn read(root: &Path, id: ObjectId) -> Result<Vec<u8>, String> {
     let repo = Repository::open(root).unwrap();
     let objects = repo
-        .objects(PackLimits::trusted())
+        .objects_with(PackLimits::trusted())
         .map_err(|e| e.to_string())?;
     objects
-        .read(id, ReadLimits::trusted())
+        .read_with(id, ReadLimits::trusted())
         .map_err(|e| e.to_string())
         .map(|object| object.unwrap().into_data())
 }
 
 fn verify_packs(root: &Path) -> Result<(), String> {
     let repo = Repository::open(root).unwrap();
-    let objects = repo.objects(PackLimits::trusted()).unwrap();
+    let objects = repo.objects_with(PackLimits::trusted()).unwrap();
     objects
         .verify_packs(&AtomicBool::new(false))
         .map_err(|e| e.to_string())

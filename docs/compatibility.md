@@ -856,11 +856,11 @@ upstream fixtures. They do not establish arbitrary crash recovery or reader snap
 
 ## Pack Reading
 
-`Repository::objects(PackLimits)` returns a synchronous reader with live loose-object access and a
-pinned set of pack/index files. `Objects::read(id, ReadLimits)` returns a verified kind and exact
-payload, or `None` for absence. Blob, tree, commit, and tag payloads share this boundary; structured
-parsing remains separate. Existing loose typed reads and writes retain their contracts. A corrupt
-loose copy fails without falling through to a valid packed duplicate.
+`Repository::objects_with(PackLimits)` returns a synchronous reader with live loose-object access
+and a pinned set of pack/index files. `Objects::read(id, ReadLimits)` returns a verified kind and
+exact payload, or `None` for absence. Blob, tree, commit, and tag payloads share this boundary;
+structured parsing remains separate. Existing loose typed reads and writes retain their contracts. A
+corrupt loose copy fails without falling through to a valid packed duplicate.
 
 ### Formats and Validation
 
@@ -2328,13 +2328,13 @@ measurements. No publication, merge or checkout is part of this increment.
 
 ## Raw Tree Checkout
 
-`Repository::checkout_tree(baseline, target, limits, cancel)` materializes a selected SHA-1 tree and
-publishes its index on macOS/Linux. This is tree checkout: HEAD, refs, reflogs and configuration
-stay unchanged. Callers supply the baseline tree rather than asking checkout to infer intent from
-HEAD. Every normal index entry must match that baseline by path, mode and ID. Staged differences
-relative to it, conflicts, gitlinks, dirty or missing tracked files and unsupported index extensions
-are refused before worktree mutation, even for paths unchanged in the target. A previous raw status
-report never substitutes for these independent checks.
+`Repository::checkout_tree_with(baseline, target, limits, cancel)` materializes a selected SHA-1
+tree and publishes its index on macOS/Linux. This is tree checkout: HEAD, refs, reflogs and
+configuration stay unchanged. Callers supply the baseline tree rather than asking checkout to infer
+intent from HEAD. Every normal index entry must match that baseline by path, mode and ID. Staged
+differences relative to it, conflicts, gitlinks, dirty or missing tracked files and unsupported
+index extensions are refused before worktree mutation, even for paths unchanged in the target. A
+previous raw status report never substitutes for these independent checks.
 
 `None` denotes an empty tree. A missing or empty index requires an empty baseline, which supports
 unborn repositories and initial checkout after either girt or Git no-checkout clone. A missing index

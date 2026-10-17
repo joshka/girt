@@ -51,9 +51,12 @@ fn fetch(path: &Path) -> ReceivedFetch {
     result.unwrap()
 }
 fn verify_contents(fixture: &Fixture, repo: &Repository) {
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     for (id, kind, expected) in &fixture.records {
-        let object = objects.read(*id, ReadLimits::default()).unwrap().unwrap();
+        let object = objects
+            .read_with(*id, ReadLimits::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(object.kind(), *kind);
         assert_eq!(object.data(), expected);
         assert_eq!(
@@ -74,10 +77,10 @@ fn imports_packed_source_and_all_object_kinds(#[case] ofs: bool) {
     let fixture = Fixture::new(girt::ObjectFormat::Sha1, ofs, 16);
     let (root, repo) = destination();
     assert!(fixture.index_path.exists());
-    let mut before = repo.objects(PackLimits::default()).unwrap();
+    let mut before = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
         before
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap(),
         None
     );
@@ -87,7 +90,7 @@ fn imports_packed_source_and_all_object_kinds(#[case] ofs: bool) {
         .unwrap();
     assert_eq!(
         before
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap(),
         None
     );
@@ -96,7 +99,7 @@ fn imports_packed_source_and_all_object_kinds(#[case] ofs: bool) {
         .unwrap();
     assert!(
         before
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -123,9 +126,9 @@ fn imports_packed_source_and_all_object_kinds(#[case] ofs: bool) {
     );
     verify_contents(&fixture, &repo);
     assert!(
-        repo.objects(PackLimits::default())
+        repo.objects_with(PackLimits::default())
             .unwrap()
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -210,9 +213,9 @@ fn selects_explicit_branch_or_tag(#[case] name: &str, #[case] has_tag: bool) {
         .unwrap();
     let tag = fixture.records.last().unwrap().0;
     assert_eq!(
-        repo.objects(PackLimits::default())
+        repo.objects_with(PackLimits::default())
             .unwrap()
-            .read(tag, ReadLimits::default())
+            .read_with(tag, ReadLimits::default())
             .unwrap()
             .is_some(),
         has_tag
@@ -311,14 +314,17 @@ fn concurrent_ref_change_fails_only_the_callers_conditional_update() {
 fn existing_snapshots_and_concurrent_openers_see_complete_pairs() {
     let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 16);
     let (_root, repo) = destination();
-    let old = repo.objects(PackLimits::default()).unwrap();
+    let old = repo.objects_with(PackLimits::default()).unwrap();
     let received = fetch(fixture.root.path());
     let done = AtomicBool::new(false);
     std::thread::scope(|scope| {
         let reader = scope.spawn(|| {
             while !done.load(Ordering::Acquire) {
-                let objects = repo.objects(PackLimits::default()).unwrap();
-                if let Some(object) = objects.read(fixture.delta, ReadLimits::default()).unwrap() {
+                let objects = repo.objects_with(PackLimits::default()).unwrap();
+                if let Some(object) = objects
+                    .read_with(fixture.delta, ReadLimits::default())
+                    .unwrap()
+                {
                     assert_eq!(object.id(), fixture.delta);
                 }
             }
@@ -330,7 +336,7 @@ fn existing_snapshots_and_concurrent_openers_see_complete_pairs() {
         reader.join().unwrap();
     });
     assert_eq!(
-        old.read(fixture.delta, ReadLimits::default()).unwrap(),
+        old.read_with(fixture.delta, ReadLimits::default()).unwrap(),
         None
     );
     verify_contents(&fixture, &repo);
@@ -441,9 +447,9 @@ fn retries_after_index_publication_failure() {
         format!("{} missing\n", fixture.delta).into_bytes()
     );
     assert_eq!(
-        repo.objects(PackLimits::default())
+        repo.objects_with(PackLimits::default())
             .unwrap()
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap(),
         None
     );
@@ -461,7 +467,7 @@ fn retries_after_index_publication_failure() {
 
 fn known(repo: &Repository, roots: &[ObjectId]) -> girt::fetch::KnownHistory {
     girt::fetch::KnownHistory::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         roots,
         FetchLimits::default(),
         &AtomicBool::new(false),
@@ -521,9 +527,9 @@ fn complete_transfer_when_any_selected_tip_is_not_known(#[case] format: girt::Ob
         .unwrap();
     assert!(
         fresh
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .read(main, ReadLimits::default())
+            .read_with(main, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -860,7 +866,7 @@ fn known_only_installation_can_exceed_default_snapshot_count() {
         .with_max_packs(257)
         .with_max_open_files(514);
     repeat_snapshot_pair(&repo, installed.checksum.unwrap(), snapshot.max_packs);
-    let objects = repo.objects(snapshot).unwrap();
+    let objects = repo.objects_with(snapshot).unwrap();
     let known = girt::fetch::KnownHistory::new(
         &objects,
         initial.wants(),

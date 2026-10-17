@@ -16,11 +16,11 @@ use std::fmt;
 ///
 /// ```no_run
 /// use girt::revision::Resolver;
-/// use girt::{OpenError, PackLimits, Repository};
+/// use girt::{OpenError, Repository};
 ///
 /// fn head(path: &str) -> girt::Result<girt::ObjectId> {
 ///     let repo = Repository::open(path)?;
-///     let objects = repo.objects(PackLimits::default())?;
+///     let objects = repo.objects()?;
 ///     Ok(Resolver::new(&repo, &objects)?.resolve(&"HEAD".parse()?)?)
 /// }
 ///
@@ -133,7 +133,10 @@ from_domain_errors! {
     crate::ParseObjectIdError,
     crate::ParseObjectIdPrefixError,
     crate::ObjectReadError,
+    crate::ReadBlobError,
     crate::ReadCommitError,
+    crate::ReadTagError,
+    crate::ReadTreeError,
     crate::ResolvePrefixError,
     crate::pack::IndexRebuildError,
     crate::PackWriteError,

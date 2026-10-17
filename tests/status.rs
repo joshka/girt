@@ -81,7 +81,7 @@ fn fixture() -> (tempfile::TempDir, Repository) {
     (temp, repo)
 }
 fn status(repo: &Repository) -> Report {
-    repo.raw_status(
+    repo.raw_status_with(
         Baseline::Head,
         Untracked::RawFilesWithoutIgnores,
         Limits::default(),
@@ -260,7 +260,7 @@ fn detached_head_and_explicit_tree_use_verified_storage(
     pack(root, packed);
     let head = status(&repo);
     let explicit = repo
-        .raw_status(
+        .raw_status_with(
             Baseline::Tree(head.baseline_tree),
             Untracked::Omit,
             Limits::default(),
@@ -342,7 +342,7 @@ fn raw_policy_exposes_ignored_files_and_normalization_difference() {
     assert_eq!(result.raw_untracked, [b"ignored".to_vec()]);
     assert_eq!(result.unstaged[0].path, b"file");
     let omitted = repo
-        .raw_status(
+        .raw_status_with(
             Baseline::Head,
             Untracked::Omit,
             Limits::default(),
@@ -429,7 +429,7 @@ fn directory_obstruction_is_not_clean() {
 fn invalid_index_is_an_error_without_writes() {
     let (_temp, repo) = fixture();
     fs::write(repo.git_dir().join("index"), b"invalid").unwrap();
-    let result = repo.raw_status(
+    let result = repo.raw_status_with(
         Baseline::Head,
         Untracked::Omit,
         Limits::default(),
@@ -458,7 +458,7 @@ fn missing_index_blob_is_an_error_even_when_working_file_is_missing() {
     )
     .unwrap();
     assert!(matches!(
-        repo.raw_status(
+        repo.raw_status_with(
             Baseline::Head,
             Untracked::Omit,
             Limits::default(),
@@ -473,7 +473,7 @@ fn cancellation_precedes_any_storage_read() {
     let (_temp, repo) = fixture();
     fs::write(repo.git_dir().join("index"), b"invalid").unwrap();
     assert!(matches!(
-        repo.raw_status(
+        repo.raw_status_with(
             Baseline::Head,
             Untracked::Omit,
             Limits::default(),
@@ -538,7 +538,7 @@ fn wrong_kind_index_object_is_an_error() {
     )
     .unwrap();
     assert!(matches!(
-        repo.raw_status(
+        repo.raw_status_with(
             Baseline::Tree(None),
             Untracked::Omit,
             Limits::default(),
@@ -560,7 +560,7 @@ fn corrupt_object_is_not_hidden_by_equal_working_content() {
     fs::remove_file(&path).unwrap();
     fs::write(path, b"corrupt").unwrap();
     assert!(matches!(
-        repo.raw_status(
+        repo.raw_status_with(
             Baseline::Head,
             Untracked::Omit,
             Limits::default(),
@@ -574,7 +574,7 @@ fn corrupt_object_is_not_hidden_by_equal_working_content() {
 fn missing_baseline_tree_is_not_an_empty_tree() {
     let (_temp, repo) = fixture();
     assert!(matches!(
-        repo.raw_status(
+        repo.raw_status_with(
             Baseline::Tree(Some(ObjectId::for_blob(
                 girt::ObjectFormat::Sha1,
                 b"absent"
@@ -595,7 +595,7 @@ fn workflow_enforces_composed_resource_bounds(#[case] limits: Limits) {
     let (_temp, repo) = fixture();
     seed(&repo, Some(b"old"), Some(b"old"), Some(b"old"));
     assert!(
-        repo.raw_status(
+        repo.raw_status_with(
             Baseline::Head,
             Untracked::Omit,
             limits,
@@ -624,7 +624,7 @@ fn unsafe_index_bytes_do_not_reach_filesystem_traversal() {
     )
     .unwrap();
     assert!(matches!(
-        repo.raw_status(
+        repo.raw_status_with(
             Baseline::Head,
             Untracked::Omit,
             Limits::default(),
@@ -697,7 +697,7 @@ fn distinguishes_worktree_and_file_byte_limits(
     git(root, &["add", "a", "b"]);
     git(root, &["commit", "-qm", "Original five-byte entries"]);
     assert!(git(root, &["status", "--porcelain=v1", "--untracked-files=no"]).is_empty());
-    let result = repo.raw_status(
+    let result = repo.raw_status_with(
         Baseline::Head,
         Untracked::Omit,
         Limits::default()

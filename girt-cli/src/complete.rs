@@ -10,6 +10,7 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
 
 use clap::CommandFactory as _;
 use clap_complete::engine::CompletionCandidate;
@@ -18,7 +19,6 @@ use girt::Repository;
 use girt::remote::Remote;
 
 use crate::Context;
-use crate::common::not_cancelled;
 
 /// Upper bound on worktree registrations read while completing.
 const MAX_WORKTREES: usize = 10_000;
@@ -216,7 +216,7 @@ pub fn worktrees() -> Vec<CompletionCandidate> {
     let Some(repository) = repository() else {
         return Vec::new();
     };
-    let Ok(worktrees) = repository.worktrees(MAX_WORKTREES, not_cancelled()) else {
+    let Ok(worktrees) = repository.worktrees(MAX_WORKTREES, &AtomicBool::new(false)) else {
         return Vec::new();
     };
     worktrees

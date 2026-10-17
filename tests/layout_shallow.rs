@@ -249,19 +249,19 @@ fn depth_clone_freezes_boundaries_and_refreshes_after_git_deepening(#[case] form
     );
     let clone = root.path().join("clone");
     let mut repo = Repository::open(&clone).unwrap();
-    let old = repo.objects(PackLimits::default()).unwrap();
+    let old = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(repo.shallow_roots().iter().collect::<Vec<_>>(), vec![tip]);
     assert_eq!(
-        old.walk(&[tip], HistoryLimits::default()).unwrap(),
+        old.walk_with(&[tip], HistoryLimits::default()).unwrap(),
         vec![tip]
     );
-    let raw = old.read(tip, ReadLimits::default()).unwrap().unwrap();
+    let raw = old.read_with(tip, ReadLimits::default()).unwrap().unwrap();
     assert_eq!(
         Commit::parse(format, raw.data()).unwrap().parents(),
         &[second]
     );
     assert!(
-        matches!(old.walk(&[second], HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == second)
+        matches!(old.walk_with(&[second], HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == second)
     );
     git(&clone, &["fetch", "--deepen=1"], b"");
     repo.refresh_shallow(1024, &AtomicBool::new(false)).unwrap();
@@ -270,12 +270,14 @@ fn depth_clone_freezes_boundaries_and_refreshes_after_git_deepening(#[case] form
         vec![second]
     );
     assert_eq!(
-        old.walk(&[tip], HistoryLimits::default()).unwrap(),
+        old.walk_with(&[tip], HistoryLimits::default()).unwrap(),
         vec![tip]
     );
-    let refreshed = repo.objects(PackLimits::default()).unwrap();
+    let refreshed = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
-        refreshed.walk(&[tip], HistoryLimits::default()).unwrap(),
+        refreshed
+            .walk_with(&[tip], HistoryLimits::default())
+            .unwrap(),
         vec![tip, second]
     );
     assert_eq!(git(&clone, &["rev-list", "--count", "HEAD"], b""), b"2\n");
@@ -284,9 +286,9 @@ fn depth_clone_freezes_boundaries_and_refreshes_after_git_deepening(#[case] form
     assert!(reopened.shallow_roots().is_empty());
     assert_eq!(
         reopened
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .walk(&[tip], HistoryLimits::default())
+            .walk_with(&[tip], HistoryLimits::default())
             .unwrap(),
         vec![tip, second, first]
     );
@@ -306,14 +308,14 @@ fn missing_nondeclared_parent_is_error_and_failed_refresh_preserves_snapshot(
     let hex = parent.to_string();
     std::fs::remove_file(repo.object_dir().join(&hex[..2]).join(&hex[2..])).unwrap();
     assert!(
-        matches!(repo.objects(PackLimits::default()).unwrap().walk(&[tip], HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == parent)
+        matches!(repo.objects_with(PackLimits::default()).unwrap().walk_with(&[tip], HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == parent)
     );
     std::fs::write(repo.common_dir().join("shallow"), format!("{tip}\n{tip}\n")).unwrap();
     repo.refresh_shallow(1024, &AtomicBool::new(false)).unwrap();
     assert_eq!(
-        repo.objects(PackLimits::default())
+        repo.objects_with(PackLimits::default())
             .unwrap()
-            .walk(&[tip], HistoryLimits::default())
+            .walk_with(&[tip], HistoryLimits::default())
             .unwrap(),
         vec![tip]
     );
@@ -344,12 +346,12 @@ fn declarations_do_not_hide_missing_or_wrong_kind_boundary_objects(#[case] forma
     )
     .unwrap();
     let repo = Repository::open(root.path()).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert!(
-        matches!(objects.walk(&[blob], HistoryLimits::default()), Err(HistoryError::NotCommit(id)) if id == blob)
+        matches!(objects.walk_with(&[blob], HistoryLimits::default()), Err(HistoryError::NotCommit(id)) if id == blob)
     );
     assert!(
-        matches!(objects.walk(&[missing], HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == missing)
+        matches!(objects.walk_with(&[missing], HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == missing)
     );
     assert!(matches!(girt::fetch::KnownHistory::new(&objects, &[blob],
         girt::fetch::FetchLimits::default(), &AtomicBool::new(false)),
@@ -452,27 +454,30 @@ fn shallow_boundaries_apply_to_ancestry_and_merge_bases_without_changing_bytes(
     let tip = commit(root.path(), "tip");
     let repo = Repository::open(root.path()).unwrap();
     let before = repo
-        .objects(PackLimits::default())
+        .objects_with(PackLimits::default())
         .unwrap()
-        .read(tip, ReadLimits::default())
+        .read_with(tip, ReadLimits::default())
         .unwrap()
         .unwrap();
     std::fs::write(repo.common_dir().join("shallow"), format!("{tip}\n")).unwrap();
     let repo = Repository::open(root.path()).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert!(
         !objects
-            .is_ancestor(parent, tip, HistoryLimits::default())
+            .is_ancestor_with(parent, tip, HistoryLimits::default())
             .unwrap()
     );
     assert!(
         objects
-            .merge_bases(parent, tip, HistoryLimits::default())
+            .merge_bases_with(parent, tip, HistoryLimits::default())
             .unwrap()
             .is_empty()
     );
     assert_eq!(
-        objects.read(tip, ReadLimits::default()).unwrap().unwrap(),
+        objects
+            .read_with(tip, ReadLimits::default())
+            .unwrap()
+            .unwrap(),
         before
     );
     assert_eq!(
@@ -480,7 +485,7 @@ fn shallow_boundaries_apply_to_ancestry_and_merge_bases_without_changing_bytes(
         b"1\n"
     );
     assert!(matches!(
-        objects.walk(&[tip], HistoryLimits::default().with_max_commits(0)),
+        objects.walk_with(&[tip], HistoryLimits::default().with_max_commits(0)),
         Err(HistoryError::Limit(_))
     ));
 }
@@ -516,9 +521,9 @@ fn null_shallow_declaration_is_retained_without_inventing_an_object(#[case] form
     std::fs::write(repo.common_dir().join("shallow"), format!("{null}\n")).unwrap();
     let repo = Repository::open(root.path()).unwrap();
     assert!(repo.shallow_roots().contains(null));
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
-        objects.walk(&[tip], HistoryLimits::default()).unwrap(),
+        objects.walk_with(&[tip], HistoryLimits::default()).unwrap(),
         vec![tip]
     );
     assert_eq!(
@@ -526,7 +531,7 @@ fn null_shallow_declaration_is_retained_without_inventing_an_object(#[case] form
         b"1\n"
     );
     assert!(
-        matches!(objects.walk(&[null], HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == null)
+        matches!(objects.walk_with(&[null], HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == null)
     );
 }
 
@@ -676,12 +681,15 @@ fn shallow_prefix_matches_git_history(
         format!("{tip}\n").as_bytes()
     );
     let repo = Repository::open(root.path()).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
-        objects.walk(&[tip], HistoryLimits::default()).unwrap(),
+        objects.walk_with(&[tip], HistoryLimits::default()).unwrap(),
         vec![tip]
     );
-    let raw = objects.read(tip, ReadLimits::default()).unwrap().unwrap();
+    let raw = objects
+        .read_with(tip, ReadLimits::default())
+        .unwrap()
+        .unwrap();
     assert_eq!(
         Commit::parse(format, raw.data()).unwrap().parents(),
         &[parent]

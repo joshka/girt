@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("unborn HEAD")?;
     let count = if operation == Operation::Repeat { 8 } else { 1 };
     for _ in 0..count {
-        let mut objects = repository.objects(PackLimits::trusted())?;
+        let mut objects = repository.objects_with(PackLimits::trusted())?;
         let measured = Instant::now();
         match operation {
             Operation::Refresh => {
@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Operation::Verify => objects.verify_packs(&AtomicBool::new(false))?,
         }
         let object = objects
-            .read(head, ReadLimits::trusted())?
+            .read_with(head, ReadLimits::trusted())?
             .ok_or("missing HEAD")?;
         std::hint::black_box(object);
         if operation == Operation::Refresh {

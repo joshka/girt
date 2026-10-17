@@ -80,7 +80,7 @@ pub enum SshPushOutcome {
 /// else {
 ///     return Err("refs/heads/topic does not point directly at a commit".into());
 /// };
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let cancel = AtomicBool::new(false);
 /// let command = PushCommand::new(RefName::new("refs/heads/topic")?, None, tip);
 /// let prepared = PreparedPush::new(&objects, vec![command], &[], PushLimits::default(), &cancel)?;

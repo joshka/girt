@@ -5,9 +5,7 @@ use std::time::{Duration, Instant};
 use girt::fetch::{FetchLimits, KnownHistory, receive_local};
 use girt::refs::{Expected, RefName, Target};
 use girt::transport::TransportControl;
-use girt::{
-    Commit, CommitFields, EntryMode, PackLimits, ReadLimits, Repository, Signature, Tree, TreeEntry,
-};
+use girt::{Commit, CommitFields, EntryMode, Repository, Signature, Tree, TreeEntry};
 
 fn repository() -> Result<(tempfile::TempDir, Repository), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -74,10 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Target::Direct(commit),
         Expected::Absent,
     )?;
-    let fetched = destination.objects(PackLimits::default())?;
-    let restored = fetched
-        .read(blob, ReadLimits::default())?
-        .ok_or("missing fetched blob")?;
+    let fetched = destination.objects()?;
+    let restored = fetched.read(blob)?.ok_or("missing fetched blob")?;
     assert_eq!(restored.data(), b"Fetched through native local storage\n");
     println!(
         "Fetched {} objects ({} pack bytes); published {commit} without a reflog",

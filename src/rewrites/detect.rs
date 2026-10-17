@@ -73,7 +73,7 @@ impl Objects {
     ///
     /// let old = tree(&[(b"before", b"same content\n")])?;
     /// let new = tree(&[(b"after", b"same content\n")])?;
-    /// let records = repo.objects(Default::default())?.detect_rewrites(
+    /// let records = repo.objects_with(Default::default())?.detect_rewrites(
     ///     Some(old),
     ///     Some(new),
     ///     Options::default(),
@@ -160,7 +160,7 @@ impl Objects {
     ///     (b"exact-new", b"identical\n"),
     ///     (b"edited-new", b"line one\nline THREE\n"),
     /// ])?;
-    /// let objects = repo.objects(Default::default())?;
+    /// let objects = repo.objects_with(Default::default())?;
     /// let options = Options::default().with_candidate_limit(0);
     /// let cancel = AtomicBool::new(false);
     /// let detection = objects.detect_rewrites_or_exact(
@@ -206,7 +206,7 @@ impl Objects {
         if !(1..=100).contains(&options.similarity) {
             return Err(Error::Similarity(options.similarity));
         }
-        let changes = self.compare_trees(old, new, limits.trees, cancel)?;
+        let changes = self.compare_trees_with(old, new, limits.trees, cancel)?;
         let (sources, destinations) = candidates(&changes, options.copies, &mut budget)?;
         let mut blobs = BTreeMap::new();
         for candidate in sources.iter().chain(&destinations) {
@@ -313,7 +313,7 @@ fn read(objects: &Objects, id: ObjectId, budget: &mut Budget<'_>) -> Result<Blob
     let mut limits = budget.remaining.read;
     limits.max_object_bytes = limits.max_object_bytes.min(budget.remaining.max_blob_bytes);
     let object = objects
-        .read(id, limits)
+        .read_with(id, limits)
         .map_err(|source| Error::Read { id, source })?
         .ok_or(Error::Missing(id))?;
     if object.kind() != ObjectKind::Blob {

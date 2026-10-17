@@ -14,7 +14,7 @@ fn cancellation_precedes_platform_and_storage_access() {
     )
     .unwrap();
     std::fs::write(repo.git_dir().join("index"), b"not an index").unwrap();
-    let result = repo.raw_status(
+    let result = repo.raw_status_with(
         Baseline::Tree(None),
         Untracked::Omit,
         Limits::default(),

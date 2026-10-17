@@ -263,10 +263,10 @@ fn tree_changes_load_verified_content_for_diff(
 ) {
     let fixture = tree_fixture(packed, format);
     let repo = Repository::open(fixture.0.path().join("repo")).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let cancel = AtomicBool::new(false);
     let changes = objects
-        .compare_trees(
+        .compare_trees_with(
             Some(fixture.1),
             Some(fixture.2),
             TreeCompareLimits::default(),
