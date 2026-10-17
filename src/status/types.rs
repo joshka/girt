@@ -1,4 +1,4 @@
-use crate::{ObjectId, TreeChange, TreeCompareLimits, TreeValue, index};
+use crate::{ChangeStatus, ObjectId, TreeChange, TreeCompareLimits, TreeValue, index};
 
 /// Snapshot against which staged entries are compared.
 ///
@@ -359,6 +359,26 @@ pub struct WorktreeChange {
     pub index: TreeValue,
     /// Observed difference, preserving obstructions rather than treating them as clean.
     pub change: Change,
+}
+
+impl WorktreeChange {
+    /// Classifies this change as the second column of `git status --porcelain` does, when the
+    /// report alone determines it.
+    ///
+    /// A deleted path is [`ChangeStatus::Deleted`]; a modified one is compared with
+    /// [`index`](Self::index) by [`ChangeStatus::between`]. Returns `None` for
+    /// [`Change::Obstructed`]: Git reports `D` when a directory occupies the leaf or an ancestor is
+    /// blocked, but `M` when a special file such as a FIFO occupies the leaf, and the report does
+    /// not record which. Inspect the obstructing path to decide. Staged changes in
+    /// [`Report::staged`] use [`TreeChange::status`].
+    #[must_use]
+    pub fn status(&self) -> Option<ChangeStatus> {
+        match &self.change {
+            Change::Deleted => Some(ChangeStatus::Deleted),
+            Change::Modified(new) => Some(ChangeStatus::between(Some(self.index), Some(*new))),
+            Change::Obstructed { .. } => None,
+        }
+    }
 }
 
 /// Literal worktree difference from one index leaf.

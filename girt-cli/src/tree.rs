@@ -7,7 +7,7 @@ use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::{EntryMode, ObjectId, ObjectKind, Objects, Tree, TreeEntry};
 
-use crate::common::{objects, read_limits, resolve_tree, stdout, write_line};
+use crate::common::{objects, read_limits, resolve_tree, stdout, write_path};
 use crate::{Context, complete};
 
 /// Tree commands.
@@ -69,7 +69,7 @@ fn walk(
         if args.recursive && entry.mode == EntryMode::Tree {
             walk(objects, entry.id, prefix, args, git, out)?;
         } else if args.name_only {
-            write_line(out, &path_bytes(prefix, git))?;
+            write_path(out, prefix, git)?;
         } else {
             write_entry(out, entry, prefix, git)?;
         }
@@ -96,42 +96,7 @@ pub fn write_entry(
     path: &[u8],
     git: bool,
 ) -> io::Result<()> {
-    let (mode, kind) = match entry.mode {
-        EntryMode::Blob => ("100644", "blob"),
-        EntryMode::Executable => ("100755", "blob"),
-        EntryMode::Symlink => ("120000", "blob"),
-        EntryMode::Tree => ("040000", "tree"),
-        EntryMode::Gitlink => ("160000", "commit"),
-        _ => ("000000", "unknown"),
-    };
+    let (mode, kind) = (entry.mode.octal(), entry.mode.object_kind().as_str());
     write!(out, "{mode} {kind} {}\t", entry.id)?;
-    write_line(out, &path_bytes(path, git))
-}
-
-/// Returns the path as Git prints it with `core.quotePath=true`, or unchanged.
-fn path_bytes(path: &[u8], git: bool) -> std::borrow::Cow<'_, [u8]> {
-    let needs_quote = |b: u8| !(0x20..0x7f).contains(&b) || b == b'"' || b == b'\\';
-    if !git || !path.iter().copied().any(needs_quote) {
-        return path.into();
-    }
-    let mut quoted = vec![b'"'];
-    for &byte in path {
-        match byte {
-            b'"' => quoted.extend_from_slice(b"\\\""),
-            b'\\' => quoted.extend_from_slice(b"\\\\"),
-            b'\x07' => quoted.extend_from_slice(b"\\a"),
-            b'\x08' => quoted.extend_from_slice(b"\\b"),
-            b'\t' => quoted.extend_from_slice(b"\\t"),
-            b'\n' => quoted.extend_from_slice(b"\\n"),
-            b'\x0b' => quoted.extend_from_slice(b"\\v"),
-            b'\x0c' => quoted.extend_from_slice(b"\\f"),
-            b'\r' => quoted.extend_from_slice(b"\\r"),
-            byte if needs_quote(byte) => {
-                quoted.extend_from_slice(format!("\\{byte:03o}").as_bytes())
-            }
-            byte => quoted.push(byte),
-        }
-    }
-    quoted.push(b'"');
-    quoted.into()
+    write_path(out, path, git)
 }

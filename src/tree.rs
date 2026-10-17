@@ -53,7 +53,7 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
-use crate::ObjectId;
+use crate::{ObjectId, ObjectKind};
 
 /// An owned, in-memory Git tree in an explicitly selected object format: names, modes, and
 /// references to other objects.
@@ -427,6 +427,48 @@ pub enum EntryMode {
 }
 
 impl EntryMode {
+    /// Returns the six-digit octal mode Git prints, as in `git ls-tree` and `git diff` headers.
+    ///
+    /// Trees print as `040000`; tree objects store the same mode as `40000` without the leading
+    /// zero, which [`Tree::new`] writes. This replaces matching each variant to a literal.
+    ///
+    /// ```
+    /// use girt::EntryMode;
+    ///
+    /// assert_eq!(EntryMode::Executable.octal(), "100755");
+    /// assert_eq!(EntryMode::Tree.octal(), "040000");
+    /// ```
+    #[must_use]
+    pub fn octal(self) -> &'static str {
+        match self {
+            Self::Blob => "100644",
+            Self::Executable => "100755",
+            Self::Symlink => "120000",
+            Self::Tree => "040000",
+            Self::Gitlink => "160000",
+        }
+    }
+
+    /// Returns the kind of object an entry with this mode names.
+    ///
+    /// Blobs, executables and symlinks name blobs, trees name trees and gitlinks name commits in
+    /// another repository. [`ObjectKind::as_str`] gives the name `git ls-tree` prints.
+    ///
+    /// ```
+    /// use girt::{EntryMode, ObjectKind};
+    ///
+    /// assert_eq!(EntryMode::Symlink.object_kind(), ObjectKind::Blob);
+    /// assert_eq!(EntryMode::Gitlink.object_kind().as_str(), "commit");
+    /// ```
+    #[must_use]
+    pub fn object_kind(self) -> ObjectKind {
+        match self {
+            Self::Blob | Self::Executable | Self::Symlink => ObjectKind::Blob,
+            Self::Tree => ObjectKind::Tree,
+            Self::Gitlink => ObjectKind::Commit,
+        }
+    }
+
     fn bytes(self) -> &'static [u8] {
         match self {
             Self::Blob => b"100644",

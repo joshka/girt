@@ -2,13 +2,12 @@
 //! Run `cargo run --example rewrites -- REPOSITORY OLD_TREE NEW_TREE`.
 //! Each NUL-delimited record contains an `R` or `C` marker, a three-digit similarity score, and
 //! source and target byte paths.
-use std::error::Error;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use clap::Parser;
-use girt::rewrites::{Kind, Limits, Options};
+use girt::rewrites::{Limits, Options};
 use girt::{ObjectId, PackLimits, Repository};
 
 #[derive(Parser)]
@@ -22,7 +21,7 @@ struct Args {
     new_tree: ObjectId,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> girt::Result<()> {
     let args = Args::parse();
     let repo = Repository::open(args.repository)?;
     let objects = repo.objects(PackLimits::default())?;
@@ -36,12 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let mut output = io::stdout().lock();
     for record in records {
-        let marker = match record.kind {
-            Kind::Rename => 'R',
-            Kind::Copy => 'C',
-            _ => return Err("unsupported rewrite kind".into()),
-        };
-        write!(output, "{marker}{:03}\0", record.similarity)?;
+        write!(output, "{}{:03}\0", record.kind.letter(), record.similarity)?;
         output.write_all(&record.source)?;
         output.write_all(&[0])?;
         output.write_all(&record.target)?;

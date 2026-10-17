@@ -82,6 +82,7 @@
 //! | Use configured-remote convenience workflows | [`workflow`] |
 //! | Use HTTP/SSH and credentials | [`transport`], [`remote::CredentialStore`] |
 //! | Compare snapshots and file contents | [`Objects::compare_trees`], [`content_diff`], [`rewrites`] |
+//! | Print paths, modes, statuses and dates as Git does | [`display`] |
 //! | Manage the index and working tree | [`index`], [`status`], [`checkout`], [`ignore`] |
 //! | Plan retention, repack, or coordinate mutation | [`retention`], [`locks`] |
 //!
@@ -135,9 +136,12 @@
 //!
 //! Missing objects are distinct from malformed storage. Object reads return `Ok(None)` for absence;
 //! I/O, corruption, unsupported representations, and exceeded limits return errors. Preserve error
-//! source chains when reporting failures. Reference transactions can have partial effects: inspect
-//! reported outcomes before retrying. Writing storage requires the filesystem assumptions
-//! documented on the owning operation; a pathname alone is not a trust boundary.
+//! source chains when reporting failures. Each operation returns its module's typed error; every
+//! one converts into the crate-level [`Error`], so application code can return [`Result`] and use
+//! `?` across modules, then downcast to recover the typed error. Reference transactions can have
+//! partial effects: inspect reported outcomes before retrying. Writing storage requires the
+//! filesystem assumptions documented on the owning operation; a pathname alone is not a trust
+//! boundary.
 //!
 //! Working-tree operations have narrower platform, byte-path, filter, and mutation contracts than
 //! object storage. Consult [`checkout`] and [`status`] before applying Git data to a filesystem.
@@ -158,7 +162,10 @@ pub use file_policy::SharedPermissions;
 pub mod commit;
 pub mod config;
 pub mod content_diff;
+pub mod display;
 mod edges;
+mod error;
+pub use error::{Error, Result};
 pub mod fetch;
 #[cfg(any(fuzzing, test))]
 #[doc(hidden)]
@@ -219,7 +226,7 @@ pub use repository::{
 };
 pub use tag::{Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};
-pub use tree_compare::{TreeChange, TreeCompareError, TreeCompareLimits, TreeValue};
+pub use tree_compare::{ChangeStatus, TreeChange, TreeCompareError, TreeCompareLimits, TreeValue};
 
 #[cfg(feature = "tracing")]
 mod trace;

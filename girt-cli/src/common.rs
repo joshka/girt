@@ -206,6 +206,15 @@ pub fn write_line(out: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
     out.write_all(b"\n")
 }
 
+/// Writes a path line, C-quoting it like Git's default `core.quotePath` when `quote` is set.
+pub fn write_path(out: &mut impl Write, path: &[u8], quote: bool) -> io::Result<()> {
+    if quote {
+        writeln!(out, "{}", girt::display::quote_path(path))
+    } else {
+        write_line(out, path)
+    }
+}
+
 /// Resolves `core.abbrev` once for an output operation; collisions are lengthened per ID.
 pub fn abbrev_len(repository: &Repository, objects: &Objects) -> Result<usize> {
     let Some(value) = repository.config().value("core", None, "abbrev") else {
