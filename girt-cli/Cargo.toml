@@ -7,7 +7,9 @@ description = "Command-line tool for inspecting and benchmarking Git repositorie
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/joshka/girt"
 rust-version = "1.97.1"
-publish = false
+keywords = ["git", "cli", "version-control"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
 
 [[bin]]
 name = "girt"
@@ -16,7 +18,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
 color-eyre = "0.6"
-girt = { path = "..", features = ["http", "ssh", "tracing"] }
+girt = { path = "..", version = "0.10.3", features = ["http", "ssh", "tracing"] }
 tokio = { version = "1.4", features = ["rt-multi-thread"] }
 tracing = "0.1.40"
 tracing-error = "0.2"
