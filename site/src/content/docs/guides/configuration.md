@@ -3,7 +3,7 @@ title: Configuration and provenance
 description: Select configuration sources, explain effective settings, and edit a direct file.
 ---
 
-A tool needs to decide which configuration sources it trusts and reads before interpreting settings.
+Before interpreting settings, a tool has to decide which configuration sources it trusts and reads.
 girt keeps three operations separate: parse supplied bytes, resolve explicit sources and includes,
 and edit one direct file while holding its lock. An effective snapshot can contain many files; it
 cannot safely be written back as though it were one source document.
@@ -72,8 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Run it with `cargo run`. Everything is removed with the temporary directory. The example treats an
-editor setting as data; it does not execute it. An application that launches commands needs its own
-trust and execution policy.
+editor setting as data; it does not execute it. An application that launches configured commands
+must decide for itself which values to trust and how to run them.
 
 Appending a local occurrence makes it the scalar winner while preserving earlier occurrences. Use
 `Document::set_value` to change a particular existing occurrence identified in the current draft.
@@ -86,14 +86,14 @@ XDG configuration before the home file. Ordinary includes expand in place. Repos
 bootstrap stays separate: an override cannot reinterpret SHA-1 storage as SHA-256.
 
 Use `entries()` and each entry's origin to explain where occurrences came from. Scalar lookup takes
-the last value, but repeated variables can have different consumer rules. URLs and refspecs should
-be interpreted by their owning APIs rather than flattened indiscriminately. Scope describes
-precedence, not permission to execute or trust a value.
+the last value, but each consumer of a repeated variable has its own rules for combining
+occurrences. Let the URL and refspec APIs interpret those values instead of flattening them
+yourself. Scope describes precedence, not permission to execute or trust a value.
 
 An absent setting, an implicit assignment, and an explicit empty value are distinct. Boolean lookup
 interprets implicit as true and empty as false; string lookup treats implicit as absent. A
 successful parse does not establish that a value is a valid boolean, integer, URL, or safe command.
-Preserve a typed lookup error instead of silently substituting a default.
+Propagate a typed lookup error instead of silently substituting a default.
 
 ## Supply environment and include context explicitly
 
@@ -103,12 +103,12 @@ system/global files and runtime assignments. Use `Config::from_environment` only
 zero. Neither reads or mutates process-global state itself.
 
 Conditional includes can depend on branch names, logical/canonical Git-directory aliases, or remote
-URLs. Expansion of home and prefix paths needs explicit context. Supply the facts the application
+URLs. Expanding home and prefix paths needs that context too. Supply the facts the application
 knows, then resolve again when those facts change. Default resolution matches ordinary include
 placement. An adapter that requires each top-level source's URL conditions to ignore other top-level
-sources can select `IncludeConditionVisibility::RootSnapshot` explicitly. It can select different
-conditional includes from ordinary resolution. See the
-[configuration module](https://docs.rs/girt/latest/girt/config/index.html) for those policies and
+sources can select `IncludeConditionVisibility::RootSnapshot`; that mode can include different files
+than ordinary resolution. See the
+[configuration module](https://docs.rs/girt/latest/girt/config/index.html) for both modes and their
 limits.
 
 ## Edit the intended source and recover deliberately
@@ -119,11 +119,13 @@ retains comments and unrelated syntax; its occurrence indices and section ordina
 current draft. Reacquire them after edits. Use `require_source` when publication should depend on
 the exact bytes or absence observed earlier.
 
-A lock conflict does not prove a stale lock. A changed-source error means reread and reconsider the
-edit. Syntax errors require correcting the source or draft; a budget refusal requires an explicit
-size and trust decision. A failed cleanup needs inspection of the owned residual lock. Explicit
-`abort` makes cleanup failure observable, whereas drop performs best-effort cleanup. Publication
-does not promise power-loss durability or an atomic transaction across several files.
+A lock conflict does not prove the lock is stale. A changed-source error means the file changed
+since you read it: read it again and decide whether the edit still makes sense. Fix syntax errors in
+the source or the draft. If the source or the edited output exceeds the byte budget, decide whether
+you trust it enough to raise the budget. If cleanup fails, inspect the lock file your edit left
+behind. Call `abort` to see cleanup failures; dropping the edit only cleans up on a best-effort
+basis. Publication does not promise power-loss durability or an atomic transaction across several
+files.
 
 After a successful commit, reopen or re-resolve before constructing dependent values. Existing
 repository, configuration, and remote values remain snapshots. The
