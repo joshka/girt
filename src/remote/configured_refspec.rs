@@ -4,6 +4,26 @@ use super::Direction;
 use crate::refs::RefName;
 
 /// The operation described by a configured refspec.
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::{ConfiguredRefspec, ConfiguredRefspecKind as Kind, Direction};
+///
+/// let kind = |direction, text: &[u8]| ConfiguredRefspec::parse(direction, text).map(|s| s.kind());
+/// assert_eq!(
+///     kind(Direction::Fetch, b"+refs/heads/*:refs/remotes/origin/*")?,
+///     Kind::Mapping
+/// );
+/// assert_eq!(kind(Direction::Fetch, b"main")?, Kind::Selection);
+/// assert_eq!(
+///     kind(Direction::Fetch, b"^refs/heads/wip/*")?,
+///     Kind::Exclusion
+/// );
+/// assert_eq!(kind(Direction::Push, b":")?, Kind::AllMatching);
+/// assert_eq!(kind(Direction::Push, b":refs/heads/old")?, Kind::Deletion);
+/// # Ok::<(), girt::remote::ConfiguredRefspecError>(())
+/// ```
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ConfiguredRefspecKind {
@@ -20,6 +40,9 @@ pub enum ConfiguredRefspecKind {
 }
 
 /// A byte-preserving description of configured fetch or push syntax.
+///
+/// Use this type to display, validate or translate the refspecs a user configured, as jj does to
+/// turn fetch refspecs into bookmark patterns. Use [`super::Refspecs`] to plan a transfer.
 ///
 /// Unlike [`super::Refspec`], this type accepts shorthand names, positive object IDs and matching
 /// push syntax. An explicit, non-pattern push source is an opaque revision expression. Parsing does

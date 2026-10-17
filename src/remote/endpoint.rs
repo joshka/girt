@@ -6,9 +6,30 @@ use super::{Remote, RemoteUrls};
 use crate::Config;
 use crate::config::boolean;
 
-/// One configured destination after a single Git-style prefix rewrite.
+/// The endpoint a transfer should connect to, after `insteadOf` rewriting and protocol policy.
 ///
-/// Bytes are preserved, including paths and credentials. Debug output deliberately omits them.
+/// Returned by [`Remote::fetch_destination`] and [`Remote::push_destinations`]. Its
+/// [`Protocol`] selects the transport. Bytes are preserved, including paths and credentials;
+/// Debug output deliberately omits them.
+///
+/// # Examples
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::{Protocol, ProtocolEnvironment, Remote};
+///
+/// let config = Config::parse(b"[remote \"origin\"]\nurl = file:///srv/git/project%20one.git\n")?;
+/// let origin = Remote::find(&config, b"origin")?.expect("configured");
+/// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+/// assert_eq!(destination.protocol(), Protocol::File);
+/// // `file://` URLs are percent-decoded into a filesystem path.
+/// # #[cfg(unix)]
+/// assert_eq!(
+///     destination.local_path()?,
+///     std::path::Path::new("/srv/git/project one.git")
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct Destination {
     bytes: Vec<u8>,
@@ -130,6 +151,19 @@ fn helper_scheme(raw: &[u8]) -> Option<&[u8]> {
 }
 
 /// Recognized Git endpoint family. Helper recognition never authorizes an executable.
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::{ParsedUrl, Protocol};
+///
+/// let protocol = |url: &[u8]| ParsedUrl::parse(url).map(|url| url.protocol());
+/// assert_eq!(protocol(b"https://example.com/repo.git")?, Protocol::Https);
+/// assert_eq!(protocol(b"git@example.com:repo.git")?, Protocol::Ssh);
+/// assert_eq!(protocol(b"/srv/repo.git")?, Protocol::Local);
+/// assert_eq!(protocol(b"hg::https://example.com/repo")?, Protocol::Helper);
+/// # Ok::<(), girt::remote::UrlError>(())
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Protocol {
@@ -165,6 +199,23 @@ impl Protocol {
 }
 
 /// Sanitized configuration failure. No URL, path, or environment value appears in Display/Debug.
+///
+/// # Examples
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::{EndpointError, ProtocolEnvironment, Remote};
+///
+/// let config = Config::parse(b"[remote \"origin\"]\nurl = https://example.com/repo.git\n")?;
+/// let origin = Remote::find(&config, b"origin")?.expect("configured");
+/// // As with Git, a `GIT_ALLOW_PROTOCOL` list replaces the configured policy.
+/// let ssh_only = ProtocolEnvironment::default().with_allow_protocol(Some(b"ssh".to_vec()));
+/// assert_eq!(
+///     origin.fetch_destination(&config, &ssh_only),
+///     Err(EndpointError::Refused)
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EndpointError {
@@ -192,7 +243,30 @@ pub enum ProtocolOrigin {
     Automatic,
 }
 
-/// Explicit environment policy for one resolution call. A present allow-list overrides config.
+/// The environment variables that restrict which protocols a transfer may use.
+///
+/// `GIT_ALLOW_PROTOCOL` is a colon-separated list of allowed protocol names; when present it
+/// replaces `protocol.allow` and `protocol.<name>.allow` entirely. `GIT_PROTOCOL_FROM_USER=0`
+/// marks the operation as automatic, which refuses protocols whose policy is `user` (by default
+/// `file` and local paths). The default value of this type applies configuration only.
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::{ProtocolEnvironment, ProtocolOrigin};
+///
+/// let environment = ProtocolEnvironment::from_environment(|name| match name {
+///     "GIT_ALLOW_PROTOCOL" => Some(b"https:ssh".to_vec()),
+///     "GIT_PROTOCOL_FROM_USER" => Some(b"0".to_vec()),
+///     _ => None,
+/// })?;
+/// assert_eq!(
+///     environment.allow_protocol.as_deref(),
+///     Some(&b"https:ssh"[..])
+/// );
+/// assert_eq!(environment.origin, Some(ProtocolOrigin::Automatic));
+/// # Ok::<(), girt::remote::EndpointError>(())
+/// ```
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct ProtocolEnvironment {
@@ -265,6 +339,27 @@ impl Remote {
     /// A push-only rewrite is never applied to fetch. No filesystem or process environment is read.
     /// This method does not perform transport I/O or validate transport-specific components.
     ///
+    /// Without configuration, local paths and `file://` are allowed unless the
+    /// [`ProtocolEnvironment`] marks the operation as automatic, remote helpers are refused, and
+    /// `http`, `https`, `ssh` and `git` are allowed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::{Protocol, ProtocolEnvironment, Remote};
+    ///
+    /// let config = Config::parse(
+    ///     b"[url \"https://github.com/\"]\ninsteadOf = gh:\n\
+    ///       [remote \"origin\"]\nurl = gh:joshka/girt\n",
+    /// )?;
+    /// let origin = Remote::find(&config, b"origin")?.expect("configured");
+    /// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+    /// assert_eq!(destination.bytes(), b"https://github.com/joshka/girt");
+    /// assert_eq!(destination.protocol(), Protocol::Https);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns [`EndpointError::Missing`] when no fetch URL is configured, configuration or syntax
@@ -283,6 +378,30 @@ impl Remote {
     ///
     /// Configured `pushurl` entries override `url` and receive only `insteadOf` rewrites. When
     /// falling back to `url`, the longest `pushInsteadOf` match wins over `insteadOf`.
+    ///
+    /// # Examples
+    ///
+    /// Fetch anonymously over HTTPS but push over SSH, a common `pushInsteadOf` setup:
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::{Protocol, ProtocolEnvironment, Remote};
+    ///
+    /// let config = Config::parse(
+    ///     b"[url \"git@example.com:\"]\npushInsteadOf = https://example.com/\n\
+    ///       [remote \"origin\"]\nurl = https://example.com/project.git\n",
+    /// )?;
+    /// let origin = Remote::find(&config, b"origin")?.expect("configured");
+    /// let environment = ProtocolEnvironment::default();
+    /// assert_eq!(
+    ///     origin.fetch_destination(&config, &environment)?.protocol(),
+    ///     Protocol::Https
+    /// );
+    /// let push = origin.push_destinations(&config, &environment)?;
+    /// assert_eq!(push[0].bytes(), b"git@example.com:project.git");
+    /// assert_eq!(push[0].protocol(), Protocol::Ssh);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///

@@ -160,6 +160,26 @@ impl<'a> ParsedUrl<'a> {
 
     /// Returns a local path in absolute, slash-separated form, or the unchanged remote URL.
     ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(unix)] {
+    /// use std::path::Path;
+    ///
+    /// use girt::remote::ParsedUrl;
+    ///
+    /// let base = Path::new("/home/user/work");
+    /// let local = ParsedUrl::parse(b"../upstream.git")?;
+    /// assert_eq!(local.canonicalize_local(base)?, b"/home/user/upstream.git");
+    /// let remote = ParsedUrl::parse(b"https://example.com/repo.git")?;
+    /// assert_eq!(
+    ///     remote.canonicalize_local(base)?,
+    ///     b"https://example.com/repo.git"
+    /// );
+    /// # }
+    /// # Ok::<(), girt::remote::UrlError>(())
+    /// ```
+    ///
     /// Relative local paths are joined to an absolute `base`; `.` and `..` components are removed
     /// lexically. No filesystem access, symlink resolution, or percent decoding occurs, and the
     /// target need not exist. File URLs remain unchanged. On Windows, local separators in the

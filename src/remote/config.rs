@@ -1,7 +1,41 @@
 use super::{Direction, RefspecError, Refspecs};
 use crate::Config;
 
-/// An owned snapshot of a named remote's raw URLs and parsed fetch/push refspecs.
+/// A named remote's URLs and refspecs, as needed to plan a transfer.
+///
+/// `Remote` is what [`crate::workflow`] and [`crate::fetch::FetchRequest`] start from: the raw
+/// `url` and `pushurl` values, and the `fetch` and `push` refspecs parsed into [`Refspecs`] that
+/// can be mapped. Resolve the URL to connect to with [`Self::fetch_destination`] or
+/// [`Self::push_destinations`], which apply `insteadOf` rewriting and protocol policy.
+///
+/// # Examples
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::Remote;
+///
+/// let config = Config::parse(
+///     b"[remote \"origin\"]\n\
+///       url = https://example.com/project.git\n\
+///       pushurl = ssh://git@example.com/project.git\n\
+///       fetch = +refs/heads/*:refs/remotes/origin/*\n",
+/// )?;
+/// let origin = Remote::find(&config, b"origin")?.expect("configured");
+/// assert_eq!(
+///     origin.fetch_url(),
+///     Some(&b"https://example.com/project.git"[..])
+/// );
+/// // An explicit `pushurl` replaces `url` for pushes.
+/// assert_eq!(
+///     origin.push_urls(),
+///     [b"ssh://git@example.com/project.git".to_vec()]
+/// );
+/// assert_eq!(origin.fetch_refspecs().specs().len(), 1);
+///
+/// // Remotes are looked up by their exact, case-sensitive name.
+/// assert!(Remote::find(&config, b"Origin")?.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 ///
 /// Names and values preserve bytes. Only `url`, `pushurl`, `fetch` and `push` are interpreted;
 /// other settings remain available through the original configuration. Resolved snapshots retain
@@ -49,7 +83,35 @@ impl std::fmt::Debug for RemoteUrls {
     }
 }
 
-/// A named remote contains a missing value or unsupported refspec.
+/// A named remote has a value girt cannot use.
+///
+/// Errors identify the key and its one-based occurrence, never the value, because URLs can hold
+/// credentials.
+///
+/// # Examples
+///
+/// Shorthand refspecs are valid Git configuration but cannot be mapped without resolving names,
+/// so [`Remote::find`] refuses them. [`super::ConfiguredRemote`] can still read such a remote.
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::{ConfiguredRemote, Remote, RemoteError};
+///
+/// let config = Config::parse(b"[remote \"origin\"]\nurl = ../upstream\nfetch = main\n")?;
+/// let error = Remote::find(&config, b"origin").unwrap_err();
+/// assert!(matches!(
+///     error,
+///     RemoteError::Refspec {
+///         key: "fetch",
+///         occurrence: 1,
+///         ..
+///     }
+/// ));
+///
+/// let described = ConfiguredRemote::find(&config, b"origin")?.expect("configured");
+/// assert_eq!(described.fetch_refspecs()[0].source(), Some(&b"main"[..]));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RemoteError {
@@ -79,7 +141,21 @@ impl Remote {
     ///
     /// Empty headers are omitted here; [`Config::subsection_names`] includes them in sorted order.
     /// Names are not validated as paths or reference components; consumers must validate before
-    /// using them in either context.
+    /// using them in either context. A name may belong to a remote with no URL; filter with
+    /// [`Self::find`] or [`super::ConfiguredRemoteRecord`] when only usable remotes are wanted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::Remote;
+    ///
+    /// let config = Config::parse(
+    ///     b"[remote \"origin\"]\nurl = a\n[remote \"fork\"]\nurl = b\n[remote \"origin\"]\nfetch = +refs/heads/*:refs/remotes/origin/*\n",
+    /// )?;
+    /// assert_eq!(Remote::names(&config), [&b"origin"[..], &b"fork"[..]]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn names(config: &Config) -> Vec<&[u8]> {
         RemoteUrls::names(config)
     }
@@ -133,6 +209,23 @@ impl Remote {
     ///
     /// The order and duplicates are retained. This describes configured destinations; it does not
     /// authorize sending, validate endpoints, or perform URL rewriting.
+    ///
+    /// # Examples
+    ///
+    /// An empty value resets the list, as in Git, so later files can override earlier ones:
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::Remote;
+    ///
+    /// let config =
+    ///     Config::parse(b"[remote \"origin\"]\nurl = one\nurl = two\npushurl = old\npushurl =\n")?;
+    /// let origin = Remote::find(&config, b"origin")?.expect("configured");
+    /// assert!(origin.configured_push_urls().is_empty());
+    /// // With no push URLs left, pushes go to every `url`.
+    /// assert_eq!(origin.push_urls(), [b"one".to_vec(), b"two".to_vec()]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn push_urls(&self) -> &[Vec<u8>] {
         if self.push_urls.is_empty() {
             &self.urls

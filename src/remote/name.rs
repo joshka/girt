@@ -30,6 +30,16 @@ pub fn validate_name(name: &[u8]) -> Result<(), InvalidRemoteName> {
 }
 
 /// A remote name cannot be used within a fetch tracking-reference namespace.
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::{RemoteNameError, validate_name};
+///
+/// let error = validate_name(b"origin.lock").unwrap_err();
+/// assert_eq!(error.name, b"origin.lock");
+/// assert_eq!(error.source, RemoteNameError::LockFileSuffix);
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("remote names must be valid within refspecs for fetching: {}", Quoted(.name))]
 #[non_exhaustive]
