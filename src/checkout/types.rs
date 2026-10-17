@@ -8,7 +8,9 @@ use crate::{ObjectId, index};
 /// blocking-worker scheduling. Directory names are enumerated again at mutation boundaries, so
 /// wide directories can require quadratic work in the number of selected paths. Blob decode
 /// ceilings are reported through `Error::Object` and its storage source; traversal and aggregate
-/// accounting can instead return `Error::Limit`. Inspect the source chain for the actual bound.
+/// accounting can instead return `Error::Limit`. Nested tree budgets return `Error::Tree`; index
+/// budgets return `Error::Index` (or `Error::IndexFormat` during replacement validation). Inspect
+/// each source chain for the actual bound.
 ///
 /// ```
 /// use std::sync::atomic::AtomicBool;
@@ -39,11 +41,15 @@ use crate::{ObjectId, index};
 ///     .checkout_tree(
 ///         None,
 ///         Some(tree),
-///         Limits::default().with_max_depth(0),
+///         Limits::default().with_max_file_bytes(4),
 ///         &AtomicBool::new(false),
 ///     )
 ///     .unwrap_err();
-/// assert!(matches!(failure.cause.as_ref(), Error::Limit(_)));
+/// assert!(matches!(
+///     failure.cause.as_ref(),
+///     Error::Object(girt::ObjectReadError::Limit(_))
+/// ));
+/// assert_eq!(failure.report.stage, girt::checkout::Stage::Preparation);
 /// assert!(failure.report.applied.is_empty());
 /// assert!(!repo.worktree().unwrap().join("file").exists());
 /// // This preparation failure preceded mutation; inspect every failure's report independently.
@@ -309,8 +315,8 @@ pub struct Failure {
 ///
 /// # Preserve an untracked obstruction
 ///
-/// A refusal during preparation leaves the obstructing file intact. Ask the user to move or retain
-/// it; removing it automatically would turn a diagnostic into data loss.
+/// A refusal during preparation leaves the obstructing file intact. Ask the user to move it or
+/// abandon checkout; removing it automatically would turn a diagnostic into data loss.
 ///
 /// ```
 /// use std::sync::atomic::AtomicBool;
@@ -342,7 +348,8 @@ pub struct Failure {
 /// let failure = repo
 ///     .checkout_tree(None, Some(tree), Limits::default(), &AtomicBool::new(false))
 ///     .unwrap_err();
-/// assert!(matches!(failure.cause.as_ref(), Error::Refused { .. }));
+/// assert!(matches!(failure.cause.as_ref(), Error::Refused { path, reason }
+///     if path == b"file" && !reason.is_empty()));
 /// assert_eq!(failure.report.stage, Stage::Preparation);
 /// assert!(failure.report.applied.is_empty());
 /// assert!(!failure.report.index_published);

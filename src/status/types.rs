@@ -96,13 +96,19 @@ pub enum Untracked {
 /// use girt::status::{Baseline, Error, Limits, Untracked};
 /// let id = repo.loose_objects().write_blob(b"12345")?;
 /// let mut edit = repo.edit_index(Default::default())?;
-/// edit.replace_entries(vec![Entry::new(b"file".to_vec(), Mode::Regular, id)])?;
+/// edit.replace_entries(vec![
+///     Entry::new(b"a".to_vec(), Mode::Regular, id),
+///     Entry::new(b"b".to_vec(), Mode::Regular, id),
+/// ])?;
 /// edit.commit()?;
-/// std::fs::write(repo.worktree().unwrap().join("file"), b"12345")?;
+/// std::fs::write(repo.worktree().unwrap().join("a"), b"12345")?;
+/// std::fs::write(repo.worktree().unwrap().join("b"), b"12345")?;
 /// let result = repo.raw_status(
 ///     Baseline::Head,
 ///     Untracked::Omit,
-///     Limits::default().with_max_file_bytes(4),
+///     Limits::default()
+///         .with_max_file_bytes(5)
+///         .with_max_worktree_bytes(8),
 ///     &AtomicBool::new(false),
 /// );
 /// assert!(matches!(result, Err(Error::Limit(_))));
@@ -355,7 +361,8 @@ pub struct WorktreeChange {
 /// Literal worktree difference from one index leaf.
 ///
 /// An obstruction differs from deletion: the tracked path is blocked by a different filesystem
-/// kind. Keep its path in diagnostics so a user can resolve the obstruction without losing content.
+/// kind or a repository boundary, at the leaf or an ancestor. Keep the first blocking path in
+/// diagnostics; it can differ from the tracked entry path.
 ///
 /// ```
 /// use std::sync::atomic::AtomicBool;
@@ -368,15 +375,16 @@ pub struct WorktreeChange {
 /// use girt::status::{Baseline, Change, Limits, Untracked};
 /// let id = repo.loose_objects().write_blob(b"tracked")?;
 /// let mut edit = repo.edit_index(Default::default())?;
-/// edit.replace_entries(vec![Entry::new(b"file".to_vec(), Mode::Regular, id)])?;
+/// edit.replace_entries(vec![Entry::new(b"dir/file".to_vec(), Mode::Regular, id)])?;
 /// edit.commit()?;
-/// std::fs::create_dir(repo.worktree().unwrap().join("file"))?;
+/// std::fs::write(repo.worktree().unwrap().join("dir"), b"untracked obstruction")?;
 ///
 /// let report = repo.raw_status(Baseline::Head, Untracked::Omit,
 ///     Limits::default(), &AtomicBool::new(false))?;
 ///
+/// assert_eq!(report.unstaged[0].path, b"dir/file");
 /// assert!(matches!(&report.unstaged[0].change,
-///     Change::Obstructed { path } if path == b"file"));
+///     Change::Obstructed { path } if path == b"dir"));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]

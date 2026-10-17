@@ -104,15 +104,18 @@ blocking worker when used from an async runtime.
 
 A path with unresolved stages appears in `unmerged`, not in either change list. Present the
 base/ours/theirs entries that exist and preserve their IDs until an explicit resolution replaces
-them with stage zero. An empty change list does not resolve a conflict.
+them with stage zero through
+[index editing](https://docs.rs/girt/latest/girt/struct.Repository.html#method.edit_index) and
+[entry replacement](https://docs.rs/girt/latest/girt/index/struct.IndexEdit.html#method.replace_entries).
+An empty change list does not resolve a conflict.
 
 An unstaged `Deleted` means the exact tracked name or an ancestor is absent. `Obstructed` means
 another filesystem kind or a repository boundary blocks that path. Report the obstruction's path
 rather than offering to discard it. `Modified` carries the observed identity and mode, so a
 mode-only change can be explained without inventing a content edit.
 
-`unchecked_gitlinks` contains every stage-zero gitlink, including those whose directory appears
-unchanged. Girt does not open its commit target or inspect submodule dirtiness. A UI that needs that
+`unchecked_gitlinks` contains every stage-zero gitlink, without inspecting whether a directory
+exists. Girt does not open its commit target or inspect submodule dirtiness. A UI that needs that
 information must perform a separate submodule observation. Nested repository boundaries likewise
 mean traversal stopped; their contents are not untracked leaves.
 
@@ -169,8 +172,8 @@ it successfully is not evidence that it will select any path.
 Choose `Case::Sensitive` or `Case::AsciiInsensitive` explicitly. ASCII folding also affects
 directory source prefixes; neither policy performs Unicode normalization or detects filesystem
 behavior. `check` includes excluded-parent decisions. `check_direct` is useful while traversing only
-when the caller has already admitted every ancestor; its leaf negation cannot override an excluded
-parent.
+when the caller has already admitted every ancestor. It can return an including leaf negation even
+when a parent is excluded. Use `check` when the caller has not enforced parent decisions.
 
 Source addition is atomic on a budget failure. Existing rules remain usable, but the rejected source
 has contributed no rules. Query work exhaustion produces no decision. Retain source labels indexed
