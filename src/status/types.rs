@@ -1,6 +1,34 @@
 use crate::{ObjectId, TreeChange, TreeCompareLimits, TreeValue, index};
 
 /// Snapshot against which staged entries are compared.
+///
+/// Use an explicit tree when the comparison belongs to a revision selected by your application,
+/// rather than this worktree's HEAD. An explicit empty tree does not inspect HEAD at all.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::status::{Baseline, Limits, Untracked};
+/// let report = repo.raw_status(
+///     Baseline::Tree(None),
+///     Untracked::Omit,
+///     Limits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+/// assert!(report.baseline_tree.is_none());
+/// assert!(report.index_missing);
+/// assert!(report.staged.is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum Baseline {
@@ -11,6 +39,32 @@ pub enum Baseline {
 }
 
 /// Deliberate policy for files absent from the index.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::status::{Baseline, Limits, Untracked};
+/// std::fs::write(repo.worktree().unwrap().join("notes.tmp"), b"scratch")?;
+/// std::fs::write(repo.worktree().unwrap().join(".gitignore"), b"*.tmp\n")?;
+/// let report = repo.raw_status(
+///     Baseline::Head,
+///     Untracked::RawFilesWithoutIgnores,
+///     Limits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+/// assert!(report.raw_untracked.contains(&b"notes.tmp".to_vec()));
+/// // Ignore matching is an explicit separate step, even though .gitignore exists.
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Untracked {
@@ -205,6 +259,32 @@ pub enum Change {
 }
 
 /// Status failed without returning a partial report or changing repository data.
+///
+/// [`Error::Changed`] means observations raced: retry for display, but obtain exclusive ownership
+/// before using observations to change files. [`Error::Unsupported`] needs an application policy
+/// or another implementation; it does not mean clean. Preserve the source chain of object/index
+/// errors so the failing storage can be diagnosed.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::status::{Baseline, Error, Limits, Untracked};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repository = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("repo"),
+///     InitKind::Worktree,
+/// )?;
+/// let result = repository.raw_status(
+///     Baseline::Head,
+///     Untracked::Omit,
+///     Limits::default(),
+///     &AtomicBool::new(true),
+/// );
+/// assert!(matches!(result, Err(Error::Cancelled)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

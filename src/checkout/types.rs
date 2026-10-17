@@ -175,6 +175,30 @@ pub struct Report {
 }
 
 /// Checkout failure with exact completed operations and independently reported cleanup failures.
+///
+/// A failed call is not permission to retry the original baseline. Inspect `report.applied`,
+/// `report.index_published`, `cause` and every `cleanup` entry; reconcile the actual files under
+/// exclusive ownership before making another plan. Even cancellation may follow completed edits.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::checkout::{Error, Limits, Stage};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repository = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("repo"),
+///     InitKind::Worktree,
+/// )?;
+/// let failure = repository
+///     .checkout_tree(None, None, Limits::default(), &AtomicBool::new(true))
+///     .unwrap_err();
+/// assert!(matches!(failure.cause.as_ref(), Error::Cancelled));
+/// assert_eq!(failure.report.stage, Stage::Preparation);
+/// assert!(failure.report.applied.is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[error("checkout failed during {stage:?}", stage = .report.stage)]
 #[non_exhaustive]
@@ -190,6 +214,11 @@ pub struct Failure {
 }
 
 /// Validation, storage, cancellation or filesystem failure.
+///
+/// Read this through [`Failure`], which also records completed effects. Refusals identify input
+/// or worktree conditions requiring a new policy/baseline. Limits and cancellation can occur after
+/// mutation; an I/O error does not imply that all earlier paths are unchanged. Nested
+/// [`Error::Verification`] and [`Error::Object`] preserve their diagnostic source chains.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

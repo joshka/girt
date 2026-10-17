@@ -8,6 +8,18 @@ use crate::ObjectId;
 /// trailing slash. No UTF-8, case folding,
 /// platform aliases, backslashes, drive letters or checkout-safety checks are applied.
 /// IDs are preserved even when zero; object existence and type remain caller obligations.
+///
+/// ```
+/// use girt::index::{Entry, Mode, Stage};
+/// use girt::{ObjectFormat, ObjectId};
+/// let entry = Entry::new(
+///     b"run.sh".to_vec(),
+///     Mode::Executable,
+///     ObjectId::for_blob(ObjectFormat::Sha1, b"#!/bin/sh\n"),
+/// );
+/// assert_eq!(entry.stage, Stage::Normal);
+/// assert_eq!(entry.stat.size, 0); // Constructed entries have no observed filesystem metadata.
+/// ```
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct Entry {
@@ -104,6 +116,32 @@ pub enum Mode {
 /// A path has either one normal entry or any nonempty subset of stages 1, 2 and 3. Missing
 /// sides represent absent files. Duplicate stages and mixing normal/conflict entries are invalid.
 /// This set is exhaustive because the on-disk stage occupies exactly two bits.
+///
+/// Keep each conflict side under the same path; resolving it replaces those sides with one
+/// [`Stage::Normal`] entry. Stage numbers describe merge inputs, not separate working files.
+///
+/// ```
+/// use girt::index::{Entry, Index, Limits, Mode, Stage};
+/// use girt::{ObjectFormat, ObjectId};
+/// let format = ObjectFormat::Sha1;
+/// let ours = Entry::new(
+///     b"file".to_vec(),
+///     Mode::Regular,
+///     ObjectId::for_blob(format, b"ours"),
+/// )
+/// .with_stage(Stage::Ours);
+/// let theirs = Entry::new(
+///     b"file".to_vec(),
+///     Mode::Regular,
+///     ObjectId::for_blob(format, b"theirs"),
+/// )
+/// .with_stage(Stage::Theirs);
+/// let mut index = Index::new(format, vec![theirs, ours.clone()], Limits::default())?;
+/// assert_eq!(index.entries()[0].stage, Stage::Ours);
+/// index.replace_entries(vec![ours.with_stage(Stage::Normal)], Limits::default())?;
+/// assert_eq!(index.entries().len(), 1);
+/// # Ok::<(), girt::index::Error>(())
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(u16)]
 pub enum Stage {

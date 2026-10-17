@@ -33,3 +33,6 @@ per-path report and actual files before recovery; retrying the original call wit
 can be unsafe. The [checkout module contract](../src/checkout.rs) lists path, platform, and mutation
 limits. The [compatibility record](compatibility.md#raw-tree-checkout) contains the tested phases
 and failures.
+
+For an end-to-end introduction to staging, raw status, ignores and checkout, see the
+[working tree and index guide](../site/src/content/docs/guides/index-and-working-tree.md).

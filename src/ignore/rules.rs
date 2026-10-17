@@ -137,6 +137,18 @@ impl Limits {
 }
 
 /// An invalid path or exhausted budget; errors never imply an ignore decision.
+///
+/// Propagate failure rather than including or excluding the path on an incomplete decision.
+/// Retry a limit failure only after choosing a larger budget appropriate to the caller's trust.
+///
+/// ```
+/// use girt::ignore::{Case, Error, Ignore, InputKind, Limits};
+/// let rules = Ignore::new(Case::Sensitive, Limits::default());
+/// assert_eq!(
+///     rules.check(b"../outside", InputKind::File),
+///     Err(Error::Path)
+/// );
+/// ```
 #[derive(Debug, thiserror::Error, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
@@ -150,6 +162,17 @@ pub enum Error {
 }
 
 /// The decisive rule, including a possible excluded ancestor.
+///
+/// ```
+/// use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
+/// let mut rules = Ignore::new(Case::Sensitive, Limits::default());
+/// let source = rules.add(Source::Info, b"cache/\n")?;
+/// let found = rules.check(b"cache/data", InputKind::File)?.unwrap();
+/// assert_eq!((found.source, found.line), (source, 1));
+/// assert!(found.matched_bytes < b"cache/data".len()); // Decision came from an ancestor.
+///
+/// # Ok::<(), girt::ignore::Error>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Match {
@@ -170,6 +193,22 @@ pub struct Match {
 /// spaces, comments and negation. A NUL truncates its physical line, matching Git's file reader.
 /// Invalid glob syntax (including a terminal escape or unclosed class) is retained as a rule that
 /// never matches. No source files are opened, and directory flags are supplied by the caller.
+///
+/// ```
+/// use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
+/// let mut rules = Ignore::new(Case::Sensitive, Limits::default());
+/// rules.add(Source::Global, b"*.log\n")?;
+/// rules.add(Source::Directory(b""), b"!important.log\n")?;
+/// assert!(rules.check(b"debug.log", InputKind::File)?.unwrap().ignored);
+/// assert!(
+///     !rules
+///         .check(b"important.log", InputKind::File)?
+///         .unwrap()
+///         .ignored
+/// );
+/// assert!(rules.check(b"source.rs", InputKind::File)?.is_none());
+/// # Ok::<(), girt::ignore::Error>(())
+/// ```
 #[derive(Debug)]
 pub struct Ignore {
     case: Case,
@@ -206,6 +245,16 @@ impl Ignore {
     ///
     /// Returns [`Error::Path`] for invalid directory prefixes and [`Error::Limit`] before retaining
     /// input beyond the configured budgets. A rejected addition leaves the set unchanged.
+    ///
+    /// ```
+    /// use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
+    /// let mut rules = Ignore::new(Case::Sensitive, Limits::default());
+    /// let source = rules.add(Source::Directory(b"src"), b"# generated\n*.tmp\n")?;
+    /// let found = rules.check(b"src/parser.tmp", InputKind::File)?.unwrap();
+    /// assert_eq!((found.source, found.line), (source, 2));
+    /// assert!(rules.check(b"parser.tmp", InputKind::File)?.is_none());
+    /// # Ok::<(), girt::ignore::Error>(())
+    /// ```
     pub fn add(&mut self, source: Source<'_>, content: &[u8]) -> Result<usize, Error> {
         let (level, base) = match source {
             Source::Global => (0, &b""[..]),
@@ -266,6 +315,16 @@ impl Ignore {
     ///
     /// Returns [`Error::Path`] for invalid paths and [`Error::Limit`] for path/work exhaustion.
     /// There are no side effects or partial decisions. Each call receives a fresh work budget.
+    ///
+    /// ```
+    /// use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
+    /// let mut rules = Ignore::new(Case::Sensitive, Limits::default());
+    /// rules.add(Source::Directory(b""), b"build/\n!build/keep.txt\n")?;
+    /// let found = rules.check(b"build/keep.txt", InputKind::File)?.unwrap();
+    /// assert!(found.ignored); // The excluded parent prevents re-inclusion.
+    /// assert_eq!(found.matched_bytes, b"build".len());
+    /// # Ok::<(), girt::ignore::Error>(())
+    /// ```
     #[expect(
         clippy::indexing_slicing,
         reason = "each end is the position of a `/` in path"
