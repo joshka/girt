@@ -95,6 +95,22 @@
 //! assert!(!clone.git_dir().join("index").exists(), "no checkout was performed");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! <!-- Feature-dependent link targets: the item when it is compiled, docs.rs otherwise. -->
+#![cfg_attr(
+    any(
+        feature = "http",
+        all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+    ),
+    doc = "[`CloneDownload`]: CloneDownload"
+)]
+#![cfg_attr(
+    not(any(
+        feature = "http",
+        all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+    )),
+    doc = "[`CloneDownload`]: https://docs.rs/girt/latest/girt/clone/struct.CloneDownload.html"
+)]
 
 mod config;
 #[cfg(any(

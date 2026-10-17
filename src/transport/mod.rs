@@ -195,6 +195,75 @@
 //! assert_eq!(destination.references()?.read(&main)?, None);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! <!-- Feature-dependent link targets: the item when it is compiled, docs.rs otherwise. -->
+#![cfg_attr(feature = "http", doc = "[`http::HttpRemote`]: http::HttpRemote")]
+#![cfg_attr(
+    not(feature = "http"),
+    doc = "[`http::HttpRemote`]: https://docs.rs/girt/latest/girt/transport/http/struct.HttpRemote.html"
+)]
+#![cfg_attr(
+    feature = "http",
+    doc = "[`http::HttpRemote::configured`]: http::HttpRemote::configured"
+)]
+#![cfg_attr(
+    not(feature = "http"),
+    doc = "[`http::HttpRemote::configured`]: https://docs.rs/girt/latest/girt/transport/http/struct.HttpRemote.html#method.configured"
+)]
+#![cfg_attr(
+    feature = "http",
+    doc = "[`http::HttpRemote::new`]: http::HttpRemote::new"
+)]
+#![cfg_attr(
+    not(feature = "http"),
+    doc = "[`http::HttpRemote::new`]: https://docs.rs/girt/latest/girt/transport/http/struct.HttpRemote.html#method.new"
+)]
+#![cfg_attr(
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux")),
+    doc = "[`ssh::SshRemote`]: ssh::SshRemote"
+)]
+#![cfg_attr(
+    not(all(feature = "ssh", any(target_os = "macos", target_os = "linux"))),
+    doc = "[`ssh::SshRemote`]: https://docs.rs/girt/latest/girt/transport/ssh/struct.SshRemote.html"
+)]
+#![cfg_attr(
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux")),
+    doc = "[`ssh::SshRemote::openssh`]: ssh::SshRemote::openssh"
+)]
+#![cfg_attr(
+    not(all(feature = "ssh", any(target_os = "macos", target_os = "linux"))),
+    doc = "[`ssh::SshRemote::openssh`]: https://docs.rs/girt/latest/girt/transport/ssh/struct.SshRemote.html#method.openssh"
+)]
+#![cfg_attr(
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux")),
+    doc = "[`ssh::SshRemote::configured`]: ssh::SshRemote::configured"
+)]
+#![cfg_attr(
+    not(all(feature = "ssh", any(target_os = "macos", target_os = "linux"))),
+    doc = "[`ssh::SshRemote::configured`]: https://docs.rs/girt/latest/girt/transport/ssh/struct.SshRemote.html#method.configured"
+)]
+#![cfg_attr(
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux")),
+    doc = "[`ssh::SshRemote::new`]: ssh::SshRemote::new"
+)]
+#![cfg_attr(
+    not(all(feature = "ssh", any(target_os = "macos", target_os = "linux"))),
+    doc = "[`ssh::SshRemote::new`]: https://docs.rs/girt/latest/girt/transport/ssh/struct.SshRemote.html#method.new"
+)]
+#![cfg_attr(
+    any(
+        feature = "http",
+        all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+    ),
+    doc = "[`crate::fetch::FetchDownload`]: crate::fetch::FetchDownload"
+)]
+#![cfg_attr(
+    not(any(
+        feature = "http",
+        all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+    )),
+    doc = "[`crate::fetch::FetchDownload`]: https://docs.rs/girt/latest/girt/fetch/struct.FetchDownload.html"
+)]
 
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 pub mod ssh;
