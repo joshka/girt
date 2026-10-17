@@ -118,8 +118,9 @@ Nothing is rolled back. Fetching again is safe, and brings the references up to 
 A push sends a list of `PushCommand`s. Each command names a remote reference, the value you believe
 it has now (`None` for "must not exist"), and the new value. The null ID deletes the reference. The
 remote applies a command only if the reference still has the expected value. This is Git's
-`--force-with-lease`, and it is always on. `ForcePolicy` separately decides whether a branch may
-move to a commit that does not descend from its old value.
+`--force-with-lease`, and it is always on. A command whose reference already has the new value
+succeeds without comparing the expected value, since nothing needs to change. `ForcePolicy`
+separately decides whether a branch may move to a commit that does not descend from its old value.
 
 In this example, `commit` is the `ObjectId` of a commit in `repo`:
 
