@@ -226,8 +226,23 @@ discovery and its subprocesses, stop new children immediately, and retain the le
 cleanup finishes. Never freeze an independent lifetime guard. Incomplete discovery reports an error
 and leaves that guard armed for group cleanup rather than declaring success. Regression tests cover
 supervisor death, stopped parents beneath a Linux subreaper, launch-registration signals, and
-blocked discovery. Windows retains normal process teardown; abrupt-owner containment needs a
-separate Job Object change.
+blocked discovery.
+
+HTTP and CONNECT fixtures have no independent guard, so teardown never freezes them. Their
+descendants stay in the leader's process group, and Drop kills that group directly. Their owner
+watch keeps running until then, so an owner killed mid-teardown still ends them. Don't rely on the
+kernel's SIGHUP and SIGCONT for orphaned, stopped groups: a same-session subreaper stops the group
+from becoming orphaned, and a frozen fixture survived its owner on Linux CI. On Windows each fixture
+runs in its own kill-on-close Job Object, joined while the leader is still suspended. Drop
+terminates the job, and an abrupt owner exit closes its last handle. The
+`abrupt_owner_exit_stops_every_fixture_process` test kills a stand-in owner and checks that every
+fixture process exits within a bound.
+
+The supported fixture topology ends at the processes that stay in the leader's group or parent-child
+tree long enough for teardown to discover them. On POSIX, a program that double-forks into a new
+session and loses its parent first escapes, and a process-tree snapshot cannot promise otherwise.
+Before a fixture depends on such a daemon, add a reproduction and extend the contract in
+`tests/support/fixture_process.rs`.
 
 ## Performance Evidence
 

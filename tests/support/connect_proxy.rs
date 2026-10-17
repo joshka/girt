@@ -30,7 +30,7 @@ impl Proxy {
             .args(["--authorization", authorization])
             .arg("--owner")
             .arg(std::process::id().to_string());
-        let mut process = Process::spawn(&mut command, false);
+        let mut process = Process::spawn_grouped(&mut command, false);
         let port: u16 = process.ready(|line| line.trim().parse::<u16>().map_err(|e| e.to_string()));
         Self {
             _process: process,
