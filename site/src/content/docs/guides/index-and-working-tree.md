@@ -10,10 +10,11 @@ The index records the file identities and modes proposed for the next tree. The 
 editable files. HEAD supplies the usual comparison baseline. These are three independent states:
 writing a file does not stage it, and changing the index does not write a working file or commit.
 
-Use girt's raw operations when your application owns byte normalization and filesystem policy. They
-preserve literal content and POSIX modes. They do not apply attributes, clean/smudge filters, EOL
-conversion, ignore rules, or configuration overrides for executable bits and symlinks. Status and
-checkout support Linux and macOS; macOS requires ASCII paths. Windows traversal is unsupported.
+Use girt's raw operations when your application decides how bytes are normalized and how the
+filesystem is treated. They preserve literal content and POSIX modes, and they do not apply
+attributes, clean/smudge filters, EOL conversion, ignore rules, or configuration overrides for
+executable bits and symlinks. Status and checkout support Linux and macOS; macOS requires ASCII
+paths. Windows traversal is unsupported.
 
 ## Stage bytes deliberately
 
@@ -60,14 +61,14 @@ An entry has a byte path, mode, identity, conflict stage, flags and cached stat 
 validates structure and stage relationships, not object existence or checkout safety. Stage zero is
 a resolved selection. Stages one, two and three describe the base, ours and theirs of an unresolved
 conflict; a missing side represents an absent file. Resolve a conflict by replacing its stages with
-one normal entry. `intent_to_add`, `skip_worktree` and `assume_valid` preserve data without
-supplying staging or sparse-checkout policy.
+one normal entry. `intent_to_add`, `skip_worktree` and `assume_valid` are preserved as data;
+girt doesn't decide from them which paths are staged or checked out sparsely.
 
-Split-index reads resolve their immutable shared file. Edits normally publish a standalone index;
-`make_standalone` explicitly removes the dependency without changing entries. Sparse expansion reads
-collapsed directory trees into entries without materializing files. It is separate from selecting a
-sparse-checkout policy. Unknown mandatory extensions are refused; unknown optional extensions can
-prevent editing until the caller explicitly chooses to discard them.
+Reading a split index resolves its immutable shared file. An edit that changes entries publishes a
+standalone index, and `make_standalone` removes the dependency without changing entries. Sparse
+expansion reads collapsed directory trees into entries without writing files; it doesn't choose
+which paths are checked out. Unknown mandatory extensions are refused, and unknown optional
+extensions prevent editing until the caller chooses to discard them.
 
 Batch paths in one index edit: opening reads the complete index and committing encodes the whole
 file. One edit per path repeatedly pays that cost.
@@ -83,8 +84,8 @@ A split index stores most entries in an immutable `sharedindex.<id>` file beside
 insufficient. Keep both files when diagnosing a failed read. A missing shared file is an error, even
 if the primary index is present and has a valid checksum.
 
-`Repository::edit_index` reads that same logical snapshot and normally publishes a standalone
-replacement when entries change. `IndexEdit::make_standalone` also allows conversion without
+`Repository::edit_index` reads that same logical snapshot and publishes a standalone replacement
+when entries change. `IndexEdit::make_standalone` also allows conversion without
 changing entries. It removes derived caches but retains resolve-undo information. Conversion never
 deletes the shared file: another index may still depend on it. Publication checks that both original
 files still match the snapshot, so a changed shared file can reject a commit even though the
@@ -118,29 +119,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The basic alternate-index methods refuse split dependencies and leaf symlinks. Use
-`edit_index_at_with_options` only when you deliberately need those layouts. Split dependencies
+`edit_index_at_with_options` only when you need those layouts. Split dependencies
 resolve beside the selected lexical path. Following a leaf symlink reads its referent, but commit
-replaces the symlink itself; it does not write through it. This distinction matters for an index
-selected by a caller-provided path.
+replaces the symlink itself; it does not write through it. Keep this in mind when a caller supplies
+the index path.
 
-### Sparse entries are a representation, not a checkout policy
+### Expand sparse entries without changing the checkout
 
 A sparse index collapses a skipped directory into a tree entry. `Index::expand_sparse` reads that
 tree and produces its leaf entries in memory. It does not create files, publish an index, or clear
-skip-worktree flags. Raw status and checkout still refuse unsupported flags after expansion. An
-application needs an explicit policy for which paths participate before using those operations. See
+skip-worktree flags, so raw status and checkout still refuse unsupported flags after expansion.
+Your application has to decide which paths take part before it uses those operations. See
 the runnable
 [sparse expansion example](https://docs.rs/girt/latest/girt/index/struct.Index.html#method.expand_sparse).
 
 Expansion has independent traversal and output budgets. Cancellation, a missing object, a wrong
 object kind, or a limit failure leaves the original collapsed draft intact. Diagnose an object read
-failure through its source chain; raising a budget cannot restore a missing tree.
+failure through its source chain, because raising a budget cannot restore a missing tree.
 
 ### Decide which extension information may be lost
 
-Optional extensions can carry information an edit would invalidate. Their optional format status
-does not make discarding them harmless. A rejected edit leaves the guard and its draft available;
-choose a supported operation or abort rather than silently retrying with an empty index.
+Optional extensions can carry information an edit would invalidate, and being optional in the
+format does not make them safe to discard. A rejected edit leaves the guard and its draft available;
+choose a supported operation or abort instead of retrying with an empty index.
 
 - Entry-offset accelerators (`EOIE`, `IEOT`) can be removed together with `invalidate_entry_offsets`
   before `discard_resolve_undo` or `invalidate_tree_cache`, which refuse those caches. Entry
@@ -148,26 +149,26 @@ choose a supported operation or abort rather than silently retrying with an empt
 - Resolve-undo (`REUC`) remembers prior conflict stages. `discard_resolve_undo` intentionally
   forgets that information; call it only when that matches the application operation.
 - The cached tree (`TREE`) can be invalidated without changing staged entries.
-- Unknown optional extensions require an explicit discard decision. Unknown mandatory extensions
-  cannot be admitted by that decision.
+- Unknown optional extensions stay until you choose to discard them. Unknown mandatory extensions
+  are refused; choosing to discard doesn't apply to them.
 
-These operations have different extension admission rules. Consult each method's errors before
-combining them; one successful cache removal does not authorize every subsequent rewrite.
+Each operation accepts a different set of extensions. Check each method's errors before combining
+them; removing one cache successfully does not mean every later rewrite is allowed.
 
 ### Reuse stat caches without trusting them as content
 
 `replace_entries_reusing_stat` preserves old stat words only for entries with the same path, stage,
-mode, identity and flags. It helps applications that reconstruct a whole entry list avoid throwing
-away useful cache data. Changed entries retain the supplied stat words. The operation never checks
+mode, identity and flags. Use it when you rebuild the whole entry list and want to keep the cached
+stat data. Changed entries retain the supplied stat words. The operation never checks
 the working file, and cached equality is not proof that its content is unchanged. Commit clears
 cached size for entries modified at or after the earlier of the previous index modification time and
 the current write time. Stat-cache consumers must then verify content, even when rewriting the index
 would otherwise hide a racily clean entry.
 
-Framing is independent of content selection: v4 compresses repeated path prefixes, while v2 is
-useful for older consumers. Extended flags require v3 or v4; requesting v2 does not remove them.
-Paths remain bytes, including non-UTF-8 names, across supported codec round trips. The repository's
-object format selects the checksum width; it must be known before parsing an index.
+The index version doesn't affect which entries are staged: v4 compresses repeated path prefixes,
+while v2 is useful for older consumers. Extended flags require v3 or v4; requesting v2 does not
+remove them. Paths remain bytes, including non-UTF-8 names, across supported codec round trips. The
+repository's object format selects the checksum width; it must be known before parsing an index.
 
 ## Read the two status comparisons
 
@@ -182,13 +183,14 @@ verification. Status never refreshes or writes the index, runs hooks, stages fil
 renames.
 
 `Untracked::Omit` avoids unrelated traversal. `RawFilesWithoutIgnores` lists raw leaves without
-reading their contents, including ignored names; empty directories are omitted. Apply ignore policy
-explicitly if the UI needs it. Use the executable
+reading their contents, including ignored names; empty directories are omitted. If the UI should
+hide ignored files, apply ignore rules yourself. Use the executable
 [raw status example](https://docs.rs/girt/latest/girt/status/) for a staged file that is modified in
 the working tree.
 
-A status report is an observation, not an atomic snapshot or permission to overwrite files. A
-`Changed` error reports an observed race; retrying can help refresh a display. Mutation needs
+A status report describes the files as they were while it ran. It is not an atomic snapshot and
+does not make it safe to overwrite files. A `Changed` error means a file, a directory, the index or
+`HEAD` changed while status ran; retrying can refresh a display. Mutation needs
 exclusive ownership even if a preceding status succeeded. Limits bound reads, visited names, paths
 and content bytes. Cancellation is cooperative; these synchronous APIs belong on the application's
 blocking worker when used from an async runtime.
@@ -196,8 +198,8 @@ blocking worker when used from an async runtime.
 ### Interpret every status category
 
 A path with unresolved stages appears in `unmerged`, not in either change list. Present the
-base/ours/theirs entries that exist and preserve their IDs until an explicit resolution replaces
-them with stage zero through
+base/ours/theirs entries that exist and preserve their IDs until the application resolves the
+conflict by replacing them with stage zero through
 [index editing](https://docs.rs/girt/latest/girt/struct.Repository.html#method.edit_index) and
 [entry replacement](https://docs.rs/girt/latest/girt/index/struct.IndexEdit.html#method.replace_entries).
 An empty change list does not resolve a conflict.
@@ -208,21 +210,21 @@ rather than offering to discard it. `Modified` carries the observed identity and
 mode-only change can be explained without inventing a content edit.
 
 `unchecked_gitlinks` contains every stage-zero gitlink, without inspecting whether a directory
-exists. Girt does not open its commit target or inspect submodule dirtiness. A UI that needs that
-information must perform a separate submodule observation. Nested repository boundaries likewise
-mean traversal stopped; their contents are not untracked leaves.
+exists. Girt does not open its commit target or check whether the submodule is dirty, so a UI that
+needs that information must inspect the submodule itself. A nested repository boundary means
+traversal stopped there; its contents are not untracked leaves.
 
 Choose budgets for the whole observation: a single-file ceiling does not bound the sum of thousands
 of small files. `Untracked::Omit` reduces unrelated traversal, but tracked-path verification still
 reads content. A limit failure returns no partial report. Preserve the last successful display with
-an explicit failure state rather than replacing it with a clean result.
+a visible failure state instead of replacing it with a clean result.
 
 ## Apply ignore rules with provenance
 
 `Ignore` is a pure byte-path matcher. The caller loads the configured global excludes file,
 common-directory `info/exclude` and encountered `.gitignore` files; it must not follow `.gitignore`
-symlinks. The matcher reads no filesystem, configuration, environment or index. Ignore decisions
-apply to the caller's untracked-file policy, not automatically to tracked paths.
+symlinks. The matcher reads no filesystem, configuration, environment or index. The caller decides
+how ignore results affect untracked files; they don't apply to tracked paths automatically.
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -245,7 +247,7 @@ prevents re-inclusion of its child: the decision above comes from `build/`, not 
 
 `None` means no rule matched; `Some` with `ignored == false` identifies an explicit negation. The
 source index and one-based line support UI explanations. Use slash-separated repository-relative
-paths and supply the observed `InputKind`; a symlink is a file, never a directory to traverse.
+paths and pass the `InputKind` you observed; a symlink is a file, never a directory to traverse.
 Backslash remains a literal byte, including on Windows. A path or work-limit error supplies no
 partial decision; do not silently translate it into included or excluded.
 
