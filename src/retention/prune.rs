@@ -30,7 +30,7 @@ pub trait MaintenanceIsolation {
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct PruneReport {
-    /// Successfully removed identities, in path order.
+    /// Successfully removed identities, in path order. Derived commit-graph cleanup is not listed.
     pub deleted: Vec<ObjectId>,
 }
 
@@ -72,7 +72,8 @@ pub struct PruneFailure {
     pub cause: PruneCause,
     /// Successfully removed objects before the failure.
     pub report: PruneReport,
-    /// Identity at a failed unlink boundary; inspect storage before retrying.
+    /// Identity at a failed object unlink boundary; inspect storage before retrying.
+    /// A later commit-graph cleanup failure has no uncertain object identity.
     pub uncertain: Option<ObjectId>,
 }
 
@@ -99,6 +100,12 @@ impl Repository {
     /// The inclusive loose cutoff matches Git prune
     /// expiry; files newer than the exact instant remain roots, including subsecond
     /// modification times.
+    ///
+    /// After any object deletion, removes `objects/info/commit-graph` and the
+    /// `objects/info/commit-graphs` directory so Git cannot consult stale derived history.
+    /// Git can rebuild these accelerators; queries lose their speedup until then. A cleanup
+    /// failure returns [`PruneCause::Io`] with the completed object-deletion report and no
+    /// uncertain object. No-op pruning leaves these caches untouched.
     ///
     /// A complete scan or matching generations cannot exclude an external Git process. The
     /// isolation implementation must exclude those processes and old readers until the returned

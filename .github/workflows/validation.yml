@@ -123,6 +123,8 @@ jobs:
           cargo +nightly fmt --all -- --check
       # Tracing fixture dispatchers share tracing-core's global callsite cache.
       - run: cargo +stable test --locked --all-features -- --test-threads=1
+      - name: Developer guide examples
+        run: python3 scripts/check-guide-examples.py
       - name: Core-only runtime without tracing
         if: ${{ needs.changes.outputs.full == 'true' }}
         run: >-
@@ -491,6 +493,7 @@ jobs:
       unix: ${{ steps.scope.outputs.unix }}
       rust: ${{ steps.paths.outputs.rust }}
       docs: ${{ steps.paths.outputs.docs }}
+      guides: ${{ steps.paths.outputs.guides }}
       index: ${{ steps.paths.outputs.index }}
       references: ${{ steps.paths.outputs.references }}
       security: ${{ steps.paths.outputs.security }}
@@ -518,12 +521,12 @@ jobs:
         run: |
           # Every publishable main revision needs full evidence, including docs-only pushes.
           if [ "$EVENT" = schedule ] || [ "$EVENT" = push ]; then
-            printf '%s\n' rust=true docs=true index=true references=true security=true >> "$GITHUB_OUTPUT"
+            printf '%s\n' rust=true docs=true guides=true index=true references=true security=true >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # A manual run keeps the Rust jobs, whose inputs select focused checks, and skips the rest.
           if [ "$EVENT" = workflow_dispatch ]; then
-            printf '%s\n' rust=true docs=false index=false references=false security=false >> "$GITHUB_OUTPUT"
+            printf '%s\n' rust=true docs=false guides=false index=false references=false security=false >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # A pull request checks out its merge commit, whose first parent is the base branch.
@@ -551,6 +554,7 @@ jobs:
           route index '^(src/|tests/(index|colocation)\.rs$|\.github/workflows/(index|validation)\.yml$)'
           route references '^(src/|tests/(references_portable|worktree_create|worktree_admin)\.rs$|\.github/workflows/(references|validation)\.yml$)'
           route docs "$prose|^(justfile|\.github/workflows/validation\.yml)\$"
+          route guides '^site/src/content/docs/guides/(index-and-working-tree|diffs-and-renames|maintenance)\.md$'
           route security '^(\.github/|Cargo\.(toml|lock)$|deny\.toml$)'
 
   docs:
@@ -579,6 +583,13 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Markdown format and prose
         run: just docs-check
+      # Rust changes check these programs in the Unix job. Guide-only edits still need execution.
+      - name: Guide example toolchain
+        if: ${{ needs.changes.outputs.guides == 'true' && needs.changes.outputs.rust != 'true' }}
+        run: rustup toolchain install stable --profile minimal
+      - name: Developer guide examples
+        if: ${{ needs.changes.outputs.guides == 'true' && needs.changes.outputs.rust != 'true' }}
+        run: python3 scripts/check-guide-examples.py
 
   index:
     name: Index

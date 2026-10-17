@@ -4,10 +4,10 @@ description: Plan retention, choose cutoffs, and reclaim storage without losing 
 ---
 
 Maintenance decides which stored data may be retired while preserving every retained object. A
-reference-only reachability walk is insufficient: staged blobs, reflog history, linked worktrees,
-recent writes, application-owned heads and alternate-store relationships can all keep data alive.
-Girt exposes policy and isolation explicitly because it cannot discover every external reader or
-writer.
+reference-only reachability walk is insufficient:
+[staged blobs](/girt/guides/index-and-working-tree/), reflog history, linked worktrees, recent
+writes, application-owned heads and alternate-store relationships can all keep data alive. Girt
+exposes policy and isolation explicitly because it cannot discover every external reader or writer.
 
 The [storage-safety model](https://github.com/joshka/girt/blob/main/docs/storage-safety.md) explains
 the rules behind these APIs. The central rule is that deleting the last readable copy is
@@ -39,6 +39,7 @@ application owns but Git refs do not name, such as unpublished operation state.
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::atomic::AtomicBool;
+
     use girt::retention::{RetentionOutcome, RetentionPolicy};
     use girt::{InitKind, ObjectFormat, Repository};
 
@@ -130,43 +131,56 @@ boundary for the full operation. Girt cannot enforce external relationships; a m
 by your own girt calls is insufficient. If your application cannot establish exclusion, return an
 error from `acquire` and use read-only planning or additive repacking instead.
 
-The following program gives an old unreferenced loose blob a deterministic timestamp, then collects
-it in an exclusively owned disposable repository. Its trivial isolation implementation is valid only
-because this fixture has no external participants; it is not a lock implementation for shared
-repositories. See the
+This program needs `girt` and `tempfile`. It returns early on non-Unix hosts because composed GC
+requires Unix directory-durability support. It gives an old unreferenced loose blob a deterministic
+timestamp, then collects it in an exclusively owned disposable repository. Its trivial isolation
+implementation is valid only because this fixture has no external participants; it is not a lock
+implementation for shared repositories. See the
 [GC API](https://docs.rs/girt/latest/girt/struct.Repository.html#method.collect_garbage) for the
 full contract.
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use girt::retention::RetentionPolicy;
     use girt::{InitKind, ObjectFormat, Repository};
+
     let directory = tempfile::tempdir()?;
-    let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Bare)?;
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        directory.path().join("r"),
+        InitKind::Bare,
+    )?;
     let cancel = AtomicBool::new(false);
 
-    if cfg!(not(unix)) { return Ok(()); }
+    if cfg!(not(unix)) {
+        return Ok(());
+    }
 
     // This fixture is private to this single-threaded example. No external writer, reader or
     // alternate-store dependent exists. A shared repository needs a real exclusion mechanism.
     struct PrivateFixture;
     impl girt::retention::MaintenanceIsolation for PrivateFixture {
         type Guard = ();
-        fn acquire(&mut self, _: &Repository) -> std::io::Result<()> { Ok(()) }
+        fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
-    use std::time::{Duration, UNIX_EPOCH};
-    use girt::retention::RetentionPolicy;
     let id = repo.loose_objects().write_blob(b"old and unreachable")?;
     let hex = id.to_string();
     let path = repo.object_dir().join(&hex[..2]).join(&hex[2..]);
     std::fs::File::open(path)?.set_modified(UNIX_EPOCH + Duration::from_secs(1))?;
-    let policy = RetentionPolicy::default()
-        .with_recent_cutoff(UNIX_EPOCH + Duration::from_secs(2));
+    let policy = RetentionPolicy::default().with_recent_cutoff(UNIX_EPOCH + Duration::from_secs(2));
     let report = repo.collect_garbage(&mut PrivateFixture, &policy, &cancel)?;
     assert_eq!(report.pruned.unwrap().deleted, [id]);
-    assert!(repo.objects(Default::default())?.read(id, Default::default())?.is_none());
+    assert!(
+        repo.objects(Default::default())?
+            .read(id, Default::default())?
+            .is_none()
+    );
     Ok(())
 }
 ```
@@ -196,9 +210,14 @@ publication.
 
 Old pack indexes are removed before their packs. An interrupted sequence can leave an unindexed pack
 that readers ignore; it cannot justify deleting it without fresh observations. Alternate and
-protected data remain untouched. Pruning only removes eligible primary loose files, never working
-files or arbitrary unknown entries. No-op standalone prune/expiry can avoid graph traversal after a
-complete bounded observation proves no candidates exist; an empty report is not a history-integrity
+protected data remain untouched. Object pruning removes only eligible primary loose files, never
+working files or arbitrary unknown objects. After any deletion, it also removes
+`objects/info/commit-graph` and `objects/info/commit-graphs`, because those derived caches can name
+pruned commits. When any pack will retire, retirement first removes `multi-pack-index*` artifacts,
+including associated bitmaps, reverse indexes and incremental-chain directories, so Git does not
+consult indexes naming removed packs. Git can rebuild these accelerators; queries lose their
+speedups until then. No-op standalone prune/expiry can avoid graph traversal after a complete
+bounded observation proves no candidates exist; an empty report is not a history-integrity
 certificate.
 
 Destructive reflog expiry, pack retirement and composed maintenance require Unix durability support.
@@ -229,7 +248,9 @@ corruption cause from the source chain for recovery diagnostics.
 A failed mutation can leave completed effects. Preserve the report and typed cause; inspect actual
 storage while excluded, then make fresh observations under a new guard before retrying.
 
-- `PruneFailure` records confirmed deletions and a possibly uncertain unlink identity.
+- `PruneFailure` records confirmed deletions and a possibly uncertain object unlink identity. A
+  later commit-graph cleanup failure returns an I/O cause after those deletions, with no uncertain
+  object.
 - `RetireFailure` records visible replacement publication, durability, removed paths and an
   uncertain artifact. Publication can precede a later verification or sync failure.
 - `ExpireFailure` records durable histories, retained obsolete tables, and an uncertain history or

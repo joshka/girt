@@ -49,11 +49,14 @@
 //! `.keep` packs, recent packs and alternate stores are untouchable. Before relying on protected
 //! storage to omit a replacement copy, girt verifies the survivor. Dependencies of protected packs
 //! receive a separate closure, so they survive without changing reflog liveness classification.
-//! Loose pruning removes only eligible regular files from the primary object directory. It does
-//! not remove packs, alternates or working files. Standalone prune retains every observed reflog
-//! record even if the supplied policy has expiry cutoffs;
-//! [`Repository::collect_garbage`](crate::Repository::collect_garbage) expires history before
-//! pruning under one guard and advances the exact observation.
+//! Object pruning removes only eligible regular loose files from the primary object directory.
+//! After deleting any objects, it also removes derived commit-graph files, which may name pruned
+//! commits. Pack retirement removes multi-pack-index artifacts before retiring packs so Git does
+//! not consult indexes naming removed storage. Git can rebuild these accelerators; until then,
+//! their speedups are unavailable. Pruning does not remove packs, alternates or working files.
+//! Standalone prune retains every observed reflog record even if the supplied policy has expiry
+//! cutoffs; [`Repository::collect_garbage`](crate::Repository::collect_garbage) expires history
+//! before pruning under one guard and advances the exact observation.
 //!
 //! # Races, damage and recovery
 //!
