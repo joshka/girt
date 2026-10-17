@@ -41,6 +41,48 @@ impl Objects {
     /// cancellation, or exhausted candidate/resource limits. Errors return no partial inference;
     /// no repository state is changed. Exact matching is attempted before the candidate limit,
     /// but storage and work bounds apply throughout. See [`Limits`] for memory accounting.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::rewrites::{Kind, Limits, Options};
+    /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repo.loose_objects();
+    /// let tree = |files: &[(&[u8], &[u8])]| -> Result<_, Box<dyn std::error::Error>> {
+    ///     let entries = files
+    ///         .iter()
+    ///         .map(|(name, bytes)| {
+    ///             Ok(TreeEntry {
+    ///                 name: name.to_vec(),
+    ///                 mode: EntryMode::Blob,
+    ///                 id: loose.write_blob(bytes)?,
+    ///             })
+    ///         })
+    ///         .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    ///     Ok(loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?)?)
+    /// };
+    ///
+    /// let old = tree(&[(b"before", b"same content\n")])?;
+    /// let new = tree(&[(b"after", b"same content\n")])?;
+    /// let records = repo.objects(Default::default())?.detect_rewrites(
+    ///     Some(old),
+    ///     Some(new),
+    ///     Options::default(),
+    ///     Limits::default(),
+    ///     None,
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// assert_eq!(records[0].kind, Kind::Rename);
+    /// assert_eq!(records[0].similarity, 100);
+    /// assert_eq!(records[0].source_id, records[0].target_id);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn detect_rewrites(
         &self,
         old: Option<ObjectId>,
@@ -73,6 +115,77 @@ impl Objects {
     ///
     /// Returns [`Error`] on the same conditions as [`Self::detect_rewrites`], except that an
     /// exceeded candidate limit is reported in the result rather than as [`Error::Candidates`].
+    ///
+    /// # Keep exact renames when edited detection is too expensive
+    ///
+    /// The fallback API, available since 0.10.0, keeps a useful result for large changes while
+    /// making its limitation visible. Unpaired additions/deletions must remain visible to the
+    /// caller. Other work limits and storage failures still return errors, never partial
+    /// detection.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::rewrites::{Error, Limits, Options};
+    /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repo.loose_objects();
+    /// let tree = |files: &[(&[u8], &[u8])]| -> Result<_, Box<dyn std::error::Error>> {
+    ///     let entries = files
+    ///         .iter()
+    ///         .map(|(name, bytes)| {
+    ///             Ok(TreeEntry {
+    ///                 name: name.to_vec(),
+    ///                 mode: EntryMode::Blob,
+    ///                 id: loose.write_blob(bytes)?,
+    ///             })
+    ///         })
+    ///         .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    ///     Ok(loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?)?)
+    /// };
+    ///
+    /// let old = tree(&[
+    ///     (b"exact-old", b"identical\n"),
+    ///     (b"edited-old", b"line one\nline two\n"),
+    /// ])?;
+    /// let new = tree(&[
+    ///     (b"exact-new", b"identical\n"),
+    ///     (b"edited-new", b"line one\nline THREE\n"),
+    /// ])?;
+    /// let objects = repo.objects(Default::default())?;
+    /// let options = Options::default().with_candidate_limit(0);
+    /// let cancel = AtomicBool::new(false);
+    /// let detection = objects.detect_rewrites_or_exact(
+    ///     Some(old),
+    ///     Some(new),
+    ///     options,
+    ///     Limits::default(),
+    ///     None,
+    ///     &cancel,
+    /// )?;
+    /// assert_eq!(detection.rewrites.len(), 1); // The identical pair survived.
+    /// assert_eq!(detection.rewrites[0].source, b"exact-old");
+    /// let skipped = detection.inexact_skipped.expect("one edited pair remains");
+    /// assert_eq!((skipped.sources, skipped.targets, skipped.limit), (1, 1, 0));
+    /// assert_eq!(skipped.suggested_limit(), 1);
+    /// assert!(matches!(
+    ///     objects.detect_rewrites(
+    ///         Some(old),
+    ///         Some(new),
+    ///         options,
+    ///         Limits::default(),
+    ///         None,
+    ///         &cancel
+    ///     ),
+    ///     Err(Error::Candidates { .. })
+    /// ));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn detect_rewrites_or_exact(
         &self,
         old: Option<ObjectId>,
