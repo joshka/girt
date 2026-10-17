@@ -14,15 +14,21 @@ fn main() -> girt::Result<()> {
         let count: usize = args[3].parse().unwrap();
         let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Worktree)?;
         let blob = repo.loose_objects().write_blob(b"content\n")?;
-        let entries = (0..count)
-            .map(|n| {
-                Entry::new(
-                    format!("dir-{:04}/nested/file-{n:08}", n / 100).into_bytes(),
-                    Mode::Regular,
-                    blob,
-                )
-            })
-            .collect();
+        let distinct = args.get(4).is_some_and(|arg| arg == "distinct");
+        let mut entries = Vec::with_capacity(count);
+        for n in 0..count {
+            let id = if distinct {
+                repo.loose_objects()
+                    .write_blob(format!("content {n}\n").as_bytes())?
+            } else {
+                blob
+            };
+            entries.push(Entry::new(
+                format!("dir-{:04}/nested/file-{n:08}", n / 100).into_bytes(),
+                Mode::Regular,
+                id,
+            ));
+        }
         let index = Index::new(ObjectFormat::Sha1, entries, Limits::default())?;
         std::fs::write(
             repo.git_dir().join("index"),

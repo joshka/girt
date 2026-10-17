@@ -1,4 +1,6 @@
-//! Tree identity derived from validated index entries, without consulting stored objects.
+//! Canonical nested trees from validated index entries, with optional immutable publication.
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use super::{Index, Mode, Stage};
 use crate::{EntryMode, ObjectId, Tree, TreeEntry};
 
@@ -26,27 +28,24 @@ impl Index {
     ///
     /// Rejects unmerged entries, non-placeholder null IDs, foreign formats, absent objects or
     /// cancellation. Lookup errors preserve their causes. All entries are checked before writing
-    /// any trees. A storage failure may leave immutable subtrees; retrying is safe under loose
-    /// storage rules. The index and references remain unchanged. Callers needing a stable object
-    /// set must exclude concurrent object retirement.
+    /// any trees. A storage failure or cancellation may leave immutable subtrees; retrying is safe
+    /// under loose storage rules. The index and references remain unchanged. Callers needing a
+    /// stable object set must exclude concurrent object retirement. Required object IDs are
+    /// checked once per invocation, without retaining presence across calls. Memory grows with
+    /// admitted index paths and distinct required IDs; imported cache-tree extensions are not
+    /// trusted.
     pub fn write_tree_with(
         &self,
         repo: &crate::Repository,
         limits: crate::PackLimits,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<ObjectId, WriteTreeError> {
-        let check = || {
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                Err(WriteTreeError::Cancelled)
-            } else {
-                Ok(())
-            }
-        };
-        check()?;
+        check_cancelled(cancel)?;
         ObjectId::null(self.format).require_format(repo.object_format())?;
-        let objects = repo.objects(limits)?;
+        let objects = repo.objects_controlled(limits, crate::AlternateLimits::default(), cancel)?;
+        let mut present = crate::PeerIdSet::default();
         for entry in &self.entries {
-            check()?;
+            check_cancelled(cancel)?;
             if entry.stage != Stage::Normal {
                 return Err(WriteTreeError::Unmerged {
                     path: entry.path.clone(),
@@ -60,7 +59,10 @@ impl Index {
                     path: entry.path.clone(),
                 });
             }
-            if entry.mode != Mode::Gitlink && !objects.contains(entry.id)? {
+            if entry.mode != Mode::Gitlink
+                && present.insert(entry.id)
+                && !objects.contains(entry.id)?
+            {
                 return Err(WriteTreeError::MissingObject {
                     path: entry.path.clone(),
                     id: entry.id,
@@ -68,24 +70,12 @@ impl Index {
             }
         }
         let loose = repo.loose_objects();
-        let mut editor = crate::tree::TreeEditor::new(&loose);
-        for entry in &self.entries {
-            check()?;
-            if entry.intent_to_add {
-                continue;
-            }
-            let mode = match entry.mode {
-                Mode::Regular => EntryMode::Blob,
-                Mode::Executable => EntryMode::Executable,
-                Mode::Symlink => EntryMode::Symlink,
-                Mode::Gitlink => EntryMode::Gitlink,
-                Mode::SparseDirectory => EntryMode::Tree,
-            };
-            let path = entry.path.strip_suffix(b"/").unwrap_or(&entry.path);
-            editor.set_entry(path, crate::TreeValue { mode, id: entry.id })?;
-        }
-        check()?;
-        Ok(editor.write()?)
+        self.build_tree(cancel, |tree| {
+            loose
+                .write_tree(tree)
+                .map_err(crate::tree::TreeWriteError::from)
+                .map_err(WriteTreeError::from)
+        })
     }
 
     /// Computes the canonical Git tree identity without reading or writing objects.
@@ -108,34 +98,58 @@ impl Index {
     /// # Ok::<(), girt::TreeError>(())
     /// ```
     pub fn tree_id(&self) -> Option<ObjectId> {
-        let mut directories = vec![Directory {
+        self.build_tree(&AtomicBool::new(false), |tree| Ok(tree.id()))
+            .ok()
+    }
+
+    // Index paths are already sorted and validated. Close each directory once when its prefix
+    // ends, sharing canonical construction between identity calculation and checked publication.
+    fn build_tree(
+        &self,
+        cancel: &AtomicBool,
+        mut publish: impl FnMut(&Tree) -> Result<ObjectId, WriteTreeError>,
+    ) -> Result<ObjectId, WriteTreeError> {
+        let mut root = Directory {
             name: &[],
             entries: Vec::new(),
-        }];
+        };
+        let mut directories: Vec<Directory<'_>> = Vec::new();
         for entry in &self.entries {
+            check_cancelled(cancel)?;
             if entry.stage != Stage::Normal {
-                return None;
+                return Err(WriteTreeError::Unmerged {
+                    path: entry.path.clone(),
+                });
             }
             if entry.intent_to_add {
                 continue;
             }
             if entry.id.is_null() {
-                return None;
+                return Err(WriteTreeError::NullId {
+                    path: entry.path.clone(),
+                });
             }
             let path = entry.path.strip_suffix(b"/").unwrap_or(&entry.path);
-            let mut components: Vec<_> = path.split(|&b| b == b'/').collect();
-            let name = components.pop()?;
+            let mut components: Vec<_> = path.split(|&byte| byte == b'/').collect();
+            let name = components.pop().ok_or(crate::tree::TreeWriteError::from(
+                crate::TreeError::InvalidName,
+            ))?;
             let common = directories
                 .iter()
-                .skip(1)
                 .zip(&components)
                 .take_while(|(directory, component)| directory.name == **component)
                 .count();
-            while directories.len() > common + 1 {
-                let tree = directories.pop()?.finish(self.format)?;
-                directories.last_mut()?.entries.push(tree);
+            while directories.len() > common {
+                if let Some(directory) = directories.pop() {
+                    let tree = directory.finish(self.format, &mut publish)?;
+                    directories
+                        .last_mut()
+                        .unwrap_or(&mut root)
+                        .entries
+                        .push(tree);
+                }
             }
-            for &name in &components[common..] {
+            for &name in components.iter().skip(common) {
                 directories.push(Directory {
                     name,
                     entries: Vec::new(),
@@ -148,17 +162,26 @@ impl Index {
                 Mode::Gitlink => EntryMode::Gitlink,
                 Mode::SparseDirectory => EntryMode::Tree,
             };
-            directories.last_mut()?.entries.push(TreeEntry {
-                name: name.to_vec(),
-                mode,
-                id: entry.id,
-            });
+            directories
+                .last_mut()
+                .unwrap_or(&mut root)
+                .entries
+                .push(TreeEntry {
+                    name: name.to_vec(),
+                    mode,
+                    id: entry.id,
+                });
         }
-        while directories.len() > 1 {
-            let tree = directories.pop()?.finish(self.format)?;
-            directories.last_mut()?.entries.push(tree);
+        while let Some(directory) = directories.pop() {
+            let tree = directory.finish(self.format, &mut publish)?;
+            directories
+                .last_mut()
+                .unwrap_or(&mut root)
+                .entries
+                .push(tree);
         }
-        Some(directories.pop()?.finish(self.format)?.id)
+        check_cancelled(cancel)?;
+        Ok(root.finish(self.format, &mut publish)?.id)
     }
 }
 
@@ -200,18 +223,31 @@ pub enum WriteTreeError {
     Cancelled,
 }
 
+fn check_cancelled(cancel: &AtomicBool) -> Result<(), WriteTreeError> {
+    if cancel.load(Ordering::Relaxed) {
+        Err(WriteTreeError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
 struct Directory<'a> {
     name: &'a [u8],
     entries: Vec<TreeEntry>,
 }
 
 impl Directory<'_> {
-    fn finish(self, format: crate::ObjectFormat) -> Option<TreeEntry> {
-        let tree = Tree::new(format, self.entries).ok()?;
-        Some(TreeEntry {
+    fn finish(
+        self,
+        format: crate::ObjectFormat,
+        publish: &mut impl FnMut(&Tree) -> Result<ObjectId, WriteTreeError>,
+    ) -> Result<TreeEntry, WriteTreeError> {
+        let tree = Tree::new(format, self.entries).map_err(crate::tree::TreeWriteError::from)?;
+        let id = publish(&tree)?;
+        Ok(TreeEntry {
             name: self.name.to_vec(),
             mode: EntryMode::Tree,
-            id: tree.id(),
+            id,
         })
     }
 }

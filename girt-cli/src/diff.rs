@@ -11,7 +11,7 @@ use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
 use girt::display::quote_path;
 use girt::rewrites::{Copies, Kind, Options};
 use girt::tree_diff::Entry;
-use girt::{ChangeStatus, EntryMode, ObjectId, Objects, ReadLimits, TreeChange, TreeValue};
+use girt::{ChangeStatus, EntryMode, ObjectId, Objects, ReadLimits, TreeValue};
 
 use crate::common::{resolve_tree, stdout};
 use crate::{Context, complete};

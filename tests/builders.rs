@@ -7,8 +7,7 @@ use std::sync::atomic::AtomicBool;
 use girt::index::{Entry, Index, Limits, Mode, Stage};
 use girt::tree::TreeEditor;
 use girt::{
-    Commit, CommitPayload, InitKind, ObjectFormat, ObjectId, PackLimits, Repository, Signature,
-    tree_diff,
+    Commit, CommitPayload, InitKind, ObjectFormat, ObjectId, Repository, Signature, tree_diff,
 };
 use rstest::rstest;
 
@@ -133,7 +132,7 @@ fn nested_index_editor_commit_and_rename_match_git(#[case] format: ObjectFormat)
         })
         .unwrap();
     assert_eq!(payload.without_headers(&[signature_index]).unwrap(), seen);
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects().unwrap();
     let diff = objects
         .diff_with_renames(Some(expected), Some(new))
         .unwrap();
@@ -491,7 +490,7 @@ fn rename_limit_keeps_exact_matches_and_reports_skipped_inference() {
         )
         .unwrap();
     let new = editor.write().unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects().unwrap();
     let report = objects
         .diff_with_renames_with(
             Some(old),
@@ -603,17 +602,13 @@ fn write_tree_rechecks_shared_objects_between_calls_and_preflights_before_public
     )
     .unwrap()
     .id();
-    assert!(incomplete.write_tree(&fresh).is_err());
     assert!(
-        !fresh
-            .objects(Default::default())
-            .unwrap()
-            .contains(subtree)
-            .unwrap()
+        matches!(incomplete.write_tree(&fresh), Err(girt::index::WriteTreeError::MissingObject { id, .. }) if id == ObjectId::for_blob(format, b"absent"))
     );
+    assert!(!fresh.objects().unwrap().contains(subtree).unwrap());
     assert!(
         !fresh
-            .objects(Default::default())
+            .objects()
             .unwrap()
             .contains(incomplete.tree_id().unwrap())
             .unwrap()
