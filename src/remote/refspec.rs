@@ -5,6 +5,22 @@ use crate::fetch::Advertisement;
 use crate::refs::RefName;
 
 /// Which side supplies source names and which refspec grammar applies.
+///
+/// The same text means different things in each direction. A fetch refspec maps remote names to
+/// local names and may exclude sources with `^`; a push refspec maps local names to remote names
+/// and may delete with an empty source (`:refs/heads/old`).
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::{Direction, Refspec};
+///
+/// // Deletion is push-only; exclusion is fetch-only.
+/// assert!(Refspec::parse(Direction::Push, b":refs/heads/old").is_ok());
+/// assert!(Refspec::parse(Direction::Fetch, b":refs/heads/old").is_err());
+/// assert!(Refspec::parse(Direction::Fetch, b"^refs/heads/wip/*").is_ok());
+/// assert!(Refspec::parse(Direction::Push, b"^refs/heads/wip/*").is_err());
+/// ```
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Direction {
@@ -25,6 +41,32 @@ pub enum Direction {
 /// push `src:` is rejected. HEAD requires an explicit push destination. Shorthand, object IDs,
 /// revision expressions, matching push (`:`), empty/default fetch and `tag <name>` are unsupported.
 /// Parsing does not resolve names, authorize force, or validate an update against storage.
+///
+/// For configuration that uses syntax outside this subset, see
+/// [`ConfiguredRefspec`](super::ConfiguredRefspec), which describes it without mapping it.
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::{Direction, Refspec, RefspecError};
+///
+/// let spec = Refspec::parse(Direction::Fetch, b"+refs/heads/*:refs/remotes/origin/*")?;
+/// assert!(spec.force());
+/// assert!(!spec.is_negative());
+/// assert_eq!(spec.as_bytes(), b"+refs/heads/*:refs/remotes/origin/*");
+///
+/// // Shorthand needs name resolution, which this type never performs.
+/// assert!(matches!(
+///     Refspec::parse(Direction::Fetch, b"main:refs/remotes/origin/main"),
+///     Err(RefspecError::Unsupported(_)),
+/// ));
+/// // Both sides of a wildcard mapping need exactly one `*`.
+/// assert!(matches!(
+///     Refspec::parse(Direction::Fetch, b"refs/heads/*:refs/remotes/origin/main"),
+///     Err(RefspecError::Syntax(_)),
+/// ));
+/// # Ok::<(), RefspecError>(())
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Refspec {
     raw: Vec<u8>,
@@ -36,6 +78,16 @@ pub struct Refspec {
 }
 
 /// A rejected occurrence in an ordered refspec list.
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::{Direction, Refspecs};
+///
+/// let error =
+///     Refspecs::parse(Direction::Fetch, ["refs/heads/main", "refs/heads/a*b*"]).unwrap_err();
+/// assert_eq!(error.index, 1);
+/// ```
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
 #[error("refspec at index {index}")]
 #[non_exhaustive]
@@ -210,7 +262,11 @@ fn validate_pattern(bytes: &[u8], source: bool) -> Result<(), RefspecError> {
     Ok(())
 }
 
-/// A resolved source supplied explicitly by the caller, without symbolic-reference traversal.
+/// A reference name and the object ID it points to, as input to [`Refspecs::map`].
+///
+/// For a fetch, sources are the remote's advertised references; [`Refspecs::map_advertisement`]
+/// builds them from an [`Advertisement`]. For a push, they are local references the caller has
+/// already resolved.
 ///
 /// Local symbolic refs must be resolved by the caller. Advertisement conversion keeps the
 /// advertised name and ID, including HEAD, and discards peeled hints. Symbolic capabilities do not
@@ -223,7 +279,12 @@ pub struct RefSource {
     pub id: ObjectId,
 }
 
-/// Whether a refspec requests a forced mapping; this does not authorize publication.
+/// Whether a refspec requests a forced mapping (`+`); this does not authorize publication.
+///
+/// A forced fetch mapping may move a destination to a commit that does not descend from its
+/// current value. Whether that is allowed is decided when references are published:
+/// [`crate::fetch::FetchRequest::prepare`] requires the caller to name each destination it
+/// authorizes for forced updates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum ForceIntent {
@@ -233,7 +294,11 @@ pub enum ForceIntent {
     Requested,
 }
 
-/// One pure selection, mapping, or push deletion; not an authorized reference update.
+/// One source matched to its destination by [`Refspecs::map`].
+///
+/// A mapping is a proposal, not a reference update: nothing has been checked against storage.
+/// Callers that publish it must still check expected old values, fast-forwarding, object kinds and
+/// force authorization; [`crate::fetch::FetchRequest`] and [`crate::push::PushCommand`] do so.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub struct Mapping {
@@ -282,7 +347,49 @@ impl Mapping {
     }
 }
 
-/// An ordered set of specifications sharing one direction, including duplicate occurrences.
+/// An ordered list of refspecs for one direction, such as a remote's `fetch` values.
+///
+/// Parse with [`Self::parse`], then map reference names with [`Self::map`] or a fetch
+/// advertisement with [`Self::map_advertisement`]. Mapping is pure: it reads no repository and
+/// contacts no server, so it can be used to preview a transfer or to test a configuration.
+///
+/// # Examples
+///
+/// ```
+/// use girt::refs::RefName;
+/// use girt::remote::{Direction, ForceIntent, RefSource, Refspecs};
+/// use girt::{ObjectFormat, ObjectKind};
+///
+/// let specs = Refspecs::parse(
+///     Direction::Fetch,
+///     ["+refs/heads/*:refs/remotes/origin/*", "^refs/heads/wip/*"],
+/// )?;
+/// let id = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"example");
+/// let sources = [
+///     RefSource {
+///         name: RefName::new("refs/heads/main")?,
+///         id,
+///     },
+///     RefSource {
+///         name: RefName::new("refs/heads/wip/spike")?,
+///         id,
+///     },
+///     RefSource {
+///         name: RefName::new("refs/tags/v1.0")?,
+///         id,
+///     },
+/// ];
+/// let mappings = specs.map(&sources)?;
+///
+/// // `wip/spike` is excluded and the tag matches no refspec.
+/// assert_eq!(mappings.len(), 1);
+/// assert_eq!(
+///     mappings[0].destination,
+///     Some(RefName::new("refs/remotes/origin/main")?)
+/// );
+/// assert_eq!(mappings[0].force, ForceIntent::Requested);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct Refspecs {
     direction: Direction,
@@ -290,6 +397,40 @@ pub struct Refspecs {
 }
 
 /// Mapping failed; no partial plan or side effects are produced.
+///
+/// # Examples
+///
+/// Two sources mapped to one destination are refused rather than letting one win silently:
+///
+/// ```
+/// use girt::refs::RefName;
+/// use girt::remote::{Direction, MappingError, RefSource, Refspecs};
+/// use girt::{ObjectFormat, ObjectKind};
+///
+/// let specs = Refspecs::parse(
+///     Direction::Fetch,
+///     [
+///         "refs/heads/main:refs/remotes/origin/main",
+///         "refs/heads/master:refs/remotes/origin/main",
+///     ],
+/// )?;
+/// let id = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"example");
+/// let sources = [
+///     RefSource {
+///         name: RefName::new("refs/heads/main")?,
+///         id,
+///     },
+///     RefSource {
+///         name: RefName::new("refs/heads/master")?,
+///         id,
+///     },
+/// ];
+/// assert!(matches!(
+///     specs.map(&sources),
+///     Err(MappingError::Collision(_))
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum MappingError {
@@ -391,6 +532,34 @@ impl Refspecs {
     ///
     /// This permits fetch callers to install and publish other advertised selections while
     /// showing each missing explicit source. Wildcards with no match are harmless.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// use girt::remote::{Direction, RefSource, Refspecs};
+    /// use girt::{ObjectFormat, ObjectKind};
+    ///
+    /// let specs = Refspecs::parse(
+    ///     Direction::Fetch,
+    ///     [
+    ///         "refs/heads/main:refs/remotes/origin/main",
+    ///         "refs/heads/gone:refs/remotes/origin/gone",
+    ///     ],
+    /// )?;
+    /// let id = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"example");
+    /// let sources = [RefSource {
+    ///     name: RefName::new("refs/heads/main")?,
+    ///     id,
+    /// }];
+    ///
+    /// // `map` fails on the missing source; this reports it and maps the rest.
+    /// assert!(specs.map(&sources).is_err());
+    /// let (mappings, missing) = specs.map_with_missing(&sources)?;
+    /// assert_eq!(mappings.len(), 1);
+    /// assert_eq!(missing, [b"refs/heads/gone".to_vec()]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///

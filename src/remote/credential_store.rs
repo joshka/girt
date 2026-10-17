@@ -13,12 +13,20 @@ use super::credential::{Credential, CredentialContext, CredentialError};
 
 /// The credential files used by Git's `store` helper.
 ///
+/// Git's `store` helper keeps credentials as plain-text URLs such as
+/// `https://alice:token@example.com` in `~/.git-credentials`. This type reads and writes the same
+/// files natively, so `credential.helper = store` works without a Git installation. Use it as a
+/// [`CredentialBackend::Store`](super::CredentialBackend::Store) in a
+/// [`CredentialSession`](super::CredentialSession); see its example. Anyone who can read the files
+/// can read the passwords.
+///
 /// Lookups read the files in order and return the first matching entry. Approval writes to the
 /// first file that exists, or creates the first file when none does. Rejection removes matching
 /// entries from every file. Each change holds a `<file>.lock` sibling from before the read until
 /// it is renamed over the file, so concurrent Git or girt writers fail instead of losing updates
-/// and an interrupted write leaves the old contents. New files are mode 0600; a rewrite drops group
-/// and other access, as Git does, and keeps stricter owner bits such as 0400.
+/// and an interrupted write leaves the old contents. On Unix, new files are mode 0600 and a
+/// rewrite drops group and other access, as Git does, keeping stricter owner bits such as 0400.
+/// Other platforms use the directory's inherited permissions.
 ///
 /// ```
 /// use std::path::Path;
@@ -49,6 +57,21 @@ impl std::fmt::Debug for CredentialStore {
 
 impl CredentialStore {
     /// Uses only `path`, like `git credential-store --file <path>`.
+    ///
+    /// The file need not exist. It is created when a complete credential is first approved. On
+    /// Unix, a new file is created with owner-only permissions (mode 0600); on other platforms it
+    /// inherits the directory's permissions, so the application must keep the directory private.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    ///
+    /// use girt::remote::CredentialStore;
+    ///
+    /// let store = CredentialStore::file("/srv/ci/credentials");
+    /// assert_eq!(store.files(), [Path::new("/srv/ci/credentials")]);
+    /// ```
     pub fn file(path: impl Into<PathBuf>) -> Self {
         Self {
             files: vec![path.into()],

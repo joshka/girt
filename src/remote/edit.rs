@@ -12,6 +12,46 @@ use crate::config::{ConfigError, Document};
 /// Each operation prepares a clone and replaces the document only on success. Branch references
 /// and `remote.pushDefault` are changed only in this document. Ambiguous repeated scalar branch
 /// selectors are rejected rather than partially applying Git CLI's warning-producing behavior.
+///
+/// To change a repository, lock its configuration file with
+/// [`Repository::edit_config`](crate::Repository::edit_config), edit
+/// [`ConfigEdit::document_mut`](crate::config::ConfigEdit::document_mut), then
+/// [`commit`](crate::config::ConfigEdit::commit). Reopen the repository afterwards to see the
+/// change, since a [`Repository`](crate::Repository) holds a configuration snapshot.
+///
+/// # Examples
+///
+/// ```
+/// use girt::config::Document;
+/// use girt::remote::{Remote, RemoteConfig, RemoteKey};
+///
+/// let mut document = Document::parse(b"[branch \"main\"]\nremote = origin\n")?;
+/// let mut remotes = RemoteConfig::new(&mut document);
+/// remotes.add(
+///     b"origin",
+///     b"https://example.com/project.git",
+///     &[b"+refs/heads/*:refs/remotes/origin/*"],
+/// )?;
+/// remotes.append(
+///     b"origin",
+///     RemoteKey::PushUrl,
+///     b"ssh://git@example.com/project.git",
+/// )?;
+/// // Renaming also updates the fetch refspec and branches that track the remote.
+/// remotes.rename(b"origin", b"upstream")?;
+///
+/// let config = document.config();
+/// let upstream = Remote::find(config, b"upstream")?.expect("renamed");
+/// assert_eq!(
+///     upstream.fetch_refspecs().specs()[0].as_bytes(),
+///     b"+refs/heads/*:refs/remotes/upstream/*"
+/// );
+/// assert_eq!(
+///     config.value("branch", Some(b"main"), "remote"),
+///     Some(Some(&b"upstream"[..]))
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct RemoteConfig<'a> {
     document: &'a mut Document,
 }
@@ -23,6 +63,25 @@ impl std::fmt::Debug for RemoteConfig<'_> {
 }
 
 /// A local remote configuration operation could not be prepared; no draft changes were applied.
+///
+/// # Examples
+///
+/// ```
+/// use girt::config::Document;
+/// use girt::remote::{RemoteConfig, RemoteEditError};
+///
+/// let mut document = Document::parse(b"[remote \"origin\"]\nurl = a\n")?;
+/// let mut remotes = RemoteConfig::new(&mut document);
+/// assert!(matches!(
+///     remotes.add(b"origin", b"b", &[]),
+///     Err(RemoteEditError::Exists)
+/// ));
+/// assert!(matches!(
+///     remotes.remove(b"fork"),
+///     Err(RemoteEditError::NotLocal)
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RemoteEditError {
