@@ -366,10 +366,15 @@ pub struct WorktreeChange {
 ///
 /// ```
 /// use std::sync::atomic::AtomicBool;
+///
 /// use girt::{InitKind, ObjectFormat, Repository};
 /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
 /// let directory = tempfile::tempdir()?;
-/// let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("w"), InitKind::Worktree)?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
 ///
 /// use girt::index::{Entry, Mode};
 /// use girt::status::{Baseline, Change, Limits, Untracked};
@@ -379,12 +384,18 @@ pub struct WorktreeChange {
 /// edit.commit()?;
 /// std::fs::write(repo.worktree().unwrap().join("dir"), b"untracked obstruction")?;
 ///
-/// let report = repo.raw_status(Baseline::Head, Untracked::Omit,
-///     Limits::default(), &AtomicBool::new(false))?;
+/// let report = repo.raw_status(
+///     Baseline::Head,
+///     Untracked::Omit,
+///     Limits::default(),
+///     &AtomicBool::new(false),
+/// )?;
 ///
 /// assert_eq!(report.unstaged[0].path, b"dir/file");
-/// assert!(matches!(&report.unstaged[0].change,
-///     Change::Obstructed { path } if path == b"dir"));
+/// assert!(matches!(
+///     &report.unstaged[0].change,
+///     Change::Obstructed { path } if path == b"dir"
+/// ));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
