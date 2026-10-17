@@ -134,11 +134,13 @@ enum Command {
     #[command(subcommand)]
     Maintenance(maintenance::Command),
 
-    /// Print a static shell completion script (commands and options only).
+    /// Print a shell completion script; add `source <(girt completions zsh)` to `~/.zshrc`.
     ///
-    /// For completion of revisions, remotes, worktrees and config keys from the current
-    /// repository, source the dynamic script instead, e.g. `source <(COMPLETE=zsh girt)` in
-    /// `~/.zshrc`. Static scripts are for packagers.
+    /// The script calls back into `girt` on each Tab, so it completes revisions, remotes, worktrees
+    /// and config keys from the current repository as well as commands and options (the same script
+    /// `COMPLETE=<shell> girt` prints). Bash: `source <(girt completions bash)` in `~/.bashrc`.
+    /// Fish: `girt completions fish | source` in `~/.config/fish/config.fish`. `--static` prints a
+    /// self-contained script without repository values, for packagers.
     Completions(complete::CompletionsArgs),
     /// Print the `girt.1` man page, or write every page with `--out`.
     Man(complete::ManArgs),

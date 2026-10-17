@@ -47,18 +47,19 @@ the current repository: revisions and ref names, remote names, linked worktree n
 keys.
 
 ```sh
-source <(COMPLETE=zsh girt)     # ~/.zshrc
-source <(COMPLETE=bash girt)    # ~/.bashrc
-COMPLETE=fish girt | source     # ~/.config/fish/config.fish
+source <(girt completions zsh)     # ~/.zshrc
+source <(girt completions bash)    # ~/.bashrc
+girt completions fish | source     # ~/.config/fish/config.fish
 ```
 
-The line asks `girt` for a small script that calls back into `girt` on each Tab, so completions stay
-in step with the installed version. Completing a value reads only refs, config and worktree
-registrations, never objects; outside a repository it offers no values. `-C <path>` is not applied
-while completing.
+The script is a small hook that calls back into `girt` on each Tab, so completions stay in step with
+the installed version. Completing a value reads only refs, config and worktree registrations, never
+objects; outside a repository it offers no values. `-C <path>` is not applied while completing.
+`girt completions` also supports `elvish` and `powershell`, and `COMPLETE=<shell> girt` prints the
+same script.
 
-Packagers can ship static scripts instead, which complete commands and options but not repository
-values: `girt completions <shell>` prints one for `bash`, `zsh`, `fish`, `elvish` or `powershell`.
+Packagers who need a fixed file can use `girt completions --static <shell>`, which completes
+commands and options but not repository values.
 
 ## Man pages
 

@@ -13,7 +13,7 @@ use std::process::ExitCode;
 
 use clap::CommandFactory as _;
 use clap_complete::engine::CompletionCandidate;
-use color_eyre::eyre::{Result, WrapErr as _};
+use color_eyre::eyre::{Result, WrapErr as _, eyre};
 use girt::Repository;
 use girt::remote::Remote;
 
@@ -26,8 +26,11 @@ const MAX_WORKTREES: usize = 10_000;
 /// Arguments for `girt completions`.
 #[derive(Debug, clap::Args)]
 pub struct CompletionsArgs {
-    /// Shell to generate a static completion script for.
+    /// Shell to print the completion script for.
     shell: clap_complete::Shell,
+    /// Print a self-contained script that completes commands and options only, for packagers.
+    #[arg(long = "static")]
+    static_script: bool,
 }
 
 /// Arguments for `girt man`.
@@ -39,12 +42,39 @@ pub struct ManArgs {
     out: Option<PathBuf>,
 }
 
-/// Prints a static completion script. Static scripts complete commands and options only; use
-/// `COMPLETE=<shell> girt` for revision, remote, worktree and config key completion.
+/// Prints the completion script for a shell.
+///
+/// By default this is the script `COMPLETE=<shell> girt` prints: a small hook that calls back into
+/// `girt` on each Tab, so values come from the current repository. `--static` prints a generated
+/// script that needs no callback but completes commands and options only.
 pub fn completions(args: CompletionsArgs) -> Result<ExitCode> {
     let mut command = crate::Cli::command();
-    clap_complete::generate(args.shell, &mut command, "girt", &mut io::stdout());
+    let mut out = io::stdout().lock();
+    if args.static_script {
+        clap_complete::generate(args.shell, &mut command, "girt", &mut out);
+    } else {
+        let shells = clap_complete::env::Shells::builtins();
+        let shell = shells
+            .completer(&args.shell.to_string())
+            .ok_or_else(|| eyre!("no dynamic completion for {}", args.shell))?;
+        shell.write_registration("COMPLETE", "girt", "girt", &completer(), &mut out)?;
+    }
+    out.flush()?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// The program the shell hook runs, resolved the way `CompleteEnv` resolves it: as invoked, with a
+/// relative path made absolute.
+fn completer() -> String {
+    let invoked = std::env::args_os()
+        .next()
+        .map_or_else(|| PathBuf::from("girt"), PathBuf::from);
+    let path = if invoked.components().count() > 1 && invoked.is_relative() {
+        std::env::current_dir().map_or(invoked.clone(), |dir| dir.join(&invoked))
+    } else {
+        invoked
+    };
+    path.to_string_lossy().into_owned()
 }
 
 /// Prints `girt.1`, or writes every page into `--out`.
@@ -259,10 +289,28 @@ mod tests {
             let mut script = Vec::new();
             clap_complete::generate(*shell, &mut crate::Cli::command(), "girt", &mut script);
             let script = String::from_utf8(script).unwrap();
-            assert!(script.contains("girt"), "{shell} script mentions no girt");
             assert!(
                 script.contains("worktree"),
                 "{shell} script lacks subcommands"
+            );
+        }
+    }
+
+    #[test]
+    fn every_shell_has_a_dynamic_hook() {
+        for shell in Shell::value_variants() {
+            let shells = clap_complete::env::Shells::builtins();
+            let completer = shells
+                .completer(&shell.to_string())
+                .unwrap_or_else(|| panic!("no dynamic completer for {shell}"));
+            let mut script = Vec::new();
+            completer
+                .write_registration("COMPLETE", "girt", "girt", "girt", &mut script)
+                .unwrap();
+            let script = String::from_utf8(script).unwrap();
+            assert!(
+                script.contains("COMPLETE"),
+                "{shell} hook does not call back"
             );
         }
     }
