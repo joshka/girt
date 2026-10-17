@@ -67,23 +67,67 @@ and Windows feature lanes are the same in those full runs. See
 [platform evidence and gaps](docs/compatibility.md#platform-and-git-version-validation) before
 making support claims.
 
-Agents must apply `full-ci` before requesting merge for platform-sensitive changes: filesystem
-operations, file locking, paths and permissions, process execution, Windows-specific code,
-platform-dependent dependencies, or CI workflow changes. Apply it when uncertain whether Linux
-establishes the contract. Adding or removing the label starts a new CI run; after adding it, wait
-for that run's `required` check. Do not remove `full-ci` to bypass a platform failure; fix the
-failure and rerun instead. Any label change starts another CI run, including labels unrelated to CI.
-Release branches named `release-plz-*` always get the full matrix, regardless of labels. Ordinary
-pull requests can merge before a macOS/Windows regression is detected. Main and nightly failures
-open or update the `CI regression on main` issue; repair failures promptly; see
-[Releases](#releases) for the Linux publishing gate.
+### Start-and-repair readiness
 
-On pull requests, changes that touch only Markdown, `docs/`, licenses, `.vale.ini`,
-`.config/rumdl.toml` or `.config/vale/` run just `Docs` (`just docs-check`); Rust and platform tests
-report as skipped even with `full-ci`. Any other path runs Rust validation. CI calls the index,
-references and security workflows when a change touches their paths. Its `required` job is the
-single merge gate: it fails when any other CI job fails or is cancelled, and treats skipped jobs as
-passing. Add new CI jobs to its `needs` list. Rust caches are saved only on main.
+girt has no downstream consumers yet. A break on main is cheap to repair, so hosted CI runs in the
+background while reviewed changes continue. Mark a pull request ready once the relevant local checks
+pass and an independent cross-provider review is posted and addressed. Use `just check` for Rust
+changes, or the relevant subset described above for narrower changes, and record the commands,
+results and checked revision. Do not wait for hosted CI to post readiness or block unrelated work
+behind a slow job. Report pending checks and any known failures honestly.
+
+An administrator may merge a ready pull request with `gh pr merge --admin --squash`, matching the
+reviewed head with `--match-head-commit`. The main ruleset still requires `required` for ordinary
+merges and retains its existing administrator bypass through pull requests. No repository rule is
+relaxed: the administrator chooses start-and-repair using local evidence and review. Reverting this
+policy only requires returning to ordinary merges. Known data-loss, corruption, unsafe mutation or
+core interoperability failures remain blockers.
+
+When a change can affect the published API, the semver policy below still applies before an
+administrator bypasses hosted CI: use completed Semver evidence for the current head, or run the
+same published-release and PR-base comparisons locally and record the results. A new break requires
+explicit maintainer approval through `next-breaking`; a tool/build error is never evidence of
+compatibility. Without this evidence the pull request is not ready. A label cannot waive a failed
+Linux publish check.
+
+For local API evidence, install the same checker as CI:
+
+```sh
+cargo +stable install cargo-semver-checks --locked --version 0.51.0
+cargo +stable semver-checks -p girt --baseline-version "$PUBLISHED_VERSION" --release-type minor --all-features
+cargo +stable semver-checks -p girt --baseline-rev "$PR_BASE" --release-type minor --all-features
+```
+
+Set `PUBLISHED_VERSION` to the latest non-yanked stable girt release on crates.io and `PR_BASE` to
+the target-branch commit used for the tested merge. Run from that tested merge revision; CI uses its
+first parent for `PR_BASE`. The second comparison is needed only if the published-release comparison
+reports a break. Exit 100 means a detected break; any other nonzero exit is a tool or build failure.
+Record both baseline revisions and results. Main's published-release comparison is advisory because
+it includes approved breaks awaiting release; it cannot detect a maintainer bypassing this readiness
+policy. The coordinator must verify that evidence before merging.
+
+Apply `full-ci` for platform-sensitive changes: filesystem operations, locks, paths, permissions,
+process execution, Windows code, platform-dependent dependencies or CI workflows. Apply it when
+uncertain whether Linux establishes the contract. This requests background evidence; it does not add
+a readiness wait. Keep the label on a failing change and repair its failure. Release branches named
+`release-plz-*` always request the full matrix. Label changes start another CI run.
+
+Ordinary Rust pull requests run all-feature tests, Clippy and Rust formatting on Linux, plus MSRV,
+API compatibility and path-selected Index, References and Security jobs. Feature permutations,
+examples and documentation builds run on main, nightly and full-matrix pull requests. No test shards
+are added. Documentation-only changes run `Docs` (`just docs-check`); Rust and platform tests skip
+even with `full-ci`. The `required` job aggregates failures and cancellations, treating skipped jobs
+as passing; include every new job in its `needs` list. Rust caches are saved only on main.
+
+A trusted completion workflow updates one `CI regression on main` issue with failing jobs and run
+links after main or nightly CI. It reopens the issue on a new failure and closes it on recovery. New
+failures during an open incident also post a comment to preserve details and notify subscribers.
+Only the newest push/nightly CI run may update it, so an old completion cannot overwrite newer
+evidence. A newer run still in progress delays that update until it completes. Contributors and the
+coordinator should claim and repair failures promptly, add a regression check where appropriate, and
+publish a patch if a released version is affected. Repairs are small reviewed changes; unrelated
+ready work continues. A workflow that never starts cannot report itself and needs the coordinator's
+health check.
 
 ## API Compatibility Gate
 
@@ -103,9 +147,10 @@ label after a later update resolves the break. The gate follows cargo-semver-che
 lints, including removed APIs and lost auto traits; it does not establish behavioral compatibility.
 Rust caches are saved only on main, so PR builds cannot crowd out the shared baseline cache.
 
-The check uses the existing CI concurrency group and both jobs feed `required`. A separate job
-writes labels without checking out or building PR code. Fork pull requests receive the label from
-the trusted `Label semver breaks` workflow after CI finishes; its workflow must be present on the
+The check uses the existing CI concurrency group and both jobs feed `required`. Administrator merges
+must satisfy the same policy with recorded local evidence when CI is pending. A separate job writes
+labels without checking out or building PR code. Fork pull requests receive the label from the
+trusted `Label semver breaks` workflow after CI finishes; its workflow must be present on the
 default branch. The compatibility gate covers Linux with all features; platform-specific API
 differences still need review and the existing platform checks.
 
