@@ -477,7 +477,11 @@ pub fn ssh_remote(url: &str, config: &girt::Config) -> Result<girt::transport::s
             Ok::<_, color_eyre::Report>(ApprovedSshCommand::new(
                 configured,
                 "/bin/sh".into(),
-                vec!["-c".into(), format!("{command} \"$@\""), command],
+                vec![
+                    "-c".into(),
+                    format!("{command} \"$@\"").into(),
+                    command.into(),
+                ],
             ))
         })
         .transpose()?;
