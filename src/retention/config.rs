@@ -7,6 +7,20 @@ use crate::refs::RefName;
 ///
 /// `None` disables a rule. A disconnected record can qualify under either cutoff; the general
 /// cutoff also applies to live records. Timestamps are Unix seconds and comparison is strict.
+///
+/// ```
+/// use girt::refs::RefName;
+/// use girt::retention::{ReflogCutoffs, ReflogExpiry};
+///
+/// let config =
+///     girt::Config::parse(b"[gc]\nreflogExpire=never\nreflogExpireUnreachable=7.days.ago\n")?;
+/// let now = 1_800_000_000;
+/// let expiry = ReflogExpiry::from_config(&config, now)?;
+/// let expected = ReflogCutoffs::default().with_unreachable(Some(now - 7 * 86400));
+/// assert_eq!(expiry.cutoffs(&RefName::new("refs/heads/main")?)?, expected);
+/// // Live records have no general cutoff; disconnected records use the seven-day cutoff.
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ReflogCutoffs {
@@ -202,6 +216,28 @@ impl ReflogExpiry {
     /// Returns [`ReflogExpiryError::PatternLimit`] when a pattern/reference pair exceeds one
     /// million matching cells. Retention planning reports incomplete before any mutation on
     /// this error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// use girt::retention::ReflogExpiry;
+    ///
+    /// let config = girt::Config::parse(b"[gc]\nreflogExpire=all\nreflogExpireUnreachable=all\n")?;
+    /// let expiry = ReflogExpiry::from_config(&config, 1_800_000_000)?;
+    /// assert!(
+    ///     expiry
+    ///         .cutoffs(&RefName::new("refs/heads/main")?)?
+    ///         .general
+    ///         .is_some()
+    /// );
+    /// assert_eq!(
+    ///     expiry.cutoffs(&RefName::new("refs/stash")?)?,
+    ///     Default::default()
+    /// );
+    /// // Without a matching per-reference pattern, stash histories are protected.
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn cutoffs(&self, name: &RefName) -> Result<ReflogCutoffs, ReflogExpiryError> {
         for pattern in &self.patterns {
             if matches_without_pathname(&pattern.bytes, name.as_bytes(), 1_000_000)

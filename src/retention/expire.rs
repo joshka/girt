@@ -84,6 +84,44 @@ pub enum ExpireCause {
 /// A directory-sync failure can occur after a new history/list is visible. Preserve
 /// `report.retained_tables` for obsolete tables left behind after durable publication. Re-read
 /// actual history before relying on expired roots in any later deletion.
+///
+/// An isolation refusal occurs before scanning or mutation. Later failure classes can carry
+/// completed effects, so inspect the report for every failure.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::retention::{ExpireCause, MaintenanceIsolation, RetentionPolicy};
+/// use girt::{InitKind, ObjectFormat, Repository};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
+/// struct Refuse;
+/// impl MaintenanceIsolation for Refuse {
+///     type Guard = ();
+///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+///         Err(std::io::Error::new(
+///             std::io::ErrorKind::WouldBlock,
+///             "store is in use",
+///         ))
+///     }
+/// }
+///
+/// let failure = repo
+///     .expire_reflogs(
+///         &mut Refuse,
+///         &RetentionPolicy::default(),
+///         &AtomicBool::new(false),
+///     )
+///     .unwrap_err();
+///
+/// assert!(matches!(failure.cause, ExpireCause::Isolation(_)));
+/// assert!(failure.report.changed.is_empty());
+/// assert!(failure.uncertain.is_none() && failure.uncertain_stack.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[error("reflog expiry failed")]
 #[non_exhaustive]
@@ -141,6 +179,70 @@ impl Repository {
     ///
     /// Isolation refusal, unsupported backend, incomplete or changed input, cancellation and I/O
     /// return the known published prefix and any uncertain replacement.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::refs::{Dereference, Expected, RefEdit, RefName, Reflog, Target};
+    /// use girt::retention::{MaintenanceIsolation, ReflogExpiryPolicy, RetentionPolicy};
+    /// use girt::{InitKind, ObjectFormat, Repository, Signature};
+    ///
+    /// # if cfg!(not(unix)) { return Ok(()); }
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r");
+    /// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
+    /// // This private fixture has no external writer, dependent reader or alternate-store user.
+    /// struct PrivateFixture;
+    /// impl MaintenanceIsolation for PrivateFixture {
+    ///     type Guard = ();
+    ///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    /// let first = repo.loose_objects().write_blob(b"older")?;
+    /// let second = repo.loose_objects().write_blob(b"newer")?;
+    /// let refs = repo.references()?;
+    /// let name = RefName::new("refs/tags/result")?;
+    /// for (seconds, id, expected) in [
+    ///     (100, first, Expected::Absent),
+    ///     (200, second, Expected::Value(Target::Direct(first))),
+    /// ] {
+    ///     let committer = Signature {
+    ///         name: b"Writer".to_vec(),
+    ///         email: b"w@example.com".to_vec(),
+    ///         seconds,
+    ///         offset_minutes: 0,
+    ///     };
+    ///     refs.transaction(&[RefEdit::new(
+    ///         name.clone(),
+    ///         Some(Target::Direct(id)),
+    ///         expected,
+    ///         Reflog::Append {
+    ///             committer,
+    ///             message: b"advance result".to_vec(),
+    ///         },
+    ///     )
+    ///     .with_dereference(Dereference::Stored)])?;
+    /// }
+    /// assert_eq!(refs.reflog(&name)?.unwrap().len(), 2);
+    /// let policy =
+    ///     RetentionPolicy::default().with_reflog_expiry(ReflogExpiryPolicy::ClassifiedCutoffs {
+    ///         live_before: Some(150),
+    ///         disconnected_before: Some(150),
+    ///     });
+    /// let report = repo.expire_reflogs(&mut PrivateFixture, &policy, &AtomicBool::new(false))?;
+    /// assert_eq!(report.changed.len(), 1);
+    /// let remaining = refs.reflog(&name)?.unwrap();
+    /// assert_eq!(remaining.len(), 1);
+    /// assert_eq!(remaining[0].committer.seconds, 200);
+    /// assert_eq!(refs.read(&name)?, Some(Target::Direct(second)));
+    /// assert_eq!(repo.loose_objects().read_blob(first, 1024)?, b"older"); // No object pruning.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn expire_reflogs<I: MaintenanceIsolation>(
         &self,
         isolation: &mut I,

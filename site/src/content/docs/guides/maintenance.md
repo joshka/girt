@@ -191,6 +191,26 @@ and index contents are immutable. Atomic rename/deletion leaves pinned handles r
 original generation. Girt uses positioned reads and owned buffers, avoiding mapped-page faults after
 truncation; that does not make in-place mutation supported.
 
+### Map application ownership to the guard lifetime
+
+For a private store used only by cooperating application threads, a mutex guard can hold the
+exclusion boundary. Every reader and writer that might depend on old storage must take that mutex.
+This does not extend to an external Git process or another repository using the store as an
+alternate. If those participants cannot be excluded, refuse acquisition rather than returning a
+marker guard.
+
+A `MutexGuard` can hold the boundary for the maintenance call, as required by the
+[isolation contract](https://docs.rs/girt/latest/girt/retention/trait.MaintenanceIsolation.html). In
+that example, the application maps a poisoned mutex to an I/O error before scanning. An application
+with an external process protocol can supply its own guard with the same lifetime, provided that
+protocol excludes every dependent participant.
+
+Do not reuse an earlier plan as a deletion list after acquiring the guard. The destructive methods
+make fresh observations inside it; partial failure requires inspection there and a new guarded
+attempt. Independent `expire_reflogs`, `retire_old_packs` and `prune_unreachable_loose` calls
+acquire separate guards, so each later phase observes new state. Use `collect_garbage` or
+`run_maintenance` to keep the whole sequence under one guard.
+
 ## Publish, verify, retire
 
 Reclamation uses one pinned snapshot for scanning, selection and copying. Reopening between those
@@ -242,6 +262,26 @@ Cancellation, bounds, unsupported types and missing/external delta bases are imm
 than fallback triggers. Some header damage can present as those errors and therefore will not be
 rescued. If no verified copy exists, preserve the damaged-pack path, entry offset and underlying
 corruption cause from the source chain for recovery diagnostics.
+
+### Diagnose before attempting reclamation
+
+1. Stop mutations and exclude dependent readers before changing stored artifacts. Keep the damaged
+   pack and its index together as recovery evidence.
+1. Read the required object through one pinned `Objects` view. A successful fallback proves that
+   object's decoded identity, while `verify_packs` can still expose remembered pack damage. Preserve
+   every source error, including the artifact path and entry offset.
+1. Recover or rebuild storage from verified data. Account for unique objects in the damaged pack;
+   one rescued blob does not establish that every retained object has another copy. Maintenance
+   deliberately refuses known damaged inputs instead of acting as a damaged-pack removal tool.
+1. Drop old readers, open a fresh view after repair, verify artifacts and read the retained objects.
+   `verify_packs` checks raw-byte integrity, not all object identities, syntax or connectivity. A
+   retention plan's blob-header traversal is also not a full integrity check.
+1. Make a fresh retention observation under exclusion before any later reclamation. An old complete
+   plan or successful fallback is not deletion authorization.
+
+The [retention module](https://docs.rs/girt/latest/girt/retention/) documents the recovery and
+verification contracts. Its damaged-pack diagnostic fixture creates corruption before opening a
+reader, rescues content from a loose duplicate and keeps the damaged artifact for recovery.
 
 ## Interpret partial failures
 

@@ -13,6 +13,43 @@ use crate::{ObjectId, Repository};
 /// must also account for repositories using this object store as an alternate. Girt cannot
 /// discover or enforce those external relationships. Return an error if the boundary cannot be
 /// established. A lock observed only by girt is insufficient.
+///
+/// # Hold an application exclusion guard
+///
+/// For a private store used only by cooperating threads, an application mutex can hold the
+/// boundary. It is insufficient if Git processes, other applications or alternate dependents can
+/// access the store. Those users must participate in the same exclusion scheme or acquisition must
+/// refuse.
+///
+/// ```
+/// use std::sync::{Mutex, MutexGuard};
+///
+/// use girt::retention::{MaintenanceIsolation, RetentionPolicy};
+/// use girt::{InitKind, ObjectFormat, Repository};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
+/// struct PrivateStore<'a>(&'a Mutex<()>);
+/// impl<'a> MaintenanceIsolation for PrivateStore<'a> {
+///     type Guard = MutexGuard<'a, ()>;
+///     fn acquire(&mut self, _: &Repository) -> std::io::Result<Self::Guard> {
+///         self.0
+///             .lock()
+///             .map_err(|_| std::io::Error::other("store exclusion poisoned"))
+///     }
+/// }
+/// // No other process knows this disposable path; every application user must take this mutex.
+/// let mutex = Mutex::new(());
+/// let report = repo.prune_unreachable_loose(
+///     &mut PrivateStore(&mutex),
+///     &RetentionPolicy::default(),
+///     &std::sync::atomic::AtomicBool::new(false),
+/// )?;
+/// assert!(report.deleted.is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub trait MaintenanceIsolation {
     /// Guard whose lifetime holds the repository-wide exclusion boundary.
     type Guard;
@@ -63,6 +100,44 @@ pub enum PruneCause {
 /// `report.deleted` is authoritative for confirmed effects; `uncertain` identifies an unlink
 /// whose outcome needs inspection. Keep `cause` and its source chain. An incomplete or changed
 /// observation never authorizes continuing with candidates from an older plan.
+///
+/// An isolation refusal occurs before scanning or mutation. Later failure classes can carry
+/// completed effects, so inspect the report for every failure.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::retention::{MaintenanceIsolation, PruneCause, RetentionPolicy};
+/// use girt::{InitKind, ObjectFormat, Repository};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
+/// struct Refuse;
+/// impl MaintenanceIsolation for Refuse {
+///     type Guard = ();
+///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+///         Err(std::io::Error::new(
+///             std::io::ErrorKind::WouldBlock,
+///             "store is in use",
+///         ))
+///     }
+/// }
+///
+/// let failure = repo
+///     .prune_unreachable_loose(
+///         &mut Refuse,
+///         &RetentionPolicy::default(),
+///         &AtomicBool::new(false),
+///     )
+///     .unwrap_err();
+///
+/// assert!(matches!(failure.cause, PruneCause::Isolation(_)));
+/// assert!(failure.report.deleted.is_empty());
+/// assert!(failure.uncertain.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[error("loose object pruning failed")]
 #[non_exhaustive]

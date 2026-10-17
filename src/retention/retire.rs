@@ -74,6 +74,46 @@ pub enum RetireCause {
 /// Use `report.published`, `report.durable`, `report.removed` and `uncertain` together. A visible
 /// replacement alone does not establish that removing old storage is safe. Re-observe under
 /// isolation before retrying; never complete the deletion sequence manually from this report.
+///
+/// An isolation refusal occurs before scanning or mutation. Later failure classes can carry
+/// completed effects, so inspect the report for every failure.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::retention::{MaintenanceIsolation, RetentionPolicy, RetireCause};
+/// use girt::{InitKind, ObjectFormat, Repository};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
+/// struct Refuse;
+/// impl MaintenanceIsolation for Refuse {
+///     type Guard = ();
+///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+///         Err(std::io::Error::new(
+///             std::io::ErrorKind::WouldBlock,
+///             "store is in use",
+///         ))
+///     }
+/// }
+///
+/// let failure = repo
+///     .retire_old_packs(
+///         &mut Refuse,
+///         &RetentionPolicy::default(),
+///         Default::default(),
+///         &AtomicBool::new(false),
+///     )
+///     .unwrap_err();
+///
+/// assert!(matches!(failure.cause, RetireCause::Isolation(_)));
+/// assert!(failure.report.published.is_none());
+/// assert!(failure.report.removed.is_empty());
+/// assert!(failure.uncertain.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[error("pack retirement failed")]
 #[non_exhaustive]
@@ -130,6 +170,69 @@ impl Repository {
     ///
     /// Isolation refusal, unsupported platform, incomplete or changed observations, publication,
     /// verification, cancellation and I/O report known effects and an uncertain boundary if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(unix)]
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::retention::{MaintenanceIsolation, RepackLimits, RetentionPolicy};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r");
+    /// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
+    /// let cancel = AtomicBool::new(false);
+    /// // This private repository has no external users or alternate dependents.
+    /// struct PrivateFixture;
+    /// impl MaintenanceIsolation for PrivateFixture {
+    ///     type Guard = ();
+    ///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let id = repo.loose_objects().write_blob(b"retained")?;
+    /// let first = repo.repack_retained(
+    ///     &RetentionPolicy::default(),
+    ///     RepackLimits::default(),
+    ///     &cancel,
+    /// )?;
+    /// let other = repo.loose_objects().write_blob(b"second retained object")?;
+    /// repo.repack_retained(
+    ///     &RetentionPolicy::default(),
+    ///     RepackLimits::default(),
+    ///     &cancel,
+    /// )?;
+    /// // A future cutoff makes freshly created packs eligible only for this private fixture.
+    /// let cutoff = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    /// let policy = RetentionPolicy::default()
+    ///     .with_heads(vec![id, other])
+    ///     .with_recent_cutoff(cutoff);
+    /// let report = repo.retire_old_packs(
+    ///     &mut PrivateFixture,
+    ///     &policy,
+    ///     RepackLimits::default(),
+    ///     &cancel,
+    /// )?;
+    /// assert!(report.durable);
+    /// let old_pack = repo
+    ///     .git_dir()
+    ///     .join("objects/pack")
+    ///     .join(format!("pack-{}.pack", first.written.checksum));
+    /// assert!(report.removed.contains(&old_pack));
+    /// assert!(!old_pack.exists());
+    /// let objects = repo.objects(Default::default())?;
+    /// assert!(objects.read(id, Default::default())?.is_some());
+    /// assert!(objects.read(other, Default::default())?.is_some());
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(unix))]
+    /// # fn main() {}
+    /// ```
     pub fn retire_old_packs<I: MaintenanceIsolation>(
         &self,
         isolation: &mut I,
