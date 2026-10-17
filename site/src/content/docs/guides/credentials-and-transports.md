@@ -140,10 +140,11 @@ girt -C project push origin main
 
 OpenSSH reads its normal configuration, identities, agent and host-trust files. The CLI selects
 `GIT_SSH_COMMAND`, then `core.sshCommand`, then `GIT_SSH`, then `ssh` on PATH. Command strings
-execute through the shell; only use configuration you trust. Clone and discovery also read global
-configuration when run outside a repository. Terminal prompts and job control are unavailable; use
-an agent or askpass. Non-OpenSSH variants, percent encoding, query/fragment fields and repository
-paths starting with `~` remain unsupported.
+execute through the shell; only use configuration you trust. Clone reads system/global configuration
+and ignores the enclosing repository. Discovery also reads global configuration when run outside a
+repository. Terminal prompts and job control are unavailable; use an agent or askpass. Non-OpenSSH
+variants, percent encoding, query/fragment fields and repository paths starting with `~` remain
+unsupported.
 
 HTTP(S) clone and discovery currently allow anonymous access only. Fetch and push use configured
 credential helpers through `workflow`, but do not prompt interactively for missing credentials.

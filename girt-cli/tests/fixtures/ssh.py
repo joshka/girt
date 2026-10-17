@@ -34,6 +34,7 @@ def exercise(root, object_format):
     tree = run(["git", "mktree"], source, env).strip().decode()
     first = run(["git", "commit-tree", tree, "-m", "first"], source, env).strip().decode()
     run(["git", "update-ref", "refs/heads/main", first], source, env)
+    run(["git", "config", "core.sshCommand", "false"], source, env)
     with tempfile.TemporaryFile(mode="w+") as diagnostics:
         server = subprocess.Popen(["python3", str(SERVER), str(source), "--owner", str(os.getpid())],
                                   env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -62,7 +63,7 @@ def exercise(root, object_format):
                 destination = root / f"clone-{index}"
                 global_config = dict(env)
                 del global_config["GIT_SSH_COMMAND"]
-                run([BINARY, "clone", address, str(destination)], root, global_config)
+                run([BINARY, "clone", address, str(destination)], source, global_config)
                 assert run(["git", "rev-parse", "HEAD"], destination, env).strip().decode() == first
                 assert run([BINARY, "remote", "heads", "origin"], destination, env) == expected
                 # core.sshCommand works when the environment override is absent; a bad lower
@@ -91,10 +92,26 @@ def exercise(root, object_format):
                                                 "-oBatchMode=yes", "-oStrictHostKeyChecking=yes"])
             run([BINARY, "remote", "heads", url], root, env, success=False)
         finally:
-            server.stdin.close()
-            assert server.wait(timeout=15) == 0, "SSH fixture cleanup failed"
-            if fixture_root is not None:
-                assert not fixture_root.exists(), "SSH keys were not removed"
+            body_error = sys.exc_info()[1]
+            try:
+                server.stdin.close()
+                try:
+                    status = server.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    server.terminate()
+                    try:
+                        server.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        server.kill()
+                        server.wait(timeout=5)
+                    raise AssertionError("SSH fixture cleanup timed out") from None
+                assert status == 0, "SSH fixture cleanup failed"
+                if fixture_root is not None:
+                    assert not fixture_root.exists(), "SSH keys were not removed"
+            except BaseException as cleanup_error:
+                if body_error is None:
+                    raise
+                print(f"Additional cleanup failure: {cleanup_error}", file=sys.stderr)
 
 
 scratch = Path.home() / "tmp"

@@ -125,7 +125,7 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         ),
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         Endpoint::Ssh(url) => {
-            let remote = crate::config::ssh_remote(&url, context)?;
+            let remote = crate::config::ssh_remote(&url, &crate::config::global_config()?)?;
             block_on(request.receive_ssh(&remote, limits, control))?.and_then(|download| {
                 download.validate_with_progress(
                     &cancel,

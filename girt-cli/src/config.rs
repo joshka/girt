@@ -420,7 +420,12 @@ fn discover(url: &str, context: &Context) -> Result<RemoteDiscovery> {
             .wrap_err_with(|| format!("listing {}", path.display())),
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         Endpoint::Ssh(url) => {
-            let remote = ssh_remote(&url, context)?;
+            let config = if context.repository().is_ok() {
+                configured_repository(context)?.config().clone()
+            } else {
+                global_config()?
+            };
+            let remote = ssh_remote(&url, &config)?;
             block_on(girt::fetch::discover_ssh(&remote, limits, control))?
                 .wrap_err("listing SSH remote")
         }
@@ -434,22 +439,12 @@ fn discover(url: &str, context: &Context) -> Result<RemoteDiscovery> {
 
 /// Use ordinary OpenSSH policy, including the same trusted shell overrides as workflow transfers.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn ssh_remote(url: &str, context: &Context) -> Result<girt::transport::ssh::SshRemote> {
+pub fn ssh_remote(url: &str, config: &girt::Config) -> Result<girt::transport::ssh::SshRemote> {
     use std::os::unix::ffi::OsStrExt as _;
 
     use girt::remote::ProtocolEnvironment;
     use girt::transport::ssh::{ApprovedSshCommand, OpenSshOptions, SshRemote};
 
-    let config = if context.repository().is_ok() {
-        configured_repository(context)?.config().clone()
-    } else {
-        let system = SYSTEM_CONFIG
-            .iter()
-            .map(PathBuf::from)
-            .find(|path| path.exists());
-        let inputs = ConfigInputs::from_environment(system, |name| std::env::var_os(name), 1024)?;
-        girt::Config::resolve(&inputs)?
-    };
     // Build the destination through the library so protocol restrictions and URL rewrites apply.
     let mut document = girt::config::Document::parse(b"")?;
     document.append("remote", Some(b"source"), "url", url.as_bytes())?;
@@ -457,7 +452,7 @@ pub fn ssh_remote(url: &str, context: &Context) -> Result<girt::transport::ssh::
     let policy = ProtocolEnvironment::from_environment(|name| {
         std::env::var_os(name).map(|value| value.as_bytes().to_vec())
     })?;
-    let destination = remote.fetch_destination(&config, &policy)?;
+    let destination = remote.fetch_destination(config, &policy)?;
     let mut environment: std::collections::BTreeMap<_, _> = std::env::vars_os().collect();
     let command = environment
         .get(std::ffi::OsStr::new("GIT_SSH_COMMAND"))
@@ -492,7 +487,7 @@ pub fn ssh_remote(url: &str, context: &Context) -> Result<girt::transport::ssh::
         .unwrap_or_else(|| PathBuf::from("/usr/bin/ssh"));
     environment.remove(std::ffi::OsStr::new("GIT_PROTOCOL"));
     SshRemote::openssh(
-        &config,
+        config,
         &destination,
         OpenSshOptions::default()
             .with_default_executable(executable)
@@ -500,4 +495,15 @@ pub fn ssh_remote(url: &str, context: &Context) -> Result<girt::transport::ssh::
             .with_environment(environment),
     )
     .wrap_err("configuring SSH remote")
+}
+
+/// Resolve system/global/environment configuration without discovering an enclosing repository.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn global_config() -> Result<girt::Config> {
+    let system = SYSTEM_CONFIG
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| path.exists());
+    let inputs = ConfigInputs::from_environment(system, |name| std::env::var_os(name), 1024)?;
+    girt::Config::resolve(&inputs).wrap_err("reading global config")
 }
