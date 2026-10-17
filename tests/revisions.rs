@@ -85,10 +85,12 @@ fn fixture() -> tempfile::TempDir {
     root
 }
 
-fn resolve(repository: &Repository, text: &str) -> Result<ObjectId, RevisionError> {
+// Boxed: the error is larger on Windows, where clippy's `result_large_err` applies.
+fn resolve(repository: &Repository, text: &str) -> Result<ObjectId, Box<RevisionError>> {
     let objects = repository.objects(PackLimits::default()).unwrap();
     let resolver = Resolver::new(repository, &objects)?;
-    resolver.resolve(&text.parse::<Revision>()?)
+    let revision = text.parse::<Revision>().map_err(RevisionError::from)?;
+    Ok(resolver.resolve(&revision)?)
 }
 
 #[test]
@@ -171,7 +173,7 @@ fn single_revisions_match_git_rev_parse() {
             }
             (None, Err(error)) => assert!(
                 !matches!(
-                    error,
+                    **error,
                     RevisionError::Unsupported(_) | RevisionError::Parse(_)
                 ),
                 "{text}: {error}"
@@ -297,7 +299,7 @@ fn unsupported_forms_are_refused_explicitly() {
     let root = fixture();
     let repository = Repository::discover(root.path()).unwrap();
     let error = resolve(&repository, "ORIG_HEAD").unwrap_err();
-    assert!(matches!(error, RevisionError::Unsupported(_)), "{error}");
+    assert!(matches!(*error, RevisionError::Unsupported(_)), "{error}");
 }
 
 #[test]
@@ -340,7 +342,7 @@ fn ambiguous_abbreviations_are_reported_or_disambiguated_by_kind() {
     let error = resolve(&repository, prefix).unwrap_err();
     assert!(
         matches!(
-            error,
+            *error,
             RevisionError::Abbreviated(girt::ResolvePrefixError::Ambiguous { .. })
         ),
         "{error}"
