@@ -849,6 +849,26 @@ impl FilePack {
         self.table.len()
     }
 
+    /// Pack trailer checksum, which also names the pack file.
+    pub(crate) fn checksum(&self) -> ObjectId {
+        self.table.pack_hash
+    }
+
+    /// Byte lengths of the pinned pack and index when opened.
+    pub(crate) fn artifact_bytes(&self) -> (u64, u64) {
+        (self.pack.len as u64, self.index.len as u64)
+    }
+
+    /// Whether the pinned in-memory index lists `id`; reads no file.
+    pub(crate) fn lists(&self, id: ObjectId) -> bool {
+        id.format() == self.format && self.table.find(&self.index_bytes, id).is_some()
+    }
+
+    /// Identity at index `position`, which must be below [`Self::object_count`].
+    pub(crate) fn identity_at(&self, position: usize) -> ObjectId {
+        self.table.identity(&self.index_bytes, position)
+    }
+
     /// Pack offset of the entry at index `position`, which must be below the index's length.
     pub(crate) fn offset(&self, position: usize) -> usize {
         self.table.offset(&self.index_bytes, position)

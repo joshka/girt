@@ -32,6 +32,14 @@
 //! [`crate::Tree::parse`], [`crate::Commit::parse`], or [`crate::Tag::parse`]. Blob bytes need no
 //! codec. Packed payloads can share cache storage; borrowing [`Object::data`] avoids copying it.
 //!
+//! # Enumerate stored objects
+//!
+//! [`Objects::stores`] yields the primary store and then its alternates. Each [`ObjectStore`]
+//! lists its pinned [`IndexedPack`]s, whose [`IndexedPack::ids`] read only the in-memory index,
+//! and scans live loose files with [`ObjectStore::loose_objects_controlled`].
+//! [`Objects::object_ids`] collects every visible identity once, and
+//! [`Objects::headers_controlled`] reads kinds and sizes without decoding payloads.
+//!
 //! # Missing, limited, and corrupt data
 //!
 //! [`Objects::read`] returns `Ok(None)` for absence. It never fetches promised objects
@@ -55,6 +63,8 @@
     reason = "parses untrusted repository or network input (#103)"
 )]
 mod alternates;
+mod header;
+mod listing;
 mod prefix;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -62,6 +72,8 @@ use std::sync::atomic::AtomicBool;
 use std::{fs, io};
 
 pub use alternates::AlternateLimits;
+pub use header::ObjectHeader;
+pub use listing::{IndexedPack, ListLimits, LooseIds, LooseObject, ObjectStore, PackIds};
 pub use prefix::ResolvePrefixError;
 
 use crate::pack::FilePack;
@@ -533,6 +545,8 @@ struct Store {
     packs: Vec<Arc<FilePack>>,
     /// `.pack` path of each entry in `packs`, in the same order.
     pack_paths: Vec<PathBuf>,
+    /// `.keep`/`.promisor` markers of each entry in `packs` observed while opening.
+    pack_marks: Vec<listing::PackMarks>,
 }
 
 fn share_pack_damage(
@@ -1487,6 +1501,7 @@ impl Store {
                     loose,
                     packs: vec![],
                     pack_paths: vec![],
+                    pack_marks: vec![],
                 });
             }
             Err(source) => {
@@ -1497,6 +1512,7 @@ impl Store {
             }
         };
         let mut paths = Vec::new();
+        let mut markers = std::collections::BTreeSet::new();
         for entry in entries {
             check_cancelled(cancelled)?;
             budget.max_directory_entries = budget
@@ -1509,6 +1525,13 @@ impl Store {
                     source,
                 })?
                 .path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "keep" || extension == "promisor")
+            {
+                markers.insert(path);
+                continue;
+            }
             if path.extension().is_some_and(|extension| extension == "idx") {
                 budget.max_packs = budget
                     .max_packs
@@ -1519,6 +1542,13 @@ impl Store {
         }
         paths.sort();
         let pack_paths: Vec<PathBuf> = paths.iter().map(|p| p.with_extension("pack")).collect();
+        let pack_marks = paths
+            .iter()
+            .map(|path| listing::PackMarks {
+                keep: markers.contains(&path.with_extension("keep")),
+                promisor: markers.contains(&path.with_extension("promisor")),
+            })
+            .collect();
         let mut packs = Vec::new();
         for path in paths {
             budget.max_open_files = budget
@@ -1545,6 +1575,7 @@ impl Store {
             loose,
             packs,
             pack_paths,
+            pack_marks,
         })
     }
 }
