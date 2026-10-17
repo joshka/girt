@@ -55,6 +55,9 @@ jobs:
         run: pnpm check
       - name: Build and check internal links
         run: pnpm build
+      # Starlight links /favicon.svg from every page; the site generates it at build time.
+      - name: Check the favicon was generated
+        run: test -s dist/favicon.svg
       - name: Check external and docs.rs links
         run: pnpm check:links
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
