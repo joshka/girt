@@ -1,5 +1,11 @@
 //! SHA-1/SHA-256 pack v2/v3 and index v1/v2 reading and caller-owned artifact writing.
 //!
+//! A pack stores many logical objects together and may encode an object as a delta against another
+//! entry. The `.idx` maps IDs to offsets; it does not change object identity. Callers normally use
+//! [`crate::Objects`] to read logical objects without choosing a physical representation. Delta
+//! reconstruction can require more work than the final payload size, so per-read input, output,
+//! depth, and decoding budgets are separate.
+//!
 //! # Reading and writing packs
 //!
 //! - [`crate::Objects`] opens a bounded snapshot of loose objects and indexed packs. Refresh or
@@ -14,6 +20,15 @@
 //!
 //! Pack decoding limits belong to [`crate::PackLimits`] and [`crate::ReadLimits`]. Neither pack
 //! reading nor writing selects refs or decides which objects should remain reachable.
+//!
+//! # Failures and publication
+//!
+//! [`crate::ObjectReadError`] identifies unsupported versions, damaged artifacts, missing delta
+//! bases, and exhausted limits. An `.idx` without its `.pack` is an opening error; a pack without
+//! an index is not visible to ordinary object readers. Keep a reader alive across related reads to
+//! reuse its opened indexes. [`PackWriteError`] can leave partial caller-owned output: discard both
+//! artifacts on failure. Creating a pack never establishes graph completeness, reachability, or
+//! permission to delete another copy; those are separate transfer or retention decisions.
 //!
 //! # Example
 //!

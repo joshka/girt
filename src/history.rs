@@ -1,4 +1,81 @@
 //! Bounded ancestry queries over verified loose and packed commit objects.
+//!
+//! Use [`Objects::walk`] to collect reachable commit IDs, [`Objects::is_ancestor`] to test
+//! ancestry, and [`Objects::merge_bases`] to find every best common ancestor. Roots are explicit
+//! commit IDs: resolve references and peel annotated tags first. Queries read graph records, not
+//! trees or blobs.
+//!
+//! # Inspect a branch point
+//!
+//! ```
+//! use girt::{
+//!     Commit, CommitFields, HistoryLimits, InitKind, ObjectFormat, PackLimits, Repository,
+//!     Signature, Tree,
+//! };
+//! let directory = tempfile::tempdir()?;
+//! let repo = Repository::init(
+//!     ObjectFormat::Sha1,
+//!     directory.path().join("r.git"),
+//!     InitKind::Bare,
+//! )?;
+//! let loose = repo.loose_objects();
+//! let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+//! let person = Signature {
+//!     name: b"A. Writer".to_vec(),
+//!     email: b"writer@example.com".to_vec(),
+//!     seconds: 1_700_000_000,
+//!     offset_minutes: 0,
+//! };
+//! let commit = |parents, message: &[u8]| {
+//!     loose.write_commit(&Commit::new(CommitFields {
+//!         tree,
+//!         parents,
+//!         author: person.clone(),
+//!         committer: person.clone(),
+//!         extra_headers: vec![],
+//!         message: message.to_vec(),
+//!     })?)
+//! };
+//! let base = commit(vec![], b"base\n")?;
+//! let left = commit(vec![base], b"left\n")?;
+//! let right = commit(vec![base], b"right\n")?;
+//! let objects = repo.objects(PackLimits::default())?;
+//! assert_eq!(
+//!     objects.walk(&[left], HistoryLimits::default())?,
+//!     [left, base]
+//! );
+//! assert!(objects.is_ancestor(base, right, HistoryLimits::default())?);
+//! assert_eq!(
+//!     objects.merge_bases(left, right, HistoryLimits::default())?,
+//!     [base]
+//! );
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Ordering and shallow history
+//!
+//! Walking is breadth-first in supplied root and stored parent order, with duplicates removed.
+//! It is not timestamp or topological order. Merge bases may contain several IDs for criss-cross
+//! history; callers must not silently choose one as the only base. Disconnected histories have
+//! none.
+//!
+//! Shallow commits are included but their parent edges are not followed, even if parent objects
+//! exist. The reader retains boundaries from its repository handle. After deepening, refresh
+//! repository shallow metadata with [`crate::Repository::refresh_shallow`] and create a new reader.
+//! Raw commit parsing still exposes stored parent IDs.
+//!
+//! # Work and failures
+//!
+//! [`HistoryLimits`] bounds distinct commits, parent occurrences, and each object read. The current
+//! queries collect a complete graph in memory; `walk` is not a lazy iterator. Ancestry tests
+//! validate both complete ancestries even for equal endpoints or an early match. Size budgets
+//! therefore need to cover the graph, not just the distance between two commits.
+//!
+//! [`HistoryError`] distinguishes missing or wrong-kind commits, malformed payloads, cycles, I/O,
+//! and exhausted bounds. Failure returns no partial result and changes no files. A limit failure
+//! requires an explicit budget decision; a missing ancestor may mean incomplete storage. Declared
+//! shallow boundaries are the supported way to stop traversal, not a blanket permission to ignore
+//! missing parents. History parsing does not impose author/date construction rules.
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -12,6 +89,15 @@ use crate::{
 /// duplicates but excluding edges beyond shallow boundaries), and each object read. Memory is
 /// O(commits + parents), plus one decoded commit and the reader's pack snapshot. These are input
 /// bounds, not a total heap or wall-clock limit.
+///
+/// ```
+/// use girt::{HistoryLimits, ReadLimits};
+/// let limits = HistoryLimits::default()
+///     .with_max_commits(10_000)
+///     .with_max_parents(40_000)
+///     .with_read(ReadLimits::default().with_max_object_bytes(1024 * 1024));
+/// assert_eq!(limits.max_commits, 10_000);
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct HistoryLimits {
@@ -162,6 +248,31 @@ impl Objects {
     ///
     /// Validates the complete ancestry of both endpoints before answering, even for identical
     /// endpoints or an early match. Returns the same failures as [`Self::walk`].
+    ///
+    /// ```
+    /// # use girt::{Commit, CommitFields, HistoryLimits, InitKind, ObjectFormat, PackLimits,
+    /// #            Repository, Signature, Tree};
+    /// # let directory = tempfile::tempdir()?;
+    /// # let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r.git"), InitKind::Bare)?;
+    /// # let loose = repo.loose_objects();
+    /// # let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    /// # let person = Signature {
+    /// #     name: b"A. Writer".to_vec(), email: b"writer@example.com".to_vec(),
+    /// #     seconds: 1_700_000_000, offset_minutes: 0,
+    /// # };
+    /// # let commit = |parents, message: &[u8]| loose.write_commit(&Commit::new(CommitFields {
+    /// #     tree, parents, author: person.clone(), committer: person.clone(),
+    /// #     extra_headers: vec![], message: message.to_vec(),
+    /// # })?);
+    /// # let base = commit(vec![], b"base\n")?;
+    /// # let left = commit(vec![base], b"left\n")?;
+    /// # let right = commit(vec![base], b"right\n")?;
+    /// # let objects = repo.objects(PackLimits::default())?;
+    /// assert!(objects.is_ancestor(base, left, HistoryLimits::default())?);
+    /// assert!(objects.is_ancestor(left, left, HistoryLimits::default())?);
+    /// assert!(!objects.is_ancestor(left, right, HistoryLimits::default())?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn is_ancestor(
         &self,
         ancestor: ObjectId,
@@ -219,6 +330,30 @@ impl Objects {
     /// # Errors
     ///
     /// Validates both complete ancestries; returns the same failures as [`Self::walk`].
+    ///
+    /// ```
+    /// # use girt::{Commit, CommitFields, HistoryLimits, InitKind, ObjectFormat, PackLimits,
+    /// #            Repository, Signature, Tree};
+    /// # let directory = tempfile::tempdir()?;
+    /// # let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r.git"), InitKind::Bare)?;
+    /// # let loose = repo.loose_objects();
+    /// # let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    /// # let person = Signature {
+    /// #     name: b"A. Writer".to_vec(), email: b"writer@example.com".to_vec(),
+    /// #     seconds: 1_700_000_000, offset_minutes: 0,
+    /// # };
+    /// # let commit = |parents, message: &[u8]| loose.write_commit(&Commit::new(CommitFields {
+    /// #     tree, parents, author: person.clone(), committer: person.clone(),
+    /// #     extra_headers: vec![], message: message.to_vec(),
+    /// # })?);
+    /// # let base = commit(vec![], b"base\n")?;
+    /// # let left = commit(vec![base], b"left\n")?;
+    /// # let right = commit(vec![base], b"right\n")?;
+    /// # let objects = repo.objects(PackLimits::default())?;
+    /// assert_eq!(objects.merge_bases(left, right, HistoryLimits::default())?, [base]);
+    /// assert_eq!(objects.merge_bases(left, left, HistoryLimits::default())?, [left]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn merge_bases(
         &self,
         left: ObjectId,
@@ -466,6 +601,12 @@ fn check_cancelled(cancel: &AtomicBool, id: ObjectId) -> Result<(), HistoryError
 }
 
 /// A complete ancestry operation failed; no partial answer is returned.
+///
+/// [`Self::Missing`] can indicate incomplete storage; fetch the required history or use a
+/// repository with correctly declared shallow roots. [`Self::NotCommit`] requires resolving the
+/// input to a commit, possibly by peeling a tag. [`Self::Limit`] calls for an explicit budget
+/// decision. Parsing and storage failures retain the offending ID and source. No variant authorizes
+/// ignoring an edge and treating an incomplete traversal as a complete answer.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum HistoryError {
@@ -808,3 +949,7 @@ mod tests {
         assert!(graph.ids.is_empty());
     }
 }
+
+#[cfg(doctest)]
+#[doc = include_str!("../site/src/content/docs/guides/objects-and-history.md")]
+mod website_objects_guide {}

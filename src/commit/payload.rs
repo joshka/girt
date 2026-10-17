@@ -52,6 +52,22 @@ impl<'a> CommitPayload<'a> {
     /// Returns [`CommitError::MissingSeparator`] if no empty separator line exists, or
     /// [`CommitError::InvalidHeader`] for an orphan continuation or invalid header name/framing.
     /// Truncation inside the message cannot be detected without an external length or object ID.
+    ///
+    /// ```
+    /// use girt::CommitPayload;
+    /// let bytes = b"x-header first\n continued\n\nmessage\xff";
+    /// let payload = CommitPayload::parse(bytes)?;
+    /// assert_eq!(payload.as_bytes(), bytes);
+    /// assert_eq!(
+    ///     payload
+    ///         .headers()
+    ///         .next()
+    ///         .ok_or("header absent")?
+    ///         .unfolded_value(),
+    ///     b"first\ncontinued"
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn parse(bytes: &'a [u8]) -> Result<Self, CommitError> {
         let mut headers: Vec<Range<usize>> = Vec::new();
         let mut start = 0;

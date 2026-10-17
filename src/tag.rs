@@ -1,4 +1,38 @@
-//! Annotated tag objects and their target metadata.
+//! Annotated tag objects and declared target kinds.
+//!
+//! Use [`Tag`] when a name needs an annotation, optional tagger, and message stored as an object. A
+//! lightweight tag is just a reference to another object and needs no `Tag`. An annotated tag needs
+//! both a stored tag object and a `refs/tags/...` reference; creating either does not create the
+//! other.
+//!
+//! # Annotate a blob
+//!
+//! ```
+//! use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+//! let target = ObjectId::for_blob(ObjectFormat::Sha1, b"release manifest\n");
+//! let tag = Tag::new(TagFields {
+//!     target,
+//!     target_kind: ObjectKind::Blob,
+//!     name: b"release-manifest".to_vec(),
+//!     tagger: None,
+//!     extra_headers: vec![],
+//!     message: b"Reviewed manifest\n".to_vec(),
+//! })?;
+//! assert_eq!(tag.target(), target);
+//! assert_eq!(tag.target_kind(), ObjectKind::Blob);
+//! # Ok::<(), girt::TagError>(())
+//! ```
+//!
+//! The target may be a blob, tree, commit, or another annotated tag. [`crate::Objects::peel`] reads
+//! and verifies the chain to a terminal object, checking declared kinds. Resolving a symbolic
+//! reference with [`crate::refs::References::resolve`] does not perform peeling.
+//!
+//! [`Tag::parse`] preserves accepted payload bytes; [`Tag::new`] emits canonical construction
+//! fields. [`Tag::validate`] and [`Tag::to_fields`] may reject data that remains readable for
+//! target inspection. A declared target kind does not prove what is in storage, and signature text
+//! remains opaque. [`TagError`] identifies invalid records, construction fields, or tagger
+//! interpretation; correct new fields or report the original stored object without changing it.
+//! Bound reads before parsing.
 
 #![warn(
     clippy::unwrap_used,
@@ -63,6 +97,25 @@ impl Tag {
     ///
     /// Returns the construction failures described by [`Self::validate`]. Has no external effects.
     /// The target identity determines the tag's format.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    /// let fields = TagFields {
+    ///     target: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
+    ///     target_kind: ObjectKind::Blob,
+    ///     name: b"v1".to_vec(),
+    ///     tagger: None,
+    ///     extra_headers: vec![],
+    ///     message: b"Release manifest\n".to_vec(),
+    /// };
+    /// let tag = Tag::new(fields.clone())?;
+    /// assert_eq!(tag.to_fields()?, fields);
+    /// assert_eq!(
+    ///     Tag::parse(ObjectFormat::Sha1, tag.as_bytes())?.id(),
+    ///     tag.id()
+    /// );
+    /// # Ok::<(), girt::TagError>(())
+    /// ```
     pub fn new(fields: TagFields) -> Result<Self, TagError> {
         fields.validate()?;
         let headers = format!(
@@ -94,6 +147,22 @@ impl Tag {
     ///
     /// Returns [`TagError`] for missing, reordered or unterminated mandatory records, invalid or
     /// foreign-format IDs, or unknown target types. No object lookup occurs.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    /// let tag = Tag::new(TagFields {
+    ///     target: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
+    ///     target_kind: ObjectKind::Blob,
+    ///     name: b"v1".to_vec(),
+    ///     tagger: None,
+    ///     extra_headers: vec![],
+    ///     message: b"Release manifest\n".to_vec(),
+    /// })?;
+    /// let parsed = Tag::parse(ObjectFormat::Sha1, tag.as_bytes())?;
+    /// assert_eq!(parsed.id(), tag.id());
+    /// assert_eq!(parsed.encode(), tag.encode());
+    /// # Ok::<(), girt::TagError>(())
+    /// ```
     pub fn parse(format: crate::ObjectFormat, payload: &[u8]) -> Result<Self, TagError> {
         let (target, target_kind) = Self::parse_target(format, payload)?;
         Ok(Self {
@@ -139,6 +208,24 @@ impl Tag {
     ///
     /// Returns [`TagError::Tagger`] for an uninterpretable identity or date. Target access and
     /// peeling do not require this conversion. Reconstructing fields can change the object ID.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    /// let tag = Tag::new(TagFields {
+    ///     target: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
+    ///     target_kind: ObjectKind::Blob,
+    ///     name: b"v1".to_vec(),
+    ///     tagger: None,
+    ///     extra_headers: vec![],
+    ///     message: b"Release manifest\n".to_vec(),
+    /// })?;
+    /// let mut fields = tag.to_fields()?;
+    /// fields.name = b"v2".to_vec();
+    /// let renamed = Tag::new(fields)?;
+    /// assert_eq!(renamed.target(), tag.target());
+    /// assert_ne!(renamed.id(), tag.id());
+    /// # Ok::<(), girt::TagError>(())
+    /// ```
     pub fn to_fields(&self) -> Result<TagFields, TagError> {
         let tagger = self
             .tagger()?

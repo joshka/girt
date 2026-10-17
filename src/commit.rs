@@ -1,4 +1,45 @@
-//! Byte-preserving commit metadata and graph records.
+//! Commit snapshots, ordered parent edges, identities, and messages.
+//!
+//! A [`Commit`] names a root tree and ordered parents, plus author, committer, headers, and
+//! message. A root commit has no parents; a merge has multiple parents. Parent order is meaningful.
+//! Times are metadata, not a reliable ordering of ancestry. Use [`crate::history`] for graph
+//! queries and [`crate::refs`] to make a stored commit reachable by name.
+//!
+//! # Read graph records without normalizing the payload
+//!
+//! ```
+//! use girt::{Commit, ObjectFormat, Tree};
+//! let tree = Tree::new(ObjectFormat::Sha1, vec![])?;
+//! let payload = format!("tree {}\n\nImported snapshot\n", tree.id());
+//! let commit = Commit::parse(ObjectFormat::Sha1, payload.as_bytes())?;
+//! assert_eq!(commit.tree(), tree.id());
+//! assert!(commit.parents().is_empty());
+//! assert_eq!(commit.message(), b"Imported snapshot\n");
+//! assert_eq!(commit.encode(), payload.as_bytes());
+//! // Graph records are readable even when construction fields are absent.
+//! assert!(commit.author()?.is_none());
+//! assert!(commit.to_fields().is_err());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! [`CommitPayload`] offers borrowed access to graph records and headers; [`Commit`] owns its
+//! bytes. [`IdentityRef`] separates identity text from date interpretation. To create a new commit,
+//! supply [`CommitFields`] with [`Signature`] values to [`Commit::new`], then store it with
+//! [`crate::LooseObjects::write_commit`]. Construction does not resolve parents or the tree.
+//!
+//! # Preserve imported data and diagnose errors
+//!
+//! Parsing preserves accepted bytes and the original ID, including unknown headers, non-UTF-8 text,
+//! and unusual date spelling. [`Commit::validate`] applies construction rules without changing
+//! bytes; [`Commit::to_fields`] requests editable fields and can fail on missing people or invalid
+//! dates. Rebuilding those fields emits canonical spelling and can change identity even after
+//! validation. Signatures embedded in headers are opaque; parsing does not verify them
+//! cryptographically.
+//!
+//! [`CommitError`] reports unreadable graph records, invalid construction fields, or mixed object
+//! formats. Report stored-data errors with the object ID; correct newly supplied fields before
+//! writing. Use bounded [`crate::Objects::read`] before parsing untrusted bytes. Parsing allocates
+//! in proportion to the payload and does not validate the referenced graph.
 
 #![warn(
     clippy::unwrap_used,
@@ -82,6 +123,27 @@ impl Commit {
     ///
     /// Returns the field errors described by [`Self::validate`]. No filesystem operations occur.
     /// Mixed tree/parent formats return [`CommitError::ObjectFormat`].
+    ///
+    /// ```
+    /// use girt::{Commit, CommitFields, ObjectFormat, Signature, Tree};
+    /// let person = Signature {
+    ///     name: b"A. Writer".to_vec(),
+    ///     email: b"a@example.com".to_vec(),
+    ///     seconds: 1_700_000_000,
+    ///     offset_minutes: 0,
+    /// };
+    /// let commit = Commit::new(CommitFields {
+    ///     tree: Tree::new(ObjectFormat::Sha1, vec![])?.id(),
+    ///     parents: vec![],
+    ///     author: person.clone(),
+    ///     committer: person,
+    ///     extra_headers: vec![],
+    ///     message: b"Initial snapshot\n".to_vec(),
+    /// })?;
+    /// assert!(commit.parents().is_empty());
+    /// assert_eq!(commit.message(), b"Initial snapshot\n");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new(fields: CommitFields) -> Result<Self, CommitError> {
         fields.validate()?;
         let mut payload = format!("tree {}\n", fields.tree).into_bytes();
@@ -119,6 +181,27 @@ impl Commit {
     ///
     /// Returns [`CommitError`] for a missing or unterminated leading tree/parent record, invalid
     /// or foreign-format IDs, or a payload ending immediately after those graph records.
+    ///
+    /// ```
+    /// use girt::{Commit, CommitFields, ObjectFormat, Signature, Tree};
+    /// let person = Signature {
+    ///     name: b"A. Writer".to_vec(),
+    ///     email: b"a@example.com".to_vec(),
+    ///     seconds: 1_700_000_000,
+    ///     offset_minutes: 0,
+    /// };
+    /// let commit = Commit::new(CommitFields {
+    ///     tree: Tree::new(ObjectFormat::Sha1, vec![])?.id(),
+    ///     parents: vec![],
+    ///     author: person.clone(),
+    ///     committer: person,
+    ///     extra_headers: vec![],
+    ///     message: b"Initial snapshot\n".to_vec(),
+    /// })?;
+    /// let parsed = Commit::parse(ObjectFormat::Sha1, commit.as_bytes())?;
+    /// assert_eq!(parsed.encode(), commit.encode());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn parse(format: crate::ObjectFormat, payload: &[u8]) -> Result<Self, CommitError> {
         let (tree, parents) = Self::parse_graph(format, payload)?;
         Ok(Self {
@@ -228,6 +311,30 @@ impl Commit {
     ///
     /// Requires both people and interpretable dates. Opaque legacy header framing which cannot
     /// be represented by [`CommitHeader`] returns [`CommitError::InvalidHeader`].
+    ///
+    /// ```
+    /// use girt::{Commit, CommitFields, ObjectFormat, Signature, Tree};
+    /// let person = Signature {
+    ///     name: b"A. Writer".to_vec(),
+    ///     email: b"a@example.com".to_vec(),
+    ///     seconds: 1_700_000_000,
+    ///     offset_minutes: 0,
+    /// };
+    /// let commit = Commit::new(CommitFields {
+    ///     tree: Tree::new(ObjectFormat::Sha1, vec![])?.id(),
+    ///     parents: vec![],
+    ///     author: person.clone(),
+    ///     committer: person,
+    ///     extra_headers: vec![],
+    ///     message: b"Initial snapshot\n".to_vec(),
+    /// })?;
+    /// let mut fields = commit.to_fields()?;
+    /// fields.message = b"Reworded snapshot\n".to_vec();
+    /// let reworded = Commit::new(fields)?;
+    /// assert_eq!(reworded.tree(), commit.tree());
+    /// assert_ne!(reworded.id(), commit.id());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn to_fields(&self) -> Result<CommitFields, CommitError> {
         let author = self
             .author()?
@@ -282,6 +389,21 @@ impl Commit {
     /// spaces and cannot be `tree`, `parent`, `author`, or `committer`; values cannot contain
     /// NUL or CR. No email syntax, message encoding, reference existence, or signature validity
     /// is checked.
+    ///
+    /// ```
+    /// use girt::{Commit, CommitError, ObjectFormat, Tree};
+    /// let tree = Tree::new(ObjectFormat::Sha1, vec![])?;
+    /// let bytes = format!("tree {}\n\nImported snapshot\n", tree.id());
+    /// let parsed = Commit::parse(ObjectFormat::Sha1, bytes.as_bytes())?;
+    /// assert!(matches!(
+    ///     parsed.validate(),
+    ///     Err(CommitError::RequiredHeader)
+    /// ));
+    /// assert_eq!(parsed.tree(), tree.id());
+    /// assert_eq!(parsed.encode(), bytes.as_bytes()); // Failure does not rewrite or discard data.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn validate(&self) -> Result<(), CommitError> {
         self.to_fields()?.validate()
     }

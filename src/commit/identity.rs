@@ -56,6 +56,15 @@ impl<'a> IdentityRef<'a> {
     /// # Errors
     ///
     /// Returns [`CommitError::InvalidSignature`] if either selected bracket is absent.
+    ///
+    /// ```
+    /// use girt::IdentityRef;
+    /// let identity = IdentityRef::parse(b"A <a@example.com> invalid-date")?;
+    /// assert_eq!(identity.name, b"A");
+    /// assert_eq!(identity.email, b"a@example.com");
+    /// assert!(identity.date().is_err());
+    /// # Ok::<(), girt::CommitError>(())
+    /// ```
     pub fn parse(bytes: &'a [u8]) -> Result<Self, CommitError> {
         let (name, rest) =
             crate::bytes::split_once(bytes, b'<').ok_or(CommitError::InvalidSignature)?;
@@ -79,6 +88,14 @@ impl<'a> IdentityRef<'a> {
     ///
     /// Missing/malformed tokens, seconds outside `i64`, and offsets outside `i16` minutes return
     /// [`CommitError::InvalidDate`]. Raw date bytes remain available after any failure.
+    ///
+    /// ```
+    /// use girt::IdentityRef;
+    /// let date = IdentityRef::parse(b"A <a@example.com> 60 -0130")?.date()?;
+    /// assert_eq!(date.seconds, 60);
+    /// assert_eq!(date.offset_minutes, -90);
+    /// # Ok::<(), girt::CommitError>(())
+    /// ```
     pub fn date(self) -> Result<IdentityDate, CommitError> {
         let bytes = self.date_bytes.trim_ascii_start();
         let (seconds, zone) = signed_decimal(bytes).ok_or(CommitError::InvalidDate)?;

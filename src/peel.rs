@@ -64,6 +64,27 @@ impl PeelLimits {
 }
 
 /// Resolved identity and kind, retaining the original tip and every intervening tag identity.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, PeelLimits, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let blob = repo.loose_objects().write_blob(b"manifest")?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// let result = objects.peel(blob, PeelLimits::default(), &AtomicBool::new(false))?;
+/// assert_eq!(result.original, blob);
+/// assert_eq!(result.target, blob);
+/// assert_eq!(result.kind, ObjectKind::Blob);
+/// assert!(result.tags.is_empty()); // An already-terminal object has no intervening tags.
+///
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct PeeledObject {
@@ -147,6 +168,46 @@ impl Objects {
     ///
     /// Returns contextual [`PeelError`] for missing/corrupt/wrong-kind targets, malformed tags,
     /// cycles, limits or cancellation. Existing corrupt objects never become an absent result.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::{
+    ///     InitKind, ObjectFormat, ObjectKind, PackLimits, PeelLimits, Repository, Tag, TagFields,
+    /// };
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repo.loose_objects();
+    /// let blob = loose.write_blob(b"manifest")?;
+    /// let tag = Tag::new(TagFields {
+    ///     target: blob,
+    ///     target_kind: ObjectKind::Blob,
+    ///     name: b"v1".to_vec(),
+    ///     tagger: None,
+    ///     extra_headers: vec![],
+    ///     message: b"Reviewed".to_vec(),
+    /// })?;
+    /// let inner = loose.write_tag(&tag)?;
+    /// let outer = Tag::new(TagFields {
+    ///     target: inner,
+    ///     target_kind: ObjectKind::Tag,
+    ///     name: b"release".to_vec(),
+    ///     tagger: None,
+    ///     extra_headers: vec![],
+    ///     message: b"Release pointer".to_vec(),
+    /// })?;
+    /// let tip = loose.write_tag(&outer)?;
+    /// let objects = repo.objects(PackLimits::default())?;
+    /// let peeled = objects.peel(tip, PeelLimits::default(), &AtomicBool::new(false))?;
+    /// assert_eq!(peeled.tags, [tip, inner]);
+    /// assert_eq!(peeled.target, blob);
+    /// assert_eq!(peeled.kind, ObjectKind::Blob);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn peel(
         &self,
         id: ObjectId,
