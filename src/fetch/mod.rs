@@ -2,9 +2,13 @@
 //!
 //! A fetch has three phases, and this module exposes each of them:
 //!
-//! 1. **Transfer and validate.** Agree with the source on which objects to send, receive them, and
-//!    check every object, delta and reachability edge. Nothing is written to the destination.
-//! 2. **Install.** Publish the validated pack and its index in the destination's object storage.
+//! 1. **Transfer and validate.** Agree with the source on which objects to send, receive them,
+//!    check every received object's framing, delta chain and identity, and walk the history of each
+//!    selected tip to check that it is complete and well-formed. Nothing is written to the
+//!    destination. See [Limits and trust](crate::transport#limits-and-trust) for exactly what is
+//!    checked.
+//! 2. **Install.** Publish the validated pack, then its index, in the destination's object storage.
+//!    An interruption between the two leaves a pack that readers ignore.
 //! 3. **Publish.** Update remote-tracking references and tags, each conditional on the value it had
 //!    when the fetch began.
 //!

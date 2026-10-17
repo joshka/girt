@@ -108,7 +108,11 @@ pub enum CloneHead {
 /// );
 /// // `main` maps to `refs/remotes/origin/main`; `HEAD` is fetched without a destination.
 /// let tracking = Some(RefName::new("refs/remotes/origin/main")?);
-/// assert!(plan.mappings.iter().any(|mapping| mapping.destination == tracking));
+/// assert!(
+///     plan.mappings
+///         .iter()
+///         .any(|mapping| mapping.destination == tracking)
+/// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug)]
