@@ -766,7 +766,7 @@ impl FilePack {
         let mut hash = Hasher::new(format);
         hash.update(&pack.bytes(0, 12)?);
         let mut buffer = [0; 64 * 1024];
-        for &position in &self.table.offsets {
+        for position in self.table.by_offset() {
             let entry = self.entry(position)?;
             let mut offset = entry.offset;
             let mut crc = crc32fast::Hasher::new();
@@ -814,13 +814,9 @@ impl FilePack {
         Ok(self.table.find(&self.index_bytes, id))
     }
 
-    /// Pack offset of the entry at index `position`.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "callers pass positions below len() from this pack's own index"
-    )]
+    /// Pack offset of the entry at index `position`, which must be below the index's length.
     pub(crate) fn offset(&self, position: usize) -> usize {
-        self.table.ranges[position].0
+        self.table.offset(&self.index_bytes, position)
     }
 
     fn identity(&self, position: usize) -> Result<ObjectId, Error> {
@@ -1192,7 +1188,7 @@ impl Source for FilePack {
     }
 
     fn at_offset(&self, offset: usize) -> Result<usize, Error> {
-        self.table.at_offset(offset)
+        self.table.at_offset(&self.index_bytes, offset)
     }
 
     /// Reads the header with up to 4 KiB of the entry, so a typical entry needs one read.
@@ -2114,7 +2110,7 @@ mod publication_tests {
         fs::rename(replacement, &path).unwrap();
         let mut new = FilePack::open(format, &path, &mut PackLimits::default(), &cancel).unwrap();
         assert!(new.inherit_damage(&[old.damage_record()]));
-        let moved_position = new.table.at_offset(offset).unwrap();
+        let moved_position = new.table.at_offset(&new.index_bytes, offset).unwrap();
         assert_ne!(moved_position, position);
         counters::reset();
         assert!(matches!(

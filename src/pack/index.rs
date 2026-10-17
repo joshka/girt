@@ -19,16 +19,20 @@ pub(crate) struct Entry {
 /// Structurally validated tables of one pack index, read from its retained bytes.
 ///
 /// Identity order serves lookups; a separate offset order serves OFS_DELTA and entry boundaries.
-/// Parsing checks every table against the others and against the pack, but not the index's own
-/// trailing checksum: that is [`verify_hash`]'s job for explicit verification and byte reuse.
+/// Offsets are read from the index bytes, so the derived tables hold two 4-byte positions per
+/// entry. Parsing checks every table against the others and against the pack, but not the
+/// index's own trailing checksum: that is [`verify_hash`]'s job for explicit verification and
+/// byte reuse.
 #[derive(Debug)]
 pub(crate) struct Index {
     format: ObjectFormat,
     legacy: bool,
-    /// `(offset, end)` of each entry, in identity order.
-    pub ranges: Vec<(usize, usize)>,
     /// Identity-order positions sorted by pack offset.
-    pub offsets: Vec<usize>,
+    order: Vec<u32>,
+    /// Rank of each identity-order position in `order`.
+    rank: Vec<u32>,
+    /// Where the entries end: the pack trailer's offset.
+    pack_end: usize,
     pub pack_hash: ObjectId,
 }
 
@@ -38,7 +42,7 @@ impl Index {
     /// Checks the header and exact table sizes, strictly increasing identities, the fanout
     /// against those identities, each large offset slot used exactly once, and offsets that are
     /// distinct and tile the pack's entry bytes from offset 12. Each check is linear in the entry
-    /// count, apart from the reverse order's radix sort.
+    /// count, apart from the offset order's radix sort.
     pub fn parse(format: ObjectFormat, bytes: &[u8], pack_end: usize) -> Result<Self, Error> {
         if bytes.len() < 8 {
             return Err(Error::Corrupt("truncated index header"));
@@ -76,7 +80,7 @@ impl Index {
             return Err(Error::Corrupt("excess large offsets"));
         }
         let table = table(1032 + count * (width + 4), table_end)?;
-        let mut ranges = Vec::with_capacity(count);
+        let mut offsets = Vec::with_capacity(count);
         for raw in table.as_chunks::<4>().0 {
             let raw = u32::from_be_bytes(*raw);
             let offset = if raw & 0x8000_0000 == 0 {
@@ -92,12 +96,12 @@ impl Index {
                 *used = true;
                 u64::from_be_bytes(*large)
             };
-            ranges.push((checked_offset(offset, pack_end)?, 0));
+            offsets.push(checked_offset(offset, pack_end)? as u64);
         }
         if used_large.contains(&false) {
             return Err(Error::Corrupt("unused large offset"));
         }
-        Self::finish(format, bytes, (8, names), ranges, pack_end)
+        Self::finish(format, bytes, (8, names), offsets, pack_end)
     }
 
     fn parse_v1(format: ObjectFormat, bytes: &[u8], pack_end: usize) -> Result<Self, Error> {
@@ -114,7 +118,7 @@ impl Index {
             .get(1024..trailer)
             .ok_or(Error::Corrupt("index table length"))?;
         let mut previous: Option<&[u8]> = None;
-        let mut ranges = Vec::with_capacity(count);
+        let mut offsets = Vec::with_capacity(count);
         for record in table.chunks_exact(width + 4) {
             let Some((offset, name)) = record.split_first_chunk::<4>() else {
                 return Err(Error::Corrupt("index table length"));
@@ -124,34 +128,34 @@ impl Index {
             }
             previous = Some(name);
             let offset = u32::from_be_bytes(*offset);
-            ranges.push((checked_offset(u64::from(offset), pack_end)?, 0));
+            offsets.push(checked_offset(u64::from(offset), pack_end)? as u64);
         }
-        Self::finish(format, bytes, (0, table), ranges, pack_end)
+        Self::finish(format, bytes, (0, table), offsets, pack_end)
     }
 
-    /// Checks the fanout against the identities' first bytes, then derives each entry's end
-    /// from the offset order.
+    /// Checks the fanout against the identities' first bytes, then sorts the entries by offset
+    /// and checks that they tile the pack.
     ///
     /// `names` holds the identities at a fixed stride: `width` in v2, `4 + width` in v1, whose
-    /// records start with the offset.
+    /// records start with the offset. `offsets` holds each entry's checked offset in identity
+    /// order.
     #[expect(
         clippy::indexing_slicing,
         reason = "each record is at least 20 bytes and first_byte is 0 or 4; a u8 selects one of \
-                  256 fanout buckets; offset_order returns a permutation of ranges' positions"
+                  256 fanout buckets; offset_order returns a permutation of offsets' positions"
     )]
     fn finish(
         format: ObjectFormat,
         bytes: &[u8],
         (fanout_start, names): (usize, &[u8]),
-        mut ranges: Vec<(usize, usize)>,
+        offsets: Vec<u64>,
         pack_end: usize,
     ) -> Result<Self, Error> {
-        let width = format.digest_len();
         let legacy = fanout_start == 0;
         let first_byte = usize::from(legacy) * 4;
         let mut fanout = [0u32; 256];
-        if !ranges.is_empty() {
-            for record in names.chunks_exact(names.len() / ranges.len()) {
+        if !offsets.is_empty() {
+            for record in names.chunks_exact(names.len() / offsets.len()) {
                 fanout[usize::from(record[first_byte])] += 1;
             }
         }
@@ -162,36 +166,60 @@ impl Index {
                 return Err(Error::Corrupt("index fanout"));
             }
         }
-        let offsets = offset_order(&ranges);
-        let mut next = pack_end;
-        for &position in offsets.iter().rev() {
-            let range = &mut ranges[position];
-            if range.0 == next {
-                return Err(Error::Corrupt("duplicate pack offset"));
-            }
-            range.1 = next;
-            next = range.0;
+        let (order, sorted) = offset_order(offsets);
+        if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(Error::Corrupt("duplicate pack offset"));
         }
-        if next != 12 {
+        // Each entry ends where the next begins, so the first must start right after the header.
+        if sorted.first().map_or(pack_end as u64, |&first| first) != 12 {
             return Err(Error::Corrupt("unindexed pack bytes"));
+        }
+        drop(sorted);
+        let mut rank = vec![0; order.len()];
+        for (index, &position) in order.iter().enumerate() {
+            rank[position as usize] = index as u32;
         }
         let pack_hash = bytes
             .len()
-            .checked_sub(2 * width)
-            .and_then(|trailer| bytes.get(trailer..trailer + width))
+            .checked_sub(2 * format.digest_len())
+            .and_then(|trailer| bytes.get(trailer..trailer + format.digest_len()))
             .and_then(|hash| ObjectId::from_bytes(format, hash).ok())
             .ok_or(Error::Corrupt("truncated index"))?;
         Ok(Self {
             format,
             legacy,
-            ranges,
-            offsets,
+            order,
+            rank,
+            pack_end,
             pack_hash,
         })
     }
 
     pub fn len(&self) -> usize {
-        self.ranges.len()
+        self.order.len()
+    }
+
+    /// Pack offset of the entry at `position`, read from the index bytes this table was parsed
+    /// from.
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        reason = "parse checked the offset and large offset tables for every position below \
+                  len() in these bytes, and that each offset fits in usize"
+    )]
+    pub fn offset(&self, bytes: &[u8], position: usize) -> usize {
+        let width = self.format.digest_len();
+        let word = |start: usize| u32::from_be_bytes(bytes[start..start + 4].try_into().unwrap());
+        if self.legacy {
+            return word(1024 + position * (width + 4)) as usize;
+        }
+        let table = 1032 + self.len() * (width + 4);
+        let raw = word(table + position * 4);
+        if raw & 0x8000_0000 == 0 {
+            return raw as usize;
+        }
+        let start = table + self.len() * 4 + (raw & 0x7fff_ffff) as usize * 8;
+        u64::from_be_bytes(bytes[start..start + 8].try_into().unwrap()) as usize
     }
 
     /// Identity at `position`, read from the index bytes this table was parsed from.
@@ -214,10 +242,15 @@ impl Index {
     #[expect(
         clippy::indexing_slicing,
         clippy::unwrap_used,
-        reason = "parse checked the CRC table for every position below len() in these bytes"
+        reason = "parse checked the CRC table for every position below len() in these bytes, and \
+                  rank holds one rank below len() for each of them"
     )]
     pub fn entry(&self, bytes: &[u8], position: usize) -> Entry {
-        let (offset, end) = self.ranges[position];
+        let offset = self.offset(bytes, position);
+        let end = self
+            .order
+            .get(self.rank[position] as usize + 1)
+            .map_or(self.pack_end, |&next| self.offset(bytes, next as usize));
         let crc = (!self.legacy).then(|| {
             let start = 1032 + self.len() * self.format.digest_len() + position * 4;
             u32::from_be_bytes(bytes[start..start + 4].try_into().unwrap())
@@ -245,16 +278,20 @@ impl Index {
     }
 
     /// Identity-order position of the entry starting at `offset`.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "offsets holds a permutation of the positions in ranges"
-    )]
-    pub fn at_offset(&self, offset: usize) -> Result<usize, Error> {
-        let position = self
-            .offsets
-            .binary_search_by_key(&offset, |&i| self.ranges[i].0)
+    pub fn at_offset(&self, bytes: &[u8], offset: usize) -> Result<usize, Error> {
+        let rank = self
+            .order
+            .binary_search_by_key(&offset, |&position| self.offset(bytes, position as usize))
             .map_err(|_| Error::Corrupt("base offset is not an indexed entry"))?;
-        Ok(self.offsets[position])
+        self.order
+            .get(rank)
+            .map(|&position| position as usize)
+            .ok_or(Error::Corrupt("base offset is not an indexed entry"))
+    }
+
+    /// Identity-order positions in pack offset order.
+    pub fn by_offset(&self) -> impl Iterator<Item = usize> + '_ {
+        self.order.iter().map(|&position| position as usize)
     }
 }
 
@@ -281,29 +318,35 @@ fn checked_offset(offset: u64, pack_end: usize) -> Result<usize, Error> {
     Ok(offset)
 }
 
-/// Sorts positions by offset with an LSD radix sort over packed `offset << shift | position` keys.
+/// Sorts identity-order positions by offset with an LSD radix sort over packed
+/// `offset << shift | position` keys, returning the positions and the sorted offsets.
 ///
 /// Only the offset bits are sorted, in at most 16-bit digits, so a pack under 4 GiB needs two
 /// passes. Equal offsets stay adjacent for the caller's duplicate check. Keys that cannot fit in
-/// 64 bits fall back to a comparison sort.
+/// 64 bits fall back to a comparison sort. Positions fit in `u32`: both index versions store the
+/// entry count in 32 bits.
 #[expect(
     clippy::indexing_slicing,
-    reason = "digits are masked below counts.len(), and counted slots stay below keys.len()"
+    reason = "digits are masked below counts.len(), counted slots stay below keys.len(), and the \
+              fallback sorts positions below offsets.len()"
 )]
-fn offset_order(ranges: &[(usize, usize)]) -> Vec<usize> {
-    let shift = usize::BITS - ranges.len().leading_zeros();
-    let largest = ranges.iter().map(|range| range.0).max().unwrap_or(0) as u64;
+fn offset_order(offsets: Vec<u64>) -> (Vec<u32>, Vec<u64>) {
+    let shift = usize::BITS - offsets.len().leading_zeros();
+    let largest = offsets.iter().copied().max().unwrap_or(0);
     let offset_bits = u64::BITS - largest.leading_zeros();
     if offset_bits + shift > u64::BITS {
-        let mut order: Vec<_> = (0..ranges.len()).collect();
-        order.sort_unstable_by_key(|&position| ranges[position].0);
-        return order;
+        let mut order: Vec<u32> = (0..offsets.len() as u32).collect();
+        order.sort_unstable_by_key(|&position| offsets[position as usize]);
+        let sorted = order
+            .iter()
+            .map(|&position| offsets[position as usize])
+            .collect();
+        return (order, sorted);
     }
-    let mut keys: Vec<u64> = ranges
-        .iter()
-        .enumerate()
-        .map(|(position, range)| (range.0 as u64) << shift | position as u64)
-        .collect();
+    let mut keys = offsets;
+    for (position, key) in keys.iter_mut().enumerate() {
+        *key = *key << shift | position as u64;
+    }
     let passes = offset_bits.div_ceil(16).max(1);
     let digit_bits = offset_bits.div_ceil(passes);
     let mask = (1u64 << digit_bits) - 1;
@@ -327,10 +370,13 @@ fn offset_order(ranges: &[(usize, usize)]) -> Vec<usize> {
         }
         std::mem::swap(&mut keys, &mut scratch);
     }
+    drop(scratch);
     let positions = (1u64 << shift) - 1;
-    keys.into_iter()
-        .map(|key| (key & positions) as usize)
-        .collect()
+    let order = keys.iter().map(|&key| (key & positions) as u32).collect();
+    for key in &mut keys {
+        *key >>= shift;
+    }
+    (order, keys)
 }
 
 pub(crate) fn word(bytes: &[u8], position: usize) -> Result<u32, Error> {
@@ -407,16 +453,20 @@ mod tests {
             vec![900, 12, 70_000, 4_000_000_000, 13],
             vec![1 << 40, 12, 1 << 33, 99],
         ] {
-            let ranges: Vec<_> = offsets.iter().map(|&offset| (offset, 0)).collect();
-            let mut expected: Vec<_> = (0..ranges.len()).collect();
-            expected.sort_by_key(|&position| offsets[position]);
-            assert_eq!(offset_order(&ranges), expected);
+            let mut expected: Vec<u32> = (0..offsets.len() as u32).collect();
+            expected.sort_by_key(|&position| offsets[position as usize]);
+            let mut sorted = offsets.clone();
+            sorted.sort_unstable();
+            assert_eq!(offset_order(offsets), (expected, sorted));
         }
     }
 
     #[test]
     fn offset_order_falls_back_when_keys_exceed_64_bits() {
-        let ranges = [(usize::MAX - 1, 0), (12, 0), (usize::MAX - 2, 0)];
-        assert_eq!(offset_order(&ranges), [1, 2, 0]);
+        let offsets = vec![u64::MAX - 1, 12, u64::MAX - 2];
+        assert_eq!(
+            offset_order(offsets),
+            (vec![1, 2, 0], vec![12, u64::MAX - 2, u64::MAX - 1])
+        );
     }
 }

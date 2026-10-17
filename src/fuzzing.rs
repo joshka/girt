@@ -157,7 +157,7 @@ pub fn pack_index(data: &[u8]) {
     for position in 0..index.len().min(MAX_VISITS) {
         let entry = index.entry(bytes, position);
         assert_eq!(index.find(bytes, entry.id), Some(position));
-        assert_eq!(index.at_offset(entry.offset).ok(), Some(position));
+        assert_eq!(index.at_offset(bytes, entry.offset).ok(), Some(position));
     }
 }
 
