@@ -32,6 +32,23 @@ Explain inherited receiver configuration and reflog identity through `LocalPushR
 jj adapter defaults. Validation completion precedes hooks, installation and reference publication;
 partial reports remain authoritative when a later step fails.
 
+## Module Front Pages
+
+A public module should let a newcomer choose an API before learning its representation. Explain what
+problem it solves, when to use it, its mental model, and how its main types fit together. Include a
+runnable task example with an observable result and links to the next operation. Document
+substantial failure causes and remedies, and the performance or safety boundaries that change a
+caller's decision. A list of item names alone is not an overview.
+
+Place useful examples on main types and operations as well as module pages, so readers arriving from
+search can act without reconstructing a workflow. Prefer examples that compose related APIs over
+examples that only repeat an accessor's return value. Example coverage is a discovery aid, not a
+reason to add repetitive snippets to every getter.
+
+Keep docs.rs self-contained for concepts and contracts. Website guides teach tasks end to end,
+including setup and recovery, and link to docs.rs for signatures and detailed guarantees. Avoid
+copying the reference into guides; duplicated contracts drift independently.
+
 ## Comment Spacing
 
 - Follow every Markdown heading with one empty doc-comment line before its content.

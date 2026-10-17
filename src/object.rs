@@ -1,3 +1,5 @@
+//! Format-bearing object identities and Git framing.
+
 #![warn(
     clippy::unwrap_used,
     clippy::expect_used,

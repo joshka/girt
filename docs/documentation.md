@@ -47,6 +47,18 @@ scaffold claims, unsupported promises and conversational residue. Preserve expla
 mistakes. Use consistent Git terminology, specific examples and a calm, direct voice. Avoid applying
 style rules mechanically when they obscure a technical contract.
 
+## Library Learning Path
+
+A developer should be able to move from the crate front page to a useful task, then to the API
+contract for each step. Explain why an operation exists, when to choose it, and what it leaves to
+the caller. Use realistic examples with expected results and explain mistakes a reader is likely to
+make. This keeps documentation useful beyond an inventory of public items.
+
+The crate front page owns orientation, the module map, feature selection, and a minimal first use.
+Module pages own shared mental models and API choices. Item pages own precise contracts and local
+examples. Website guides compose tasks across modules and link to the reference. This division keeps
+essential explanations available on docs.rs while giving longer tasks room to develop.
+
 ## Evidence and Pull Requests
 
 Put the evidence for a change in its pull request description or commit messages: exact revisions,

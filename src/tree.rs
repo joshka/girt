@@ -1,3 +1,5 @@
+//! Byte-preserving Git tree parsing and construction.
+
 #![warn(
     clippy::unwrap_used,
     clippy::expect_used,

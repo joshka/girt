@@ -1,27 +1,30 @@
-//! Git objects, repositories, references, and explicit transfer workflows for Rust applications.
+//! Git objects, repositories, and explicit workflows for Rust applications.
 //!
-//! girt opens a repository at a chosen path and works with its Git data directly. The application
-//! chooses which objects to write, which references to publish, and when to update a working tree.
-//! The API is experimental, but its current operations document their accepted formats, effects,
-//! limits, and recovery obligations.
+//! girt is a Git library for applications that need to read and write Git data directly. Use it to
+//! inspect a repository, construct snapshots, traverse history, or publish references. The
+//! application chooses when each effect happens: storing a commit does not move a branch, and
+//! moving a branch does not update a working tree. The API is experimental.
 //!
-//! # First use
+//! # Design principles
 //!
-//! Add `girt = "0.8"` to a project using Rust 1.97.1 or newer. Compute a Git blob identity
-//! without opening a repository:
+//! Git's on-disk formats and semantics define the supported behavior. girt preserves accepted
+//! object bytes and their identities, including non-UTF-8 names and messages. Unsupported cases are
+//! refused explicitly rather than silently approximated. Support is specific to each operation;
+//! opening a repository does not establish that every Git feature used by that repository is
+//! supported.
+//!
+//! The library models Git concepts directly. A repository locates storage and selects its hash
+//! format; objects describe immutable content; references give that content mutable names.
+//! Configuration, resource limits, cancellation, and publication policy are explicit where the
+//! operation needs them. No application-wide runtime or tracing subscriber is installed.
+//!
+//! # Quick start
+//!
+//! Add girt to a Rust project with `cargo add girt`. The minimum Rust version is 1.97.1.
+//! This example also uses `tempfile` (`cargo add tempfile`) to create a disposable repository:
 //!
 //! ```rust
-//! use girt::{ObjectFormat, ObjectKind};
-//!
-//! let id = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"hello");
-//! assert_eq!(id.to_string(), "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0");
-//! ```
-//!
-//! To store a blob, add `tempfile = "3"` for this disposable example so it does not change an
-//! existing repository:
-//!
-//! ```rust
-//! use girt::{InitKind, ObjectFormat, Repository};
+//! use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
 //!
 //! let directory = tempfile::tempdir()?;
 //! let repository = Repository::init(
@@ -29,218 +32,116 @@
 //!     directory.path().join("project"),
 //!     InitKind::Worktree,
 //! )?;
-//! let id = repository.loose_objects().write_blob(b"hello\n")?;
-//! assert_eq!(repository.loose_objects().read_blob(id, 1024)?, b"hello\n");
+//! let id = repository.loose_objects().write_blob(b"hello Git\n")?;
+//! let objects = repository.objects(PackLimits::default())?;
+//! let blob = objects
+//!     .read(id, ReadLimits::default())?
+//!     .ok_or("blob missing")?;
+//! assert_eq!(blob.kind(), ObjectKind::Blob);
+//! assert_eq!(blob.data(), b"hello Git\n");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! Writing an object does not move a branch or populate the working tree. The temporary directory
-//! is removed when `directory` is dropped. For an existing repository, start with
-//! [`Repository::open`] and the read-only [`Objects`] interface.
+//! The repository is removed when `directory` is dropped. No commit or branch is created: a blob is
+//! only bytes. For an existing repository use [`Repository::open`]; to find one above a directory
+//! use [`Repository::discover`]. See [`repository`] for the distinction between selecting a
+//! location, opening its metadata, and reading its storage.
 //!
-//! In the [source checkout](https://github.com/joshka/girt), run
-//! `cargo run --example loose_blob` to write and read a blob in disposable storage. See
-//! [`LooseObjects`] for storage assumptions and the
-//! [contributor guide](https://github.com/joshka/girt/blob/main/CONTRIBUTING.md)
-//! for setup and checks.
+//! # The Git mental model
 //!
-//! # How the APIs fit together
+//! An [`ObjectId`] identifies a kind and exact payload using Git's header and hash. It carries its
+//! SHA-1 or SHA-256 format, but proves neither existence nor object kind. A blob contains file
+//! bytes; a [`Tree`] maps byte names and modes to IDs; a [`Commit`] names a tree and ordered
+//! parents; a [`Tag`] adds metadata to another object. Objects contain IDs rather than owned child
+//! objects, so reading a commit does not recursively read its tree or parents.
 //!
-//! Read the task sections below in the order your application needs them:
+//! [`Objects::read`] verifies storage framing and identity. Parsing the returned bytes decodes an
+//! object's structure; validation may impose further rules. These stages remain separate so
+//! inspection tools can preserve and diagnose unusual Git data without rewriting it. Follow
+//! [`tree`] and [`commit`] for exact parsing and construction guarantees.
 //!
-//! 1. [Read a repository](#reading-a-repository), then use [`ObjectId`], [`Tree`], [`Commit`], and
-//!    [`Tag`] for object data. [`Repository`] chooses the repository format; an [`Objects`] reader
-//!    holds a pack snapshot until it is reopened.
-//! 2. Use [`refs`] to resolve or conditionally publish references when objects must become
-//!    reachable. Object installation and reference updates are separate steps.
-//! 3. Use [`remote`] to interpret explicit remote configuration, then [`fetch`], [`clone`], or
-//!    [`push`] for transfer and publication. The application still owns endpoint selection,
-//!    authorization, and retry decisions.
-//! 4. Use [`index`], [`status`], and [`checkout`] when the application also manages a working tree.
-//!    Status and checkout use raw byte and platform rules that differ from Git's default CLI.
+//! A reference can contain an ID or another reference's name. `HEAD` commonly points to a branch;
+//! an unborn branch has a name but no ID yet. [`refs::References::resolve`] follows symbolic names;
+//! [`Objects::peel`] follows annotated tag objects. These are different operations.
 //!
-//! Follow a module link for its API map and the owning methods' contracts. The runnable
-//! [examples](https://github.com/joshka/girt/tree/main/examples) show
-//! full workflows; check each one's input and effects before running it. The
-//! [compatibility record](https://github.com/joshka/girt/blob/main/docs/compatibility.md)
-//! retains tested scope and historical evidence.
+//! # Where to go next
 //!
-//! # Features and platforms
+//! | Task | API and explanation |
+//! | --- | --- |
+//! | Locate, open, or initialize a repository | [`repository`], [`RepositoryLocation`], [`Repository`] |
+//! | Compute or parse full object identities | [`object`], [`ObjectFormat`], [`ObjectId`] |
+//! | Decode or construct snapshots and metadata | [`tree`], [`commit`], [`tag`] |
+//! | Read loose and packed objects together | [`objects`], [`Objects`], [`ReadLimits`] |
+//! | Write individual objects | [`loose`], [`LooseObjects`] |
+//! | Read or produce pack artifacts | [`pack`] |
+//! | Walk ancestry, test reachability, find merge bases | [`history`] |
+//! | Resolve names, conditionally update refs, inspect reflogs | [`refs`] |
+//! | Parse, resolve, interpret, or edit configuration | [`config`] |
+//! | Interpret named remotes and refspecs | [`remote`] |
+//! | Fetch, push, or clone with explicit publication | [`fetch`], [`push`], [`clone`] |
+//! | Use configured-remote convenience workflows | [`workflow`] |
+//! | Use HTTP/SSH and credentials | [`transport`], [`remote::CredentialStore`] |
+//! | Compare snapshots and file contents | [`Objects::compare_trees`], [`content_diff`], [`rewrites`] |
+//! | Manage the index and working tree | [`index`], [`status`], [`checkout`], [`ignore`] |
+//! | Plan retention, repack, or coordinate mutation | [`retention`], [`locks`] |
 //!
-//! [`workflow`] provides optional configured-remote convenience functions for applications such
-//! as jj: refspecs, configuration and environment resolution remain outside the core repository
-//! API. [`workflow::fetch`], [`workflow::push`] and [`workflow::remote_head`] take the repository
-//! explicitly and own synchronous network runtime/credential orchestration.
+//! The [runnable examples](https://github.com/joshka/girt/tree/main/examples) compose these APIs.
+//! The [compatibility record](https://github.com/joshka/girt/blob/main/docs/compatibility.md) describes
+//! verified scope. Each API's errors and limitations remain the contract for that operation.
 //!
-//! Local storage, references, and native local transfer need no optional feature. `http` adds
-//! smart-HTTP(S) transfer; `ssh` adds system OpenSSH transfer on macOS/Linux. Both network paths
-//! use a caller-owned Tokio runtime. Their fetch adapters return downloaded data for explicit
-//! synchronous validation. `tracing` adds operation spans without installing a subscriber. Raw
-//! working-tree status and checkout are supported on macOS/Linux; their module pages describe
-//! accepted paths and mutation limits.
+//! # Features and execution
 //!
-//! # Object identities
+//! There are no default features. Repository metadata, object codecs, local storage, references,
+//! configuration, history, and native local transfer work without optional features.
 //!
-//! [`ObjectId`] carries SHA-1 or SHA-256 digest bytes. [`ObjectFormat::hash_object`] hashes exact
-//! payloads with Git framing; it does not validate payload structure or translate embedded IDs.
-//! Hex parsing accepts full 40/64-digit identities, while [`ObjectId::from_hex`] requires an
-//! explicit format. Null IDs are format-specific sentinels. Codecs, loose/packed storage and
-//! traversal support both formats. Tree construction and all decoded payload parsing take an
-//! explicit format, including empty trees. Commit construction derives the format from its tree
-//! and requires matching parents; tag construction derives it from the target. References,
-//! reflogs and working-tree index v2/v3/v4 use the repository format. Remote discovery identifies
-//! SHA-1/SHA-256 advertisements before transfer. Wire fetch and push support both formats;
-//! native local transfer also supports both without invoking Git.
+//! | Feature | Adds | Execution requirements |
+//! | --- | --- | --- |
+//! | `http` | Smart HTTP(S) transport with Rustls | Caller-owned Tokio runtime for transport APIs |
+//! | `ssh` | System OpenSSH transport on macOS/Linux | OpenSSH and a caller-owned Tokio runtime |
+//! | `tracing` | Operation spans and bounded-work counts | Caller installs and configures a subscriber |
 //!
-//! # Creating and finding a repository
+//! Enable features with, for example, `cargo add girt --features http`. [`workflow`] owns
+//! synchronous runtime and credential orchestration for its configured-remote convenience
+//! operations. Lower-level HTTP/SSH adapters download data for explicit synchronous validation.
+//! Local filesystem operations are synchronous; applications choose their scheduling and blocking
+//! boundaries.
 //!
-//! [`Repository::init`] creates a bare or ordinary SHA-1 or SHA-256 repository with unborn `main`
-//! and refuses reinitialization. [`Repository::discover`] searches physical ancestors from an
-//! existing directory; [`Repository::discover_with_ceiling`] bounds that search to an inclusive
-//! ancestor. Discovery stops at malformed or unsupported metadata rather than selecting an outer
-//! repository.
+//! Run these workflows from a source checkout; check each example's arguments and filesystem
+//! effects before using existing data:
 //!
-//! # Reading a repository
+//! ```sh
+//! cargo run --example loose_blob
+//! cargo run --example compare_trees
+//! cargo run --example content_diff
+//! cargo run --example index
+//! cargo run --example status
+//! cargo run --example checkout
+//! ```
 //!
-//! Open an explicit path with [`Repository::open`], then retain an [`Objects`] reader with chosen
-//! [`PackLimits`]. Loose objects are read live; packs form an immutable snapshot that survives
-//! repacking. Reopen to discover new packs. [`Objects::read`] checks framing and identity under
-//! per-read [`ReadLimits`]; parse its exact bytes with [`Commit`], [`Tree`], or [`Tag`] when
-//! structured fields are needed. Repository history queries follow commit ancestry up to declared
-//! shallow boundaries under [`HistoryLimits`] without relying on timestamps.
+//! With `tracing`, DEBUG spans describe operations and phases; TRACE makes individual object reads
+//! and writes visible. Run `cargo run --features tracing --example tracing` for a scoped
+//! subscriber. HTTP/SSH download spans remain alive through synchronous validation or drop,
+//! including time queued for a worker. Spans record categorical outcomes and bounded-work counts;
+//! returned errors and reports remain authoritative for recovery. See the
+//! [tracing guide](https://github.com/joshka/girt/blob/main/docs/tracing.md) for coverage and overhead.
 //!
-//! # Comparing snapshots
+//! # Limits, failures, and safety
 //!
-//! Pass explicit tree IDs to [`Objects::compare_trees`], using `None` for an empty side. Returned
-//! [`TreeChange`] records preserve path bytes and old/new IDs and modes in raw full-path order.
-//! Equal subtree IDs skip reads, so comparison does not establish their validity or existence.
-//! Changed directories are traversed; gitlinks stay leaves and leaf targets are not read.
-//! [`TreeCompareLimits`] bounds traversal and eager output; cancellation is cooperative between
-//! synchronous processing steps. Run `cargo run --example compare_trees` for a disposable example.
+//! Choose [`PackLimits`] when opening a reader and [`ReadLimits`] for individual objects. History
+//! adds [`HistoryLimits`] for graph work. Defaults bound untrusted input; a limit failure means the
+//! requested work exceeded the selected budget, not necessarily that the repository is corrupt.
+//! Increase only the relevant budget after considering the input's trust and available resources.
+//! `trusted()` limits remove practical protections and are a caller policy decision.
 //!
-//! Load a change's regular, executable or symlink payloads with
-//! [`content_diff::BlobContent::read`], then borrow them in [`content_diff::diff`]. The pure engine
-//! preserves arbitrary bytes and LF boundaries, returning unchanged, binary-changed or shortest
-//! line edits with explicit resource limits. Absence and mode changes remain on the original tree
-//! record; empty and absent payloads compare equal. Gitlinks require a separate submodule policy.
-//! Run `cargo run --example content_diff` for the composed operation.
+//! Missing objects are distinct from malformed storage. Object reads return `Ok(None)` for absence;
+//! I/O, corruption, unsupported representations, and exceeded limits return errors. Preserve error
+//! source chains when reporting failures. Reference transactions can have partial effects: inspect
+//! reported outcomes before retrying. Writing storage requires the filesystem assumptions
+//! documented on the owning operation; a pathname alone is not a trust boundary.
 //!
-//! # Planning from remote configuration
-//!
-//! [`remote::Remote::find`] reads named URLs and fetch/push refspecs from [`Repository::config`].
-//! Map explicit resolved sources with [`remote::Refspecs::map`], or select advertised fetch tips
-//! with [`remote::Refspecs::map_advertisement`]. Plans preserve force intent but require separate
-//! endpoint selection, update authorization and conditional publication. No transfer is initiated.
-//!
-//! # Fetching and publishing references
-//!
-//! [`fetch::FetchRequest::prepare`] captures local ref values with explicit force authorization and
-//! reflog policy. Its local/HTTP/SSH adapters map the advertisement actually used for transfer.
-//! [`fetch::FetchReady::finish`] installs objects before checking update rules and conditionally
-//! publishing remote-tracking refs and tags. Local branch destinations are unsupported. Inspect
-//! [`fetch::FetchFinishError`] for installed objects and possible partial transaction effects.
-//! [`fetch::FetchRequest::with_prune`] opts into remote-tracking deletion; depth requests use
-//! [`fetch::FetchRequest::with_depth`] with coordinated shallow publication. `FETCH_HEAD` and
-//! implicit tag following remain caller policy; this is not full CLI fetch.
-//! Run `cargo run --example fetch_remote` for a disposable workflow with named remote
-//! configuration.
-//!
-//! Build optional [`fetch::KnownHistory`] from verified local objects before negotiation. Local
-//! and stream fetches return [`fetch::ReceivedFetch`]. HTTP/SSH downloads instead own unvalidated
-//! bytes and the exact negotiation history; move them to a caller-managed blocking worker and
-//! validate them there. The caller bounds queued downloads and active workers, then joins the
-//! work even after requesting cancellation.
-//!
-//! [`fetch::ReceivedFetch::install`] reopens the destination under explicit snapshot limits and
-//! rechecks local dependencies before publishing a pack/index pair. It leaves references unchanged.
-//! Coordinate with pruning until a separate conditional [`refs::References::update_without_reflog`]
-//! publishes the intended tip. Pack installation and each reference update have separate failure
-//! and retry contracts. Use [`refs::References::transaction`] to check a whole batch before
-//! sequential publication and choose explicit reflog policy; inspect partial outcomes on
-//! publication failure.
-//!
-//! # Cloning without checkout
-//!
-//! [`clone::CloneRequest::prepare_tracking`] selects a new destination, layout, stored origin URL,
-//! branch policy and reflog policy. Receive from an explicit local/HTTP/SSH endpoint, validate any
-//! owned network download on a caller-controlled worker, then call [`clone::CloneReady::finish`].
-//! Both layouts retain all remote-tracking branches and tags, with one selected local branch or
-//! detached HEAD. No index or working files are populated; an ordinary clone has Git's no-checkout
-//! state. Inspect [`clone::CloneError`] for initialized, installed, configured and published state
-//! after failure. Run `cargo run --example clone_repository` for the lifecycle.
-//!
-//! # Preparing and sending a push
-//!
-//! [`push::PreparedPush`] synchronously verifies selected history, proves required ancestry, and
-//! builds bounded pack buffers. Optional receiver roots exclude only history proven within that
-//! verified graph. Sending checks required advertised capabilities before attempting commands;
-//! the server checks each command's exact expected old value when updating references.
-//!
-//! Inspect [`push::PushReport`] even after a successful send: individual references may be
-//! rejected. [`push::PushError`] distinguishes failure before transmission from uncertain outcomes
-//! that retain valid acknowledgements. Inspect remote references before retrying unknown outcomes.
-//! Local storage, hashing, graph work, and compression remain synchronous; optional async
-//! transports use the caller's runtime. Resource limits apply to the documented phase or read, not
-//! total process memory or an operation-wide deadline.
-//!
-//! # Reading and replacing the index
-//!
-//! [`index::Index`] parses and encodes bounded SHA-1/SHA-256 v2/v3/v4 indexes with byte paths, stat
-//! words and conflict stages. [`Repository::read_index`] distinguishes missing storage from an
-//! empty index; [`Repository::edit_index`] holds `index.lock` while the caller derives and
-//! publishes changes. Optional extensions round-trip; edits discard derived caches, retain
-//! resolve-undo records and refuse unknown optional extensions. Index operations never create
-//! working files or apply staging policy. Run `cargo run --example index` for a disposable
-//! repository example.
-//!
-//! # Observing working-tree status
-//!
-//! [`Repository::raw_status`] separates staged tree/index changes, raw index/worktree changes,
-//! conflicts and unchecked gitlinks. It verifies content instead of trusting cached stat data,
-//! applies no normalization or ignores, and never refreshes the index. macOS/Linux traversal
-//! avoids symlink ancestors and repository metadata. Reports are observations, not atomic
-//! snapshots or checkout preconditions. Run `cargo run --example status` for a disposable fixture.
-//!
-//! # Checking out a selected tree
-//!
-//! [`Repository::checkout_tree`] materializes raw blob bytes and publishes a matching index on
-//! macOS/Linux. Supply an explicit baseline matching the clean index, or `None` for an initial
-//! no-checkout clone. The operation refuses staged/unstaged changes and untracked obstructions;
-//! HEAD and refs remain unchanged. [`checkout`] documents caller exclusion, supported names,
-//! preparation/mutation/publication phases and per-path failure reports. Run
-//! `cargo run --example checkout` for a disposable lifecycle example.
-//!
-//! # Planning object retention
-//!
-//! [`Repository::plan_retention`] observes caller heads, references, imported reflogs, registered
-//! worktree HEADs and indexes, recent loose objects, shallow boundaries, and protected packs.
-//! [`retention::RetentionPolicy`] supplies resource limits and expiry cutoffs. Complete reports
-//! distinguish every observed reachable object from objects still required after reflog expiry.
-//! Incomplete reports retain recovered candidates and cannot justify deletion. A later maintenance
-//! executor must exclude writers and rescan before acting; this library operation changes no files.
-//! [`Repository::repack_retained`] performs a fresh scan and publishes a bounded pack/index pair
-//! without removing existing storage. It cannot authorize pruning while external writers or pinned
-//! readers may still depend on old data.
-//!
-//! # Optional operation tracing
-//!
-//! Enable the `tracing` feature for categorical operation spans on the `girt` target. DEBUG
-//! spans describe workflows and phases; TRACE includes individual object reads and writes.
-//! Spans record outcomes and bounded-work counts without formatting arguments or returned errors.
-//! The caller owns subscribers, sinks, filtering, runtimes and scheduling; errors remain structured
-//! return values. Run `cargo run --features tracing --example tracing` for a scoped subscriber.
-//! HTTP/SSH downloads retain the initiating subscriber and span through synchronous worker
-//! validation or drop. Their span lifetime therefore includes queue time. See `docs/tracing.md` for
-//! coverage, overhead, async context propagation and guidance for extending instrumentation.
-//!
-//! # Current boundaries
-//!
-//! Git object and reference operations support SHA-1 and SHA-256. Wire fetch and push use
-//! protocol v0 streams; native local transfer uses girt storage without a Git server process.
-//! The supported working-tree operations use literal blob bytes and POSIX modes. They do not apply
-//! attributes, filters, or EOL conversion. Branch switching, sparse checkout, and submodule
-//! operations remain outside this API. Each operation's module and item docs state its narrower
-//! accepted formats, resource limits, and failure effects.
+//! Working-tree operations have narrower platform, byte-path, filter, and mutation contracts than
+//! object storage. Consult [`checkout`] and [`status`] before applying Git data to a filesystem.
+
 // Let library unit tests share the Git-generated integration fixtures.
 #[cfg(test)]
 extern crate self as girt;
@@ -254,7 +155,7 @@ pub mod clone;
 mod file_policy;
 pub use file_policy::SharedPermissions;
 
-mod commit;
+pub mod commit;
 pub mod config;
 pub mod content_diff;
 mod edges;
@@ -262,26 +163,26 @@ pub mod fetch;
 #[cfg(any(fuzzing, test))]
 #[doc(hidden)]
 pub mod fuzzing;
-mod history;
+pub mod history;
 pub mod ignore;
 pub mod index;
 pub mod locks;
-mod loose;
-mod object;
-mod objects;
+pub mod loose;
+pub mod object;
+pub mod objects;
 pub mod pack;
 mod packet;
 mod peel;
 pub mod push;
 pub mod refs;
 pub mod remote;
-mod repository;
+pub mod repository;
 pub mod retention;
 pub mod rewrites;
 pub mod status;
-mod tag;
+pub mod tag;
 pub mod transport;
-mod tree;
+pub mod tree;
 mod tree_compare;
 pub mod workflow;
 

@@ -1,4 +1,57 @@
-//! Repository location, opening, and creation.
+//! Repository discovery, explicit opening, and creation.
+//!
+//! Start with [`Repository::open`] when the application already has a repository path. Use
+//! [`Repository::discover`] for a user-selected directory that may be below the repository root.
+//! Use [`RepositoryLocation::at_git_dir`] when a caller has selected the exact metadata directory
+//! and needs to apply trust policy before opening it. None of these reads ambient Git environment
+//! variables; supply inherited configuration explicitly through [`ConfigInputs`].
+//!
+//! # Layout and lifetime
+//!
+//! An ordinary checkout has a working directory and `.git` metadata; a bare repository has only
+//! metadata. Linked worktrees share a [`Repository::common_dir`] and object database while
+//! retaining private [`Repository::git_dir`] metadata. Use these accessors instead of appending
+//! `.git` to a path. [`Repository::worktree`] returns `None` for bare repositories.
+//!
+//! A handle retains metadata, configuration, and shallow roots read at opening. It is not a lock
+//! or a complete validation of stored objects. Reopen to refresh metadata; open an
+//! [`Objects`](crate::Objects) reader separately to retain a pack snapshot. Loose objects and
+//! reference reads have their own visibility rules.
+//!
+//! # Find a repository from a nested directory
+//!
+//! ```
+//! use girt::{InitKind, ObjectFormat, Repository};
+//!
+//! let directory = tempfile::tempdir()?;
+//! let path = directory.path().join("project");
+//! let created = Repository::init(ObjectFormat::Sha1, &path, InitKind::Worktree)?;
+//! let nested = path.join("src");
+//! std::fs::create_dir(&nested)?;
+//! let found = Repository::discover_with_ceiling(&nested, &path)?;
+//! assert_eq!(found.git_dir(), created.git_dir());
+//! assert_eq!(found.object_format(), ObjectFormat::Sha1);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Discovery follows physical ancestors after canonicalizing paths. A ceiling bounds where
+//! candidates are searched, but indirections in metadata can point outside it. A recognized
+//! malformed or unsupported candidate stops discovery so it cannot silently select an outer
+//! repository. Use a ceiling to avoid searching unrelated ancestors, not as filesystem isolation.
+//!
+//! # Creating and diagnosing repositories
+//!
+//! [`Repository::init`] creates an unborn `main`; [`InitOptions`] allows a chosen branch, format,
+//! and reference backend. `init_with_options` uses `master` unless the options select another
+//! branch; this differs from the `main` chosen by the simpler `init` entry point. Initialization
+//! refuses existing metadata. If a later write fails, partial newly created metadata can remain:
+//! inspect it before retrying rather than treating initialization as rollback-safe.
+//!
+//! [`OpenError::NotFound`] means the selected path or discovery range has no usable candidate.
+//! [`OpenError::Malformed`] identifies inconsistent metadata; inspect the reported path and reason.
+//! [`OpenError::Unsupported`] requires choosing a supported feature or extending support, rather
+//! than bypassing validation. Configuration errors retain their source; correct that source before
+//! reopening. Opening writes nothing and does not repair a repository.
 mod colocation;
 mod command_layout;
 mod discover;
@@ -113,13 +166,19 @@ impl RepositoryLocation {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// use girt::RepositoryLocation;
     /// use girt::config::ConfigInputs;
-    /// let location = RepositoryLocation::at_git_dir("project/.git")?;
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = girt::Repository::init(
+    ///     girt::ObjectFormat::Sha1,
+    ///     directory.path().join("project"),
+    ///     girt::InitKind::Worktree,
+    /// )?;
+    /// let location = RepositoryLocation::at_git_dir(repo.git_dir())?;
     /// let repository = location.open_with_config(&ConfigInputs::default())?;
     /// assert_eq!(repository.git_dir(), location.git_dir());
-    /// # Ok::<(), girt::OpenError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn open_with_config(&self, inputs: &ConfigInputs) -> Result<Repository, OpenError> {
         Repository::open_location(self, inputs, crate::refs::reftable::StackLimits::default())
@@ -145,14 +204,20 @@ impl RepositoryLocation {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// use girt::RepositoryLocation;
     /// use girt::config::ConfigInputs;
-    /// let location = RepositoryLocation::at_git_dir("project/.git")?;
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = girt::Repository::init(
+    ///     girt::ObjectFormat::Sha1,
+    ///     directory.path().join("project"),
+    ///     girt::InitKind::Worktree,
+    /// )?;
+    /// let location = RepositoryLocation::at_git_dir(repo.git_dir())?;
     /// let metadata = location.read_metadata_with_config(&ConfigInputs::default())?;
     /// assert_eq!(metadata.git_dir(), location.git_dir());
     /// println!("{}", metadata.object_format());
-    /// # Ok::<(), girt::OpenError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn read_metadata_with_config(
         &self,
@@ -177,16 +242,22 @@ impl RepositoryLocation {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// use girt::RepositoryLocation;
     /// use girt::config::{ConfigInputs, IncludePlacement};
-    /// let location = RepositoryLocation::at_git_dir("project/.git")?;
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = girt::Repository::init(
+    ///     girt::ObjectFormat::Sha1,
+    ///     directory.path().join("project"),
+    ///     girt::InitKind::Worktree,
+    /// )?;
+    /// let location = RepositoryLocation::at_git_dir(repo.git_dir())?;
     /// let metadata = location.read_metadata_with_config_and_include_placement(
     ///     &ConfigInputs::default(),
     ///     IncludePlacement::AfterSectionReverse,
     /// )?;
     /// assert_eq!(metadata.git_dir(), location.git_dir());
-    /// # Ok::<(), girt::OpenError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn read_metadata_with_config_and_include_placement(
         &self,
@@ -647,6 +718,11 @@ impl std::fmt::Debug for Repository {
 }
 
 /// Failure to open a repository from a path or discovered location.
+///
+/// Opening is read-only. Treat [`Self::NotFound`] as a selection problem, [`Self::Malformed`] as
+/// inconsistent metadata, and [`Self::Unsupported`] as a capability boundary. Do not retry an
+/// unsupported repository as if it used default settings. Inspect nested configuration and I/O
+/// sources for the path and original cause; see the [module overview](self) for recovery guidance.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum OpenError {
@@ -747,6 +823,17 @@ impl Repository {
     /// on success or failure. Filesystem reads and allocation are synchronous and unbounded by a
     /// caller-supplied resource limit except configuration and shallow metadata. The default
     /// shallow snapshot is limited to 16 MiB.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("archive.git");
+    /// Repository::init(ObjectFormat::Sha256, &path, InitKind::Bare)?;
+    /// let repository = Repository::open(&path)?;
+    /// assert!(repository.is_bare());
+    /// assert_eq!(repository.object_format(), ObjectFormat::Sha256);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
         Self::open_with_config(path, &ConfigInputs::default())
     }
@@ -766,6 +853,28 @@ impl Repository {
     /// Returns the layout/format errors of [`Self::open`] or contextual configuration resolution
     /// failures. All operations are read-only. Config resolution obeys the supplied budgets;
     /// repository metadata bootstrap retains [`Self::open`]'s allocation contract.
+    ///
+    /// ```
+    /// use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("project");
+    /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Worktree)?;
+    /// let global = directory.path().join("global");
+    /// std::fs::write(&global, b"[core]\neditor = user-editor\n")?;
+    /// let mut edit = repo.edit_config(4096)?;
+    /// edit.document_mut()
+    ///     .append("core", None, "editor", b"project-editor")?;
+    /// edit.commit()?;
+    /// let inputs =
+    ///     ConfigInputs::default().with_files(vec![ConfigFile::new(global, ConfigScope::Global)]);
+    /// let opened = Repository::open_with_config(&path, &inputs)?;
+    /// assert_eq!(
+    ///     opened.config().string("core", None, "editor"),
+    ///     Some(&b"project-editor"[..])
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn open_with_config(
         path: impl AsRef<Path>,
         inputs: &ConfigInputs,
@@ -1314,3 +1423,8 @@ mod tests {
         assert!(!path.exists());
     }
 }
+
+// Compile the website's complete program as part of the ordinary doctest suite.
+#[cfg(doctest)]
+#[doc = include_str!("../site/src/content/docs/guides/open-a-repository.md")]
+mod website_repository_guide {}

@@ -1,3 +1,5 @@
+//! Bounded reads over loose objects and pack snapshots.
+
 #![warn(
     clippy::unwrap_used,
     clippy::expect_used,
