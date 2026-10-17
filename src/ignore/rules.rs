@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::pattern::Pattern;
 
 /// The filesystem kind of a queried ignore path.
@@ -258,10 +260,18 @@ pub struct Match {
 pub struct Ignore {
     case: Case,
     limits: Limits,
-    sources: Vec<Rules>,
+    // Shared so that a copy extended by one more directory costs only reference counts.
+    sources: Vec<Arc<Rules>>,
     bytes: usize,
     patterns: usize,
 }
+/// Counts from [`Ignore::usage`].
+#[derive(Clone, Copy)]
+pub(crate) struct Usage {
+    pub(crate) sources: usize,
+    pub(crate) patterns: usize,
+}
+
 #[derive(Clone, Debug)]
 struct Rules {
     base: Vec<u8>,
@@ -290,6 +300,15 @@ impl Ignore {
     #[must_use]
     pub fn limits(&self) -> Limits {
         self.limits
+    }
+
+    /// Sources and patterns added so far, counted against [`Limits::sources`] and
+    /// [`Limits::patterns`].
+    pub(crate) fn usage(&self) -> Usage {
+        Usage {
+            sources: self.sources.len(),
+            patterns: self.patterns,
+        }
     }
 
     /// Source bytes that can still be added before [`Limits::bytes`] is reached.
@@ -356,11 +375,11 @@ impl Ignore {
         };
         self.patterns += patterns.len();
         self.bytes = bytes;
-        self.sources.push(Rules {
+        self.sources.push(Arc::new(Rules {
             base: base.to_vec(),
             rank: (level, depth, index),
             patterns,
-        });
+        }));
         self.sources.sort_by_key(|s| s.rank);
         Ok(index)
     }

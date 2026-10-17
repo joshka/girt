@@ -12,7 +12,7 @@
 //!
 //! See the runnable [`Objects::compare_trees_with`] example for repository setup.
 //! [`Objects::compare_trees`] uses default limits and never cancels.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
@@ -454,12 +454,28 @@ impl Objects {
         limits: TreeCompareLimits,
         cancel: &AtomicBool,
     ) -> Result<Vec<TreeChange>, TreeCompareError> {
+        self.compare_trees_among(old, new, &HashMap::new(), limits, cancel)
+    }
+
+    /// [`Self::compare_trees_with`], taking trees found in `local` instead of reading them.
+    ///
+    /// `local` must map each identity to the tree that hashes to it, such as the trees built from
+    /// an index. Its trees are not charged to `limits`; trees read from storage still are.
+    pub(crate) fn compare_trees_among(
+        &self,
+        old: Option<ObjectId>,
+        new: Option<ObjectId>,
+        local: &HashMap<ObjectId, Tree>,
+        limits: TreeCompareLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<TreeChange>, TreeCompareError> {
         for id in old.into_iter().chain(new) {
             id.require_format(self.object_format())?;
         }
         let mut budget = Budget {
             remaining: limits,
             cancel,
+            local,
         };
         budget.check()?;
         let mut pending = vec![Directory {
@@ -587,6 +603,7 @@ struct Directory {
 struct Budget<'a> {
     remaining: TreeCompareLimits,
     cancel: &'a AtomicBool,
+    local: &'a HashMap<ObjectId, Tree>,
 }
 
 impl Budget<'_> {
@@ -604,6 +621,9 @@ impl Budget<'_> {
         let Some(id) = id else {
             return Ok(Tree::new(objects.object_format(), vec![]).expect("empty tree"));
         };
+        if let Some(tree) = self.local.get(&id) {
+            return Ok(tree.clone());
+        }
         charge(&mut self.remaining.max_trees, 1, "trees")?;
         let mut read = self.remaining.read;
         read.max_object_bytes = read.max_object_bytes.min(self.remaining.max_tree_bytes);

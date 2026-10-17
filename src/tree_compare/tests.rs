@@ -449,6 +449,7 @@ fn cancellation_between_reads_stops_before_missing_object() {
     let mut budget = Budget {
         remaining: TreeCompareLimits::default(),
         cancel: &cancel,
+        local: &std::collections::HashMap::new(),
     };
     assert!(budget.read(&f.objects(), None, b"").is_ok());
     cancel.store(true, Ordering::Relaxed);

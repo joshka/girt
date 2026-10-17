@@ -2318,15 +2318,26 @@ slice.
 this worktree's index, then verifies working files against stage-zero entries. Staged results reuse
 `TreeChange`; unstaged results distinguish content/mode changes, missing paths and obstructions.
 Conflicts retain their exact index stages. Missing index storage means an empty index, not an empty
-baseline tree. Index blobs, including conflict stages, are identity/type verified through the
-existing loose/packed reader. Baseline leaf targets and submodule commit targets are not resolved.
+baseline tree. As in Git, index blobs are not read: status compares identities, so a missing or
+damaged index blob is fsck's concern. Without conflicts, the index's own trees are computed and
+baseline subtrees with the same identity are skipped unread. Baseline leaf targets and submodule
+commit targets are not resolved.
+
+A working file is not read when the `lstat` taken during traversal matches every cached index stat
+word (size, mtime and ctime with nanoseconds, device, inode, uid and gid) and the entry's mode.
+Racily clean entries are read: those whose cached mtime or ctime falls in or after the second the
+index file was last modified. Git's rule compares only the mtime, with nanoseconds, so girt rereads
+a superset of the entries Git rereads. A zero cached size (Git's smudge) and a split index always
+force a read. `tests/status.rs::matching_stat_words_are_trusted_unless_racy` compares each case with
+`git status`, using an index whose cached identity deliberately disagrees with the file.
 
 The API and every report explicitly select literal bytes and POSIX modes. Attributes, clean filters,
 EOL conversion, ignore rules, `core.filemode`, `core.symlinks`, global config and environmental
 normalization policy are not applied. Thus raw status can differ from Git status for a CRLF working
 file with `text eol=lf`, an ignored file, or an assume-valid entry. Assume-valid is deliberately
-ignored: all indexed blob content is verified, even when cached stat words match. No hooks or filter
-commands run. Consumers must own normalization policy if they require Git-default status.
+ignored: such an entry is treated like any other, so a changed file whose stat words differ is read.
+No hooks or filter commands run. Consumers must own normalization policy if they require Git-default
+status.
 
 Untracked policy is either `Omit` or `RawFilesWithoutIgnores`. The latter lists every encountered
 untracked leaf, including ignored and special files, without reading its content; empty directories

@@ -199,14 +199,15 @@ pub struct Limits {
     pub trees: TreeCompareLimits,
     /// Pack snapshot bounds when opening the reader.
     pub packs: crate::PackLimits,
-    /// Per-object reconstruction bounds for HEAD and index blobs.
+    /// Per-object reconstruction bounds for the HEAD commit.
     pub read: crate::ReadLimits,
-    /// Total HEAD and index blob payload bytes, counting repeated identities (default 256 MiB).
+    /// HEAD commit payload bytes (default 256 MiB); index blobs are not read.
     pub max_object_bytes: usize,
     /// Maximum bytes in one working file (default 16 MiB). Symlink targets additionally have a
     /// fixed one-MiB ceiling; reads use one extra byte to detect truncation.
     pub max_file_bytes: usize,
-    /// Total bytes hashed from working files/links (default 256 MiB).
+    /// Total bytes hashed from working files/links (default 256 MiB). Files whose cached stat
+    /// data is trusted are not read and cost nothing.
     pub max_worktree_bytes: usize,
     /// Directory entries visited, including unrelated names and metadata (default 1,000,000).
     pub max_directory_entries: usize,
@@ -214,6 +215,10 @@ pub struct Limits {
     pub max_path_bytes: usize,
     /// Nested directory depth, capped at 128 even if larger (default 64).
     pub max_depth: usize,
+    /// Threads that walk the working tree, including the calling thread (default 8). The walk
+    /// uses no more than the platform reports as available; 0 and 1 both walk on the calling
+    /// thread alone.
+    pub max_threads: usize,
 }
 
 impl Limits {
@@ -286,6 +291,13 @@ impl Limits {
         self.max_depth = max_depth;
         self
     }
+
+    /// Sets [`Self::max_threads`].
+    #[must_use]
+    pub fn with_max_threads(mut self, max_threads: usize) -> Self {
+        self.max_threads = max_threads;
+        self
+    }
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -300,6 +312,7 @@ impl Default for Limits {
             max_directory_entries: 1_000_000,
             max_path_bytes: 64 * 1024 * 1024,
             max_depth: 64,
+            max_threads: 8,
         }
     }
 }
@@ -316,8 +329,8 @@ pub enum Comparison {
 ///
 /// Paths are sorted by raw bytes within each list. Empty change lists do not establish Git-default
 /// cleanliness: inspect unmerged entries, unchecked gitlinks, boundaries, and untracked policy.
-/// Assume-valid entries are verified exactly like other entries. All index blob targets, including
-/// conflict stages, are verified; baseline leaf targets and gitlink commit targets are not read.
+/// Assume-valid entries are treated exactly like other entries. Index blob targets (including
+/// conflict stages), baseline leaf targets and gitlink commit targets are not read.
 ///
 /// # Inspect unresolved entries before declaring a worktree clean
 ///
@@ -596,23 +609,23 @@ pub enum Error {
     /// Opening the pack snapshot failed.
     #[error("cannot open status object reader")]
     Objects(#[source] crate::ObjectReadError),
-    /// Reading a HEAD commit or an index blob failed.
+    /// Reading the HEAD commit failed.
     #[error("reading status object {id} at {path:?}")]
     Object {
         /// Object identity requested.
         id: ObjectId,
-        /// Entry path, or `HEAD` for the baseline commit.
+        /// `HEAD`, for the baseline commit.
         path: Vec<u8>,
         /// Storage/verification cause. Boxed to keep contextual errors compact.
         #[source]
         source: Box<crate::ObjectReadError>,
     },
-    /// Referenced commit/blob is missing or has the wrong kind.
+    /// The HEAD commit is missing or has the wrong kind.
     #[error("invalid status object {id} at {path:?}: {reason}")]
     InvalidObject {
         /// Object identity requested.
         id: ObjectId,
-        /// Entry path or `HEAD`.
+        /// `HEAD`.
         path: Vec<u8>,
         /// Missing or wrong-kind explanation.
         reason: &'static str,

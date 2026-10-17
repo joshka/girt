@@ -1,4 +1,5 @@
 //! Canonical nested trees from validated index entries, with optional immutable publication.
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{Index, Mode, Stage};
@@ -72,7 +73,7 @@ impl Index {
         let loose = repo.loose_objects();
         self.build_tree(cancel, |tree| {
             loose
-                .write_tree(tree)
+                .write_tree(&tree)
                 .map_err(crate::tree::TreeWriteError::from)
                 .map_err(WriteTreeError::from)
         })
@@ -102,12 +103,29 @@ impl Index {
             .ok()
     }
 
+    /// Computes [`Self::tree_id`] and keeps every tree built along the way, by identity.
+    ///
+    /// Each identity is the hash of its own tree, so a lookup can stand in for reading that tree
+    /// from object storage. Returns `None` where [`Self::tree_id`] does.
+    /// Cancellation also returns `None`; the caller checks `cancel` afterwards.
+    pub(crate) fn trees(&self, cancel: &AtomicBool) -> Option<(ObjectId, HashMap<ObjectId, Tree>)> {
+        let mut trees = HashMap::new();
+        let root = self
+            .build_tree(cancel, |tree| {
+                let id = tree.id();
+                trees.insert(id, tree);
+                Ok(id)
+            })
+            .ok()?;
+        Some((root, trees))
+    }
+
     // Index paths are already sorted and validated. Close each directory once when its prefix
     // ends, sharing canonical construction between identity calculation and checked publication.
     fn build_tree(
         &self,
         cancel: &AtomicBool,
-        mut publish: impl FnMut(&Tree) -> Result<ObjectId, WriteTreeError>,
+        mut publish: impl FnMut(Tree) -> Result<ObjectId, WriteTreeError>,
     ) -> Result<ObjectId, WriteTreeError> {
         let mut root = Directory {
             name: &[],
@@ -240,10 +258,10 @@ impl Directory<'_> {
     fn finish(
         self,
         format: crate::ObjectFormat,
-        publish: &mut impl FnMut(&Tree) -> Result<ObjectId, WriteTreeError>,
+        publish: &mut impl FnMut(Tree) -> Result<ObjectId, WriteTreeError>,
     ) -> Result<TreeEntry, WriteTreeError> {
         let tree = Tree::new(format, self.entries).map_err(crate::tree::TreeWriteError::from)?;
-        let id = publish(&tree)?;
+        let id = publish(tree)?;
         Ok(TreeEntry {
             name: self.name.to_vec(),
             mode: EntryMode::Tree,

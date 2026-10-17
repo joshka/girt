@@ -17,8 +17,9 @@
 //! lists untracked paths as `git status` does: pass it the rules from
 //! [`Repository::ignore_rules`](crate::Repository::ignore_rules) and an [`UntrackedFiles`] listing,
 //! and read [`Report::untracked`].
-//! Cached index stat words and assume-valid never bypass content verification. No index refresh,
-//! locks, hooks, writes, rename detection, staging or checkout occur.
+//! As in Git, a working file is not read when its `lstat` matches every cached index stat word and
+//! the entry is not racily clean; index blobs are never read. Assume-valid is ignored. No index
+//! refresh, locks, hooks, writes, rename detection, staging or checkout occur.
 //!
 //! Traversal is supported on Linux and macOS. Linux preserves non-UTF-8 filename bytes; macOS
 //! accepts ASCII paths only because Unicode normalization aliases are not implemented. Exact

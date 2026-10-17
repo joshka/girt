@@ -882,3 +882,24 @@ fn failed_delete_mark_after_rename_cannot_publish_over_a_new_lock() {
     assert!(edit.is_err(), "the new owner still holds the name");
     fs::remove_file(&lock).unwrap();
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn timed_read_pairs_entries_with_the_read_file_time() {
+    let (_root, repo) = repository(crate::ObjectFormat::Sha1);
+    assert!(matches!(
+        repo.read_index_timed(Limits::default()).unwrap(),
+        (None, None)
+    ));
+    populated(&repo);
+    let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_234_567_890);
+    File::options()
+        .write(true)
+        .open(repo.git_dir().join("index"))
+        .unwrap()
+        .set_modified(written)
+        .unwrap();
+    let (index, seconds) = repo.read_index_timed(Limits::default()).unwrap();
+    assert_eq!(index, repo.read_index(Limits::default()).unwrap());
+    assert_eq!(seconds, Some(1_234_567_890));
+}

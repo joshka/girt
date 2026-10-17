@@ -157,6 +157,33 @@ fn rejects_stage_relationships(#[case] a: Stage, #[case] b: Stage) {
         Err(Error::Entry { .. })
     ));
 }
+#[rstest]
+#[case::file_above_file(&[(&b"a"[..], Stage::Normal), (b"a/b", Stage::Normal)], false)]
+#[case::deep(&[(&b"a/b"[..], Stage::Normal), (b"a/b/c/d", Stage::Normal)], false)]
+#[case::sibling_between(
+    &[(&b"a/b"[..], Stage::Normal), (b"a/b-x", Stage::Normal), (b"a/b/c", Stage::Normal)],
+    false
+)]
+#[case::other_sides(&[(&b"q"[..], Stage::Ours), (b"q/a", Stage::Theirs)], true)]
+#[case::same_side_later(
+    &[(&b"q"[..], Stage::Ours), (b"q/a", Stage::Theirs), (b"q/b", Stage::Ours)],
+    false
+)]
+#[case::conflict_below_normal(&[(&b"q"[..], Stage::Normal), (b"q/a", Stage::Theirs)], false)]
+#[case::shared_name_prefix(&[(&b"ab"[..], Stage::Normal), (b"ab-c/d", Stage::Normal)], true)]
+#[case::shorter_name(&[(&b"a"[..], Stage::Normal), (b"ab/c", Stage::Normal)], true)]
+fn file_directory_collisions_are_checked_per_stage(
+    #[case] paths: &[(&[u8], Stage)],
+    #[case] valid: bool,
+) {
+    let entries = paths
+        .iter()
+        .map(|(path, stage)| entry(path, *stage))
+        .collect();
+    let result = Index::new(crate::ObjectFormat::Sha1, entries, Limits::default());
+    assert_eq!(result.is_ok(), valid, "{result:?}");
+}
+
 #[test]
 fn sorts_partial_conflict_stages() {
     let index = Index::new(

@@ -10,8 +10,16 @@ impl Repository {
     /// This is a **raw-content** API: attributes, filters, EOL conversion, ignores and config
     /// overrides of executable/symlink behavior are not applied. Every result records this policy.
     /// Use [`Untracked::Omit`] for tracked-only inspection, or explicitly request raw untracked
-    /// leaves. Assume-valid and stat equality never skip verification. No filesystem writes or
-    /// index refresh occur; ordinary reads may update access times according to the filesystem.
+    /// leaves. No filesystem writes or index refresh occur; ordinary reads may update access times
+    /// according to the filesystem.
+    ///
+    /// A working file is not read when the `lstat` taken during traversal matches every cached
+    /// stat word of its stage-zero entry (size, mtime and ctime with nanoseconds, device, inode,
+    /// uid and gid) and its mode. As in Git, a racily clean entry is read instead: one whose cached
+    /// mtime or ctime falls in or after the second the index file was last modified, when a later
+    /// change in that second could leave every word equal. A zero cached size and a split index
+    /// always force reads. Assume-valid is ignored. Like Git, status compares identities without
+    /// reading index blobs, and skips baseline subtrees whose identity equals the index's.
     ///
     /// Intent-to-add and skip-worktree entries are refused pending explicit consumer policy.
     ///
@@ -24,7 +32,8 @@ impl Repository {
     /// platforms return unsupported before accessing storage. Worktree files must live on a
     /// filesystem supporting native POSIX modes and symlinks; emulation/normalization is excluded.
     ///
-    /// File identity, size, mode, mtime and ctime are compared around reads. Directory metadata is
+    /// File identity, size, mode, mtime and ctime are compared around reads; a trusted file is
+    /// observed through its one `lstat`, as in Git. Directory metadata is
     /// checked around traversal; HEAD (when requested) and index are reread before returning.
     /// Observed changes fail. These checks cannot detect all changes, ABA replacements, or changes
     /// after inspection: the report is not an atomic snapshot and must never authorize checkout
@@ -33,18 +42,22 @@ impl Repository {
     /// boundary. Metadata/object/reference reads inherit the existing storage APIs' assumptions;
     /// in particular reference resolution has a depth bound but no byte budget.
     ///
-    /// Work is synchronous. Cancellation is checked between entries, objects, directories and
-    /// 64-KiB file-read chunks. One syscall, object read, index parse, tree parse or sort cannot be
-    /// interrupted. The caller owns blocking-worker scheduling; there is no wall-clock guarantee.
-    /// Memory is bounded by index/tree/pack limits plus visited path records and one file buffer.
-    /// Directory traversal retains at most `min(max_depth, 128) + 1` active directory frames.
+    /// Work is synchronous: the call returns once up to [`Limits::max_threads`] scoped threads,
+    /// the caller's included, have walked the working tree. Cancellation is checked between
+    /// entries, objects, directories and 64-KiB file-read chunks. One syscall, object read, index
+    /// parse, tree parse or sort cannot be interrupted. The caller owns blocking-worker scheduling;
+    /// there is no wall-clock guarantee. Memory is bounded by index/tree/pack limits plus visited
+    /// path records, the index's own trees and one file buffer per thread. Directory budgets are
+    /// shared by every thread. Each thread holds about `min(max_depth, 128) + 1` directory
+    /// descriptors, plus the parents of directories waiting in the queue.
     ///
     /// # Errors
     ///
     /// Returns [`Error`] for bare/unsupported layouts or names, observed concurrent changes,
-    /// missing/corrupt/wrong-kind objects, malformed index/HEAD, I/O, cancellation or exceeded
-    /// limits. Index blob targets are verified even for missing worktree files and conflicts;
-    /// gitlink commits and baseline leaf targets are not resolved. No partial report is returned.
+    /// missing/corrupt/wrong-kind HEAD commits or baseline trees, malformed index/HEAD, I/O,
+    /// cancellation or exceeded limits. Index blobs, gitlink commits and baseline leaf targets are
+    /// not resolved. When multiple threads fail, one error is returned. No partial report is
+    /// returned.
     ///
     /// ```
     /// use std::sync::atomic::AtomicBool;
@@ -276,7 +289,17 @@ mod supported {
                 "worktree location is unknown"
             },
         })?;
-        let index = repo.read_index(limits.index)?;
+        // The racy cutoff is the modification time of the very file whose entries are trusted.
+        let (index, index_written) = repo.read_index_timed(limits.index)?;
+        // Index words hold the low 32 bits of the seconds, as Git writes them.
+        let index_written = index_written.map(|seconds| seconds as u32);
+        let split = index.as_ref().is_some_and(|index| {
+            index
+                .extensions()
+                .iter()
+                .any(|extension| extension.signature() == *b"link")
+        });
+        let index_written = index_written.filter(|_| !split);
         check(cancel)?;
         let entries = index.as_ref().map_or(&[][..], index::Index::entries);
         for entry in entries {
@@ -309,48 +332,45 @@ mod supported {
                 })
                 .transpose()?,
         };
-        let leaves = objects.compare_trees_with(None, tree, limits.trees, cancel)?;
-        let mut staged: BTreeMap<Vec<u8>, (Option<TreeValue>, Option<TreeValue>)> = leaves
-            .into_iter()
-            .map(|change| (change.path, (change.new, None)))
-            .collect();
-        let mut conflicts = BTreeSet::new();
         let mut unmerged = Vec::new();
         let mut gitlinks = Vec::new();
         for entry in entries {
             check(cancel)?;
-            if entry.mode != index::Mode::Gitlink {
-                read_object(
-                    &objects,
-                    entry.id,
-                    &entry.path,
-                    ObjectKind::Blob,
-                    &mut limits,
-                )?;
-            }
             if entry.stage != index::Stage::Normal {
-                conflicts.insert(entry.path.clone());
                 unmerged.push(entry.clone());
-            } else {
-                staged.entry(entry.path.clone()).or_default().1 = Some(value(entry));
-                if entry.mode == index::Mode::Gitlink {
-                    gitlinks.push(entry.clone());
-                }
+            } else if entry.mode == index::Mode::Gitlink {
+                gitlinks.push(entry.clone());
             }
         }
-        let staged = staged
-            .into_iter()
-            .filter(|(path, (old, new))| old != new && !conflicts.contains(path))
-            .map(|(path, (old, new))| TreeChange { path, old, new })
-            .collect();
+        // Without conflicts the index has trees of its own, so the comparison skips every
+        // baseline subtree whose identity equals the index's and reads only the rest.
+        let trees = index
+            .as_ref()
+            .filter(|_| unmerged.is_empty())
+            .and_then(|index| index.trees(cancel));
+        check(cancel)?;
+        let staged = match trees {
+            Some((root, trees)) => {
+                objects.compare_trees_among(tree, Some(root), &trees, limits.trees, cancel)?
+            }
+            None => flattened_staged(&objects, tree, entries, limits, cancel)?,
+        };
         let (untracked_policy, untracked_files) = match &listing {
             Listing::Raw(policy) => (*policy, None),
             Listing::Ignoring(_, files) => (Untracked::Omit, Some(*files)),
         };
-        let observed = super::super::worktree::scan(repo, root, entries, listing, limits, cancel)?;
+        let observed = super::super::worktree::scan(
+            repo,
+            root,
+            entries,
+            index_written,
+            listing,
+            limits,
+            cancel,
+        )?;
         before_recheck();
         check(cancel)?;
-        if repo.read_index(limits.index)? != index {
+        if !repo.index_unchanged(index.as_ref(), limits.index)? {
             return Err(Error::Changed(b"index".to_vec()));
         }
         if let Some(head) = head
@@ -373,6 +393,36 @@ mod supported {
             untracked: observed.listed,
             boundaries: observed.boundaries,
         })
+    }
+
+    /// Compares every baseline leaf with the stage-zero entries, leaving conflicted paths to
+    /// [`Report::unmerged`].
+    fn flattened_staged(
+        objects: &Objects,
+        tree: Option<ObjectId>,
+        entries: &[index::Entry],
+        limits: Limits,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<TreeChange>, Error> {
+        let leaves = objects.compare_trees_with(None, tree, limits.trees, cancel)?;
+        let mut staged: BTreeMap<Vec<u8>, (Option<TreeValue>, Option<TreeValue>)> = leaves
+            .into_iter()
+            .map(|change| (change.path, (change.new, None)))
+            .collect();
+        let mut conflicts = BTreeSet::new();
+        for entry in entries {
+            check(cancel)?;
+            if entry.stage == index::Stage::Normal {
+                staged.entry(entry.path.clone()).or_default().1 = Some(value(entry));
+            } else {
+                conflicts.insert(entry.path.clone());
+            }
+        }
+        Ok(staged
+            .into_iter()
+            .filter(|(path, (old, new))| old != new && !conflicts.contains(path))
+            .map(|(path, (old, new))| TreeChange { path, old, new })
+            .collect())
     }
 
     fn resolve_head(repo: &Repository) -> Result<refs::Resolution, Error> {
