@@ -131,6 +131,10 @@ pub(super) fn receive_depth_observed(
         ));
     }
     let mut pending: VecDeque<_> = wants.iter().copied().map(|id| (id, None)).collect();
+    // Commits' root trees wait until every queued commit is read, then go oldest first. A chain
+    // of new commits then reaches the one with a complete parent, whose paired tree marks the
+    // unchanged entries the later trees share, before any later tree is walked.
+    let mut commit_trees = Vec::new();
     // Each object's actual kind once read. Every edge naming it must require that kind.
     let mut observed = IdMap::<ObjectKind>::default();
     let mut selected = Vec::<ObjectId>::new();
@@ -147,7 +151,10 @@ pub(super) fn receive_depth_observed(
         control.cancel,
         limits.max_threads,
         |prefetch| {
-            while let Some((id, kind)) = pending.pop_front() {
+            while let Some((id, kind)) = pending.pop_front().or_else(|| {
+                pending.extend(commit_trees.drain(..).rev());
+                pending.pop_front()
+            }) {
                 prefetch.popped();
                 check(control)?;
                 if let Some(&actual) = observed.get(&id) {
@@ -257,7 +264,11 @@ pub(super) fn receive_depth_observed(
                         dependencies.push(target);
                         return Ok(());
                     }
-                    pending.push_back((target, Some(kind)));
+                    if object_kind == ObjectKind::Commit && kind == ObjectKind::Tree {
+                        commit_trees.push((target, Some(kind)));
+                    } else {
+                        pending.push_back((target, Some(kind)));
+                    }
                     Ok(())
                 })?;
                 if available {
@@ -277,7 +288,7 @@ pub(super) fn receive_depth_observed(
         },
     )?;
     // The walk's tables are proportional to the whole history; release them before writing.
-    drop((pending, observed));
+    drop((pending, commit_trees, observed));
     check(control)?;
     if progress(&[]) == ControlFlow::Break(()) {
         return Err(FetchError::Cancelled);
