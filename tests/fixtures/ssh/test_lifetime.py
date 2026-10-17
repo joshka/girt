@@ -162,7 +162,7 @@ class Cleanup(unittest.TestCase):
         handler runs at that exact boundary."""
         shim = self.root / "bin"
         shim.mkdir()
-        (shim / "git-upload-pack").write_text(f"#!/bin/sh\necho $$ > {self.root / 'git.pid'}\nexec sleep 60\n")
+        (shim / "git-upload-pack").write_text("#!/bin/sh\nexec sleep 60\n")
         (shim / "git-upload-pack").chmod(0o755)
         repo = str(self.root / "repo.git")
         # Take the exact --serve argv (including any guard arguments) from a live fixture.
@@ -174,7 +174,7 @@ class Cleanup(unittest.TestCase):
                      if l.startswith("ForceCommand "))
         argv = shlex.split(force[len("ForceCommand "):])
         runner = f"""
-import os, runpy, signal, subprocess, sys
+import os, runpy, signal, subprocess, sys, time
 sys.argv = {argv[1:]!r}
 os.environ["SSH_ORIGINAL_COMMAND"] = "git-upload-pack '" + {repo!r} + "'"
 real = subprocess.Popen
@@ -183,7 +183,17 @@ class Popen(real):
         super().__init__(args, *a, **k)
         if args and args[0] == "/bin/sh":
             from pathlib import Path
-            Path({str(self.root / 'git.pid')!r}).write_text(str(self.pid))
+            # Pause with an empty staging file to reproduce the old open-before-write window.
+            temporary = Path({str(self.root / 'git.pid.tmp')!r})
+            with temporary.open("w") as output:
+                Path({str(self.root / 'pid-open')!r}).touch()
+                deadline = time.monotonic() + {BOUND}
+                while not Path({str(self.root / 'publish-pid')!r}).exists():
+                    if time.monotonic() >= deadline:
+                        raise AssertionError("PID publication was not released")
+                    time.sleep(.01)
+                output.write(str(self.pid))
+            temporary.replace(Path({str(self.root / 'git.pid')!r}))
             os.kill(os.getpid(), signal.SIGTERM)  # handled before __init__ returns
 subprocess.Popen = Popen
 runpy.run_path(sys.argv[0], run_name="__main__")
@@ -191,6 +201,10 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         forced = subprocess.Popen([argv[0], "-c", runner], stdin=subprocess.PIPE, env=env,
                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, process_group=0)
         try:
+            wait_for(lambda: (self.root / "pid-open").exists(), what="PID staging file opened")
+            self.assertEqual((self.root / "git.pid.tmp").read_text(), "")
+            self.assertFalse((self.root / "git.pid").exists(), "incomplete PID was published")
+            (self.root / "publish-pid").touch()
             wait_for(lambda: (self.root / "git.pid").exists(), what="git launched")
             git = int((self.root / "git.pid").read_text())
             wait_for(lambda: forced.poll() is not None, what="forced command exit")
@@ -202,6 +216,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             except ProcessLookupError:
                 pass
             forced.wait()
+            forced.stderr.close()
             owner.finish()
             if (self.root / "git.pid").exists():
                 try:
