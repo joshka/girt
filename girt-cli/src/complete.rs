@@ -169,9 +169,9 @@ fn short_name(name: &str) -> (String, &'static str) {
     (name.to_owned(), "ref")
 }
 
-/// Configured remote names.
+/// Remote names from every config layer, as the remote commands see them.
 pub fn remotes() -> Vec<CompletionCandidate> {
-    let Some(repository) = repository() else {
+    let Ok(repository) = crate::config::configured_repository(&Context::new(false)) else {
         return Vec::new();
     };
     let names: BTreeSet<String> = Remote::names(repository.config())
