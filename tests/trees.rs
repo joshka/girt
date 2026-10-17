@@ -228,6 +228,6 @@ fn rejects_truncated_entries_like_git(
     let id = ObjectId::from_hex(format, hex).unwrap();
     assert!(matches!(
         objects.read_tree(id, payload.len()),
-        Err(girt::Error::Tree(error)) if error == expected
+        Err(girt::loose::Error::Tree(error)) if error == expected
     ));
 }

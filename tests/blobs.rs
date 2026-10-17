@@ -6,7 +6,8 @@ use std::process::{Command, Stdio};
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
-use girt::{Error, LooseObjects, ObjectFormat, ObjectId};
+use girt::loose::Error;
+use girt::{LooseObjects, ObjectFormat, ObjectId};
 use rstest::rstest;
 
 /// Maps an identity to its loose-object path so tests can inspect or replace the stored file.
