@@ -52,7 +52,7 @@ fmt-md-check:
 
 # Check formatting and calibrated prose rules for the reader-facing guides.
 docs-check: fmt-md-check
-    vale README.md CONTRIBUTING.md docs/configuration.md docs/reference-transactions.md docs/repositories.md docs/http.md docs/ssh.md docs/working-tree.md
+    vale --config .config/vale.ini README.md CONTRIBUTING.md docs/configuration.md docs/reference-transactions.md docs/repositories.md docs/http.md docs/ssh.md docs/working-tree.md
 
 # Measure the quality scorecard (docs/quality.md); pass --full to remeasure coverage and mutants.
 scorecard *args:
