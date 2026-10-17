@@ -325,6 +325,34 @@ stale locks. On unsupported platforms it preserves guard validity for ordinary a
 reports unsupported cleanup. SIGKILL, crashes and power loss cannot run cleanup. Persistent worktree
 `locked` markers and pack `.keep` files are never transient cleanup targets.
 
+### Recover obsolete tables
+
+Keep `Compaction.retained` and its per-path errors when obsolete-file removal fails. Girt exposes no
+later cleanup API for these files, and another compaction will not discover them. They remain
+unlisted and do not rejoin the stack on the next read.
+
+For manual recovery, establish exclusive control of the repository and honor the writer protocol:
+hold `tables.list.lock`, re-read `tables.list`, and confirm each candidate is still unlisted and is
+one of the paths recorded in `Compaction.retained` before removing it. Preserve unrecognized files;
+a directory listing alone does not establish ownership. The
+[compaction report](https://docs.rs/girt/latest/girt/refs/reftable/struct.Compaction.html)
+retains the cleanup evidence.
+
+### Recover leftover locks
+
+Inspect each per-file failure and its underlying I/O cause, including girt's unsupported-platform
+refusal. On Unix, the old guard is already invalidated even if removal failed, so its abort/drop
+path cannot clear the leftover lock. On unsupported platforms, it remains valid for ordinary
+abort/drop. The [cleanup report](https://docs.rs/girt/latest/girt/locks/struct.CleanupReport.html)
+separates these failures from replacement paths preserved for another owner. Never treat preserved
+paths as a list of files to remove.
+
+After a process dies, its locks are outside the live registry. Establish exclusive control and
+verify that no writer still owns a leftover lock before manual recovery. Age alone cannot establish
+that a lock is abandoned. Inspect unpublished contents before removing it; ordinary acquisition
+refuses an existing lock, and `cleanup` does not scan for stale locks. Keep admissions closed until
+all old writers are joined, because cleanup allows new acquisitions after it returns.
+
 ## API reference
 
 - [Retention policy, outcomes, reports and errors](https://docs.rs/girt/latest/girt/retention/)

@@ -525,6 +525,61 @@ fn sync_directory(directory: &Path) -> Result<(), ReferenceError> {
 /// readers ignore it. Lock cleanup is best effort and process termination can leave stale locks.
 /// Successful publication with failed obsolete-file cleanup is returned as
 /// [`Compaction::retained`].
+///
+/// # Compact a deletion without resurrecting an older value
+///
+/// A merged snapshot retains tombstones. Full-stack compaction covers every older table and can
+/// drop them, while preserving live records and their update indexes.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::refs::reftable::{Snapshot, StackLimits, compact};
+/// use girt::refs::{Backend, Expected, RefName, Target};
+/// use girt::{InitKind, ObjectFormat, Repository};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo =
+///     Repository::init_with_backend(ObjectFormat::Sha1, path, InitKind::Bare, Backend::Reftable)?;
+/// let stack = repo.common_dir().join("reftable");
+/// let cancel = AtomicBool::new(false);
+///
+/// let gone = RefName::new("refs/tags/gone")?;
+/// let live = RefName::new("refs/tags/live")?;
+/// let id = repo.loose_objects().write_blob(b"retained data")?;
+/// let refs = repo.references()?;
+/// for name in [&gone, &live] {
+///     refs.update_without_reflog(name, Target::Direct(id), Expected::Absent)?;
+/// }
+/// refs.delete_without_reflog(&gone, Expected::Value(Target::Direct(id)))?;
+/// let before = Snapshot::read(&stack, ObjectFormat::Sha1, StackLimits::default(), &cancel)?;
+/// let tombstone = |record: &girt::refs::reftable::RefRecord| {
+///     record.name.as_bytes() == gone.as_bytes() && record.target.is_none()
+/// };
+/// assert!(before.table.references.iter().any(tombstone));
+/// let retained = before
+///     .table
+///     .references
+///     .iter()
+///     .find(|record| record.name.as_bytes() == live.as_bytes())
+///     .unwrap()
+///     .clone();
+/// let report = compact(&stack, ObjectFormat::Sha1, StackLimits::default(), &cancel)?;
+/// assert!(report.input_tables >= 2); // Each successful transaction publishes a table.
+/// assert!(report.retained.is_empty());
+/// let after = Snapshot::read(&stack, ObjectFormat::Sha1, StackLimits::default(), &cancel)?;
+/// assert!(
+///     !after
+///         .table
+///         .references
+///         .iter()
+///         .any(|record| record.name.as_bytes() == gone.as_bytes())
+/// );
+/// assert!(after.table.references.contains(&retained)); // Includes the original update index.
+/// assert_eq!(refs.read(&gone)?, None);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn compact(
     directory: &Path,
     format: ObjectFormat,
