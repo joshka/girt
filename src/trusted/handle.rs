@@ -112,7 +112,7 @@ impl Handle {
         Ok(Self::new(repository).with_environment(environment))
     }
 
-    /// Chooses the environment used by [`Signature`] and [`workflow`] operations.
+    /// Chooses the environment for [`Signature`], [`Repository::ignore_rules`] and [`workflow`].
     /// Repository configuration is unchanged; load it with matching inputs before construction.
     #[must_use]
     pub fn with_environment(mut self, environment: Environment) -> Self {
@@ -191,17 +191,25 @@ impl Handle {
         self.reader.read_blob(id)
     }
 
-    /// Compares HEAD, index and raw working files through [`Repository::raw_status`].
-    /// Untracked files are included without ignore processing.
+    /// Compares HEAD, index and working files with ignore-aware collapsed untracked paths.
+    ///
+    /// Loads [`Repository::ignore_rules`] with the captured environment, then calls
+    /// [`Repository::status`] with HEAD as baseline and
+    /// [`crate::status::UntrackedFiles::Collapsed`]. Tracked content still uses raw bytes;
+    /// attributes, filters and normalization remain explicit policy. Use [`Self::repository`]
+    /// and [`Repository::raw_status`] for a raw untracked listing.
     ///
     /// # Errors
     ///
-    /// Returns raw-status platform, storage and resource failures. No mutation occurs.
-    pub fn status(&self) -> Result<crate::status::Report, crate::status::Error> {
-        self.reader.repository.raw_status(
+    /// Returns ignore-rule loading and status platform, storage and resource failures unchanged.
+    /// No mutation occurs.
+    pub fn status(&self) -> crate::Result<crate::status::Report> {
+        let rules = self.reader.repository.ignore_rules(&self.environment)?;
+        Ok(self.reader.repository.status(
             crate::status::Baseline::Head,
-            crate::status::Untracked::RawFilesWithoutIgnores,
-        )
+            crate::status::UntrackedFiles::Collapsed,
+            &rules,
+        )?)
     }
 
     /// Starts an empty snapshot through [`crate::tree::TreeEditor::new`].

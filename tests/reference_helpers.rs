@@ -16,7 +16,9 @@ fn git_attempt(root: &Path, args: &[&str]) -> Output {
             command.env_remove(key);
         }
     }
+    // Snapshot assertions must not race Git's automatic maintenance after a fixture command.
     let mut child = command
+        .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
         .current_dir(root)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", root.join("absent-config"))

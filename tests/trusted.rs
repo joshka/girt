@@ -590,3 +590,53 @@ fn shared_handles_support_parallel_content_reads() {
         assert_eq!(read.join().unwrap().unwrap(), b"parallel");
     });
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn status_uses_captured_environment_ignores_and_collapsed_directories() {
+    let (directory, _handle) = handle(ObjectFormat::Sha1);
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("ignore"), b"globally-ignored\n").unwrap();
+    git(
+        directory.path(),
+        &["config", "core.excludesFile", "~/ignore"],
+    );
+    std::fs::write(directory.path().join(".gitignore"), b"locally-ignored\n").unwrap();
+    std::fs::write(directory.path().join("locally-ignored"), b"local").unwrap();
+    std::fs::write(directory.path().join("globally-ignored"), b"global").unwrap();
+    std::fs::create_dir(directory.path().join("kept")).unwrap();
+    std::fs::write(directory.path().join("kept/file"), b"visible").unwrap();
+    let handle = Handle::new(Repository::open(directory.path()).unwrap())
+        .with_environment(environment().with("HOME", home.path()));
+
+    let report = handle.status().unwrap();
+
+    let paths: Vec<_> = report
+        .untracked
+        .iter()
+        .map(|entry| entry.path.as_slice())
+        .collect();
+    assert_eq!(paths, [b".gitignore".as_slice(), b"kept"]);
+    let kinds: Vec<_> = report.untracked.iter().map(|entry| entry.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            girt::status::UntrackedKind::File,
+            girt::status::UntrackedKind::Directory
+        ]
+    );
+    assert_eq!(
+        report.untracked_files,
+        Some(girt::status::UntrackedFiles::Collapsed)
+    );
+    assert!(report.raw_untracked.is_empty());
+    let raw = handle
+        .repository()
+        .raw_status(
+            girt::status::Baseline::Head,
+            girt::status::Untracked::RawFilesWithoutIgnores,
+        )
+        .unwrap();
+    assert!(raw.raw_untracked.contains(&b"locally-ignored".to_vec()));
+    assert!(raw.raw_untracked.contains(&b"globally-ignored".to_vec()));
+}
