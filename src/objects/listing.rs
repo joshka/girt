@@ -63,7 +63,7 @@ impl Objects {
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let stores: Vec<_> = objects.stores().collect();
     /// assert_eq!(stores.len(), 1);
     /// assert!(!stores[0].is_alternate());
@@ -109,7 +109,7 @@ impl Objects {
     ///     InitKind::Bare,
     /// )?;
     /// let id = repo.loose_objects().write_blob(b"listed\n")?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// assert_eq!(objects.object_ids(ListLimits::default())?, [id]);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

@@ -50,7 +50,7 @@ impl Objects {
     ///     InitKind::Bare,
     /// )?;
     /// let id = repo.loose_objects().write_blob(b"seven\n")?;
-    /// let objects = repo.objects(PackLimits::default())?;
+    /// let objects = repo.objects_with(PackLimits::default())?;
     /// let header = objects
     ///     .header(id, ReadLimits::default())?
     ///     .ok_or("missing")?;
@@ -72,7 +72,21 @@ impl Objects {
     /// Equivalent to calling [`Self::header`] for each identity, but shared delta-chain headers
     /// are read once per call and pack reads proceed in file order, which matters for listing a
     /// whole repository. Results pair each identity with its header, or `None` when absent;
-    /// their order is unspecified. `cancelled` is checked between objects.
+    /// their order is unspecified. Use [`Self::headers_controlled`] to cancel.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::header`].
+    pub fn headers(
+        &self,
+        ids: impl IntoIterator<Item = ObjectId>,
+        limits: ReadLimits,
+    ) -> Result<Vec<(ObjectId, Option<ObjectHeader>)>, ObjectReadError> {
+        self.headers_controlled(ids, limits, &AtomicBool::new(false))
+    }
+
+    /// Reads the headers of many objects as [`Self::headers`] does, checking `cancelled` between
+    /// objects.
     ///
     /// # Errors
     ///

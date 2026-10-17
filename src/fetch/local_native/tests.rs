@@ -90,7 +90,7 @@ fn local_progress_no_wants_has_no_pack() {
 fn local_progress_known_objects_are_not_read_or_packed() {
     let (_root, repo, id) = source(ObjectFormat::Sha1);
     let cancel = AtomicBool::new(false);
-    let objects = repo.objects(Default::default()).unwrap();
+    let objects = repo.objects_with(Default::default()).unwrap();
     let known = KnownHistory::new(&objects, &[id], FetchLimits::default(), &cancel).unwrap();
     let mut events = Vec::new();
     receive(
@@ -405,7 +405,7 @@ fn chain_dependencies(format: ObjectFormat, files: usize, commits: usize) -> usi
     let repo = Repository::open(path.join(".git")).unwrap();
     let cancel = AtomicBool::new(false);
     let known = KnownHistory::from_store_roots(
-        repo.objects(crate::PackLimits::default()).unwrap(),
+        repo.objects_with(crate::PackLimits::default()).unwrap(),
         &[base],
         &cancel,
     )

@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use clap::Parser;
-use girt::{ObjectId, PackLimits, ReadLimits, Repository};
+use girt::{ObjectId, Repository};
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
@@ -21,10 +21,8 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let repository = Repository::open(args.path)?;
-    let objects = repository.objects(PackLimits::default())?;
-    let object = objects
-        .read(args.id, ReadLimits::default())?
-        .ok_or("object absent")?;
+    let objects = repository.objects()?;
+    let object = objects.read(args.id)?.ok_or("object absent")?;
     eprintln!(
         "{} {} ({} bytes)",
         object.kind().as_str(),

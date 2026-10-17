@@ -10,8 +10,8 @@ the repository, index or working files.
 
 ## Choose the comparison layer
 
-`Objects::compare_trees(old, new, limits, cancel)` returns leaf additions, removals and changes in
-raw full-path byte order. `None` represents an empty side. A `TreeChange` has a byte path and
+`Objects::compare_trees_with(old, new, limits, cancel)` returns leaf additions, removals and changes
+in raw full-path byte order. `None` represents an empty side. A `TreeChange` has a byte path and
 optional old and new `TreeValue`s, each holding an identity and mode. Two present sides can describe
 a mode-only change. File/directory replacements produce a leaf change and changes beneath the
 directory; empty directories produce no leaf records. Gitlinks remain leaves rather than local
@@ -59,9 +59,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id,
         }],
     )?)?;
-    let objects = repo.objects(Default::default())?;
+    let objects = repo.objects()?;
     let cancel = AtomicBool::new(false);
-    let changes = objects.compare_trees(None, Some(tree), Default::default(), &cancel)?;
+    let changes = objects.compare_trees(None, Some(tree))?;
 
     let content = BlobContent::read(&objects, &changes[0], Default::default(), 1024, &cancel)?;
     assert!(content.old.is_empty());
@@ -246,7 +246,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (b"exact-new", b"identical\n"),
         (b"edited-new", b"one\ntwo\nthree\nFOUR\n"),
     ])?;
-    let objects = repo.objects(Default::default())?;
+    let objects = repo.objects()?;
     let options = Options::default().with_candidate_limit(0);
     let cancel = AtomicBool::new(false);
     let detection = objects.detect_rewrites_or_exact(

@@ -176,11 +176,11 @@ fn installation_failure_retains_visible_pack_and_reports_phase() {
 #[test]
 fn history_limit_and_index_lifecycle_have_owned_spans() {
     let (_root, repo) = repository();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let capture = Capture::default();
     tracing::dispatcher::with_default(&capture.dispatch(), || {
         let error = objects
-            .walk(
+            .walk_with(
                 &[ObjectId::for_blob(ObjectFormat::Sha1, SECRET)],
                 HistoryLimits::default().with_max_commits(0),
             )
@@ -215,7 +215,7 @@ fn push_first_write_failure_is_not_sent_without_logging_source_text() {
     let (_root, repo) = repository();
     let id = repo.loose_objects().write_blob(SECRET).unwrap();
     let prepared = PreparedPush::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         vec![
             PushCommand::new(
                 girt::refs::RefName::new("refs/tags/R03_SECRET_ref").unwrap(),
@@ -298,7 +298,7 @@ fn filtered_operations_never_modify_caller_fields() {
     let root = tempfile::tempdir().unwrap();
     let loose = girt::LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let (_repo_dir, repo) = repository();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let capture = Capture::default();
     let dispatch = tracing::Dispatch::new(
         tracing_subscriber::registry()
@@ -363,7 +363,7 @@ fn successful_push_protocol_exposes_remote_rejections_without_text() {
     let (_root, repo) = repository();
     let id = repo.loose_objects().write_blob(SECRET).unwrap();
     let prepared = PreparedPush::new(
-        &repo.objects(PackLimits::default()).unwrap(),
+        &repo.objects_with(PackLimits::default()).unwrap(),
         vec![
             PushCommand::new(
                 girt::refs::RefName::new("refs/tags/R03_SECRET_ref").unwrap(),
@@ -490,7 +490,7 @@ fn sha1_transfer_cannot_publish_into_sha256_repository() {
 fn peel_span_owns_read_children_and_redacts_payloads() {
     let (_root, repo) = repository();
     let id = repo.loose_objects().write_blob(SECRET).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let capture = Capture::default();
     let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
         objects.peel(id, girt::PeelLimits::default(), &AtomicBool::new(false))
@@ -513,7 +513,7 @@ fn peel_span_owns_read_children_and_redacts_payloads() {
 #[case::cancelled(true, "cancelled", "cancelled")]
 fn peel_failure_classification(#[case] cancel: bool, #[case] outcome: &str, #[case] class: &str) {
     let (_root, repo) = repository();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let capture = Capture::default();
     let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
         objects.peel(

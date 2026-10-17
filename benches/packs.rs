@@ -12,7 +12,7 @@ mod pack_git;
 fn packs(c: &mut Criterion) {
     for count in [16, 256] {
         let fixture = pack_git::Fixture::new(girt::ObjectFormat::Sha1, true, count);
-        let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+        let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
         // Retain and inspect the shared fixture metadata outside timed operations.
         assert!(fixture.root.path().exists());
         assert!(fixture.index_path.exists());
@@ -44,7 +44,7 @@ fn packs(c: &mut Criterion) {
             b.iter(|| {
                 fixture
                     .repo
-                    .objects(black_box(PackLimits::default()))
+                    .objects_with(black_box(PackLimits::default()))
                     .unwrap()
             })
         });
@@ -58,7 +58,7 @@ fn packs(c: &mut Criterion) {
             .0;
         c.bench_function(&format!("packs/peel-tag-cold-reader-{count}"), |b| {
             b.iter_batched(
-                || fixture.repo.objects(PackLimits::default()).unwrap(),
+                || fixture.repo.objects_with(PackLimits::default()).unwrap(),
                 |reader| {
                     reader
                         .peel(
@@ -84,21 +84,21 @@ fn packs(c: &mut Criterion) {
                 girt::ObjectId::for_blob(girt::ObjectFormat::Sha1, b"absent benchmark object");
             b.iter(|| {
                 objects
-                    .read(black_box(absent), ReadLimits::default())
+                    .read_with(black_box(absent), ReadLimits::default())
                     .unwrap()
             })
         });
         c.bench_function(&format!("packs/indexed-ordinary-{count}"), |b| {
             b.iter(|| {
                 objects
-                    .read(black_box(fixture.ordinary), ReadLimits::default())
+                    .read_with(black_box(fixture.ordinary), ReadLimits::default())
                     .unwrap()
             })
         });
         c.bench_function(&format!("packs/indexed-delta-{count}"), |b| {
             b.iter(|| {
                 objects
-                    .read(black_box(fixture.delta), ReadLimits::default())
+                    .read_with(black_box(fixture.delta), ReadLimits::default())
                     .unwrap()
             })
         });
@@ -117,7 +117,7 @@ fn large_storage(c: &mut Criterion) {
     .unwrap();
     let small = report["small"].as_str().unwrap().parse().unwrap();
     let large = report["large"].as_str().unwrap().parse().unwrap();
-    let objects = repository.objects(PackLimits::default()).unwrap();
+    let objects = repository.objects_with(PackLimits::default()).unwrap();
     let mut group = c.benchmark_group("large-storage");
     group
         .sampling_mode(criterion::SamplingMode::Flat)
@@ -126,7 +126,7 @@ fn large_storage(c: &mut Criterion) {
     group.bench_function("open-warm", |b| {
         b.iter(|| {
             repository
-                .objects(black_box(PackLimits::default()))
+                .objects_with(black_box(PackLimits::default()))
                 .unwrap()
         })
     });
@@ -134,14 +134,14 @@ fn large_storage(c: &mut Criterion) {
     group.bench_function("small-warm", |b| {
         b.iter(|| {
             objects
-                .read(black_box(small), ReadLimits::default())
+                .read_with(black_box(small), ReadLimits::default())
                 .unwrap()
         })
     });
     group.bench_function("32mib-warm", |b| {
         b.iter(|| {
             objects
-                .read(black_box(large), ReadLimits::default())
+                .read_with(black_box(large), ReadLimits::default())
                 .unwrap()
         })
     });
@@ -165,14 +165,14 @@ fn store_open(c: &mut Criterion) {
     group.bench_function("open-head-warm", |b| {
         b.iter(|| {
             repository
-                .objects(PackLimits::trusted())
+                .objects_with(PackLimits::trusted())
                 .unwrap()
-                .read(black_box(head), ReadLimits::trusted())
+                .read_with(black_box(head), ReadLimits::trusted())
                 .unwrap()
                 .unwrap()
         })
     });
-    let mut objects = repository.objects(PackLimits::trusted()).unwrap();
+    let mut objects = repository.objects_with(PackLimits::trusted()).unwrap();
     group.bench_function("refresh-warm", |b| {
         b.iter(|| {
             objects

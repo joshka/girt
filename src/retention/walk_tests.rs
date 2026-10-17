@@ -272,7 +272,7 @@ fn damage_rescued_after_complete_plan_refuses_prune(#[case] format: crate::Objec
     let store = session.plan.store.as_ref().unwrap();
     assert_eq!(
         store
-            .read(fixture.ordinary, crate::ReadLimits::default())
+            .read_with(fixture.ordinary, crate::ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -301,7 +301,7 @@ fn damage_rescued_after_complete_plan_refuses_prune(#[case] format: crate::Objec
     );
     assert!(
         store
-            .read(fixture.delta, crate::ReadLimits::default())
+            .read_with(fixture.delta, crate::ReadLimits::default())
             .is_err()
     );
 }

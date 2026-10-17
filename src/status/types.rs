@@ -18,7 +18,7 @@ use crate::{ChangeStatus, ObjectId, TreeChange, TreeCompareLimits, TreeValue, in
 /// )?;
 ///
 /// use girt::status::{Baseline, Limits, Untracked};
-/// let report = repo.raw_status(
+/// let report = repo.raw_status_with(
 ///     Baseline::Tree(None),
 ///     Untracked::Omit,
 ///     Limits::default(),
@@ -55,7 +55,7 @@ pub enum Baseline {
 /// use girt::status::{Baseline, Limits, Untracked};
 /// std::fs::write(repo.worktree().unwrap().join("notes.tmp"), b"scratch")?;
 /// std::fs::write(repo.worktree().unwrap().join(".gitignore"), b"*.tmp\n")?;
-/// let report = repo.raw_status(
+/// let report = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::RawFilesWithoutIgnores,
 ///     Limits::default(),
@@ -106,7 +106,7 @@ pub enum Untracked {
 /// edit.commit()?;
 /// std::fs::write(repo.worktree().unwrap().join("a"), b"12345")?;
 /// std::fs::write(repo.worktree().unwrap().join("b"), b"12345")?;
-/// let result = repo.raw_status(
+/// let result = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
 ///     Limits::default()
@@ -272,7 +272,7 @@ pub enum Comparison {
 /// ])?;
 /// edit.commit()?;
 ///
-/// let report = repo.raw_status(
+/// let report = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
 ///     Limits::default(),
@@ -332,7 +332,7 @@ pub struct Report {
 /// edit.replace_entries(vec![Entry::new(b"missing".to_vec(), Mode::Regular, id)])?;
 /// edit.commit()?;
 ///
-/// let report = repo.raw_status(
+/// let report = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
 ///     Limits::default(),
@@ -407,7 +407,7 @@ impl WorktreeChange {
 /// edit.commit()?;
 /// std::fs::write(repo.worktree().unwrap().join("dir"), b"untracked obstruction")?;
 ///
-/// let report = repo.raw_status(
+/// let report = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
 ///     Limits::default(),
@@ -454,7 +454,7 @@ pub enum Change {
 ///     directory.path().join("repo"),
 ///     InitKind::Worktree,
 /// )?;
-/// let result = repository.raw_status(
+/// let result = repository.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
 ///     Limits::default(),

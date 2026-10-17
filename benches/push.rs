@@ -23,16 +23,16 @@ fn push(c: &mut Criterion) {
     for count in [16, 256] {
         let fixture = pack_git::Fixture::new(girt::ObjectFormat::Sha1, true, count);
         assert!(fixture.index_path.exists());
-        let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+        let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
         assert!(
             objects
-                .read(fixture.ordinary, ReadLimits::default())
+                .read_with(fixture.ordinary, ReadLimits::default())
                 .unwrap()
                 .is_some()
         );
         assert!(
             objects
-                .read(fixture.delta, ReadLimits::default())
+                .read_with(fixture.delta, ReadLimits::default())
                 .unwrap()
                 .is_some()
         );
@@ -70,7 +70,7 @@ fn push(c: &mut Criterion) {
         let commit = girt::Commit::parse(
             girt::ObjectFormat::Sha1,
             objects
-                .read(old, ReadLimits::default())
+                .read_with(old, ReadLimits::default())
                 .unwrap()
                 .unwrap()
                 .data(),
@@ -279,7 +279,7 @@ fn blob_edits(c: &mut Criterion) {
     let base = repo.loose_objects().write_blob(&data).unwrap();
     data[262144..262152].copy_from_slice(b"EDITED!!");
     let tip = repo.loose_objects().write_blob(&data).unwrap();
-    let objects = repo.objects(PackLimits::trusted()).unwrap();
+    let objects = repo.objects_with(PackLimits::trusted()).unwrap();
     let command = PushCommand::new(RefName::new("refs/tags/edit").unwrap(), None, tip)
         .with_force(ForcePolicy::Allow);
     let cancel = AtomicBool::new(false);

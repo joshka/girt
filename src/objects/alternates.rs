@@ -22,7 +22,7 @@ use super::ObjectReadError;
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let strict = AlternateLimits::default().with_max_stores(0);
 /// assert!(
 ///     repo.objects_with_alternates(PackLimits::default(), strict)

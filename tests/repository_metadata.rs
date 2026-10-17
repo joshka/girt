@@ -170,9 +170,9 @@ fn metadata_ignores_corrupt_objects_and_index(
     let opened = location.open_with_config(&ConfigInputs::default()).unwrap();
     assert!(
         opened
-            .objects(girt::PackLimits::default())
+            .objects_with(girt::PackLimits::default())
             .unwrap()
-            .read(id, girt::ReadLimits::default())
+            .read_with(id, girt::ReadLimits::default())
             .is_err()
     );
 }

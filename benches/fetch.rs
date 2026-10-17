@@ -26,16 +26,16 @@ fn fetch(c: &mut Criterion) {
     let mut group = c.benchmark_group("fetch");
     for count in [16, 256] {
         let fixture = pack_git::Fixture::new(girt::ObjectFormat::Sha1, true, count);
-        let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+        let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
         assert!(
             objects
-                .read(fixture.ordinary, ReadLimits::default())
+                .read_with(fixture.ordinary, ReadLimits::default())
                 .unwrap()
                 .is_some()
         );
         assert!(
             objects
-                .read(fixture.delta, ReadLimits::default())
+                .read_with(fixture.delta, ReadLimits::default())
                 .unwrap()
                 .is_some()
         );
@@ -117,7 +117,7 @@ fn fetch(c: &mut Criterion) {
         let commit = girt::Commit::parse(
             girt::ObjectFormat::Sha1,
             objects
-                .read(old, ReadLimits::default())
+                .read_with(old, ReadLimits::default())
                 .unwrap()
                 .unwrap()
                 .data(),

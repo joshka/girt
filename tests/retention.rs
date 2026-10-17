@@ -818,7 +818,7 @@ fn pack_retirement_refuses_without_directory_durability() {
 #[case::sha256("sha256")]
 fn published_repack_is_git_usable_and_preserves_readers(#[case] format: &str) {
     let (root, repo, first, second) = fixture_format(format);
-    let mut reader = repo.objects(PackLimits::default()).unwrap();
+    let mut reader = repo.objects_with(PackLimits::default()).unwrap();
     let policy =
         RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let result = repo
@@ -878,7 +878,7 @@ fn published_repack_is_git_usable_and_preserves_readers(#[case] format: &str) {
     );
     assert_eq!(
         reader
-            .read(second, ReadLimits::default())
+            .read_with(second, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -920,9 +920,9 @@ fn unstored_canonical_empty_tree_is_retained_and_repacked(#[case] format: &str) 
             .exists()
     );
     assert!(
-        repo.objects(PackLimits::default())
+        repo.objects_with(PackLimits::default())
             .unwrap()
-            .read(empty, ReadLimits::default())
+            .read_with(empty, ReadLimits::default())
             .unwrap()
             .is_some()
     );

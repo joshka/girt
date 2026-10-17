@@ -135,7 +135,10 @@ fn pack(repo: &Path, options: PackRefsOptions) -> girt::refs::PackRefsReport {
     repository
         .references()
         .unwrap()
-        .pack(&repository.objects(PackLimits::default()).unwrap(), options)
+        .pack(
+            &repository.objects_with(PackLimits::default()).unwrap(),
+            options,
+        )
         .unwrap()
 }
 
@@ -250,7 +253,7 @@ fn held_packed_lock_fails_without_effects() {
     fs::write(repo.join(".git/packed-refs.lock"), "").unwrap();
     let repository = Repository::open(&repo).unwrap();
     let result = repository.references().unwrap().pack(
-        &repository.objects(PackLimits::default()).unwrap(),
+        &repository.objects_with(PackLimits::default()).unwrap(),
         PackRefsOptions::ALL,
     );
     assert!(matches!(
@@ -301,7 +304,7 @@ fn reftable_is_unsupported() {
     );
     let repository = Repository::open(root.path().join("repo")).unwrap();
     let result = repository.references().unwrap().pack(
-        &repository.objects(PackLimits::default()).unwrap(),
+        &repository.objects_with(PackLimits::default()).unwrap(),
         PackRefsOptions::ALL,
     );
     assert!(matches!(

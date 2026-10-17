@@ -31,9 +31,9 @@ fn alternate(repo: &Repository, bytes: &[u8]) {
 }
 
 fn read(repo: &Repository, id: ObjectId) -> Option<Vec<u8>> {
-    repo.objects(PackLimits::default())
+    repo.objects_with(PackLimits::default())
         .unwrap()
-        .read(id, ReadLimits::default())
+        .read_with(id, ReadLimits::default())
         .unwrap()
         .map(|o| o.into_data())
 }
@@ -111,15 +111,15 @@ fn reads_borrowed_packs_with_aggregate_limits(#[case] format: ObjectFormat) {
         read(&a, fixture.delta).unwrap()
     );
     assert!(matches!(
-        a.objects(PackLimits::default().with_max_packs(0)),
+        a.objects_with(PackLimits::default().with_max_packs(0)),
         Err(ObjectReadError::Limit("pack count"))
     ));
     assert!(matches!(
-        a.objects(PackLimits::default().with_max_bytes(1)),
+        a.objects_with(PackLimits::default().with_max_bytes(1)),
         Err(ObjectReadError::Limit("pack snapshot bytes"))
     ));
     assert!(matches!(
-        a.objects(PackLimits::default().with_max_open_files(1)),
+        a.objects_with(PackLimits::default().with_max_open_files(1)),
         Err(ObjectReadError::Limit("pack file handles"))
     ));
     assert_eq!(snapshot(fixture.root.path()), before);
@@ -135,7 +135,7 @@ fn reads_borrowed_packs_with_aggregate_limits(#[case] format: ObjectFormat) {
     )
     .unwrap();
     assert!(matches!(
-        a.objects(PackLimits::default().with_max_packs(1)),
+        a.objects_with(PackLimits::default().with_max_packs(1)),
         Err(ObjectReadError::Limit("pack count"))
     ));
     let pair_bytes = fs::metadata(&primary_index).unwrap().len()
@@ -143,15 +143,15 @@ fn reads_borrowed_packs_with_aggregate_limits(#[case] format: ObjectFormat) {
             .unwrap()
             .len();
     assert!(matches!(
-        a.objects(PackLimits::default().with_max_bytes(pair_bytes as usize)),
+        a.objects_with(PackLimits::default().with_max_bytes(pair_bytes as usize)),
         Err(ObjectReadError::Limit("pack snapshot bytes"))
     ));
     assert!(matches!(
-        a.objects(PackLimits::default().with_max_open_files(3)),
+        a.objects_with(PackLimits::default().with_max_open_files(3)),
         Err(ObjectReadError::Limit("pack file handles"))
     ));
     assert!(matches!(
-        a.objects(
+        a.objects_with(
             PackLimits::default()
                 .with_max_index_bytes(fs::metadata(&primary_index).unwrap().len() as usize)
         ),
@@ -168,7 +168,7 @@ fn topology_is_fixed_until_reopen_and_loose_objects_remain_live(#[case] format: 
     let b = init(&root.path().join("b"), format);
     let c = init(&root.path().join("c"), format);
     alternate(&a, b"../../b/objects\n");
-    let old = a.objects(PackLimits::default()).unwrap();
+    let old = a.objects_with(PackLimits::default()).unwrap();
     // A joined writer is a deterministic edit after snapshot construction.
     let metadata = a.object_dir().join("info/alternates");
     std::thread::spawn(move || fs::write(metadata, b"../../c/objects\n").unwrap())
@@ -176,8 +176,16 @@ fn topology_is_fixed_until_reopen_and_loose_objects_remain_live(#[case] format: 
         .unwrap();
     let old_id = b.loose_objects().write_blob(b"live old store").unwrap();
     let new_id = c.loose_objects().write_blob(b"new topology").unwrap();
-    assert!(old.read(old_id, ReadLimits::default()).unwrap().is_some());
-    assert!(old.read(new_id, ReadLimits::default()).unwrap().is_none());
+    assert!(
+        old.read_with(old_id, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        old.read_with(new_id, ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
     assert!(read(&a, new_id).is_some());
     assert!(read(&a, old_id).is_none());
 }
@@ -194,9 +202,9 @@ fn corrupt_primary_duplicate_does_not_fall_through(#[case] format: ObjectFormat)
     a.loose_objects().write_blob(b"duplicate").unwrap();
     let hex = id.to_string();
     fs::write(a.object_dir().join(&hex[..2]).join(&hex[2..]), b"corrupt").unwrap();
-    let objects = a.objects(PackLimits::default()).unwrap();
+    let objects = a.objects_with(PackLimits::default()).unwrap();
     assert!(matches!(
-        objects.read(id, ReadLimits::default()),
+        objects.read_with(id, ReadLimits::default()),
         Err(ObjectReadError::Loose(_))
     ));
 }
@@ -230,7 +238,7 @@ fn aliases_are_visited_once_and_primary_survives_missing_alternate(#[case] forma
         .unwrap();
     assert_eq!(
         objects
-            .read(id, ReadLimits::default())
+            .read_with(id, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -238,7 +246,7 @@ fn aliases_are_visited_once_and_primary_survives_missing_alternate(#[case] forma
     );
     assert!(
         objects
-            .read(
+            .read_with(
                 ObjectId::for_blob(format, b"missing"),
                 ReadLimits::default()
             )
@@ -302,7 +310,7 @@ fn malformed_records_are_explicit(#[case] bytes: &[u8]) {
     let a = init(root.path(), ObjectFormat::Sha1);
     alternate(&a, bytes);
     assert!(matches!(
-        a.objects(PackLimits::default()),
+        a.objects_with(PackLimits::default()),
         Err(ObjectReadError::Alternate { .. })
     ));
 }
@@ -312,7 +320,7 @@ fn metadata_io_error_retains_its_cause() {
     let root = tempfile::tempdir().unwrap();
     let a = init(root.path(), ObjectFormat::Sha1);
     fs::create_dir(a.object_dir().join("info/alternates")).unwrap();
-    let error = a.objects(PackLimits::default()).unwrap_err();
+    let error = a.objects_with(PackLimits::default()).unwrap_err();
     assert!(
         matches!(&error, ObjectReadError::Path { path, .. } if path.ends_with("info/alternates"))
     );
@@ -367,7 +375,7 @@ fn follows_symlink_alias_once(#[case] format: ObjectFormat) {
         .unwrap();
     assert_eq!(
         objects
-            .read(id, ReadLimits::default())
+            .read_with(id, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -388,7 +396,7 @@ fn denied_metadata_retains_permission_cause() {
     alternate(&a, b".\n");
     let path = a.object_dir().join("info/alternates");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o0)).unwrap();
-    let result = a.objects(PackLimits::default());
+    let result = a.objects_with(PackLimits::default());
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     assert!(
         matches!(result, Err(ObjectReadError::Path { source, .. }) if source.kind() == std::io::ErrorKind::PermissionDenied)
@@ -412,9 +420,9 @@ fn depth_first_precedence_is_stable(#[case] format: ObjectFormat) {
     fs::write(c.object_dir().join(&hex[..2]).join(&hex[2..]), b"corrupt").unwrap();
     assert_eq!(read(&a, id).unwrap(), b"depth first");
     alternate(&a, b"../../c/objects\n../../b/objects\n");
-    let objects = a.objects(PackLimits::default()).unwrap();
+    let objects = a.objects_with(PackLimits::default()).unwrap();
     assert!(matches!(
-        objects.read(id, ReadLimits::default()),
+        objects.read_with(id, ReadLimits::default()),
         Err(ObjectReadError::Loose(_))
     ));
 }
@@ -452,11 +460,11 @@ fn bounded_shared_graph_workload() {
     }
     alternate(&a, &records);
     let started = std::time::Instant::now();
-    let reader = a.objects(PackLimits::default()).unwrap();
+    let reader = a.objects_with(PackLimits::default()).unwrap();
     let elapsed = started.elapsed();
     assert!(
         reader
-            .read(
+            .read_with(
                 ObjectId::for_blob(ObjectFormat::Sha1, b"missing"),
                 ReadLimits::default()
             )

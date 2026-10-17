@@ -8,7 +8,7 @@ use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, eyre};
 use girt::display::DateFormat;
 use girt::revision::Selection;
-use girt::{Commit, HistoryLimits, IdentityDate, IdentityRef, ObjectId, Objects};
+use girt::{Commit, HistoryLimits, IdentityDate, IdentityRef, ObjectId, Objects, ReadLimits};
 
 use crate::common::{self, display_bytes};
 use crate::{Context, complete};
@@ -70,7 +70,7 @@ pub struct LogArgs {
 
 pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = common::objects(&repository)?;
+    let objects = repository.objects()?;
     let commit = |rev: &str| common::resolve_commit(&repository, &objects, rev);
     let limits = HistoryLimits::trusted();
     let mut out = common::stdout();
@@ -79,7 +79,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
             let selection = common::select(&repository, &objects, &revs)?;
             let hidden = hidden(&objects, &selection)?;
             let ids = objects
-                .walk(&selection.include, limits)
+                .walk_with(&selection.include, limits)
                 .wrap_err("walking history")?;
             let count = ids.iter().filter(|id| !hidden.contains(id)).count();
             writeln!(out, "{count}")?;
@@ -87,7 +87,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
         }
         Command::MergeBase { a, b, all } => {
             let bases = objects
-                .merge_bases(commit(&a)?, commit(&b)?, limits)
+                .merge_bases_with(commit(&a)?, commit(&b)?, limits)
                 .wrap_err("finding merge bases")?;
             let shown = if all {
                 &bases[..]
@@ -108,7 +108,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
             descendant,
         } => {
             let yes = objects
-                .is_ancestor(commit(&ancestor)?, commit(&descendant)?, limits)
+                .is_ancestor_with(commit(&ancestor)?, commit(&descendant)?, limits)
                 .wrap_err("checking ancestry")?;
             if !context.git {
                 writeln!(out, "{}", if yes { "yes" } else { "no" })?;
@@ -126,7 +126,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
 
 pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = common::objects(&repository)?;
+    let objects = repository.objects()?;
     let yellow = crate::color::style(context.color, crate::color::YELLOW);
     let reset = crate::color::style(context.color, crate::color::RESET);
     let selection = common::select(&repository, &objects, &args.revs)?;
@@ -236,7 +236,10 @@ impl<'a> DateOrder<'a> {
         if !self.seen.insert(id) {
             return Ok(());
         }
-        let commit = common::read_commit(self.objects, id)?;
+        let commit = self
+            .objects
+            .read_commit_with(id, ReadLimits::trusted())
+            .wrap_err_with(|| format!("reading commit {id}"))?;
         let date = commit
             .committer()
             .ok()
@@ -252,7 +255,10 @@ impl<'a> DateOrder<'a> {
         let Some((_, _, id)) = self.heap.pop() else {
             return Ok(None);
         };
-        let commit = common::read_commit(self.objects, id)?;
+        let commit = self
+            .objects
+            .read_commit_with(id, ReadLimits::trusted())
+            .wrap_err_with(|| format!("reading commit {id}"))?;
         if !self.objects.shallow_roots().contains(id) {
             for parent in commit.parents() {
                 self.push(*parent)?;
@@ -272,7 +278,7 @@ fn hidden(objects: &Objects, selection: &Selection) -> Result<HashSet<ObjectId>>
         return Ok(HashSet::new());
     }
     let ids = objects
-        .walk(&selection.exclude, HistoryLimits::trusted())
+        .walk_with(&selection.exclude, HistoryLimits::trusted())
         .wrap_err("walking excluded history")?;
     Ok(ids.into_iter().collect())
 }

@@ -271,7 +271,7 @@ fn cleanup_cancels_a_pending_packed_ref_wait_without_stealing_the_lock() {
     std::thread::scope(|scope| {
         let worker = scope.spawn(|| {
             let references = repo.references().unwrap();
-            let objects = repo.objects(girt::PackLimits::default()).unwrap();
+            let objects = repo.objects_with(girt::PackLimits::default()).unwrap();
             started.send(()).unwrap();
             references.pack(
                 &objects,

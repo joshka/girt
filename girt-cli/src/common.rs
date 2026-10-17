@@ -2,14 +2,13 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::config::ConfigInputs;
 use girt::refs::{RefName, References};
 use girt::revision::{Range, Resolver, Revision, Selection};
 use girt::workflow::Environment;
-use girt::{Commit, Config, ObjectId, ObjectKind, Objects, PackLimits, ReadLimits, Repository};
+use girt::{Config, ObjectId, ObjectKind, Objects, Repository};
 
 /// Maximum symbolic-ref hops followed while resolving a reference.
 const MAX_SYMREF_DEPTH: usize = 5;
@@ -86,28 +85,10 @@ impl Context {
     }
 }
 
-/// A never-set cancellation flag for commands that run to completion.
-pub fn not_cancelled() -> &'static AtomicBool {
-    static FLAG: AtomicBool = AtomicBool::new(false);
-    &FLAG
-}
-
-/// Opens the repository's object storage with default limits.
-pub fn objects(repository: &Repository) -> Result<Objects> {
-    repository
-        .objects(PackLimits::default())
-        .wrap_err("opening object storage")
-}
-
-/// Generous read limits for interactive use: objects up to 1 GiB.
-pub fn read_limits() -> ReadLimits {
-    ReadLimits::default().with_max_object_bytes(1 << 30)
-}
-
 /// Resolves a revision expression such as `main~2`, `v1.0^{tree}` or `HEAD:path`; see
 /// [`girt::revision`] for the syntax.
 pub fn resolve(repository: &Repository, revision: &str) -> Result<ObjectId> {
-    let objects = objects(repository)?;
+    let objects = repository.objects()?;
     resolve_with(repository, &objects, revision, None)
 }
 
@@ -137,7 +118,7 @@ fn resolve_with(
     kind: Option<ObjectKind>,
 ) -> Result<ObjectId> {
     let parsed: Revision = revision.parse()?;
-    let resolver = Resolver::new(repository, objects)?.with_read_limits(read_limits());
+    let resolver = Resolver::new(repository, objects)?;
     let id = match kind {
         Some(kind) => resolver.resolve_to(&parsed, kind),
         None => resolver.resolve(&parsed),
@@ -156,7 +137,7 @@ pub fn select(repository: &Repository, objects: &Objects, ranges: &[String]) -> 
             .map(|range| range.parse())
             .collect::<Result<Vec<Range>, _>>()?
     };
-    let resolver = Resolver::new(repository, objects)?.with_read_limits(read_limits());
+    let resolver = Resolver::new(repository, objects)?;
     Ok(resolver.select(&parsed)?)
 }
 
@@ -176,18 +157,6 @@ pub fn resolve_tree(
     revision: &str,
 ) -> Result<ObjectId> {
     resolve_kind(repository, objects, revision, ObjectKind::Tree)
-}
-
-/// Reads and parses a commit.
-pub fn read_commit(objects: &Objects, id: ObjectId) -> Result<Commit> {
-    let object = objects
-        .read(id, read_limits())
-        .wrap_err_with(|| format!("reading {id}"))?
-        .ok_or_else(|| eyre!("missing object {id}"))?;
-    if object.kind() != ObjectKind::Commit {
-        bail!("{id} is a {:?}, not a commit", object.kind());
-    }
-    Commit::parse(objects.object_format(), object.data()).wrap_err_with(|| format!("parsing {id}"))
 }
 
 /// Formats bytes for display, replacing invalid UTF-8.

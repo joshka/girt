@@ -109,7 +109,7 @@ impl Default for SparseLimits {
 ///     Entry::new(b"vendor/".to_vec(), Mode::SparseDirectory, tree).with_skip_worktree(true);
 /// let mut index = Index::new(ObjectFormat::Sha1, vec![collapsed], Limits::default())?;
 /// let original = index.clone();
-/// let objects = repo.objects(Default::default())?;
+/// let objects = repo.objects_with(Default::default())?;
 /// let error = index
 ///     .expand_sparse(
 ///         &objects,
@@ -211,7 +211,7 @@ impl Index {
     /// let collapsed =
     ///     Entry::new(b"vendor/".to_vec(), Mode::SparseDirectory, tree).with_skip_worktree(true);
     /// let mut index = Index::new(ObjectFormat::Sha1, vec![collapsed], Limits::default())?;
-    /// let objects = repo.objects(Default::default())?;
+    /// let objects = repo.objects_with(Default::default())?;
     ///
     /// index.expand_sparse(
     ///     &objects,
@@ -381,7 +381,7 @@ mod tests {
         let index = Index::new(format, vec![directory(id)], Limits::default()).unwrap();
         (
             root,
-            repo.objects(crate::PackLimits::default()).unwrap(),
+            repo.objects_with(crate::PackLimits::default()).unwrap(),
             index,
         )
     }
@@ -455,7 +455,7 @@ mod tests {
         let mut index =
             Index::new(ObjectFormat::Sha1, vec![directory(id)], Limits::default()).unwrap();
         let before = index.encode(Limits::default()).unwrap();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         let result = index.expand_sparse(
             &objects,
             Limits::default(),
@@ -530,7 +530,7 @@ mod tests {
         let id = repo.loose_objects().write_tree(&tree).unwrap();
         let mut index = Index::new(format, vec![directory(id)], Limits::default()).unwrap();
         let before = index.encode(Limits::default()).unwrap();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         let limits = SparseLimits {
             max_depth: 0,
             ..SparseLimits::default()
@@ -569,7 +569,7 @@ mod tests {
         let tree = Tree::new(format, vec![]).unwrap();
         let id = repo.loose_objects().write_tree(&tree).unwrap();
         let mut index = Index::new(format, vec![directory(id)], Limits::default()).unwrap();
-        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let objects = repo.objects_with(crate::PackLimits::default()).unwrap();
         index
             .expand_sparse(
                 &objects,

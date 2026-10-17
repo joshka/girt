@@ -33,7 +33,7 @@ fn peeling(c: &mut Criterion) {
                 id = loose.write_tag(&tag).unwrap();
                 kind = ObjectKind::Tag;
             }
-            let objects = repo.objects(PackLimits::default()).unwrap();
+            let objects = repo.objects_with(PackLimits::default()).unwrap();
             let cancel = AtomicBool::new(false);
             objects.peel(id, PeelLimits::default(), &cancel).unwrap();
             group.bench_function(format!("{format}/{depth}"), |b| {

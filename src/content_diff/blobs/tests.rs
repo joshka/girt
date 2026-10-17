@@ -25,7 +25,7 @@ impl Fixture {
         let tree = loose
             .write_tree(&Tree::new(crate::ObjectFormat::Sha1, vec![]).unwrap())
             .unwrap();
-        let objects = repo.objects(PackLimits::default()).unwrap();
+        let objects = repo.objects_with(PackLimits::default()).unwrap();
         Self {
             root,
             objects,

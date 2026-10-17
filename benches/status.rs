@@ -49,7 +49,7 @@ fn benchmark(c: &mut Criterion) {
         edit.commit().unwrap();
         let cancel = AtomicBool::new(false);
         let run = || {
-            repo.raw_status(
+            repo.raw_status_with(
                 Baseline::Tree(Some(tree_id)),
                 Untracked::Omit,
                 Limits::default(),

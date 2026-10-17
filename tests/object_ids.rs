@@ -41,9 +41,9 @@ fn sha1_repository_refuses_sha256_read_and_checkout_before_locking() {
     )
     .unwrap();
     let id = ObjectId::Sha256([1; 32]);
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert!(matches!(
-        objects.read(id, ReadLimits::default()),
+        objects.read_with(id, ReadLimits::default()),
         Err(girt::ObjectReadError::Loose(
             girt::loose::Error::ObjectFormat(_)
         ))
@@ -51,7 +51,7 @@ fn sha1_repository_refuses_sha256_read_and_checkout_before_locking() {
     let lock = repo.git_dir().join("index.lock");
     std::fs::write(&lock, b"another owner").unwrap();
     let failure = repo
-        .checkout_tree(
+        .checkout_tree_with(
             None,
             Some(id),
             girt::checkout::Limits::default(),

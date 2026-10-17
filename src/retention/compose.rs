@@ -168,8 +168,8 @@ impl Repository {
     /// assert!(report.expired.is_some() && report.retired.is_some() && report.pruned.is_some());
     /// assert!(report.pruned.unwrap().deleted.is_empty());
     /// assert!(
-    ///     repo.objects(Default::default())?
-    ///         .read(id, Default::default())?
+    ///     repo.objects_with(Default::default())?
+    ///         .read_with(id, Default::default())?
     ///         .is_some()
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -259,8 +259,8 @@ impl Repository {
     /// let report = repo.collect_garbage(&mut PrivateFixture, &policy, &cancel)?;
     /// assert_eq!(report.pruned.unwrap().deleted, [id]);
     /// assert!(
-    ///     repo.objects(Default::default())?
-    ///         .read(id, Default::default())?
+    ///     repo.objects_with(Default::default())?
+    ///         .read_with(id, Default::default())?
     ///         .is_none()
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())

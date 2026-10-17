@@ -18,7 +18,7 @@
 /// # let commit = include!("../doctest/commit.rs");
 /// let first = commit(&repo, &[], "First commit")?;
 /// let command = PushCommand::new(RefName::new("refs/heads/main")?, None, first);
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 ///
 /// let mut events = Vec::new();
 /// let cancel = AtomicBool::new(false);

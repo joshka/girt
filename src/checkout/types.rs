@@ -38,7 +38,7 @@ use crate::{ObjectId, index};
 ///
 /// use girt::checkout::Error;
 /// let failure = repo
-///     .checkout_tree(
+///     .checkout_tree_with(
 ///         None,
 ///         Some(tree),
 ///         Limits::default().with_max_file_bytes(4),
@@ -221,8 +221,8 @@ pub enum Stage {
 ///     vec![entry(b"path", EntryMode::Tree, subtree)],
 /// )?)?;
 /// let cancel = AtomicBool::new(false);
-/// repo.checkout_tree(None, Some(old), Limits::default(), &cancel)?;
-/// let report = repo.checkout_tree(Some(old), Some(new), Limits::default(), &cancel)?;
+/// repo.checkout_tree_with(None, Some(old), Limits::default(), &cancel)?;
+/// let report = repo.checkout_tree_with(Some(old), Some(new), Limits::default(), &cancel)?;
 /// let at_path: Vec<_> = report
 ///     .applied
 ///     .iter()
@@ -293,7 +293,7 @@ pub struct Applied {
 ///
 /// use girt::checkout::{Action, Stage};
 /// let report =
-///     repo.checkout_tree(None, Some(tree), Limits::default(), &AtomicBool::new(false))?;
+///     repo.checkout_tree_with(None, Some(tree), Limits::default(), &AtomicBool::new(false))?;
 /// assert_eq!(report.stage, Stage::Publication);
 /// assert!(report.index_published);
 /// assert!(
@@ -339,7 +339,7 @@ pub struct Report {
 ///     InitKind::Worktree,
 /// )?;
 /// let failure = repository
-///     .checkout_tree(None, None, Limits::default(), &AtomicBool::new(true))
+///     .checkout_tree_with(None, None, Limits::default(), &AtomicBool::new(true))
 ///     .unwrap_err();
 /// assert!(matches!(failure.cause.as_ref(), Error::Cancelled));
 /// assert_eq!(failure.report.stage, Stage::Preparation);
@@ -400,7 +400,7 @@ pub struct Failure {
 /// let path = repo.worktree().unwrap().join("file");
 /// std::fs::write(&path, b"local notes")?;
 /// let failure = repo
-///     .checkout_tree(None, Some(tree), Limits::default(), &AtomicBool::new(false))
+///     .checkout_tree_with(None, Some(tree), Limits::default(), &AtomicBool::new(false))
 ///     .unwrap_err();
 /// assert!(matches!(
 ///     failure.cause.as_ref(),

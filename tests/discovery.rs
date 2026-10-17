@@ -210,15 +210,15 @@ fn shallow_boundary_survives_reference_lock_failure_and_can_recover() {
     );
     assert!(
         opened
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .read(tip, ReadLimits::default())
+            .read_with(tip, ReadLimits::default())
             .unwrap()
             .is_some()
     );
     std::fs::remove_file(&lock).unwrap();
     let known = KnownHistory::new(
-        &opened.objects(PackLimits::default()).unwrap(),
+        &opened.objects_with(PackLimits::default()).unwrap(),
         &[tip],
         FetchLimits::default(),
         &AtomicBool::new(false),
@@ -255,7 +255,7 @@ fn workflow_publishes_initial_and_deepened_shallow_history(#[case] format: Objec
         Some(Target::Direct(second))
     );
     let known = KnownHistory::new(
-        &opened.objects(PackLimits::default()).unwrap(),
+        &opened.objects_with(PackLimits::default()).unwrap(),
         &[second],
         FetchLimits::default(),
         &AtomicBool::new(false),
@@ -270,9 +270,9 @@ fn workflow_publishes_initial_and_deepened_shallow_history(#[case] format: Objec
     );
     assert!(
         opened
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .read(first, ReadLimits::default())
+            .read_with(first, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -317,10 +317,10 @@ fn git_wire_fetch_installs_objects(#[case] format: ObjectFormat, #[case] version
     fetched
         .install(&repo, PackLimits::default(), &AtomicBool::new(false))
         .unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
         objects
-            .read(tip, ReadLimits::default())
+            .read_with(tip, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -407,7 +407,7 @@ fn git_deepens_verified_shallow_history(#[case] format: ObjectFormat, #[case] ve
     );
     let repo = Repository::open(&path).unwrap();
     assert!(repo.shallow_roots().contains(previous));
-    let store = repo.objects(PackLimits::default()).unwrap();
+    let store = repo.objects_with(PackLimits::default()).unwrap();
     let cancel = AtomicBool::new(false);
     let known = KnownHistory::new(&store, &[previous], FetchLimits::default(), &cancel).unwrap();
 
@@ -769,12 +769,17 @@ fn native_local_depth_one_retains_only_tip_closure(#[case] format: ObjectFormat)
     let (report, marker) = retained.finish(&cancel).unwrap();
     assert!(report.shallow_published);
     let opened = Repository::open(destination.path()).unwrap();
-    let objects = opened.objects(PackLimits::default()).unwrap();
+    let objects = opened.objects_with(PackLimits::default()).unwrap();
     assert_eq!(opened.shallow_roots().iter().collect::<Vec<_>>(), vec![tip]);
-    assert!(objects.read(tip, ReadLimits::default()).unwrap().is_some());
     assert!(
         objects
-            .read(first, ReadLimits::default())
+            .read_with(tip, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        objects
+            .read_with(first, ReadLimits::default())
             .unwrap()
             .is_none()
     );
@@ -820,9 +825,9 @@ fn retained_shallow_phase_holds_lock_until_publication(#[case] format: ObjectFor
     assert!(!installed.report().shallow_published);
     assert_eq!(installed.updates().len(), 1);
     assert_eq!(
-        repo.objects(PackLimits::default())
+        repo.objects_with(PackLimits::default())
             .unwrap()
-            .read(tip, ReadLimits::default())
+            .read_with(tip, ReadLimits::default())
             .unwrap()
             .unwrap()
             .kind(),
@@ -912,7 +917,7 @@ fn retained_workflow_refreshes_captured_shallow_destination(#[case] format: Obje
     let next = child_commit(&source, tip);
     let reopened = Repository::open(destination.path()).unwrap();
     let known = KnownHistory::new(
-        &reopened.objects(PackLimits::default()).unwrap(),
+        &reopened.objects_with(PackLimits::default()).unwrap(),
         &[tip],
         FetchLimits::default(),
         &AtomicBool::new(false),
@@ -1332,7 +1337,7 @@ fn git_http_backend_v2_fetch_installs_incremental_history(#[case] format: Object
         .unwrap();
 
     let tip = child_commit(&source, base);
-    let store = repo.objects(PackLimits::default()).unwrap();
+    let store = repo.objects_with(PackLimits::default()).unwrap();
     let known = KnownHistory::new(&store, &[base], FetchLimits::default(), &cancel).unwrap();
     let (fetched, _) = receive_http_backend(source.path(), tip, &known);
     // The shared root commit and empty tree are not resent: only the new commit arrives.
@@ -1344,9 +1349,9 @@ fn git_http_backend_v2_fetch_installs_incremental_history(#[case] format: Object
     assert_eq!(
         Repository::open(destination.path())
             .unwrap()
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .read(tip, ReadLimits::default())
+            .read_with(tip, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),

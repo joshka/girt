@@ -413,7 +413,7 @@ impl CloneReady {
         cancelled(cancel)?;
         // Like Git's clone, publish fetched refs packed; the local branch and HEAD stay loose.
         if repo.reference_backend() == crate::refs::Backend::Files {
-            let objects = repo.objects(limits.snapshot)?;
+            let objects = repo.objects_with(limits.snapshot)?;
             report.packed_refs = Some(
                 repo.references()?
                     .pack(&objects, crate::refs::PackRefsOptions::ALL)?,
@@ -436,7 +436,7 @@ fn verify_branches(
     cancel: &AtomicBool,
 ) -> Result<(), CloneFailure> {
     let objects = repo
-        .objects(limits.snapshot)
+        .objects_with(limits.snapshot)
         .map_err(FetchError::Destination)?;
     let detached = match head {
         CloneHead::Detached(id) => Some(*id),
@@ -451,7 +451,7 @@ fn verify_branches(
     for id in branches.chain(detached) {
         cancelled(cancel)?;
         let object = objects
-            .read(id, limits.verification.known_read)
+            .read_with(id, limits.verification.known_read)
             .map_err(FetchError::from)?
             .ok_or(FetchError::Missing(id))?;
         if object.kind() != ObjectKind::Commit {

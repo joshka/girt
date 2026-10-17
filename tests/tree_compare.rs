@@ -146,9 +146,9 @@ impl Fixture {
     fn compare(&self, old: Option<ObjectId>, new: Option<ObjectId>) -> Vec<Change> {
         let changes = Repository::open(self.root.path())
             .unwrap()
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .compare_trees(
+            .compare_trees_with(
                 old,
                 new,
                 TreeCompareLimits::default(),

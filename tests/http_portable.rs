@@ -287,10 +287,10 @@ fn downloads_validates_installs_and_reuses_known_objects() {
     received
         .install(&destination, PackLimits::default(), &cancel)
         .unwrap();
-    let objects = destination.objects(PackLimits::default()).unwrap();
+    let objects = destination.objects_with(PackLimits::default()).unwrap();
     let expected = &source.records[0];
     let actual = objects
-        .read(expected.0, ReadLimits::default())
+        .read_with(expected.0, ReadLimits::default())
         .unwrap()
         .unwrap();
     assert_eq!(actual.kind(), expected.1);
@@ -324,13 +324,13 @@ fn downloads_validates_installs_and_reuses_known_objects() {
     assert_eq!(server.requests(), ["GET", "POST", "GET"]);
     assert!(
         objects
-            .read(source.ordinary, ReadLimits::default())
+            .read_with(source.ordinary, ReadLimits::default())
             .unwrap()
             .is_some()
     );
     assert!(
         objects
-            .read(source.delta, ReadLimits::default())
+            .read_with(source.delta, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -358,7 +358,7 @@ fn pushes_objects_and_git_publishes_the_remote_ref() {
     let bytes = git(source.root.path(), &["rev-parse", "main"], b"");
     let tip: ObjectId = std::str::from_utf8(&bytes).unwrap().trim().parse().unwrap();
     let prepared = PreparedPush::new(
-        &source.repo.objects(PackLimits::default()).unwrap(),
+        &source.repo.objects_with(PackLimits::default()).unwrap(),
         vec![
             PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, tip)
                 .with_force(ForcePolicy::FastForwardOnly),

@@ -72,9 +72,9 @@
 //! std::fs::write(base.with_extension("pack"), &pack)?;
 //! std::fs::write(base.with_extension("idx"), &index)?;
 //!
-//! let objects = repository.objects(PackLimits::default())?;
+//! let objects = repository.objects_with(PackLimits::default())?;
 //! let object = objects
-//!     .read(id, ReadLimits::default())?
+//!     .read_with(id, ReadLimits::default())?
 //!     .expect("indexed pack is visible");
 //! assert_eq!(object.data(), data);
 //! # Ok::<(), Box<dyn std::error::Error>>(())

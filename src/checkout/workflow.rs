@@ -48,15 +48,15 @@ impl Repository {
     ///     }],
     /// )?)?;
     /// let cancel = AtomicBool::new(false);
-    /// repo.checkout_tree(None, Some(tree), Default::default(), &cancel)?;
-    /// let report = repo.checkout_tree(Some(tree), None, Default::default(), &cancel)?;
+    /// repo.checkout_tree_with(None, Some(tree), Default::default(), &cancel)?;
+    /// let report = repo.checkout_tree_with(Some(tree), None, Default::default(), &cancel)?;
     /// assert!(report.index_published);
     /// assert!(!repo.worktree().unwrap().join("hello.txt").exists());
     /// assert!(loose.read_blob(blob, 1024).is_ok()); // Removing a file does not delete its object.
     ///
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn checkout_tree(
+    pub fn checkout_tree_with(
         &self,
         baseline: Option<ObjectId>,
         target: Option<ObjectId>,
@@ -76,7 +76,7 @@ impl Repository {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::checkout_tree`]'s failures and partial mutation reports.
+    /// Returns [`Self::checkout_tree_with`]'s failures and partial mutation reports.
     pub fn checkout_tree_with_progress(
         &self,
         baseline: Option<ObjectId>,
@@ -121,5 +121,23 @@ impl Repository {
                 cleanup: vec![],
             })
         }
+    }
+
+    /// Materializes a tree with [`Limits::default`] and no cancellation.
+    ///
+    /// Equivalent to `self.checkout_tree_with(baseline, target, Limits::default(), &never)` with a
+    /// flag that is never set; see [`Self::checkout_tree_with`] for the baseline contract, recovery
+    /// and platform limits. Use [`Self::checkout_tree_with_progress`] to observe progress or
+    /// cancel.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failures of [`Self::checkout_tree_with`] except cancellation.
+    pub fn checkout_tree(
+        &self,
+        baseline: Option<ObjectId>,
+        target: Option<ObjectId>,
+    ) -> Result<Report, Failure> {
+        self.checkout_tree_with(baseline, target, Limits::default(), &AtomicBool::new(false))
     }
 }

@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
@@ -14,7 +15,7 @@ use girt::retention::{
 use girt::{ObjectFormat, ObjectId, ObjectStore, Objects, Repository};
 
 use crate::Context;
-use crate::common::{not_cancelled, objects, stdout};
+use crate::common::stdout;
 use crate::object::loose_ids;
 
 /// Loose objects and packs younger than this survive pruning and pack retirement.
@@ -102,7 +103,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
                 .repack_retained(
                     &RetentionPolicy::trusted(),
                     RepackLimits::trusted(),
-                    not_cancelled(),
+                    &AtomicBool::new(false),
                 )
                 .wrap_err("repacking retained objects")?;
             let written = published.written;
@@ -132,7 +133,7 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
     match command {
         PackCommand::List => {
             let repository = context.repository()?;
-            let objects = objects(&repository)?;
+            let objects = repository.objects()?;
             let mut out = stdout();
             for store in objects.stores() {
                 for pack in store.packs() {
@@ -158,7 +159,7 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
         PackCommand::Verify => {
             let repository = context.repository()?;
             let progress = crate::progress::Activity::new(context.progress, "Verifying packs");
-            match objects(&repository)?.verify_packs(not_cancelled()) {
+            match repository.objects()?.verify_packs(&AtomicBool::new(false)) {
                 Ok(()) => {
                     progress.finish("verified");
                     writeln!(stdout(), "ok")?;
@@ -181,7 +182,7 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
                 &pack,
                 format,
                 IndexRebuildLimits::default(),
-                not_cancelled(),
+                &AtomicBool::new(false),
             )
             .wrap_err_with(|| format!("rebuilding index for {}", pack.display()))?;
             progress.finish(format_args!("{} objects", rebuilt.objects));
@@ -247,7 +248,7 @@ fn run_phases(repository: &Repository, args: &RunArgs, progress_enabled: bool) -
             writeln!(out, "would-expire-reflog-records {records}")?;
         }
         if args.retire_packs {
-            let objects = objects(repository)?;
+            let objects = repository.objects()?;
             let retired = primary(&objects)?
                 .packs()
                 .filter(|pack| !plan.protected_packs.contains(pack.path()))
@@ -265,7 +266,7 @@ fn run_phases(repository: &Repository, args: &RunArgs, progress_enabled: bool) -
         return Ok(ExitCode::SUCCESS);
     }
 
-    let cancel = not_cancelled();
+    let cancel = &AtomicBool::new(false);
     let mut isolation = UserAsserted;
     if args.expire_reflogs {
         let progress = crate::progress::Activity::new(progress_enabled, "Expiring reflogs");
@@ -301,7 +302,7 @@ fn run_phases(repository: &Repository, args: &RunArgs, progress_enabled: bool) -
 
 /// Plans retention, failing unless the scan was complete.
 fn plan(repository: &Repository, policy: &RetentionPolicy) -> Result<RetentionPlan> {
-    let plan = repository.plan_retention(policy, not_cancelled());
+    let plan = repository.plan_retention(policy, &AtomicBool::new(false));
     if let girt::retention::RetentionOutcome::Incomplete(error) = &plan.outcome {
         bail!("retention scan incomplete: {error}");
     }
@@ -327,7 +328,7 @@ fn unreachable(
     repository: &Repository,
     plan: &RetentionPlan,
 ) -> Result<(BTreeSet<ObjectId>, BTreeSet<ObjectId>)> {
-    let objects = objects(repository)?;
+    let objects = repository.objects()?;
     let store = primary(&objects)?;
     let keep = |id: &ObjectId| !plan.reachable.contains(id) && !plan.required.contains(id);
     let mut loose: BTreeSet<_> = loose_ids(&store)?.into_iter().collect();

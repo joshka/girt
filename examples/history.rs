@@ -2,7 +2,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use girt::{HistoryLimits, ObjectId, PackLimits, Repository};
+use girt::{ObjectId, Repository};
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
@@ -19,19 +19,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let root = args.commit;
     let repo = Repository::open(args.path)?;
-    let objects = repo.objects(PackLimits::default())?;
-    for id in objects.walk(&[root], HistoryLimits::default())? {
+    let objects = repo.objects()?;
+    for id in objects.walk(&[root])? {
         println!("{id}");
     }
     if let Some(other) = args.other_commit {
-        println!(
-            "ancestor: {}",
-            objects.is_ancestor(root, other, HistoryLimits::default())?
-        );
-        println!(
-            "merge bases: {:?}",
-            objects.merge_bases(root, other, HistoryLimits::default())?
-        );
+        println!("ancestor: {}", objects.is_ancestor(root, other)?);
+        println!("merge bases: {:?}", objects.merge_bases(root, other)?);
     }
     Ok(())
 }

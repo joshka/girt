@@ -38,7 +38,7 @@ fn measure(c: &mut Criterion) {
         .unwrap();
         parents = vec![loose.write_commit(&commit).unwrap()];
     }
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let shallow_path = repo.common_dir().join("shallow");
     let shallow_bytes: String = (0u32..128)
         .map(|index| {
@@ -61,7 +61,7 @@ fn measure(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     objects
-                        .walk(black_box(&parents), HistoryLimits::default())
+                        .walk_with(black_box(&parents), HistoryLimits::default())
                         .unwrap(),
                 )
             })

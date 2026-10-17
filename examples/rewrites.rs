@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 
 use clap::Parser;
 use girt::rewrites::{Limits, Options};
-use girt::{ObjectId, PackLimits, Repository};
+use girt::{ObjectId, Repository};
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
@@ -24,7 +24,7 @@ struct Args {
 fn main() -> girt::Result<()> {
     let args = Args::parse();
     let repo = Repository::open(args.repository)?;
-    let objects = repo.objects(PackLimits::default())?;
+    let objects = repo.objects()?;
     let records = objects.detect_rewrites(
         Some(args.old_tree),
         Some(args.new_tree),

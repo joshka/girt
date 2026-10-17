@@ -96,7 +96,7 @@ fn lists_packs_loose_and_alternates_like_git(#[case] format: ObjectFormat) {
     let shared = blobs(&borrowed, "packed", 1);
     let borrowed_loose = blobs(&borrowed, "borrowed", 2);
 
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
         objects.object_ids(ListLimits::default()).unwrap(),
         git_all(&repo)
@@ -165,7 +165,7 @@ fn loose_scan_skips_non_object_names() {
         dir.join("ef/0000000000000000000000000000000000000b"),
     )
     .unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let store = objects.stores().next().unwrap();
     let found: Vec<_> = store.loose_objects().map(Result::unwrap).collect();
     assert_eq!(found.len(), 1);
@@ -179,7 +179,7 @@ fn loose_scan_stops_at_entry_limit_and_cancellation() {
     let root = tempfile::tempdir().unwrap();
     let repo = init(root.path(), ObjectFormat::Sha1);
     blobs(&repo, "limited", 4);
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let store = objects.stores().next().unwrap();
     let never = AtomicBool::new(false);
     let limited: Vec<_> = store
@@ -203,7 +203,7 @@ fn loose_scan_stops_at_entry_limit_and_cancellation() {
 fn empty_store_lists_nothing() {
     let root = tempfile::tempdir().unwrap();
     let repo = init(root.path(), ObjectFormat::Sha1);
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert!(
         objects
             .object_ids(ListLimits::default())

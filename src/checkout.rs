@@ -1,7 +1,9 @@
 //! Conservative tree checkout with literal blob bytes and native POSIX modes.
 //!
 //! [`Repository::checkout_tree`](crate::Repository::checkout_tree) takes an explicit clean
-//! baseline, target, [`Limits`] and cancellation flag. [`Report`] records completed operations and
+//! baseline and target, with default [`Limits`] and no cancellation;
+//! [`Repository::checkout_tree_with`](crate::Repository::checkout_tree_with) also takes limits and
+//! a cancellation flag. [`Report`] records completed operations and
 //! index publication; [`Failure`] preserves that report and cleanup failures when a later phase
 //! stops. Inspect the actual worktree before recovery because mutations are not rolled back.
 //!
@@ -56,9 +58,6 @@
 //! clone. HEAD and references are unchanged:
 //!
 //! ```
-//! use std::sync::atomic::AtomicBool;
-//!
-//! use girt::checkout::Limits;
 //! use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
 //!
 //! # if cfg!(not(any(target_os = "linux", target_os = "macos"))) {
@@ -80,7 +79,7 @@
 //! let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![entry])?)?;
 //!
 //! // `None` baseline: the current index is empty or absent.
-//! repository.checkout_tree(None, Some(tree), Limits::default(), &AtomicBool::new(false))?;
+//! repository.checkout_tree(None, Some(tree))?;
 //!
 //! let file = repository
 //!     .worktree()

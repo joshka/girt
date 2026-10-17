@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use girt::{HistoryLimits, ObjectId, PackLimits, ReadLimits, Repository};
+use girt::{ObjectId, Repository};
 
 pub struct Gate {
     pub started: tokio::sync::oneshot::Sender<()>,
@@ -73,23 +73,14 @@ impl Fixture {
 
     pub fn operation(&self, gate: Option<Gate>) {
         let repo = Repository::open(self.root.path()).unwrap();
-        let objects = repo.objects(PackLimits::default()).unwrap();
+        let objects = repo.objects().unwrap();
         if let Some(gate) = gate {
             gate.started.send(()).unwrap();
             gate.release.recv().unwrap();
         }
-        let blob = objects
-            .read(self.blob, ReadLimits::default())
-            .unwrap()
-            .unwrap();
+        let blob = objects.read(self.blob).unwrap().unwrap();
         assert_eq!(blob.data().len(), 2 * 1024 * 1024);
-        assert_eq!(
-            objects
-                .walk(&[self.tip], HistoryLimits::default())
-                .unwrap()
-                .len(),
-            512
-        );
+        assert_eq!(objects.walk(&[self.tip]).unwrap().len(), 512);
     }
 }
 

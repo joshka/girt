@@ -48,9 +48,9 @@ impl BlobContent {
     /// let id = loose.write_blob(b"added\n")?;
     /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1,
     ///     vec![TreeEntry { name: b"file".to_vec(), mode: EntryMode::Blob, id }])?)?;
-    /// let objects = repo.objects(Default::default())?;
+    /// let objects = repo.objects_with(Default::default())?;
     /// let cancel = AtomicBool::new(false);
-    /// let changes = objects.compare_trees(None, Some(tree), Default::default(), &cancel)?;
+    /// let changes = objects.compare_trees_with(None, Some(tree), Default::default(), &cancel)?;
     ///
     /// let content = BlobContent::read(&objects, &changes[0], Default::default(), 1024, &cancel)?;
     /// assert!(content.old.is_empty());
@@ -106,7 +106,7 @@ fn read_side(
     limits.max_object_bytes = limits.max_object_bytes.min(remaining);
     let id = value.id;
     let object = objects
-        .read(id, limits)
+        .read_with(id, limits)
         .map_err(|source| ContentReadError::Read { id, source })?
         .ok_or(ContentReadError::Missing(id))?;
     if object.kind() != ObjectKind::Blob {
@@ -141,8 +141,8 @@ fn read_side(
 ///
 /// let missing = girt::ObjectId::for_blob(ObjectFormat::Sha1, b"not stored");
 /// let root = tree(vec![entry(b"file", missing, EntryMode::Blob)])?;
-/// let objects = repo.objects(Default::default())?;
-/// let changes = objects.compare_trees(None, Some(root), Default::default(), &cancel)?;
+/// let objects = repo.objects_with(Default::default())?;
+/// let changes = objects.compare_trees_with(None, Some(root), Default::default(), &cancel)?;
 /// // Structural comparison succeeded without reading the leaf blob.
 /// let error = BlobContent::read(&objects, &changes[0], Default::default(), 1024, &cancel)
 ///     .unwrap_err();

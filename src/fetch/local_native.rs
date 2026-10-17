@@ -82,7 +82,7 @@ pub(super) fn receive_depth_observed(
         return Err(FetchError::Unsupported("shallow local source"));
     }
     let store = source
-        .objects(limits.source_packs)
+        .objects_with(limits.source_packs)
         .map_err(FetchError::SourceObjects)?;
     let advertisement = advertise_store(source, &store, limits, control)?;
     let mut wants = select(&advertisement);
@@ -420,7 +420,7 @@ pub(super) fn advertise(
 ) -> Result<Advertisement, FetchError> {
     check(control)?;
     let store = source
-        .objects(limits.source_packs)
+        .objects_with(limits.source_packs)
         .map_err(FetchError::SourceObjects)?;
     advertise_store(source, &store, limits, control)
 }

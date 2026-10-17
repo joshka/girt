@@ -120,9 +120,9 @@ fn commit_graph_and_storage_match_git(
     assert_eq!(decoded.id(), id);
     assert_eq!(decoded.encode(), bytes);
     assert_eq!(
-        repo.objects(PackLimits::default())
+        repo.objects_with(PackLimits::default())
             .unwrap()
-            .walk(&[id], HistoryLimits::default())
+            .walk_with(&[id], HistoryLimits::default())
             .unwrap(),
         [id]
     );
@@ -242,7 +242,7 @@ fn nested_peeling_preserves_identity_and_matches_git(
     let terminal = store(&repo, kind.as_str(), &bytes);
     let inner = tag(&repo, terminal, kind);
     let outer = tag(&repo, inner, ObjectKind::Tag);
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let result = objects
         .peel(outer, PeelLimits::default(), &AtomicBool::new(false))
         .unwrap();
@@ -265,7 +265,7 @@ fn peeling_failures_identify_the_referring_tag(
     let (_dir, repo) = repo(format);
     let missing = ObjectId::for_blob(format, b"absent");
     let root = tag(&repo, missing, ObjectKind::Blob);
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let error = objects
         .peel(root, PeelLimits::default(), &AtomicBool::new(false))
         .unwrap_err();
@@ -358,7 +358,7 @@ fn tag_reading_matches_git_peeling(
     store(&repo, "blob", b"x");
     let bytes = fixture(format, "tag", name);
     let id = store(&repo, "tag", &bytes);
-    let result = repo.objects(PackLimits::default()).unwrap().peel(
+    let result = repo.objects_with(PackLimits::default()).unwrap().peel(
         id,
         PeelLimits::default(),
         &AtomicBool::new(false),
@@ -391,7 +391,7 @@ fn transfer_graph_accepts_legacy_metadata_and_unsorted_trees(
     let bytes = format!("tree {tree}\nauthor A <a> nonsense\n\n").into_bytes();
     let commit = store(&repo, "commit", &bytes);
     let root = tag(&repo, commit, ObjectKind::Commit);
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let known = girt::fetch::KnownHistory::new(
         &objects,
         &[root],
@@ -427,7 +427,7 @@ fn peeling_checks_terminal_syntax_and_exact_limits(
         .as_bytes()
         .len()
         + 1;
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert!(
         objects
             .peel(
@@ -546,7 +546,7 @@ fn peeling_leaves_terminal_tree_records_for_the_tree_reader(
     let tree = store(&repo, "tree", b"invalid");
     let root = tag(&repo, tree, ObjectKind::Tree);
     let peeled = repo
-        .objects(PackLimits::default())
+        .objects_with(PackLimits::default())
         .unwrap()
         .peel(root, PeelLimits::default(), &AtomicBool::new(false))
         .unwrap();

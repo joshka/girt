@@ -35,7 +35,7 @@ fn agrees_with_git_for_exact_packed_objects(
     #[case] kind: ObjectKind,
 ) {
     let fixture = Fixture::new(format, ofs, 16);
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let expected: Vec<_> = fixture
         .records
         .iter()
@@ -45,7 +45,10 @@ fn agrees_with_git_for_exact_packed_objects(
     let actual: Vec<_> = expected
         .iter()
         .map(|(id, _, _)| {
-            let object = objects.read(*id, ReadLimits::default()).unwrap().unwrap();
+            let object = objects
+                .read_with(*id, ReadLimits::default())
+                .unwrap()
+                .unwrap();
             (object.id(), object.kind(), object.into_data())
         })
         .collect();
@@ -72,12 +75,12 @@ fn agrees_with_git_for_exact_packed_objects(
 #[case::sha256(girt::ObjectFormat::Sha256)]
 fn combines_loose_and_packed_reads_and_reports_absence(#[case] format: girt::ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let loose = fixture.repo.loose_objects();
     let id = loose.write_blob(b"new loose blob").unwrap();
     assert_eq!(
         objects
-            .read(id, ReadLimits::default())
+            .read_with(id, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -85,7 +88,7 @@ fn combines_loose_and_packed_reads_and_reports_absence(#[case] format: girt::Obj
     );
     assert_eq!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -93,7 +96,7 @@ fn combines_loose_and_packed_reads_and_reports_absence(#[case] format: girt::Obj
     );
     assert_eq!(
         objects
-            .read(ObjectId::for_blob(format, b"absent"), ReadLimits::default())
+            .read_with(ObjectId::for_blob(format, b"absent"), ReadLimits::default())
             .unwrap(),
         None
     );
@@ -109,7 +112,7 @@ fn contains_reports_packed_loose_and_absent_objects_without_writing(
     #[case] format: girt::ObjectFormat,
 ) {
     let fixture = Fixture::new(format, true, 4);
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let loose_dir_entries = || {
         fs::read_dir(fixture.repo.object_dir())
             .unwrap()
@@ -150,9 +153,9 @@ fn contains_reports_packed_loose_and_absent_objects_without_writing(
 /// valid packed copy.
 fn corrupt_loose_copy_does_not_hide_valid_pack(#[case] format: girt::ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let expected = objects
-        .read(fixture.ordinary, ReadLimits::default())
+        .read_with(fixture.ordinary, ReadLimits::default())
         .unwrap();
     let hex = fixture.ordinary.to_string();
     let directory = fixture.repo.object_dir().join(&hex[..2]);
@@ -160,7 +163,7 @@ fn corrupt_loose_copy_does_not_hide_valid_pack(#[case] format: girt::ObjectForma
     fs::write(directory.join(&hex[2..]), b"broken zlib").unwrap();
     assert_eq!(
         objects
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap(),
         expected
     );
@@ -173,13 +176,17 @@ fn snapshots_survive_repack_and_new_reader_reads_repacked_repository(
     #[case] format: girt::ObjectFormat,
 ) {
     let fixture = Fixture::new(format, true, 16);
-    let before = fixture.repo.objects(PackLimits::default()).unwrap();
+    let before = fixture.repo.objects_with(PackLimits::default()).unwrap();
     git(fixture.root.path(), &["repack", "-ad"], b"");
-    let after = fixture.repo.objects(PackLimits::default()).unwrap();
+    let after = fixture.repo.objects_with(PackLimits::default()).unwrap();
     assert!(!fixture.index_path.exists());
     assert_eq!(
-        before.read(fixture.delta, ReadLimits::default()).unwrap(),
-        after.read(fixture.delta, ReadLimits::default()).unwrap()
+        before
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap(),
+        after
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap()
     );
 }
 
@@ -191,7 +198,7 @@ fn snapshots_survive_repack_and_new_reader_reads_repacked_repository(
 fn bounds_snapshot_loading(#[case] format: girt::ObjectFormat, #[case] limits: PackLimits) {
     let fixture = Fixture::new(format, true, 4);
     assert!(matches!(
-        fixture.repo.objects(limits),
+        fixture.repo.objects_with(limits),
         Err(ObjectReadError::Limit(_))
     ));
 }
@@ -203,7 +210,7 @@ fn missing_pack_is_storage_failure_not_object_absence(#[case] format: girt::Obje
     let fixture = Fixture::new(format, true, 4);
     fs::remove_file(fixture.index_path.with_extension("pack")).unwrap();
     assert!(matches!(
-        fixture.repo.objects(PackLimits::default()),
+        fixture.repo.objects_with(PackLimits::default()),
         Err(ObjectReadError::Path { path, source }) if path == fixture.repo.object_dir().join("pack").join(fixture.index_path.file_name().unwrap()).with_extension("pack") && source.kind() == std::io::ErrorKind::NotFound
     ));
 }
@@ -214,10 +221,10 @@ fn missing_pack_is_storage_failure_not_object_absence(#[case] format: girt::Obje
 fn unindexed_pack_is_not_yet_published(#[case] format: girt::ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
     std::fs::remove_file(&fixture.index_path).unwrap();
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
         objects
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap(),
         None
     );
@@ -303,9 +310,12 @@ fn verify_compressed_export(
         result.deltas.max_depth
     );
     let repo = Repository::open(root.path()).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     for (id, kind, expected) in records {
-        let restored = objects.read(*id, ReadLimits::default()).unwrap().unwrap();
+        let restored = objects
+            .read_with(*id, ReadLimits::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(restored.kind(), *kind);
         assert_eq!(restored.data(), expected);
         assert_eq!(
@@ -413,7 +423,10 @@ fn corrupt_snapshot_identifies_both_artifacts_and_preserves_cause(
     let expected_index = fs::canonicalize(&fixture.index_path).unwrap();
     fs::remove_file(&fixture.index_path).unwrap();
     fs::write(&fixture.index_path, b"broken").unwrap();
-    let error = fixture.repo.objects(PackLimits::default()).unwrap_err();
+    let error = fixture
+        .repo
+        .objects_with(PackLimits::default())
+        .unwrap_err();
     let ObjectReadError::PackArtifacts {
         index,
         pack,
@@ -472,12 +485,15 @@ fn reads_legacy_indexes_and_version_three_packs(
 ) {
     let fixture = Fixture::new(format, ofs, 16);
     rewrite_pack_version(&fixture, version, index);
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let actual: Vec<_> = fixture
         .records
         .iter()
         .map(|(id, _, _)| {
-            let object = objects.read(*id, ReadLimits::default()).unwrap().unwrap();
+            let object = objects
+                .read_with(*id, ReadLimits::default())
+                .unwrap()
+                .unwrap();
             (object.id(), object.kind(), object.into_data())
         })
         .collect();
@@ -489,7 +505,7 @@ fn reads_legacy_indexes_and_version_three_packs(
             b""
         ),
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -506,10 +522,10 @@ fn reads_symlinked_object_directory(#[case] format: girt::ObjectFormat) {
     fs::rename(fixture.repo.object_dir(), &destination).unwrap();
     std::os::unix::fs::symlink(&destination, fixture.repo.object_dir()).unwrap();
     let repo = girt::Repository::open(fixture.root.path()).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -524,10 +540,10 @@ fn reads_symlinked_object_directory(#[case] format: girt::ObjectFormat) {
 fn rejects_file_resource_limits(#[case] limits: PackLimits, #[case] expected: &str) {
     let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     assert!(
-        matches!(fixture.repo.objects(limits), Err(ObjectReadError::Limit(reason)) if reason == expected)
+        matches!(fixture.repo.objects_with(limits), Err(ObjectReadError::Limit(reason)) if reason == expected)
     );
     // A failed opening leaves no reader state that can poison a later independent attempt.
-    assert!(fixture.repo.objects(PackLimits::default()).is_ok());
+    assert!(fixture.repo.objects_with(PackLimits::default()).is_ok());
 }
 
 #[rstest]
@@ -544,15 +560,15 @@ fn exact_file_limits_and_compressed_work(#[case] format: girt::ObjectFormat) {
         .with_max_index_bytes(index_bytes)
         .with_max_open_files(2)
         .with_max_packs(1);
-    let objects = fixture.repo.objects(limits).unwrap();
+    let objects = fixture.repo.objects_with(limits).unwrap();
     let read = ReadLimits::default().with_max_input_bytes(0);
     assert!(matches!(
-        objects.read(fixture.delta, read),
+        objects.read_with(fixture.delta, read),
         Err(ObjectReadError::Limit("compressed entry bytes"))
     ));
     assert!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -601,19 +617,31 @@ fn cancelled_open_and_read_are_retryable(#[case] format: girt::ObjectFormat) {
 #[case::sha256(girt::ObjectFormat::Sha256)]
 fn cloned_readers_share_files_with_independent_cursors(#[case] format: girt::ObjectFormat) {
     let fixture = Fixture::new(format, true, 32);
-    let reader = fixture.repo.objects(PackLimits::default()).unwrap();
+    let reader = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let other = reader.clone();
-    let expected = reader.read(fixture.delta, ReadLimits::default()).unwrap();
+    let expected = reader
+        .read_with(fixture.delta, ReadLimits::default())
+        .unwrap();
     let result = std::thread::scope(|scope| {
-        let first = scope.spawn(|| reader.read(fixture.delta, ReadLimits::default()).unwrap());
-        let second = scope.spawn(|| other.read(fixture.ordinary, ReadLimits::default()).unwrap());
+        let first = scope.spawn(|| {
+            reader
+                .read_with(fixture.delta, ReadLimits::default())
+                .unwrap()
+        });
+        let second = scope.spawn(|| {
+            other
+                .read_with(fixture.ordinary, ReadLimits::default())
+                .unwrap()
+        });
         (first.join().unwrap(), second.join().unwrap())
     });
     assert_eq!(result.0, expected);
     assert_eq!(result.1.unwrap().id(), fixture.ordinary);
     drop(reader);
     assert_eq!(
-        other.read(fixture.delta, ReadLimits::default()).unwrap(),
+        other
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap(),
         expected
     );
 }
@@ -629,7 +657,7 @@ fn truncated_pinned_artifacts_preserve_io_failure(#[case] extension: &str) {
     let bytes = fs::read(&path).unwrap();
     fs::remove_file(&path).unwrap();
     fs::write(&path, bytes).unwrap();
-    let reader = fixture.repo.objects(PackLimits::default()).unwrap();
+    let reader = fixture.repo.objects_with(PackLimits::default()).unwrap();
     // In-place writes violate the immutable-artifact contract; observable short reads must still
     // return an error rather than panic, deadlock or become object absence.
     fs::OpenOptions::new()
@@ -639,7 +667,7 @@ fn truncated_pinned_artifacts_preserve_io_failure(#[case] extension: &str) {
         .set_len(0)
         .unwrap();
     assert!(
-        matches!(reader.read(fixture.delta, ReadLimits::default()), Err(ObjectReadError::Path { path: found, source }) if found == path && source.kind() == std::io::ErrorKind::UnexpectedEof)
+        matches!(reader.read_with(fixture.delta, ReadLimits::default()), Err(ObjectReadError::Path { path: found, source }) if found == path && source.kind() == std::io::ErrorKind::UnexpectedEof)
     );
 }
 
@@ -682,7 +710,7 @@ fn open_rejects_index_pack_trailer_mismatch(#[case] format: girt::ObjectFormat) 
     fs::remove_file(&fixture.index_path).unwrap();
     fs::write(&fixture.index_path, index).unwrap();
     assert!(
-        matches!(fixture.repo.objects(PackLimits::default()), Err(ObjectReadError::PackArtifacts { source, .. }) if matches!(*source, ObjectReadError::Corrupt("index/pack checksum disagreement")))
+        matches!(fixture.repo.objects_with(PackLimits::default()), Err(ObjectReadError::PackArtifacts { source, .. }) if matches!(*source, ObjectReadError::Corrupt("index/pack checksum disagreement")))
     );
 }
 
@@ -701,7 +729,7 @@ fn open_rejects_truncated_pack(#[case] format: girt::ObjectFormat) {
     drop(file);
     // The bytes now in the trailer's place disagree with the index, as Git reports.
     assert!(
-        matches!(fixture.repo.objects(PackLimits::default()), Err(ObjectReadError::PackArtifacts { source, .. }) if matches!(*source, ObjectReadError::Corrupt("index/pack checksum disagreement")))
+        matches!(fixture.repo.objects_with(PackLimits::default()), Err(ObjectReadError::PackArtifacts { source, .. }) if matches!(*source, ObjectReadError::Corrupt("index/pack checksum disagreement")))
     );
 }
 
@@ -739,18 +767,18 @@ fn corrupt_entry_is_detected_on_read_not_open(#[case] format: girt::ObjectFormat
         ),
         good.2
     );
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     assert!(matches!(
         objects.verify_packs(&std::sync::atomic::AtomicBool::new(false)),
         Err(ObjectReadError::Corrupt(_))
     ));
     let error = objects
-        .read(fixture.ordinary, ReadLimits::default())
+        .read_with(fixture.ordinary, ReadLimits::default())
         .unwrap_err();
     assert!(error_chain(&error).contains("corrupt packed storage"));
     assert_eq!(
         objects
-            .read(good.0, ReadLimits::default())
+            .read_with(good.0, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -778,7 +806,7 @@ fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt:
     rehash_index(format, &mut index);
     fs::remove_file(&fixture.index_path).unwrap();
     fs::write(&fixture.index_path, index).unwrap();
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let delta = &fixture
         .records
         .iter()
@@ -789,7 +817,7 @@ fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt:
     // same store still checks it.
     assert_eq!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -798,7 +826,7 @@ fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt:
     assert!(
         error_chain(
             &objects
-                .read(fixture.ordinary, ReadLimits::default())
+                .read_with(fixture.ordinary, ReadLimits::default())
                 .unwrap_err()
         )
         .contains("entry CRC")
@@ -816,7 +844,7 @@ fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt:
 fn explicit_verification_agrees_with_git_and_is_cancellable(#[case] format: girt::ObjectFormat) {
     use std::sync::atomic::{AtomicBool, Ordering};
     let fixture = Fixture::new(format, true, 4);
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let cancel = AtomicBool::new(true);
     assert!(matches!(
         objects.verify_packs(&cancel),
@@ -831,7 +859,7 @@ fn explicit_verification_agrees_with_git_and_is_cancellable(#[case] format: girt
     );
     assert_eq!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -856,10 +884,10 @@ fn matching_trailers_do_not_replace_whole_pack_verification(#[case] format: girt
     fs::write(&path, &pack).unwrap();
     fs::remove_file(&fixture.index_path).unwrap();
     fs::write(&fixture.index_path, &index).unwrap();
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
         objects
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -1014,8 +1042,11 @@ fn chains_at_least(path: &Path, depth: usize) -> usize {
 }
 
 fn read(repo: &Repository, id: ObjectId) -> (ObjectKind, Vec<u8>) {
-    let objects = repo.objects(PackLimits::default()).unwrap();
-    let object = objects.read(id, ReadLimits::trusted()).unwrap().unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
+    let object = objects
+        .read_with(id, ReadLimits::trusted())
+        .unwrap()
+        .unwrap();
     (object.kind(), object.into_data())
 }
 
@@ -1035,13 +1066,16 @@ fn full_history_reads_match_git_in_every_order(#[case] format: ObjectFormat) {
     );
     let repo = Repository::open(root.path()).unwrap();
     // One reader for every pass, so later passes hit entries cached by earlier ones.
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let forward: Vec<usize> = (0..expected.len()).collect();
     let reverse: Vec<usize> = forward.iter().rev().copied().collect();
     for order in [&forward, &reverse, &forward] {
         for &index in order {
             let (id, kind, data) = &expected[index];
-            let object = objects.read(*id, ReadLimits::trusted()).unwrap().unwrap();
+            let object = objects
+                .read_with(*id, ReadLimits::trusted())
+                .unwrap()
+                .unwrap();
             assert_eq!(
                 (object.kind(), object.data()),
                 (*kind, data.as_slice()),
@@ -1070,16 +1104,22 @@ fn taken_payloads_do_not_alias_cached_bases(#[case] format: ObjectFormat) {
         .map(|(id, kind, data)| (*id, (*kind, data.clone())))
         .collect();
     let repo = Repository::open(root.path()).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     for round in 0..3 {
         for (id, _, _) in &expected {
-            let object = objects.read(*id, ReadLimits::trusted()).unwrap().unwrap();
+            let object = objects
+                .read_with(*id, ReadLimits::trusted())
+                .unwrap()
+                .unwrap();
             let mut data = object.into_data();
             data.iter_mut().for_each(|byte| *byte = !*byte);
             data.push(round);
         }
         for (id, _, _) in expected.iter().rev() {
-            let object = objects.read(*id, ReadLimits::trusted()).unwrap().unwrap();
+            let object = objects
+                .read_with(*id, ReadLimits::trusted())
+                .unwrap()
+                .unwrap();
             assert_eq!(
                 (object.kind(), object.into_data()),
                 by_id[id].clone(),
@@ -1095,7 +1135,7 @@ fn concurrent_full_reads_match_git() {
     let root = history(ObjectFormat::Sha1);
     let expected = git_objects(root.path());
     let repo = Repository::open(root.path()).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     std::thread::scope(|scope| {
         for thread in 0..4 {
             let objects = &objects;
@@ -1103,7 +1143,10 @@ fn concurrent_full_reads_match_git() {
             scope.spawn(move || {
                 for step in 0..expected.len() {
                     let (id, kind, data) = &expected[(step * (thread + 1)) % expected.len()];
-                    let object = objects.read(*id, ReadLimits::trusted()).unwrap().unwrap();
+                    let object = objects
+                        .read_with(*id, ReadLimits::trusted())
+                        .unwrap()
+                        .unwrap();
                     assert_eq!((object.kind(), object.data()), (*kind, data.as_slice()));
                     let mut owned = object.into_data();
                     owned.fill(thread as u8);
@@ -1326,10 +1369,14 @@ impl DamagedCopies {
 fn damaged_pack_reads_another_verified_pack(#[case] format: ObjectFormat, #[case] damage: &str) {
     let copies = DamagedCopies::new(format, damage, false);
     let from_git = copies.git_content(damage);
-    let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = copies
+        .fixture
+        .repo
+        .objects_with(PackLimits::default())
+        .unwrap();
     assert_eq!(
         objects
-            .read(copies.target, ReadLimits::default())
+            .read_with(copies.target, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -1338,7 +1385,7 @@ fn damaged_pack_reads_another_verified_pack(#[case] format: ObjectFormat, #[case
     assert_eq!(from_git, copies.expected);
     assert_eq!(
         objects
-            .read(copies.unique, ReadLimits::default())
+            .read_with(copies.unique, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -1347,7 +1394,7 @@ fn damaged_pack_reads_another_verified_pack(#[case] format: ObjectFormat, #[case
     assert_eq!(
         objects
             .clone()
-            .read(copies.target, ReadLimits::default())
+            .read_with(copies.target, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -1362,10 +1409,14 @@ fn damaged_pack_reads_verified_loose_fallback(#[case] format: ObjectFormat) {
     let copies = DamagedCopies::new(format, "zlib", false);
     copies.remove_good();
     copies.write_loose();
-    let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = copies
+        .fixture
+        .repo
+        .objects_with(PackLimits::default())
+        .unwrap();
     assert_eq!(
         objects
-            .read(copies.target, ReadLimits::default())
+            .read_with(copies.target, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -1391,9 +1442,13 @@ fn damaged_only_copy_names_pack_and_offset_without_content(
 ) {
     let copies = DamagedCopies::new(format, damage, false);
     copies.remove_good();
-    let mut objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    let mut objects = copies
+        .fixture
+        .repo
+        .objects_with(PackLimits::default())
+        .unwrap();
     let error = objects
-        .read(copies.target, ReadLimits::default())
+        .read_with(copies.target, ReadLimits::default())
         .unwrap_err();
     let chain = error_chain(&error);
     assert!(chain.contains(copies.damaged.to_str().unwrap()), "{chain}");
@@ -1408,7 +1463,7 @@ fn damaged_only_copy_names_pack_and_offset_without_content(
     assert_eq!(
         error_chain(
             &objects
-                .read(copies.target, ReadLimits::default())
+                .read_with(copies.target, ReadLimits::default())
                 .unwrap_err()
         ),
         chain
@@ -1448,10 +1503,14 @@ fn rescued_damage_never_authorizes_unique_object_deletion(
     #[case] maintenance: bool,
 ) {
     let copies = DamagedCopies::new(format, damage, true);
-    let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = copies
+        .fixture
+        .repo
+        .objects_with(PackLimits::default())
+        .unwrap();
     assert_eq!(
         objects
-            .read(copies.target, ReadLimits::default())
+            .read_with(copies.target, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -1519,7 +1578,7 @@ fn rescued_damage_never_authorizes_unique_object_deletion(
         .unwrap();
     assert_eq!(
         objects
-            .read(unique.0, ReadLimits::default())
+            .read_with(unique.0, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -1545,10 +1604,14 @@ fn damaged_pack_reads_verified_alternate(#[case] format: ObjectFormat) {
         format!("{}\n", alternate.path().display()),
     )
     .unwrap();
-    let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = copies
+        .fixture
+        .repo
+        .objects_with(PackLimits::default())
+        .unwrap();
     assert_eq!(
         objects
-            .read(copies.target, ReadLimits::default())
+            .read_with(copies.target, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -1564,9 +1627,13 @@ fn damaged_fallback_copy_is_checked_too() {
     rehash_index(ObjectFormat::Sha1, &mut index);
     fs::remove_file(copies.good.with_extension("idx")).unwrap();
     fs::write(copies.good.with_extension("idx"), index).unwrap();
-    let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = copies
+        .fixture
+        .repo
+        .objects_with(PackLimits::default())
+        .unwrap();
     let error = objects
-        .read(copies.target, ReadLimits::default())
+        .read_with(copies.target, ReadLimits::default())
         .unwrap_err();
     assert!(error_chain(&error).contains(copies.damaged.to_str().unwrap()));
 }
@@ -1574,9 +1641,9 @@ fn damaged_fallback_copy_is_checked_too() {
 #[test]
 fn read_limit_does_not_poison_a_pack_entry() {
     let fixture = Fixture::new(ObjectFormat::Sha1, true, 4);
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     assert!(matches!(
-        objects.read(
+        objects.read_with(
             fixture.ordinary,
             ReadLimits::default().with_max_object_bytes(1)
         ),
@@ -1584,7 +1651,7 @@ fn read_limit_does_not_poison_a_pack_entry() {
     ));
     assert_eq!(
         objects
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -1606,9 +1673,13 @@ fn corrupt_loose_fallback_still_reports_the_damaged_pack() {
         .join(&hex[2..]);
     fs::remove_file(&loose).unwrap();
     fs::write(loose, b"damaged loose stream").unwrap();
-    let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = copies
+        .fixture
+        .repo
+        .objects_with(PackLimits::default())
+        .unwrap();
     let error = objects
-        .read(copies.target, ReadLimits::default())
+        .read_with(copies.target, ReadLimits::default())
         .unwrap_err();
     assert!(error_chain(&error).contains(copies.damaged.to_str().unwrap()));
 }
@@ -1647,10 +1718,14 @@ fn corrupt_loose_fallback_does_not_hide_a_verified_alternate() {
         format!("{}\n", alternate.path().display()),
     )
     .unwrap();
-    let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = copies
+        .fixture
+        .repo
+        .objects_with(PackLimits::default())
+        .unwrap();
     assert_eq!(
         objects
-            .read(copies.target, ReadLimits::default())
+            .read_with(copies.target, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -1681,7 +1756,7 @@ fn packed_tag_peeling_survives_interleaved_read_limits(#[case] format: ObjectFor
         .parse()
         .unwrap();
     let cancel = std::sync::atomic::AtomicBool::new(false);
-    let first = fixture.repo.objects(PackLimits::default()).unwrap();
+    let first = fixture.repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
         first
             .peel(tag, girt::PeelLimits::trusted(), &cancel)
@@ -1689,15 +1764,15 @@ fn packed_tag_peeling_survives_interleaved_read_limits(#[case] format: ObjectFor
             .target,
         target
     );
-    let second = fixture.repo.objects(PackLimits::default()).unwrap();
+    let second = fixture.repo.objects_with(PackLimits::default()).unwrap();
     assert!(
         second
-            .read(tag, ReadLimits::default().with_max_object_bytes(1))
+            .read_with(tag, ReadLimits::default().with_max_object_bytes(1))
             .is_err()
     );
-    let third = fixture.repo.objects(PackLimits::default()).unwrap();
+    let third = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let blob = third
-        .read(fixture.delta, ReadLimits::trusted())
+        .read_with(fixture.delta, ReadLimits::trusted())
         .unwrap()
         .unwrap();
     assert_eq!(

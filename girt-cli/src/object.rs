@@ -7,10 +7,11 @@ use std::process::ExitCode;
 use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::{
-    Commit, ListLimits, Object, ObjectId, ObjectKind, ObjectStore, Objects, Repository, Tag, Tree,
+    Commit, ListLimits, Object, ObjectId, ObjectKind, ObjectStore, Objects, ReadLimits, Repository,
+    Tag, Tree,
 };
 
-use crate::common::{not_cancelled, objects, read_limits, resolve, stdout, write_line};
+use crate::common::{resolve, stdout, write_line};
 use crate::tree::write_entry;
 use crate::{Context, complete};
 
@@ -194,14 +195,14 @@ fn hash(args: HashArgs, context: &Context) -> Result<ExitCode> {
 /// Opens storage and reads the object a revision names.
 fn read(context: &Context, rev: &str) -> Result<Object> {
     let repository = context.repository()?;
-    let objects = objects(&repository)?;
+    let objects = repository.objects()?;
     let id = resolve(&repository, rev)?;
     read_id(&objects, id)?.ok_or_else(|| eyre!("missing object {id}"))
 }
 
 fn read_id(objects: &Objects, id: ObjectId) -> Result<Option<Object>> {
     objects
-        .read(id, read_limits())
+        .read_with(id, ReadLimits::trusted())
         .wrap_err_with(|| format!("reading {id}"))
 }
 
@@ -254,7 +255,7 @@ fn id(args: RevArgs, context: &Context) -> Result<ExitCode> {
 
 fn exists(args: RevArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = objects(&repository)?;
+    let objects = repository.objects()?;
     let Ok(id) = resolve(&repository, &args.rev) else {
         return Ok(ExitCode::FAILURE);
     };
@@ -266,7 +267,7 @@ fn exists(args: RevArgs, context: &Context) -> Result<ExitCode> {
 
 fn batch(args: BatchArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = objects(&repository)?;
+    let objects = repository.objects()?;
     let mut input = io::stdin().lock();
     let mut out = stdout();
     let mut line = String::new();
@@ -301,7 +302,7 @@ fn batch(args: BatchArgs, context: &Context) -> Result<ExitCode> {
 
 fn list(args: &ListArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = objects(&repository)?;
+    let objects = repository.objects()?;
     let mut ids = if args.packed {
         objects.packs().flat_map(|pack| pack.ids()).collect()
     } else if args.loose {
@@ -312,13 +313,13 @@ fn list(args: &ListArgs, context: &Context) -> Result<ExitCode> {
         ids
     } else {
         objects
-            .object_ids_controlled(ListLimits::default(), not_cancelled())
+            .object_ids(ListLimits::default())
             .wrap_err("listing objects")?
     };
     ids.sort_unstable();
     ids.dedup();
     let mut headers = objects
-        .headers_controlled(ids, read_limits(), not_cancelled())
+        .headers(ids, ReadLimits::trusted())
         .wrap_err("reading object headers")?;
     headers.sort_unstable_by_key(|(id, _)| *id);
     let mut out = io::BufWriter::new(stdout());
@@ -341,7 +342,7 @@ pub(crate) fn loose_ids(store: &ObjectStore<'_>) -> Result<Vec<ObjectId>> {
 
 fn count(context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = objects(&repository)?;
+    let objects = repository.objects()?;
     let mut stores = objects.stores();
     let primary = stores
         .next()

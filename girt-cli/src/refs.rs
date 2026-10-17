@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap_complete::{ArgValueCandidates, ArgValueCompleter};
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::refs::{Dereference, Expected, RefEdit, RefName, References, Reflog, Target};
-use girt::{ObjectId, ObjectKind, Repository, Signature};
+use girt::{ObjectId, ObjectKind, ReadLimits, Repository, Signature};
 
 use crate::common::{self, display_bytes};
 use crate::{Context, complete};
@@ -138,9 +138,9 @@ fn check_target(
     name: &str,
     id: ObjectId,
 ) -> Result<()> {
-    let objects = common::objects(repository)?;
+    let objects = repository.objects()?;
     let object = objects
-        .read(id, common::read_limits())
+        .header(id, ReadLimits::trusted())
         .wrap_err_with(|| format!("reading {id}"))?
         .ok_or_else(|| eyre!("object {id} does not exist"))?;
     let destination = references.resolve(&ref_name(name)?, 5).map_or_else(
@@ -181,7 +181,7 @@ fn list(
     symbolic: bool,
     context: &Context,
 ) -> Result<ExitCode> {
-    let objects = common::objects(repository)?;
+    let objects = repository.objects()?;
     let mut all = references.list().wrap_err("listing references")?;
     all.sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()));
     let mut out = common::stdout();
@@ -208,7 +208,7 @@ fn list(
         let name = display_bytes(name);
         if context.git {
             let object = objects
-                .read(id, common::read_limits())
+                .header(id, ReadLimits::trusted())
                 .wrap_err_with(|| format!("reading {id}"))?
                 .ok_or_else(|| eyre!("missing object {id} for {name}"))?;
             writeln!(out, "{id} {}\t{name}", object.kind().as_str())?;
@@ -282,7 +282,7 @@ fn log(
         .reflog(&full)
         .wrap_err_with(|| format!("reading reflog of {name}"))?
         .unwrap_or_default();
-    let objects = common::objects(repository)?;
+    let objects = repository.objects()?;
     let width = common::abbrev_len(repository, &objects)?;
     let mut out = common::stdout();
     for (index, entry) in entries.iter().rev().enumerate() {

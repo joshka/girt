@@ -148,7 +148,10 @@ fn prepared(format: ObjectFormat, limits: PushLimits) -> push::PreparedPush {
     let source = super::Fixture::new(format, false, 2);
     let id = super::tip(&source.repo, "refs/heads/main");
     push::PreparedPush::new(
-        &source.repo.objects(girt::PackLimits::default()).unwrap(),
+        &source
+            .repo
+            .objects_with(girt::PackLimits::default())
+            .unwrap(),
         vec![super::command("refs/heads/main", None, id)],
         &[],
         limits,
@@ -673,7 +676,10 @@ fn selection_prepared(format: ObjectFormat) -> push::PreparedPush {
     let source = super::Fixture::new(format, false, 2);
     let id = super::tip(&source.repo, "refs/heads/main");
     push::PreparedPush::new(
-        &source.repo.objects(girt::PackLimits::default()).unwrap(),
+        &source
+            .repo
+            .objects_with(girt::PackLimits::default())
+            .unwrap(),
         vec![
             super::command("refs/heads/main", Some(id), id),
             super::command("refs/heads/other", None, id),

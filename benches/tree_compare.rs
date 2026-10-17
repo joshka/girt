@@ -67,7 +67,7 @@ fn compare(c: &mut Criterion) {
         deep_old = write(vec![entry("d".into(), EntryMode::Tree, deep_old)]);
         deep_new = write(vec![entry("d".into(), EntryMode::Tree, deep_new)]);
     }
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let cancel = AtomicBool::new(false);
     for (name, old, new, count) in [
         ("sparse-100-of-10000", old, sparse, 100),
@@ -76,7 +76,7 @@ fn compare(c: &mut Criterion) {
     ] {
         assert_eq!(
             objects
-                .compare_trees(Some(old), Some(new), TreeCompareLimits::default(), &cancel)
+                .compare_trees_with(Some(old), Some(new), TreeCompareLimits::default(), &cancel)
                 .unwrap()
                 .len(),
             count
@@ -84,7 +84,7 @@ fn compare(c: &mut Criterion) {
         c.bench_function(&format!("tree-compare/{name}"), |bench| {
             bench.iter(|| {
                 objects
-                    .compare_trees(
+                    .compare_trees_with(
                         black_box(Some(old)),
                         black_box(Some(new)),
                         TreeCompareLimits::default(),

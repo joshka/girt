@@ -174,26 +174,26 @@ fn public_objects_interoperate_both_directions(
         b"",
     );
     git(&path, &["fsck", "--strict", "--no-dangling"], b"");
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let object = objects
-        .read(tag_id, ReadLimits::default())
+        .read_with(tag_id, ReadLimits::default())
         .unwrap()
         .unwrap();
     assert_eq!(object.id(), tag_id);
     assert_eq!(object.object_format(), format);
     assert_eq!(
         objects
-            .walk(&[imported_id], HistoryLimits::default())
+            .walk_with(&[imported_id], HistoryLimits::default())
             .unwrap(),
         vec![imported_id, child_id, base_id]
     );
     assert!(
         objects
-            .is_ancestor(base_id, imported_id, HistoryLimits::default())
+            .is_ancestor_with(base_id, imported_id, HistoryLimits::default())
             .unwrap()
     );
     let changes = objects
-        .compare_trees(
+        .compare_trees_with(
             None,
             Some(imported_tree_id),
             TreeCompareLimits::default(),
@@ -310,7 +310,7 @@ fn sha256_corrupt_storage_preserves_metadata() {
     )
     .unwrap();
     assert!(matches!(
-        repo.objects(PackLimits::default()),
+        repo.objects_with(PackLimits::default()),
         Err(girt::ObjectReadError::Path { .. })
     ));
     // Explicit loose access remains usable even in a repository with packed artifacts.
@@ -386,10 +386,10 @@ fn sha256_git_pack_is_readable() {
         b"",
     );
     git(repo.git_dir(), &["repack", "-ad"], b"");
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
         objects
-            .read(id, ReadLimits::default())
+            .read_with(id, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -412,19 +412,19 @@ fn traversal_checks_format_limits_and_cancellation(
         .write_tree(&Tree::new(format, vec![]).unwrap())
         .unwrap();
     let id = loose.write_commit(&commit(tree, vec![], 1)).unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert!(
         objects
-            .walk(&[ObjectId::null(foreign)], HistoryLimits::default())
+            .walk_with(&[ObjectId::null(foreign)], HistoryLimits::default())
             .is_err()
     );
     assert!(
         objects
-            .walk(&[id], HistoryLimits::default().with_max_commits(0))
+            .walk_with(&[id], HistoryLimits::default().with_max_commits(0))
             .is_err()
     );
     assert!(matches!(
-        objects.compare_trees(
+        objects.compare_trees_with(
             None,
             Some(tree),
             TreeCompareLimits::default(),
@@ -433,7 +433,7 @@ fn traversal_checks_format_limits_and_cancellation(
         Err(girt::TreeCompareError::Cancelled)
     ));
     assert!(matches!(
-        objects.compare_trees(
+        objects.compare_trees_with(
             None,
             Some(ObjectId::null(foreign)),
             TreeCompareLimits::default(),
@@ -494,7 +494,7 @@ fn sha256_fetch_knowledge_cannot_cross_formats() {
         InitKind::Bare,
     )
     .unwrap();
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     let blob = repo.loose_objects().write_blob(b"known").unwrap();
     let known = girt::fetch::KnownHistory::new(
         &objects,
@@ -555,13 +555,13 @@ fn packed_history_checkout_and_status_use_repository_format(#[case] format: Obje
         )
         .unwrap();
     git(&path, &["repack", "-ad"], b"");
-    let objects = repo.objects(PackLimits::default()).unwrap();
+    let objects = repo.objects_with(PackLimits::default()).unwrap();
     assert_eq!(
-        objects.walk(&[tip], HistoryLimits::default()).unwrap(),
+        objects.walk_with(&[tip], HistoryLimits::default()).unwrap(),
         [tip]
     );
     let report = repo
-        .checkout_tree(
+        .checkout_tree_with(
             None,
             Some(tree_id),
             Default::default(),
@@ -578,7 +578,7 @@ fn packed_history_checkout_and_status_use_repository_format(#[case] format: Obje
         format!("100644 {blob} 0\tfile\n").as_bytes()
     );
     let status = repo
-        .raw_status(
+        .raw_status_with(
             Baseline::Head,
             Untracked::Omit,
             Default::default(),
@@ -591,7 +591,7 @@ fn packed_history_checkout_and_status_use_repository_format(#[case] format: Obje
     git(&path, &["fsck", "--strict"], b"");
     std::fs::write(path.join("file"), b"dirty").unwrap();
     let status = repo
-        .raw_status(
+        .raw_status_with(
             Baseline::Head,
             Untracked::Omit,
             Default::default(),
@@ -600,7 +600,7 @@ fn packed_history_checkout_and_status_use_repository_format(#[case] format: Obje
         .unwrap();
     assert_eq!(status.unstaged.len(), 1);
     assert!(
-        repo.checkout_tree(
+        repo.checkout_tree_with(
             Some(tree_id),
             None,
             Default::default(),

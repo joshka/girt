@@ -1088,7 +1088,7 @@ impl FetchReady {
             let objects = self
                 .request
                 .repository
-                .objects(limits.snapshot)
+                .objects_with(limits.snapshot)
                 .map_err(|error| {
                     FetchFinishFailure::BeforePublication(FetchError::Destination(error))
                 })?;
@@ -1122,7 +1122,7 @@ impl FetchReady {
         if !self.received.wants().is_empty() {
             let reopened = Repository::open(self.request.repository.git_dir())
                 .map_err(FetchFinishFailure::Reopen)?;
-            let objects = reopened.objects(limits.snapshot).map_err(|error| {
+            let objects = reopened.objects_with(limits.snapshot).map_err(|error| {
                 FetchFinishFailure::BeforePublication(FetchError::Destination(error))
             })?;
             // Prove the received representation is still installed, and honor destination lookup

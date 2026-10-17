@@ -87,7 +87,7 @@ fn fixture() -> tempfile::TempDir {
 
 // Boxed: the error is larger on Windows, where clippy's `result_large_err` applies.
 fn resolve(repository: &Repository, text: &str) -> Result<ObjectId, Box<RevisionError>> {
-    let objects = repository.objects(PackLimits::default()).unwrap();
+    let objects = repository.objects_with(PackLimits::default()).unwrap();
     let resolver = Resolver::new(repository, &objects)?;
     let revision = text.parse::<Revision>().map_err(RevisionError::from)?;
     Ok(resolver.resolve(&revision)?)
@@ -215,7 +215,7 @@ fn push_destination_defaults_to_the_only_remote() {
 fn resolve_to_tag_keeps_annotated_tags() {
     let root = fixture();
     let repository = Repository::discover(root.path()).unwrap();
-    let objects = repository.objects(PackLimits::default()).unwrap();
+    let objects = repository.objects_with(PackLimits::default()).unwrap();
     let resolver = Resolver::new(&repository, &objects).unwrap();
     let tag = resolver
         .resolve_to(&"v1".parse().unwrap(), girt::ObjectKind::Tag)
@@ -261,7 +261,7 @@ fn ranges_match_git_rev_list_counts() {
     let root = fixture();
     let path = root.path();
     let repository = Repository::discover(path).unwrap();
-    let objects = repository.objects(PackLimits::default()).unwrap();
+    let objects = repository.objects_with(PackLimits::default()).unwrap();
     let resolver = Resolver::new(&repository, &objects).unwrap();
     for args in [
         &["HEAD"][..],
@@ -278,12 +278,12 @@ fn ranges_match_git_rev_list_counts() {
         let ranges: Vec<Range> = args.iter().map(|arg| arg.parse().unwrap()).collect();
         let selection = resolver.select(&ranges).unwrap();
         let excluded: std::collections::HashSet<_> = objects
-            .walk(&selection.exclude, HistoryLimits::trusted())
+            .walk_with(&selection.exclude, HistoryLimits::trusted())
             .unwrap()
             .into_iter()
             .collect();
         let count = objects
-            .walk(&selection.include, HistoryLimits::trusted())
+            .walk_with(&selection.include, HistoryLimits::trusted())
             .unwrap()
             .into_iter()
             .filter(|id| !excluded.contains(id))

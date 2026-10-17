@@ -1,6 +1,4 @@
 //! Run `cargo run --example checkout` on macOS/Linux. All files are disposable.
-use std::sync::atomic::AtomicBool;
-
 use girt::{EntryMode, InitKind, Repository, Tree, TreeEntry};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,8 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?)?;
     // This example owns the repository exclusively. After a no-checkout clone, likewise pass
     // None as baseline and read the desired commit's tree for target. HEAD is never switched.
-    let cancel = AtomicBool::new(false);
-    match repo.checkout_tree(None, Some(target), Default::default(), &cancel) {
+    match repo.checkout_tree(None, Some(target)) {
         Ok(report) => println!("Published raw tree checkout: {report:?}"),
         Err(failure) => {
             eprintln!(
@@ -39,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     // A subsequent checkout names the current baseline explicitly. This removes only our
     // verified tracked file and publishes an empty index; it does not delete unknown contents.
-    repo.checkout_tree(Some(target), None, Default::default(), &cancel)?;
+    repo.checkout_tree(Some(target), None)?;
     assert!(!repo.worktree().unwrap().join("hello.txt").exists());
     drop(repo);
     temp.close()?; // Recursive cleanup belongs only to this disposable example's owner.

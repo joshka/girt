@@ -20,21 +20,25 @@ fn index_publication_after_miss_requires_explicit_refresh(#[case] format: Object
     let fixture = Fixture::new(format, true, 4);
     let pending = fixture.index_path.with_extension("pending");
     fs::rename(&fixture.index_path, &pending).unwrap();
-    let mut objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let mut objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let retained = objects.clone();
     assert_eq!(
-        objects.read(fixture.delta, ReadLimits::default()).unwrap(),
+        objects
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap(),
         None
     );
     // Pack exists already; only the fully written index is atomically published.
     fs::rename(pending, &fixture.index_path).unwrap();
     assert_eq!(
-        objects.read(fixture.delta, ReadLimits::default()).unwrap(),
+        objects
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap(),
         None
     );
     refresh(&mut objects).unwrap();
     let value = objects
-        .read(fixture.delta, ReadLimits::default())
+        .read_with(fixture.delta, ReadLimits::default())
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -46,7 +50,9 @@ fn index_publication_after_miss_requires_explicit_refresh(#[case] format: Object
         )
     );
     assert_eq!(
-        retained.read(fixture.delta, ReadLimits::default()).unwrap(),
+        retained
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap(),
         None
     );
     assert_eq!(fixture.records.len(), 7);
@@ -57,7 +63,7 @@ fn index_publication_after_miss_requires_explicit_refresh(#[case] format: Object
 #[case::sha256(ObjectFormat::Sha256)]
 fn failed_refresh_preserves_pinned_reader_and_recovers(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
-    let mut objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let mut objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let retained = objects.clone();
     let pack = fixture.index_path.with_extension("pack");
     let pending = pack.with_extension("pending");
@@ -67,7 +73,7 @@ fn failed_refresh_preserves_pinned_reader_and_recovers(#[case] format: ObjectFor
     );
     assert_eq!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -76,8 +82,12 @@ fn failed_refresh_preserves_pinned_reader_and_recovers(#[case] format: ObjectFor
     fs::rename(pending, pack).unwrap();
     refresh(&mut objects).unwrap();
     assert_eq!(
-        objects.read(fixture.delta, ReadLimits::default()).unwrap(),
-        retained.read(fixture.delta, ReadLimits::default()).unwrap()
+        objects
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap(),
+        retained
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap()
     );
 }
 
@@ -86,7 +96,7 @@ fn failed_refresh_preserves_pinned_reader_and_recovers(#[case] format: ObjectFor
 #[case::sha256(ObjectFormat::Sha256)]
 fn corrupt_replacement_is_error_until_repaired(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
-    let mut objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let mut objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let original = fixture.index_path.with_extension("old");
     fs::rename(&fixture.index_path, &original).unwrap();
     fs::write(&fixture.index_path, b"interrupted index").unwrap();
@@ -96,7 +106,7 @@ fn corrupt_replacement_is_error_until_repaired(#[case] format: ObjectFormat) {
     ));
     assert_eq!(
         objects
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -107,7 +117,7 @@ fn corrupt_replacement_is_error_until_repaired(#[case] format: ObjectFormat) {
     refresh(&mut objects).unwrap();
     assert_eq!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -120,17 +130,21 @@ fn corrupt_replacement_is_error_until_repaired(#[case] format: ObjectFormat) {
 #[case::sha256(ObjectFormat::Sha256)]
 fn external_git_gc_retains_old_packs_and_refreshes_current_view(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
-    let mut objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let mut objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let retained = objects.clone();
     git(fixture.root.path(), &["gc", "--prune=now"], b"");
     refresh(&mut objects).unwrap();
     assert_eq!(
-        objects.read(fixture.delta, ReadLimits::default()).unwrap(),
-        retained.read(fixture.delta, ReadLimits::default()).unwrap()
+        objects
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap(),
+        retained
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap()
     );
     assert_eq!(
         objects
-            .read(fixture.ordinary, ReadLimits::default())
+            .read_with(fixture.ordinary, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
@@ -149,7 +163,7 @@ fn changed_alternates_leave_retained_topology_until_refresh(#[case] format: Obje
     let primary = Fixture::new(format, true, 4);
     let alternate = Fixture::new(format, true, 8);
     let id = alternate.delta;
-    let mut objects = primary.repo.objects(PackLimits::default()).unwrap();
+    let mut objects = primary.repo.objects_with(PackLimits::default()).unwrap();
     let retained = objects.clone();
     let metadata = primary.repo.object_dir().join("info/alternates");
     fs::create_dir_all(metadata.parent().unwrap()).unwrap();
@@ -159,7 +173,12 @@ fn changed_alternates_leave_retained_topology_until_refresh(#[case] format: Obje
     )
     .unwrap();
     refresh(&mut objects).unwrap();
-    assert!(objects.read(id, ReadLimits::default()).unwrap().is_some());
+    assert!(
+        objects
+            .read_with(id, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
     // A fresh loose identity exists only in the newly borrowed directory.
     let loose = alternate
         .repo
@@ -168,18 +187,24 @@ fn changed_alternates_leave_retained_topology_until_refresh(#[case] format: Obje
         .unwrap();
     assert!(
         objects
-            .read(loose, ReadLimits::default())
+            .read_with(loose, ReadLimits::default())
             .unwrap()
             .is_some()
     );
-    assert_eq!(retained.read(loose, ReadLimits::default()).unwrap(), None);
+    assert_eq!(
+        retained.read_with(loose, ReadLimits::default()).unwrap(),
+        None
+    );
     let borrowed = objects.clone();
     fs::remove_file(metadata).unwrap();
     refresh(&mut objects).unwrap();
-    assert_eq!(objects.read(loose, ReadLimits::default()).unwrap(), None);
+    assert_eq!(
+        objects.read_with(loose, ReadLimits::default()).unwrap(),
+        None
+    );
     assert!(
         borrowed
-            .read(loose, ReadLimits::default())
+            .read_with(loose, ReadLimits::default())
             .unwrap()
             .is_some()
     );
@@ -190,7 +215,7 @@ fn changed_alternates_leave_retained_topology_until_refresh(#[case] format: Obje
 #[case::sha256(ObjectFormat::Sha256)]
 fn cancellation_and_limits_preserve_view(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
-    let mut objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let mut objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     assert!(matches!(
         objects.refresh_controlled(
             PackLimits::default(),
@@ -208,7 +233,7 @@ fn cancellation_and_limits_preserve_view(#[case] format: ObjectFormat) {
     ));
     assert_eq!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -222,9 +247,9 @@ fn cancellation_and_limits_preserve_view(#[case] format: ObjectFormat) {
 #[case::sha256(ObjectFormat::Sha256)]
 fn concurrent_loose_publication_is_live_without_refresh(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
-    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let id = girt::ObjectId::for_blob(format, b"concurrent loose publication");
-    assert_eq!(objects.read(id, ReadLimits::default()).unwrap(), None);
+    assert_eq!(objects.read_with(id, ReadLimits::default()).unwrap(), None);
     let first = fixture.repo.loose_objects();
     let second = first.clone();
     std::thread::scope(|scope| {
@@ -235,14 +260,14 @@ fn concurrent_loose_publication_is_live_without_refresh(#[case] format: ObjectFo
     });
     assert_eq!(
         objects
-            .read(id, ReadLimits::default())
+            .read_with(id, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
         b"concurrent loose publication"
     );
     git(fixture.root.path(), &["prune", "--expire=now"], b"");
-    assert_eq!(objects.read(id, ReadLimits::default()).unwrap(), None);
+    assert_eq!(objects.read_with(id, ReadLimits::default()).unwrap(), None);
 }
 
 #[rstest]
@@ -250,18 +275,20 @@ fn concurrent_loose_publication_is_live_without_refresh(#[case] format: ObjectFo
 #[case::sha256(ObjectFormat::Sha256)]
 fn removing_pairs_only_affects_refreshed_generation(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
-    let mut objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let mut objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let retained = objects.clone();
     fs::remove_file(&fixture.index_path).unwrap();
     fs::remove_file(fixture.index_path.with_extension("pack")).unwrap();
     refresh(&mut objects).unwrap();
     assert_eq!(
-        objects.read(fixture.delta, ReadLimits::default()).unwrap(),
+        objects
+            .read_with(fixture.delta, ReadLimits::default())
+            .unwrap(),
         None
     );
     assert_eq!(
         retained
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),
@@ -274,7 +301,7 @@ fn removing_pairs_only_affects_refreshed_generation(#[case] format: ObjectFormat
 #[case::sha256(ObjectFormat::Sha256)]
 fn malformed_alternate_refresh_preserves_prior_view(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
-    let mut objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let mut objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
     let metadata = fixture.repo.object_dir().join("info/alternates");
     fs::create_dir_all(metadata.parent().unwrap()).unwrap();
     fs::write(&metadata, b"\"unfinished").unwrap();
@@ -284,7 +311,7 @@ fn malformed_alternate_refresh_preserves_prior_view(#[case] format: ObjectFormat
     ));
     assert_eq!(
         objects
-            .read(fixture.delta, ReadLimits::default())
+            .read_with(fixture.delta, ReadLimits::default())
             .unwrap()
             .unwrap()
             .id(),

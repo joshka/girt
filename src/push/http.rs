@@ -98,7 +98,7 @@ pub async fn send_http(
 /// let new = commit("refs/heads/main")?;
 /// let main = RefName::new("refs/heads/main")?;
 ///
-/// let objects = repo.objects(PackLimits::default())?;
+/// let objects = repo.objects_with(PackLimits::default())?;
 /// let cancel = AtomicBool::new(false);
 /// let command = PushCommand::new(main.clone(), Some(last_seen), new);
 /// let prepared = PreparedPush::new(

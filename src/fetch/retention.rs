@@ -387,7 +387,7 @@ mod tests {
         let (_root, source, destination, received) = fixture();
         let cancel = AtomicBool::new(false);
         let known = KnownHistory::new(
-            &source.objects(PackLimits::default()).unwrap(),
+            &source.objects_with(PackLimits::default()).unwrap(),
             received.wants(),
             FetchLimits::default(),
             &cancel,

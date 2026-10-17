@@ -593,8 +593,8 @@ impl LooseObjects {
 ///     Err(Error::UnsupportedObjectType)
 /// ));
 /// let object = repo
-///     .objects(PackLimits::default())?
-///     .read(id, ReadLimits::default())?
+///     .objects_with(PackLimits::default())?
+///     .read_with(id, ReadLimits::default())?
 ///     .ok_or("object absent")?;
 /// assert_eq!(object.kind(), ObjectKind::Blob);
 /// assert_eq!(object.data(), b"release notes\n");

@@ -225,9 +225,9 @@ impl Repository {
     ///     .join(format!("pack-{}.pack", first.written.checksum));
     /// assert!(report.removed.contains(&old_pack));
     /// assert!(!old_pack.exists());
-    /// let objects = repo.objects(Default::default())?;
-    /// assert!(objects.read(id, Default::default())?.is_some());
-    /// assert!(objects.read(other, Default::default())?.is_some());
+    /// let objects = repo.objects_with(Default::default())?;
+    /// assert!(objects.read_with(id, Default::default())?.is_some());
+    /// assert!(objects.read_with(other, Default::default())?.is_some());
     /// # Ok(())
     /// # }
     /// # #[cfg(not(unix))]
@@ -1041,7 +1041,7 @@ mod tests {
         );
         let fresh = Repository::open(root.path()).unwrap();
         assert!(
-            fresh.objects(crate::PackLimits::default()).is_ok(),
+            fresh.objects_with(crate::PackLimits::default()).is_ok(),
             "cold open failed after unsynced index unlink was lost but pack unlink persisted"
         );
     }

@@ -97,7 +97,7 @@ fn probe(count: usize) -> Result<(), Box<dyn std::error::Error>> {
     let mut directory = Entry::new(b"outside/".to_vec(), Mode::SparseDirectory, tree_id);
     directory.skip_worktree = true;
     let sparse = Index::new(ObjectFormat::Sha1, vec![directory], Limits::default())?;
-    let objects = repo.objects(girt::PackLimits::default())?;
+    let objects = repo.objects_with(girt::PackLimits::default())?;
     let expand_ns = measure(|| {
         let mut index = sparse.clone();
         index

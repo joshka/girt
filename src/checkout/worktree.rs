@@ -127,7 +127,7 @@ impl<'a> Plan<'a> {
         mut limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        let objects = repo.objects(limits.packs)?;
+        let objects = repo.objects_with(limits.packs)?;
         let old = flatten(&objects, baseline, limits, cancel)?;
         let target = flatten(&objects, target, limits, cancel)?;
         let entries = edit.index().entries();
@@ -191,7 +191,7 @@ impl<'a> Plan<'a> {
                 .min(limits.max_object_bytes)
                 .min(limits.max_file_bytes);
             let object = objects
-                .read(leaf.id, read)?
+                .read_with(leaf.id, read)?
                 .ok_or(Error::InvalidBlob(leaf.id))?;
             if object.kind() != ObjectKind::Blob {
                 return Err(Error::InvalidBlob(leaf.id));
@@ -747,7 +747,7 @@ fn flatten(
     cancel: &AtomicBool,
 ) -> Result<Leaves, Error> {
     Ok(objects
-        .compare_trees(None, tree, limits.trees, cancel)?
+        .compare_trees_with(None, tree, limits.trees, cancel)?
         .into_iter()
         .map(|change| (change.path, change.new.unwrap()))
         .collect())

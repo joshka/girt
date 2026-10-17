@@ -38,7 +38,7 @@ impl Fixture {
             force: ForcePolicy::default(),
         });
         let prepared = PreparedPush::new(
-            &repo.objects(PackLimits::default()).unwrap(),
+            &repo.objects_with(PackLimits::default()).unwrap(),
             commands.to_vec(),
             &[],
             PushLimits::default(),

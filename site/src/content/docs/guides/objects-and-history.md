@@ -53,23 +53,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let base = commit(vec![], b"base\n")?;
     let left = commit(vec![base], b"left\n")?;
     let right = commit(vec![base], b"right\n")?;
-    let objects = repo.objects(PackLimits::default())?;
+    let objects = repo.objects_with(PackLimits::default())?;
     assert_eq!(
-        objects.walk(&[left], HistoryLimits::default())?,
+        objects.walk_with(&[left], HistoryLimits::default())?,
         [left, base]
     );
     assert_eq!(
-        objects.merge_bases(left, right, HistoryLimits::default())?,
+        objects.merge_bases_with(left, right, HistoryLimits::default())?,
         [base]
     );
-    let decoded = objects.read_commit(left, girt::ReadLimits::default())?;
+    let decoded = objects.read_commit_with(left, girt::ReadLimits::default())?;
     let root = objects
-        .read(decoded.tree(), girt::ReadLimits::default())?
+        .read_with(decoded.tree(), girt::ReadLimits::default())?
         .ok_or("tree missing")?;
     assert_eq!(root.kind(), girt::ObjectKind::Tree);
     let entries = Tree::parse(ObjectFormat::Sha1, root.data())?;
     let file = objects
-        .read(entries.entries()[0].id, girt::ReadLimits::default())?
+        .read_with(entries.entries()[0].id, girt::ReadLimits::default())?
         .ok_or("blob missing")?;
     assert_eq!(file.kind(), girt::ObjectKind::Blob);
     assert_eq!(file.data(), b"# Project\n");
@@ -148,7 +148,7 @@ fn select(
     argument: &str,
 ) -> Result<Selection, Box<dyn std::error::Error>> {
     let range: Range = argument.parse()?;
-    let objects = repository.objects(PackLimits::default())?;
+    let objects = repository.objects_with(PackLimits::default())?;
     let resolver = Resolver::new(repository, &objects)?;
     Ok(resolver.select(&[range])?)
 }
