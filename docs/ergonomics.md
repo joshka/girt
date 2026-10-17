@@ -118,53 +118,35 @@ Desired sketch: `git.log("main").exclude("release").date_order().take(20)`. Gap 
 
 ### Diff two commits: tree and content
 
-<!-- ergonomics-status: partial -->
+<!-- ergonomics-status: supported -->
 
-Partial: the compiled snippet resolves both commits to trees, compares them and reads changed blob
-contents. It emits debug representations of edit ranges, not unified patches. Gitlinks need an
-explicit submodule policy. Renames are combined with structural changes; `Comparison` reports
-skipped exhaustive inference when the candidate limit is exceeded. This snippet reads detected
-entries. Verbosity includes the content diff's ReadLimits, DiffLimits and false AtomicBool.
+Supported: the handle resolves both revisions to trees, detects renames and writes the unified patch
+`git diff` prints, streaming each line to the caller's writer. Hunks come from girt's Myers
+comparison without Git's indent heuristic, so ambiguous changes may align differently; attributes,
+textconv, diff configuration and binary patches are not applied. `Objects::write_patch_with` chooses
+context lines, abbreviation, binary policy, limits and cancellation; `patch::write_hunks` renders a
+`content_diff` result alone.
+
+With the trusted handle:
 
 ```rust,no_run
-use std::sync::atomic::AtomicBool;
+use std::io::{self, Write as _};
 
-use girt::content_diff::{BinaryMode, BlobContent, DiffLimits, diff};
-use girt::revision::Resolver;
-use girt::{ObjectKind, ReadLimits, Repository};
+use girt::trusted::Handle;
 
-fn compare(repo: &Repository) -> girt::Result<()> {
-    let objects = repo.objects()?;
-    let resolver = Resolver::new(repo, &objects)?;
-    let old = resolver.resolve_to(&"HEAD~1".parse()?, ObjectKind::Tree)?;
-    let new = resolver.resolve_to(&"HEAD".parse()?, ObjectKind::Tree)?;
-    let cancel = AtomicBool::new(false);
-    let limits = DiffLimits::default();
-    for entry in objects.diff_trees(Some(old), Some(new))?.entries {
-        let content = BlobContent::read(
-            &objects,
-            &entry.content_change(),
-            ReadLimits::default(),
-            limits.max_input_bytes,
-            &cancel,
-        )?;
-        let edits = diff(
-            &content.old,
-            &content.new,
-            BinaryMode::Auto,
-            limits,
-            &cancel,
-        )?;
-        println!("{entry:?}: {edits:?}");
-    }
+fn main() -> girt::Result<()> {
+    let git = Handle::discover("repo")?;
+    let mut out = io::BufWriter::new(io::stdout().lock());
+    git.write_patch(&mut out, "HEAD~1", "HEAD")?;
+    out.flush()?;
     Ok(())
 }
 ```
 
-Disposable end-to-end evidence: [content_diff](../examples/content_diff.rs).
+Disposable end-to-end evidence: [patch](../examples/patch.rs).
 
-Desired sketch: `objects.diff_trees(old_tree, new_tree)?`. Gap closure:
-[404](https://github.com/joshka/girt/issues/404); patch rendering in
+Desired sketch: `git.write_patch(out, "HEAD~1", "HEAD")?`. Gap closure:
+[404](https://github.com/joshka/girt/issues/404) and
 [411](https://github.com/joshka/girt/issues/411). `--name-status` output can already use
 `girt::display::quote_path` and `TreeChange::status`
 ([407](https://github.com/joshka/girt/issues/407)).

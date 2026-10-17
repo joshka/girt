@@ -36,7 +36,7 @@ impl ObjectView {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn snapshot(&self) -> crate::Result<Arc<Objects>> {
+    pub(super) fn snapshot(&self) -> crate::Result<Arc<Objects>> {
         if let Some(objects) = &*self.lock() {
             return Ok(Arc::clone(objects));
         }

@@ -229,6 +229,40 @@ impl Handle {
         )?)
     }
 
+    /// Writes the `git diff <old> <new>` patch between two revisions' trees.
+    ///
+    /// Resolves both revisions to trees as [`Self::rev_parse`] does, detects renames (including
+    /// empty files, as Git does) with [`crate::Objects::diff_trees_with`], then calls
+    /// [`crate::Objects::write_patch`]. Abbreviation is
+    /// automatic; `core.abbrev`, `diff.*` configuration and attributes are not read. Use
+    /// [`crate::Objects::write_patch_with`] for context, abbreviation, binary policy or limits.
+    /// Pass a buffered writer: each patch line is a separate write.
+    ///
+    /// # Errors
+    ///
+    /// Returns resolution, comparison and [`crate::patch::Error`] failures. Lines written before a
+    /// failure remain in `out`.
+    pub fn write_patch(
+        &self,
+        out: impl std::io::Write,
+        old: impl Display,
+        new: impl Display,
+    ) -> crate::Result<()> {
+        let old = self.reader.resolve(old, Some(ObjectKind::Tree))?;
+        let new = self.reader.resolve(new, Some(ObjectKind::Tree))?;
+        let objects = self.reader.snapshot()?;
+        // `git diff` pairs empty files as exact renames; the core default does not.
+        let options = crate::rewrites::Options::default().with_track_empty(true);
+        let comparison = objects.diff_trees_with(
+            Some(old),
+            Some(new),
+            options,
+            Default::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )?;
+        Ok(objects.write_patch(out, &comparison.entries)?)
+    }
+
     /// Starts an empty snapshot through [`crate::tree::TreeEditor::new`].
     /// Supply stored subtrees explicitly with `set_entry`; this does not load HEAD or stage files.
     pub fn tree_editor(&self) -> crate::tree::TreeEditor<'_> {

@@ -139,6 +139,7 @@ from_domain_errors! {
     crate::tree_diff::Error,
     crate::locks::CleanupFailure,
     crate::loose::Error,
+    crate::patch::Error,
     crate::ObjectFormatError,
     crate::ParseObjectIdError,
     crate::ParseObjectIdPrefixError,

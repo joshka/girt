@@ -1,23 +1,19 @@
 //! `girt diff`: compare two trees as a change list, renames or a unified patch.
 
 use std::io::Write;
-use std::ops::Range;
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
 use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _};
-use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+use girt::ReadLimits;
 use girt::display::quote_path;
-use girt::rewrites::{Copies, Kind, Options};
+use girt::patch::{Limits, Options};
+use girt::rewrites::{self, Copies};
 use girt::tree_diff::Entry;
-use girt::{ChangeStatus, EntryMode, ObjectId, Objects, ReadLimits, TreeValue};
 
 use crate::common::{resolve_tree, stdout};
 use crate::{Context, complete};
-
-/// Lines of unchanged context around each patch hunk.
-const CONTEXT: usize = 3;
 
 /// Compare two trees.
 ///
@@ -58,7 +54,7 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
     let old = resolve_tree(&repository, &objects, &args.a)?;
     let new = resolve_tree(&repository, &objects, &args.b)?;
     let entries = if args.renames || args.copies {
-        let options = Options::default().with_copies(if args.copies {
+        let options = rewrites::Options::default().with_copies(if args.copies {
             Copies::Modified
         } else {
             Copies::Disabled
@@ -90,14 +86,20 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
     let mut out = stdout();
     let width = crate::common::abbrev_len(&repository, &objects)?;
     if args.patch {
-        for entry in &entries {
-            if context.color {
-                let mut colored = PatchColor::new(&mut out);
-                write_patch(&mut colored, &objects, entry, width)?;
-                colored.flush()?;
-            } else {
-                write_patch(&mut out, &objects, entry, width)?;
-            }
+        // The CLI reads trusted local storage, so blobs are read without the default object cap.
+        let options = Options::default().with_abbrev_len(Some(width));
+        let limits = Limits::default().with_read(ReadLimits::trusted());
+        let cancel = AtomicBool::new(false);
+        if context.color {
+            let mut colored = PatchColor::new(&mut out);
+            objects
+                .write_patch_with(&mut colored, &entries, options, limits, &cancel)
+                .wrap_err("writing patch")?;
+            colored.flush()?;
+        } else {
+            objects
+                .write_patch_with(&mut out, &entries, options, limits, &cancel)
+                .wrap_err("writing patch")?;
         }
     } else {
         for entry in &entries {
@@ -158,252 +160,6 @@ fn write_status(out: &mut impl Write, entry: &Entry, git: bool) -> Result<()> {
             )?;
         }
         _ => color_eyre::eyre::bail!("unsupported tree diff entry"),
-    }
-    Ok(())
-}
-
-/// Writes the patch for one entry, splitting type changes into a deletion and an addition.
-fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry, width: usize) -> Result<()> {
-    match entry {
-        Entry::Change(change) => match (change.old, change.new) {
-            (Some(old), Some(new)) if change.status() == ChangeStatus::TypeChanged => {
-                let path = &change.path;
-                write_file_patch(out, objects, (path, path), Some(old), None, None, width)?;
-                write_file_patch(out, objects, (path, path), None, Some(new), None, width)
-            }
-            (old, new) => write_file_patch(
-                out,
-                objects,
-                (&change.path, &change.path),
-                old,
-                new,
-                None,
-                width,
-            ),
-        },
-        Entry::Rewrite {
-            kind,
-            similarity,
-            source,
-            target,
-            old,
-            new,
-        } => write_file_patch(
-            out,
-            objects,
-            (source, target),
-            Some(*old),
-            Some(*new),
-            Some((*kind, *similarity)),
-            width,
-        ),
-        _ => color_eyre::eyre::bail!("unsupported tree diff entry"),
-    }
-}
-
-fn write_file_patch(
-    out: &mut impl Write,
-    objects: &Objects,
-    (old_path, new_path): (&[u8], &[u8]),
-    old: Option<TreeValue>,
-    new: Option<TreeValue>,
-    rewrite: Option<(Kind, u8)>,
-    width: usize,
-) -> Result<()> {
-    let a = quote_path(&[b"a/", old_path].concat()).to_string();
-    let b = quote_path(&[b"b/", new_path].concat()).to_string();
-    writeln!(out, "diff --git {a} {b}")?;
-    match (old, new) {
-        (None, Some(new)) => writeln!(out, "new file mode {}", new.mode.octal())?,
-        (Some(old), None) => writeln!(out, "deleted file mode {}", old.mode.octal())?,
-        (Some(old), Some(new)) if old.mode != new.mode => {
-            writeln!(
-                out,
-                "old mode {}\nnew mode {}",
-                old.mode.octal(),
-                new.mode.octal()
-            )?;
-        }
-        _ => {}
-    }
-    if let Some((kind, similarity)) = rewrite {
-        let verb = if kind == Kind::Rename {
-            "rename"
-        } else {
-            "copy"
-        };
-        writeln!(out, "similarity index {similarity}%")?;
-        writeln!(out, "{verb} from {}", quote_path(old_path))?;
-        writeln!(out, "{verb} to {}", quote_path(new_path))?;
-    }
-    let zero = |value: Option<TreeValue>| value.map(|value| value.id);
-    let (old_id, new_id) = (zero(old), zero(new));
-    if old_id == new_id {
-        return Ok(());
-    }
-    let mode = match (old, new) {
-        (Some(old), Some(new)) if old.mode == new.mode => format!(" {}", new.mode.octal()),
-        _ => String::new(),
-    };
-    let abbrev = |id: Option<ObjectId>| match id {
-        Some(id) => objects.abbreviate(id, width).map(|p| p.to_string()),
-        None => Ok("0".repeat(width.min(objects.object_format().digest_len() * 2))),
-    };
-    writeln!(out, "index {}..{}{mode}", abbrev(old_id)?, abbrev(new_id)?)?;
-
-    let (old_bytes, new_bytes) = read_sides(objects, old, new)?;
-    let a = if old.is_some() {
-        a.as_str()
-    } else {
-        "/dev/null"
-    };
-    let b = if new.is_some() {
-        b.as_str()
-    } else {
-        "/dev/null"
-    };
-    let limits = DiffLimits::default();
-    match diff(
-        &old_bytes,
-        &new_bytes,
-        BinaryMode::Auto,
-        limits,
-        &AtomicBool::new(false),
-    )
-    .wrap_err("diffing contents")?
-    {
-        ContentDiff::Unchanged => {}
-        ContentDiff::Binary { .. } => writeln!(out, "Binary files {a} and {b} differ")?,
-        ContentDiff::Text(text) => {
-            writeln!(out, "--- {a}\n+++ {b}")?;
-            write_hunks(out, text.old_bytes(), text.new_bytes(), text.edits())?;
-        }
-        _ => color_eyre::eyre::bail!("girt does not support this content diff kind yet"),
-    }
-    Ok(())
-}
-
-/// Reads both sides' bytes; gitlinks render as `Subproject commit <id>` lines like Git.
-fn read_sides(
-    objects: &Objects,
-    old: Option<TreeValue>,
-    new: Option<TreeValue>,
-) -> Result<(Vec<u8>, Vec<u8>)> {
-    Ok((read_side(objects, old)?, read_side(objects, new)?))
-}
-
-fn read_side(objects: &Objects, value: Option<TreeValue>) -> Result<Vec<u8>> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    if value.mode == EntryMode::Gitlink {
-        return Ok(format!("Subproject commit {}\n", value.id).into_bytes());
-    }
-    let object = objects
-        .read_with(value.id, ReadLimits::trusted())
-        .wrap_err_with(|| format!("reading {}", value.id))?
-        .ok_or_else(|| color_eyre::eyre::eyre!("missing object {}", value.id))?;
-    Ok(object.into_data())
-}
-
-/// Byte ranges of each line, including its LF.
-fn lines(bytes: &[u8]) -> Vec<Range<usize>> {
-    let mut lines = Vec::new();
-    let mut start = 0;
-    for (index, byte) in bytes.iter().enumerate() {
-        if *byte == b'\n' {
-            lines.push(start..index + 1);
-            start = index + 1;
-        }
-    }
-    if start < bytes.len() {
-        lines.push(start..bytes.len());
-    }
-    lines
-}
-
-/// Renders edits as unified hunks, merging edits whose gap fits within twice the context.
-fn write_hunks(
-    out: &mut impl Write,
-    old: &[u8],
-    new: &[u8],
-    edits: &[girt::content_diff::ContentEdit],
-) -> Result<()> {
-    let (old_lines, new_lines) = (lines(old), lines(new));
-    let mut index = 0;
-    while index < edits.len() {
-        let mut end = index;
-        while end + 1 < edits.len()
-            && edits[end + 1].old_lines.start - edits[end].old_lines.end <= 2 * CONTEXT
-        {
-            end += 1;
-        }
-        let (first, last) = (&edits[index], &edits[end]);
-        let old_start = first.old_lines.start.saturating_sub(CONTEXT);
-        let new_start = first.new_lines.start - (first.old_lines.start - old_start);
-        let old_end = (last.old_lines.end + CONTEXT).min(old_lines.len());
-        let new_end = last.new_lines.end + (old_end - last.old_lines.end);
-        write!(
-            out,
-            "@@ -{} +{} @@",
-            range(old_start, old_end - old_start),
-            range(new_start, new_end - new_start)
-        )?;
-        if let Some(name) = function_name(old, &old_lines[..old_start]) {
-            out.write_all(b" ")?;
-            out.write_all(name)?;
-        }
-        out.write_all(b"\n")?;
-        let mut position = old_start;
-        for edit in &edits[index..=end] {
-            for line in &old_lines[position..edit.old_lines.start] {
-                write_line(out, b' ', &old[line.clone()])?;
-            }
-            for line in &old_lines[edit.old_lines.clone()] {
-                write_line(out, b'-', &old[line.clone()])?;
-            }
-            for line in &new_lines[edit.new_lines.clone()] {
-                write_line(out, b'+', &new[line.clone()])?;
-            }
-            position = edit.old_lines.end;
-        }
-        for line in &old_lines[position..old_end] {
-            write_line(out, b' ', &old[line.clone()])?;
-        }
-        index = end + 1;
-    }
-    Ok(())
-}
-
-/// Formats a hunk range as Git does: `start,count`, omitting `,1`, with start 0-based if empty.
-fn range(start: usize, count: usize) -> String {
-    match count {
-        0 => format!("{start},0"),
-        1 => format!("{}", start + 1),
-        _ => format!("{},{count}", start + 1),
-    }
-}
-
-/// Git's default hunk-header function context: the nearest preceding line starting with a
-/// letter, `_` or `$`, trailing whitespace removed and truncated to 80 bytes.
-fn function_name<'a>(bytes: &'a [u8], before: &[Range<usize>]) -> Option<&'a [u8]> {
-    before.iter().rev().find_map(|line| {
-        let text = &bytes[line.clone()];
-        let first = *text.first()?;
-        if !(first.is_ascii_alphabetic() || first == b'_' || first == b'$') {
-            return None;
-        }
-        let text = &text[..text.len().min(80)];
-        let trimmed = text.trim_ascii_end();
-        Some(trimmed)
-    })
-}
-
-fn write_line(out: &mut impl Write, prefix: u8, line: &[u8]) -> Result<()> {
-    out.write_all(&[prefix])?;
-    out.write_all(line)?;
-    if !line.ends_with(b"\n") {
-        out.write_all(b"\n\\ No newline at end of file\n")?;
     }
     Ok(())
 }
