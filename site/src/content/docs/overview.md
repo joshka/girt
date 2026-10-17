@@ -41,7 +41,7 @@ and what it rejects.
 
 ## Where it stands
 
-girt is experimental and its API still changes between minor releases. It already runs jj's full
+girt is experimental and its API still changes between minor releases. It runs jj's full
 test suite and an end-to-end script against real Git. Performance is the main open work.
 Medium-sized repositories are mostly at parity with stock jj, while some operations on very large
 repositories are still several times slower. The [benchmark](/girt/performance/jj-benchmark/) shows
@@ -50,10 +50,10 @@ where.
 ## How this site relates to the API docs
 
 The [API documentation on docs.rs](https://docs.rs/girt/latest/girt/) is self-contained. Its crate
-and module pages teach each area, and every item documents its contract, limits and recovery from
-failure. This site composes those pieces into tasks and concepts that span modules. It adds the
-safety and compatibility model and performance results, and links to docs.rs for the details rather
-than repeating them.
+and module pages explain each area, and every item documents its contract, limits and how to recover
+from failure. This site covers tasks and concepts that span several modules, the safety and
+compatibility model, and performance results. It links to docs.rs for details instead of repeating
+them.
 
 ## Next steps
 
