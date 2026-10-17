@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/joshka/girt/compare/girt-cli-v0.2.0...girt-cli-v0.2.1) - 2026-10-17
+
+### Other
+
+- Fix the main build: report index errors from IndexedPack::contains ([#388](https://github.com/joshka/girt/pull/388))
+- List packs and enumerate objects through Objects; add girt object list and count ([#368](https://github.com/joshka/girt/pull/368))
+- Add shell completions and man pages to the girt CLI ([#374](https://github.com/joshka/girt/pull/374))
+
 ## [0.2.0](https://github.com/joshka/girt/compare/girt-cli-v0.1.0...girt-cli-v0.2.0) - 2026-10-17
 
 ### Other

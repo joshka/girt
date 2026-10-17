@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/joshka/girt/compare/girt-v0.11.0...girt-v0.11.1) - 2026-10-17
+
+### Other
+
+- Fix the main build: report index errors from IndexedPack::contains ([#388](https://github.com/joshka/girt/pull/388))
+- Release girt locks on Windows through verified file handles ([#377](https://github.com/joshka/girt/pull/377))
+- Contain Windows HTTP fixtures in kill-on-close jobs and document fixture ownership ([#376](https://github.com/joshka/girt/pull/376))
+- Say cargo add girt instead of pinning a version in the README ([#380](https://github.com/joshka/girt/pull/380))
+- List packs and enumerate objects through Objects; add girt object list and count ([#368](https://github.com/joshka/girt/pull/368))
+- Map pack indexes and check them lazily, as Git does ([#382](https://github.com/joshka/girt/pull/382))
+- Box the revision test helper's error to fix Windows clippy ([#383](https://github.com/joshka/girt/pull/383))
+- Add shell completions and man pages to the girt CLI ([#374](https://github.com/joshka/girt/pull/374))
+
 ## [0.11.0](https://github.com/joshka/girt/compare/girt-v0.10.3...girt-v0.11.0) - 2026-10-17
 
 ### Other
