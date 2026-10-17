@@ -133,9 +133,7 @@ fn nested_index_editor_commit_and_rename_match_git(#[case] format: ObjectFormat)
         .unwrap();
     assert_eq!(payload.without_headers(&[signature_index]).unwrap(), seen);
     let objects = repo.objects().unwrap();
-    let diff = objects
-        .diff_with_renames(Some(expected), Some(new))
-        .unwrap();
+    let diff = objects.diff_trees(Some(expected), Some(new)).unwrap();
     assert_eq!(diff.entries.len(), 2);
     assert!(diff.entries.iter().any(|e| matches!(e, tree_diff::Entry::Rewrite { source, target, similarity: 100, .. } if source == b"dir/file" && target == b"new/file")));
     let oracle = git(
@@ -152,7 +150,7 @@ fn nested_index_editor_commit_and_rename_match_git(#[case] format: ObjectFormat)
     assert_eq!(oracle, b"D\tdir/sub/run\nR100\tdir/file\tnew/file\n");
     assert!(
         objects
-            .diff_with_renames_with(
+            .diff_trees_with(
                 Some(expected),
                 Some(new),
                 Default::default(),
@@ -492,7 +490,7 @@ fn rename_limit_keeps_exact_matches_and_reports_skipped_inference() {
     let new = editor.write().unwrap();
     let objects = repo.objects().unwrap();
     let report = objects
-        .diff_with_renames_with(
+        .diff_trees_with(
             Some(old),
             Some(new),
             girt::rewrites::Options::default().with_candidate_limit(0),
@@ -535,7 +533,7 @@ fn rename_limit_keeps_exact_matches_and_reports_skipped_inference() {
         oracle,
         b"A\tnew/different\nR100\told/exact\tnew/exact\nD\told/edited\n"
     );
-    let result = objects.diff_with_renames_with(
+    let result = objects.diff_trees_with(
         Some(old),
         Some(new),
         Default::default(),

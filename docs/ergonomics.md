@@ -138,7 +138,7 @@ fn compare(repo: &Repository) -> girt::Result<()> {
     let new = resolver.resolve_to(&"HEAD".parse()?, ObjectKind::Tree)?;
     let cancel = AtomicBool::new(false);
     let limits = DiffLimits::default();
-    for entry in objects.diff_with_renames(Some(old), Some(new))?.entries {
+    for entry in objects.diff_trees(Some(old), Some(new))?.entries {
         let content = BlobContent::read(
             &objects,
             &entry.content_change(),
@@ -161,7 +161,7 @@ fn compare(repo: &Repository) -> girt::Result<()> {
 
 Disposable end-to-end evidence: [content_diff](../examples/content_diff.rs).
 
-Desired sketch: `objects.diff_with_renames(old_tree, new_tree)?`. Gap closure:
+Desired sketch: `objects.diff_trees(old_tree, new_tree)?`. Gap closure:
 [404](https://github.com/joshka/girt/issues/404); patch rendering in
 [411](https://github.com/joshka/girt/issues/411). `--name-status` output can already use
 `girt::display::quote_path` and `TreeChange::status`
