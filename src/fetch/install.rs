@@ -341,9 +341,7 @@ impl ReceivedFetch {
         &self.advertisement
     }
 
-    /// Selected tip IDs, in the order the selection returned them. These are not reference-update
-    /// instructions. Wire transfers remove duplicate IDs; native local receive currently keeps
-    /// them ([#326](https://github.com/joshka/girt/issues/326)).
+    /// Deduplicated selected tip IDs, in caller order. These are not reference-update instructions.
     pub fn wants(&self) -> &[ObjectId] {
         &self.wants
     }
