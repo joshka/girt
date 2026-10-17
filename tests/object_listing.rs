@@ -122,7 +122,7 @@ fn lists_packs_loose_and_alternates_like_git(#[case] format: ObjectFormat) {
     let mut sorted = packed.clone();
     sorted.sort();
     assert_eq!(pack.ids().collect::<Vec<_>>(), sorted);
-    assert_eq!(pack.ids().rev().next(), sorted.last().copied());
+    assert_eq!(pack.ids().next_back(), sorted.last().copied());
 
     let mut primary: Vec<_> = stores[0]
         .loose_objects()

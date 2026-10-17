@@ -101,6 +101,22 @@ bytes. Validation can impose additional rules. Rebuilding an object from its par
 normalize its spelling and so change its ID, which is why a tool that inspects objects should report
 malformed data instead of rewriting it.
 
+## List what a store holds
+
+`Objects::stores` yields the primary object directory, then each alternate. Each store's `packs`
+reports the pack and index paths, object count, sizes, checksum and whether a `.keep` or `.promisor`
+file marked the pack. Pack IDs come from the reader's pinned index in ascending order, with no file
+reads. `loose_objects` scans the store's live fan-out directories one entry at a time. It is bounded
+by `ListLimits`, can be cancelled and may miss or include files written during the scan.
+`object_ids` combines every pack and loose file across all stores into one sorted list without
+duplicates, as `git cat-file --batch-all-objects` does. `headers_controlled` then reads kinds and
+sizes in pack order without decoding payloads.
+
+Alternates are borrowed: a pruning tool must check `is_alternate` and leave them alone. Multi-pack
+indexes are not read and stray files are not reported. See
+[Objects::stores](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.stores) for
+the contracts.
+
 ## Choose the history query
 
 `walk` collects reachable commit IDs in breadth-first order, using supplied root and stored parent

@@ -51,7 +51,9 @@ impl Objects {
     /// )?;
     /// let id = repo.loose_objects().write_blob(b"seven\n")?;
     /// let objects = repo.objects(PackLimits::default())?;
-    /// let header = objects.header(id, ReadLimits::default())?.ok_or("missing")?;
+    /// let header = objects
+    ///     .header(id, ReadLimits::default())?
+    ///     .ok_or("missing")?;
     /// assert_eq!((header.kind(), header.size()), (ObjectKind::Blob, 6));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

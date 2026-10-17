@@ -2,19 +2,20 @@
 
 use std::collections::BTreeSet;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
-use color_eyre::eyre::{Result, WrapErr as _, bail};
+use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::pack::{IndexRebuildLimits, IndexRebuildOutcome, rebuild_index};
 use girt::retention::{
     MaintenanceIsolation, ReflogExpiryPolicy, RepackLimits, RetentionPlan, RetentionPolicy,
 };
-use girt::{ObjectFormat, ObjectId, Repository};
+use girt::{ObjectFormat, ObjectId, ObjectStore, Objects, Repository};
 
 use crate::Context;
 use crate::common::{not_cancelled, objects, stdout};
+use crate::object::loose_ids;
 
 /// Loose objects and packs younger than this survive pruning and pack retirement.
 const PRUNE_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
@@ -66,9 +67,11 @@ pub struct RunArgs {
 /// Pack file commands.
 #[derive(Debug, clap::Subcommand)]
 pub enum PackCommand {
-    /// List packs: `<path> <objects> <bytes>` per line, sorted by path.
+    /// List packs: `<path> <objects> <bytes>` per line, primary store first, then alternates,
+    /// each sorted by path.
     ///
-    /// There is no exact Git equivalent; `--git` is ignored.
+    /// `keep`, `promisor` and `alternate` follow when they apply. There is no exact Git
+    /// equivalent; `--git` is ignored.
     List,
     /// Verify every pack's checksums and objects; prints `ok` or fails with the error.
     ///
@@ -107,7 +110,10 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
                 "{} objects, {} bytes",
                 written.objects, written.pack_bytes
             ));
-            let path = pack_dir(&repository).join(format!("pack-{}.pack", written.checksum));
+            let path = repository
+                .object_dir()
+                .join("pack")
+                .join(format!("pack-{}.pack", written.checksum));
             writeln!(
                 stdout(),
                 "{} {} {}",
@@ -126,14 +132,27 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
     match command {
         PackCommand::List => {
             let repository = context.repository()?;
-            let format = repository.object_format();
+            let objects = objects(&repository)?;
             let mut out = stdout();
-            for pack in pack_paths(&repository)? {
-                let ids = index_ids(&pack.with_extension("idx"), format)?;
-                let bytes = std::fs::metadata(&pack)
-                    .wrap_err_with(|| format!("reading {}", pack.display()))?
-                    .len();
-                writeln!(out, "{} {} {bytes}", pack.display(), ids.len())?;
+            for store in objects.stores() {
+                for pack in store.packs() {
+                    write!(
+                        out,
+                        "{} {} {}",
+                        pack.path().display(),
+                        pack.object_count(),
+                        pack.pack_bytes()
+                    )?;
+                    let marks = [
+                        (pack.is_kept(), "keep"),
+                        (pack.is_promisor(), "promisor"),
+                        (store.is_alternate(), "alternate"),
+                    ];
+                    for (_, mark) in marks.iter().filter(|(set, _)| *set) {
+                        write!(out, " {mark}")?;
+                    }
+                    writeln!(out)?;
+                }
             }
         }
         PackCommand::Verify => {
@@ -228,10 +247,10 @@ fn run_phases(repository: &Repository, args: &RunArgs, progress_enabled: bool) -
             writeln!(out, "would-expire-reflog-records {records}")?;
         }
         if args.retire_packs {
-            let packs = pack_paths(repository)?;
-            let retired = packs
-                .iter()
-                .filter(|pack| !plan.protected_packs.contains(*pack))
+            let objects = objects(repository)?;
+            let retired = primary(&objects)?
+                .packs()
+                .filter(|pack| !plan.protected_packs.contains(pack.path()))
                 .count();
             writeln!(out, "would-retire-packs {retired}")?;
         }
@@ -308,95 +327,20 @@ fn unreachable(
     repository: &Repository,
     plan: &RetentionPlan,
 ) -> Result<(BTreeSet<ObjectId>, BTreeSet<ObjectId>)> {
-    let format = repository.object_format();
+    let objects = objects(repository)?;
+    let store = primary(&objects)?;
     let keep = |id: &ObjectId| !plan.reachable.contains(id) && !plan.required.contains(id);
-    let mut loose: BTreeSet<_> = loose_ids(&objects_dir(repository), format)?;
+    let mut loose: BTreeSet<_> = loose_ids(&store)?.into_iter().collect();
     loose.retain(keep);
-    let mut packed = BTreeSet::new();
-    for pack in pack_paths(repository)? {
-        packed.extend(index_ids(&pack.with_extension("idx"), format)?);
-    }
+    let mut packed: BTreeSet<_> = store.packs().flat_map(|pack| pack.ids()).collect();
     packed.retain(keep);
     Ok((loose, packed))
 }
 
-fn objects_dir(repository: &Repository) -> PathBuf {
-    repository.common_dir().join("objects")
-}
-
-fn pack_dir(repository: &Repository) -> PathBuf {
-    objects_dir(repository).join("pack")
-}
-
-/// Indexed `.pack` files in the primary store, sorted by path.
-fn pack_paths(repository: &Repository) -> Result<Vec<PathBuf>> {
-    let dir = pack_dir(repository);
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error).wrap_err_with(|| format!("reading {}", dir.display())),
-    };
-    let mut packs = Vec::new();
-    for entry in entries {
-        let path = entry?.path();
-        if path.extension().is_some_and(|ext| ext == "pack") && path.with_extension("idx").exists()
-        {
-            packs.push(path);
-        }
-    }
-    packs.sort();
-    Ok(packs)
-}
-
-/// Loose object IDs found in `objects/xx/` fan-out directories.
-fn loose_ids(dir: &Path, format: ObjectFormat) -> Result<BTreeSet<ObjectId>> {
-    let mut ids = BTreeSet::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Ok(ids);
-    };
-    for entry in entries {
-        let entry = entry?;
-        let prefix = entry.file_name();
-        let Some(prefix) = prefix.to_str().filter(|name| name.len() == 2) else {
-            continue;
-        };
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        for file in std::fs::read_dir(entry.path())? {
-            let name = file?.file_name();
-            let hex = format!("{prefix}{}", name.to_string_lossy());
-            if let Ok(id) = hex.parse::<ObjectId>()
-                && id.format() == format
-            {
-                ids.insert(id);
-            }
-        }
-    }
-    Ok(ids)
-}
-
-/// Object IDs listed by a version 1 or 2 pack index.
-fn index_ids(path: &Path, format: ObjectFormat) -> Result<Vec<ObjectId>> {
-    let bytes = std::fs::read(path).wrap_err_with(|| format!("reading {}", path.display()))?;
-    let width = format.digest_len();
-    let (fanout, names, stride) = if bytes.starts_with(b"\xfftOc\0\0\0\x02") {
-        (8, 8 + 1024, width)
-    } else {
-        (0, 1024, width + 4)
-    };
-    let corrupt = || color_eyre::eyre::eyre!("corrupt pack index {}", path.display());
-    let count = bytes
-        .get(fanout + 1020..fanout + 1024)
-        .map(|word| u32::from_be_bytes([word[0], word[1], word[2], word[3]]) as usize)
-        .ok_or_else(corrupt)?;
-    // Version 1 entries are `offset, name`; version 2 names are contiguous.
-    let skip = if fanout == 0 { 4 } else { 0 };
-    (0..count)
-        .map(|position| {
-            let start = names + position * stride + skip;
-            let raw = bytes.get(start..start + width).ok_or_else(corrupt)?;
-            ObjectId::from_bytes(format, raw).map_err(|_| corrupt())
-        })
-        .collect()
+/// The repository's own object store, which excludes borrowed alternates.
+fn primary(objects: &Objects) -> Result<ObjectStore<'_>> {
+    objects
+        .stores()
+        .next()
+        .ok_or_else(|| eyre!("object storage has no primary store"))
 }
