@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.3](https://github.com/joshka/girt/compare/girt-v0.11.2...girt-v0.11.3) - 2026-10-17
+
+### Other
+
+- Add current and configured signature constructors ([#410](https://github.com/joshka/girt/pull/410))
+- Fix clone's 3 GB memory peak by queuing each object once in local fetch ([#402](https://github.com/joshka/girt/pull/402))
+- Cut local push peak memory by releasing the source snapshot after preparing ([#399](https://github.com/joshka/girt/pull/399))
+- Speed up GC's retention walk by queuing each object once ([#397](https://github.com/joshka/girt/pull/397))
+- Let writers skip content the object store already holds (Objects::contains) ([#396](https://github.com/joshka/girt/pull/396))
+- Measure everyday task ergonomics ([#415](https://github.com/joshka/girt/pull/415))
+
 ## [0.11.2](https://github.com/joshka/girt/compare/girt-v0.11.1...girt-v0.11.2) - 2026-10-17
 
 ### Other
