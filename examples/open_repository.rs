@@ -1,18 +1,25 @@
 //! Read a loose blob by explicit repository path and full format-bearing ID.
 //! Run `cargo run --example open_repository -- /path/to/repo <blob-id>`.
+use std::path::PathBuf;
+
+use clap::Parser;
 use girt::{ObjectId, Repository};
 
+#[derive(Parser)]
+#[command(about, long_about = None)]
+struct Args {
+    /// Repository to open.
+    path: PathBuf,
+    /// Full format-bearing ID of the loose blob.
+    blob_id: ObjectId,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args_os().skip(1);
-    let path = args.next().ok_or("usage: open_repository PATH BLOB_ID")?;
-    let id: ObjectId = args
-        .next()
-        .ok_or("missing blob ID")?
-        .to_str()
-        .ok_or("ID must be ASCII")?
-        .parse()?;
-    let repository = Repository::open(path)?;
-    let bytes = repository.loose_objects().read_blob(id, 16 * 1024 * 1024)?;
+    let args = Args::parse();
+    let repository = Repository::open(args.path)?;
+    let bytes = repository
+        .loose_objects()
+        .read_blob(args.blob_id, 16 * 1024 * 1024)?;
     println!(
         "Read {} bytes from {}",
         bytes.len(),

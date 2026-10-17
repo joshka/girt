@@ -3,9 +3,8 @@ title: Getting started
 description: Add girt to a Rust project, open a repository and read its history.
 ---
 
-Add girt to a project, open an existing repository, resolve `HEAD` and walk its history. Nothing
-here writes to disk; the guides linked at the end cover writing objects, updating references and
-transfer.
+Add girt to a project, open an existing repository and print its recent history. Nothing here writes
+to disk; the guides linked at the end cover writing objects, updating references and transfer.
 
 ## Requirements
 
@@ -17,7 +16,10 @@ transfer.
 
 ```sh
 cargo add girt
+cargo add clap --features derive
 ```
+
+The example below uses [clap](https://docs.rs/clap) for its arguments; girt doesn't need it.
 
 The default build has no network transport. Enable the optional features you need:
 
@@ -29,71 +31,87 @@ The default build has no network transport. Enable the optional features you nee
 
 ## Read a repository
 
-This program prints the commit `HEAD` points to and counts the commits reachable from it. It follows
-at most five symbolic references from `HEAD`. An ordinary `HEAD` needs one hop, to its branch; the
-limit stops a reference cycle or an unexpectedly long chain.
+This program prints the first ten commits in `HEAD`'s history, one line each:
 
 ```rust
-use girt::refs::RefName;
-use girt::{Commit, HistoryLimits, ObjectKind, PackLimits, ReadLimits, Repository};
+use std::path::PathBuf;
+
+use clap::Parser;
+use girt::{HistoryLimits, PackLimits, ReadLimits, Repository};
+
+/// Print the first commits in HEAD's history.
+#[derive(Parser)]
+struct Args {
+    /// Repository or worktree to read.
+    #[arg(default_value = ".")]
+    path: PathBuf,
+    /// Number of commits to print.
+    #[arg(short = 'n', long, default_value_t = 10)]
+    count: usize,
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = std::env::args().nth(1).ok_or("usage: PATH")?;
-    let repository = Repository::open(path)?;
-
-    // Follow HEAD through at most five symbolic hops to a commit ID.
-    let head = repository
-        .references()?
-        .resolve(&RefName::new("HEAD")?, 5)?;
-    let Some(head_id) = head.id else {
-        let name = String::from_utf8_lossy(head.name.as_bytes());
-        println!("{name} is unborn");
-        return Ok(());
-    };
-
-    // An Objects reader pins the packs it opened; loose objects are read live.
+    let args = Args::parse();
+    let repository = Repository::open(&args.path)?;
+    let head = repository.head()?;
+    let head_id = head.id.ok_or("HEAD has no commits yet")?;
     let objects = repository.objects(PackLimits::default())?;
-    let object = objects
-        .read(head_id, ReadLimits::default())?
-        .ok_or("HEAD commit is missing")?;
-    let kind = object.kind();
-    if kind != ObjectKind::Commit {
-        return Err(format!("HEAD names a {kind:?}, not a commit").into());
+    let history = objects.walk(&[head_id], HistoryLimits::default())?;
+    for id in history.into_iter().take(args.count) {
+        let commit = objects.read_commit(id, ReadLimits::default())?;
+        let message = String::from_utf8_lossy(commit.message());
+        let summary = message.lines().next().unwrap_or_default();
+        println!("{id} {summary}");
     }
-    let commit = Commit::parse(repository.object_format(), object.data())?;
-    let message = String::from_utf8_lossy(commit.message());
-    println!("{head_id} {}", message.lines().next().unwrap_or_default());
-
-    // Walk ancestry without relying on commit timestamps.
-    let count = objects.walk(&[head_id], HistoryLimits::default())?.len();
-    println!("{count} commits reachable from HEAD");
     Ok(())
 }
 ```
 
-Run it against any repository, including a linked worktree:
+Run it against a repository or a linked worktree:
 
 ```sh
 cargo run -- /path/to/repo
 ```
 
-The example shows four habits that run through girt's API:
+Each step is one call:
 
-- **Budgets are explicit.** `PackLimits`, `ReadLimits` and `HistoryLimits` set budgets for the
-  inputs an operation accepts, such as object size, delta depth and the number of commits walked.
-  Input over budget is refused with an error. The budgets don't cap total memory use. The defaults
-  suit ordinary repositories; raise them only for repositories you trust with more work.
-- **Reading is separate from parsing.** [`Objects::read`] checks the object's framing and identity
-  and returns its kind and exact bytes. Check the kind, then decode the bytes with [`Commit::parse`]
-  for the repository's object format.
-- **Packs are a snapshot; loose objects are live.** An [`Objects`] reader keeps the packs it opened
-  even if another process repacks. Loose objects are read from disk at each call. Open a new reader
-  to see new packs.
-- **Missing isn't an error.** A missing object is `None`, and an unborn `HEAD` has no ID. Errors
-  report I/O failures and corrupt, unsupported or over-budget data.
+1. [`Repository::open`] reads the repository's configuration and layout. It doesn't search parent
+   directories, so pass the repository or worktree itself.
+2. [`Repository::head`] follows `HEAD` to the branch it names, or stops at `HEAD` if it's detached,
+   and returns the commit ID stored there. A new repository's branch has no commits yet (Git calls
+   this an _unborn_ branch), so the ID is an `Option`. The program reports that case as an error
+   rather than printing nothing.
+3. [`Repository::objects`] opens a reader over the repository's loose objects and packs.
+4. [`Objects::walk`] collects every commit reachable from `HEAD` by following parent links, before
+   the program prints the first few. The order is breadth-first from `HEAD`, not sorted by date.
+   `HistoryLimits::default()` refuses a history over 100,000 commits; raise `max_commits` for a
+   larger repository.
+5. [`Objects::read_commit`] reads one commit and parses it.
 
+## Habits of the API
+
+The program shows a few patterns that run through girt.
+
+**Budgets are explicit.** `PackLimits`, `ReadLimits` and `HistoryLimits` cap the input an operation
+accepts, such as object size, delta depth and the number of commits walked. Input over budget is
+refused with an error. The defaults suit ordinary repositories; raise them only for repositories you
+trust with more work. The budgets don't cap total memory use.
+
+**Absence is a value, damage is an error.** An unborn branch is `id: None`, and [`Objects::read`]
+returns `None` for an object that doesn't exist. Errors report I/O failures and corrupt, unsupported
+or over-budget data. Typed reads such as [`Objects::read_commit`] treat a missing object as an
+error, because an ID you got from a reference or a walk should exist.
+
+**A reader is a snapshot of packs.** An [`Objects`] reader keeps the packs it opened even if another
+process repacks, while loose objects are read from disk at each call. Open a new reader to see new
+packs.
+
+[`Repository::open`]: https://docs.rs/girt/latest/girt/repository/struct.Repository.html#method.open
+[`Repository::head`]: https://docs.rs/girt/latest/girt/repository/struct.Repository.html
+[`Repository::objects`]: https://docs.rs/girt/latest/girt/repository/struct.Repository.html#method.objects
+[`Objects::walk`]: https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.walk
 [`Objects::read`]: https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.read
-[`Commit::parse`]: https://docs.rs/girt/latest/girt/commit/struct.Commit.html#method.parse
+[`Objects::read_commit`]: https://docs.rs/girt/latest/girt/objects/struct.Objects.html
 [`Objects`]: https://docs.rs/girt/latest/girt/objects/struct.Objects.html
 
 ## Run the examples

@@ -1,7 +1,9 @@
 //! Isolated reader measurement; generate inputs with tests/fixtures/file-storage/generate.py.
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
+use clap::{Parser, ValueEnum};
 use girt::{AlternateLimits, ObjectId, PackLimits, ReadLimits, Repository};
 
 fn handles() -> Option<usize> {
@@ -22,10 +24,30 @@ fn handles() -> Option<usize> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Mode {
+    /// Measure cancellation of an in-flight store open instead of reads.
+    Cancel,
+    /// Keep the process alive for one second after measuring so it can be sampled.
+    Hold,
+}
+
+#[derive(Parser)]
+#[command(about, long_about = None)]
+struct Args {
+    /// Repository to open.
+    repository: PathBuf,
+    /// Object to read.
+    id: ObjectId,
+    /// Optional measurement mode.
+    #[arg(value_enum)]
+    mode: Option<Mode>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<_> = std::env::args().collect();
-    let repository = Repository::open(args.get(1).ok_or("repository path required")?)?;
-    let id: ObjectId = args.get(2).ok_or("object id required")?.parse()?;
+    let args = Args::parse();
+    let repository = Repository::open(args.repository)?;
+    let id = args.id;
     let baseline = handles();
     let failed = repository.objects(PackLimits::default().with_max_index_bytes(0));
     assert!(matches!(
@@ -33,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(girt::ObjectReadError::Limit("pack index bytes"))
     ));
     assert_eq!(handles(), baseline);
-    if args.get(3).is_some_and(|arg| arg == "cancel") {
+    if args.mode == Some(Mode::Cancel) {
         let cancelled = AtomicBool::new(false);
         let start = Instant::now();
         let result = std::thread::scope(|scope| {
@@ -116,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("handles_after_drop={:?}", handles());
     assert_eq!(handles(), baseline);
     // Optional sampling interval is outside measured operations and retains no reader.
-    if args.get(3).is_some_and(|arg| arg == "hold") {
+    if args.mode == Some(Mode::Hold) {
         std::thread::sleep(Duration::from_secs(1));
     }
     Ok(())

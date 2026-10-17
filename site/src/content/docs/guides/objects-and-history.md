@@ -62,11 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         objects.merge_bases(left, right, HistoryLimits::default())?,
         [base]
     );
-    let stored = objects
-        .read(left, girt::ReadLimits::default())?
-        .ok_or("commit missing")?;
-    assert_eq!(stored.kind(), girt::ObjectKind::Commit);
-    let decoded = Commit::parse(ObjectFormat::Sha1, stored.data())?;
+    let decoded = objects.read_commit(left, girt::ReadLimits::default())?;
     let root = objects
         .read(decoded.tree(), girt::ReadLimits::default())?
         .ok_or("tree missing")?;
@@ -92,11 +88,12 @@ the child objects before you publish a reference to the commit.
 
 ## Read a stored snapshot
 
-Open an `Objects` reader once and reuse it for related reads. For each ID, call `read` with a
-payload budget; `None` means the object is absent. Check the returned kind before choosing a parser.
-Parsing a commit gives its tree and parent IDs. Read its tree separately to get entry names, modes,
-and child IDs. Read a blob to obtain file bytes; your application decides whether to decode them as
-text. Preserve raw names when displaying or exporting non-UTF-8 repositories.
+Open an `Objects` reader once and reuse it for related reads. Call `read_commit` for an ID that must
+be a commit; it gives the commit's tree and parent IDs, and a missing or non-commit object is an
+error. For other objects, call `read` with a payload budget; `None` means the object is absent.
+Check the returned kind before choosing a parser. Read its tree separately to get entry names,
+modes, and child IDs. Read a blob to obtain file bytes; your application decides whether to decode
+them as text. Preserve raw names when displaying or exporting non-UTF-8 repositories.
 
 [Objects::read](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.read) verifies
 framing and identity. Tree and commit parsing decodes payloads while retaining accepted original

@@ -1,12 +1,22 @@
 //! Run without arguments for a disposable fixture, or pass an existing repository path.
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
+use clap::Parser;
 use girt::status::{Baseline, Limits, Untracked};
 use girt::{InitKind, Repository};
 
+#[derive(Parser)]
+#[command(about, long_about = None)]
+struct Args {
+    /// Existing repository to inspect. Omit to use a disposable fixture.
+    path: Option<PathBuf>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
     let temp = tempfile::tempdir()?;
-    let repository = match std::env::args_os().nth(1) {
+    let repository = match args.path {
         Some(path) => Repository::open(path)?,
         None => fixture(&temp)?,
     };

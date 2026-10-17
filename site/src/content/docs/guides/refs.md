@@ -51,8 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
     refs.transaction(&[edit])?;
-    let head = RefName::new("HEAD")?;
-    assert_eq!(refs.resolve(&head, 5)?.id, Some(id));
+    assert_eq!(repo.head()?.id, Some(id));
     let logs = refs.reflog(&main)?.ok_or("reflog missing")?;
     assert_eq!(logs[0].new, id);
     Ok(())
@@ -89,7 +88,9 @@ itself before attempting its conditional update.
 ## Resolve names and annotated tags separately
 
 `read` returns the stored direct ID or symbolic name. `resolve` follows symbolic names to a terminal
-name and optional ID. An absent terminal name can be an ordinary unborn branch; it is not an
+name and optional ID;
+[`Repository::head`](https://docs.rs/girt/latest/girt/repository/struct.Repository.html) resolves
+`HEAD` with a default limit. An absent terminal name can be an ordinary unborn branch; it is not an
 object-storage error. `Objects::peel` then follows annotated tag objects if required. A lightweight
 tag names its target directly; an annotated tag reference names a stored `Tag` object. Listing
 references excludes pseudorefs such as `HEAD`.

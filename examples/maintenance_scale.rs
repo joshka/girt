@@ -20,9 +20,19 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(unix)]
+use clap::Parser;
+#[cfg(unix)]
 use girt::Repository;
 #[cfg(unix)]
 use girt::retention::{MaintenanceIsolation, RepackLimits, RetentionPolicy};
+
+#[cfg(unix)]
+#[derive(Parser)]
+#[command(about, long_about = None)]
+struct Args {
+    /// Absolute path of a disposable bare Git repository.
+    path: PathBuf,
+}
 
 #[cfg(unix)]
 struct DisposableIsolation;
@@ -74,10 +84,8 @@ fn sample(directory: PathBuf, running: &AtomicBool) -> io::Result<Peaks> {
 
 #[cfg(unix)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = std::env::args_os()
-        .nth(1)
-        .ok_or("pass the absolute path of a disposable bare Git repository")?;
-    let repository = Repository::open(PathBuf::from(path))?;
+    let args = Args::parse();
+    let repository = Repository::open(args.path)?;
     let pack_directory = repository.object_dir().join("pack");
     let initial_bytes = pack_bytes(&pack_directory)?;
     let policy =
