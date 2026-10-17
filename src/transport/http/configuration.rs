@@ -104,6 +104,29 @@ impl std::fmt::Debug for HttpEnvironment {
 /// Resolution reads `http.<url>.*` settings scoped to the destination's URL, and fails on settings
 /// girt does not implement, such as client certificates, rather than ignoring them. See
 /// [`HttpRemote`](super::HttpRemote) for an example.
+///
+/// # Examples
+///
+/// Configuration that weakens TLS needs the application's explicit approval:
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::{ProtocolEnvironment, Remote};
+/// use girt::transport::http::{HttpEnvironment, HttpError, HttpSettings};
+///
+/// let config = Config::parse(
+///     b"[http]\nsslVerify = false\n[remote \"origin\"]\nurl = https://example.com/project.git\n",
+/// )?;
+/// let origin = Remote::find(&config, b"origin")?.expect("configured");
+/// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+///
+/// let refused = HttpSettings::resolve(&config, &destination, &HttpEnvironment::default());
+/// assert!(matches!(refused, Err(HttpError::Configuration(_))));
+///
+/// let approved = HttpEnvironment::default().with_allow_insecure_tls(true);
+/// assert!(HttpSettings::resolve(&config, &destination, &approved).is_ok());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct HttpSettings {
     pub(super) url: String,
     pub(super) roots: Vec<Vec<u8>>,
@@ -173,6 +196,29 @@ impl HttpSettings {
     /// # Errors
     ///
     /// Rejects a non-HTTP destination or an implicit, empty, or NUL-containing CA path.
+    ///
+    /// # Examples
+    ///
+    /// `http.<url>.*` settings apply only to matching URLs. The application reads the file itself
+    /// and passes its bytes in [`HttpEnvironment::ssl_ca_info`]:
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::{ProtocolEnvironment, Remote};
+    /// use girt::transport::http::HttpSettings;
+    ///
+    /// let config = Config::parse(
+    ///     b"[http \"https://example.com/\"]\nsslCAInfo = /etc/ssl/example-ca.pem\n\
+    ///       [remote \"origin\"]\nurl = https://example.com/project.git\n",
+    /// )?;
+    /// let origin = Remote::find(&config, b"origin")?.expect("configured");
+    /// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+    /// assert_eq!(
+    ///     HttpSettings::configured_ca_info(&config, &destination)?,
+    ///     Some(&b"/etc/ssl/example-ca.pem"[..]),
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn configured_ca_info<'a>(
         config: &'a Config,
         destination: &Destination,

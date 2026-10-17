@@ -40,6 +40,54 @@ pub(super) static FAIL_FLUSH: AtomicBool = AtomicBool::new(false);
 /// The caller must not concurrently change foreground groups, terminal settings, signal handlers
 /// or masks used for job control. Descendants escaping the owned process group remain outside the
 /// cleanup contract. Abrupt process termination cannot run the restoration guard.
+///
+/// # Examples
+///
+/// Let OpenSSH prompt on the terminal, as `git` does, and handle a Ctrl-Z during the prompt. This
+/// needs a terminal and a server, so it is not run:
+///
+/// ```no_run
+/// use std::fs::OpenOptions;
+/// use std::sync::Arc;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{FetchLimits, discover_ssh};
+/// use girt::transport::TransportControl;
+/// use girt::transport::ssh::{ForegroundTerminal, SshRemote};
+/// # fn remote() -> SshRemote { unimplemented!() }
+///
+/// let tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+/// let (terminal, mut events) = ForegroundTerminal::prepare(tty.into())?;
+/// // Only `SshRemote::openssh` endpoints accept a terminal.
+/// let remote = remote().with_terminal(Arc::new(terminal))?;
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let cancel = AtomicBool::new(false);
+/// let discovery = runtime.block_on(async {
+///     let session = discover_ssh(
+///         &remote,
+///         FetchLimits::default(),
+///         TransportControl::new(&cancel),
+///     );
+///     tokio::pin!(session);
+///     loop {
+///         tokio::select! {
+///             result = &mut session => break result,
+///             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+///                 // The user stopped SSH, for example with Ctrl-Z at a password prompt. A real
+///                 // client would stop itself here and resume when it is foregrounded again.
+///                 if let Some(stopped) = events.try_next_stop()? {
+///                     stopped.resume()?;
+///                 }
+///             }
+///         }
+///     }
+/// })?;
+/// println!("{:?}", discovery.head);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct ForegroundTerminal {
     shared: Arc<Shared>,
 }

@@ -571,6 +571,56 @@ impl CredentialSession {
     /// Returns [`CredentialError`] for invalid protocol bytes, helper/store I/O, unsuccessful
     /// helper exit, cancellation or deadline expiry. Earlier helpers may already have stored
     /// credentials; notifications are sequential and are not rolled back.
+    ///
+    /// # Examples
+    ///
+    /// Save a credential the user typed once the server has accepted it, so the next lookup finds
+    /// it:
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::Config;
+    /// use girt::remote::{
+    ///     CredentialBackend, CredentialContext, CredentialHelper, CredentialSession, CredentialStore,
+    ///     Prompt,
+    /// };
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let file = directory.path().join("credentials");
+    /// let config = Config::parse(b"[credential]\nhelper = store\n")?;
+    /// let helpers = [CredentialHelper::new(
+    ///     b"store".to_vec(),
+    ///     CredentialBackend::Store(CredentialStore::file(&file)),
+    /// )];
+    /// let context = || CredentialContext::new(b"https".to_vec(), b"example.com".to_vec());
+    /// let cancel = AtomicBool::new(false);
+    ///
+    /// // The store is empty, so the user is prompted.
+    /// let mut prompt = |field| match field {
+    ///     Prompt::Username => Some(b"alice".to_vec()),
+    ///     Prompt::Password => Some(b"token-123".to_vec()),
+    ///     _ => None,
+    /// };
+    /// let session = CredentialSession::fill(
+    ///     &config,
+    ///     context(),
+    ///     &helpers,
+    ///     Some(&mut prompt),
+    ///     &cancel,
+    ///     None,
+    /// )?;
+    /// // ... authenticate with `session.credential()`; the server accepts it ...
+    /// session.approve(&cancel, None)?;
+    ///
+    /// // Now the store answers without prompting.
+    /// let again = CredentialSession::fill(&config, context(), &helpers, None, &cancel, None)?;
+    /// assert_eq!(
+    ///     again.credential().password.as_deref(),
+    ///     Some(&b"token-123"[..])
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn approve(
         &self,
         cancel: &AtomicBool,

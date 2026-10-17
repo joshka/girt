@@ -196,6 +196,28 @@ impl<'a> RemoteConfig<'a> {
     /// # Errors
     ///
     /// Missing occurrences or invalid replacement values leave the draft unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::config::Document;
+    /// use girt::remote::{RemoteConfig, RemoteKey, RemoteUrls};
+    ///
+    /// let mut document =
+    ///     Document::parse(b"[remote \"origin\"]\nurl = https://old.example.com/project.git\n")?;
+    /// RemoteConfig::new(&mut document).set(
+    ///     b"origin",
+    ///     RemoteKey::Url,
+    ///     0,
+    ///     b"https://new.example.com/project.git",
+    /// )?;
+    /// let urls = RemoteUrls::find(document.config(), b"origin")?.expect("configured");
+    /// assert_eq!(
+    ///     urls.fetch_url(),
+    ///     Some(&b"https://new.example.com/project.git"[..])
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn set(
         &mut self,
         name: &[u8],
@@ -289,6 +311,26 @@ impl<'a> RemoteConfig<'a> {
     /// # Errors
     ///
     /// Inherited-only/missing remotes and repeated scalar selectors fail without draft changes.
+    ///
+    /// Remote-tracking references under `refs/remotes/<name>/` are not deleted; remove them
+    /// separately if the application wants `git remote remove` behavior.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::config::Document;
+    /// use girt::remote::{RemoteConfig, RemoteUrls};
+    ///
+    /// let mut document = Document::parse(
+    ///     b"[remote \"origin\"]\nurl = https://example.com/project.git\n[branch \"main\"]\nremote = origin\n",
+    /// )?;
+    /// RemoteConfig::new(&mut document).remove(b"origin")?;
+    /// let config = document.config();
+    /// assert!(RemoteUrls::find(config, b"origin")?.is_none());
+    /// // The branch no longer tracks the removed remote.
+    /// assert_eq!(config.value("branch", Some(b"main"), "remote"), None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn remove(&mut self, name: &[u8]) -> Result<(), RemoteEditError> {
         self.prepare(|draft| {
             require_local(draft, name)?;

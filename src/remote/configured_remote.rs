@@ -23,6 +23,33 @@ use crate::Config;
 /// compatibility implementation for the **whole remote**, without treating unsupported data as
 /// invalid. This type neither authorizes a transport nor changes [`super::Remote`] or
 /// [`super::RemoteUrls`]' stricter configuration policies.
+///
+/// # Examples
+///
+/// List a remote as `jj git remote list` shows it, with rewritten URLs and their parts:
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::ConfiguredRemote;
+///
+/// let config = Config::parse(
+///     b"[url \"https://github.com/\"]\ninsteadOf = gh:\n\
+///       [remote \"origin\"]\nurl = gh:joshka/girt\nfetch = +refs/heads/*:refs/remotes/origin/*\n",
+/// )?;
+/// let origin = ConfiguredRemote::find(&config, b"origin")?.expect("has a URL");
+/// assert_eq!(
+///     origin.fetch_url(),
+///     Some(&b"https://github.com/joshka/girt"[..])
+/// );
+/// // Without a `pushurl`, pushes use the fetch URL.
+/// assert_eq!(origin.push_url(), origin.fetch_url());
+///
+/// let parts = origin.fetch_url_parts().expect("has a URL");
+/// assert_eq!(parts.host(), Some(&b"github.com"[..]));
+/// assert_eq!(parts.path(), b"/joshka/girt");
+/// assert_eq!(origin.fetch_refspecs().len(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone)]
 pub struct ConfiguredRemote {
     fetch_url: Option<NormalizedUrl>,
