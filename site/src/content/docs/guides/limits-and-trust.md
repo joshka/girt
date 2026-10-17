@@ -36,11 +36,12 @@ you trust. The defaults are sized for untrusted input and refuse very large stor
 
 ## Repo and explicit control
 
-[`Repo`](https://docs.rs/girt/latest/girt/struct.Repo.html) is the convenience interface for trusted
-local use. It loads objects lazily with the core default limits; its name does not select the larger
-`trusted()` bounds. Its configured transfers compose `workflow` and follow that module's trust
-contract. Choose [`Repository`](https://docs.rs/girt/latest/girt/struct.Repository.html) for
-explicit limits and cancellation, especially when processing untrusted input.
+[`Repo`](https://github.com/joshka/girt/blob/main/src/repo/handle.rs) is the convenience interface
+for trusted local use. It loads objects lazily with the core default limits; its name does not
+select the larger `trusted()` bounds. Its configured transfers compose `workflow` and follow that
+module's trust contract. Choose
+[`Repository`](https://docs.rs/girt/latest/girt/repository/struct.Repository.html) for explicit
+limits and cancellation, especially when processing untrusted input.
 
 ## Default: bounded for untrusted input
 

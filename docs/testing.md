@@ -318,8 +318,8 @@ The Windows integration selection follows implemented operations, not just file 
   combined rename results checked against Git CLI in disposable repositories. No native checkout
   operations are required. The SSH signing-oracle cases run on Unix with an isolated temporary key;
   Windows exercises signature framing and payload preservation without invoking a signing provider.
-- `trusted`: Both-format convenience commit/reflog and refresh behavior, plus lazy history reads,
-  use original Git-oracle fixtures. Raw switch cases run only on Linux/macOS.
+- `repo`: Both-format convenience commit/reflog and refresh behavior, plus lazy history reads, use
+  original Git-oracle fixtures. Raw switch cases run only on Linux/macOS.
 - `index`: SHA-1/SHA-256 v2/v3/v4 parsing/encoding, held-lock replacement, Git stat/flag
   observations, byte paths, and linked/separate-gitdir routing. No checkout or reference-backend
   operation is required.
