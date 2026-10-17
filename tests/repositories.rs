@@ -14,7 +14,9 @@ fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
         }
     }
 
+    // Snapshot assertions require fixtures to stay unchanged after Git returns.
     let mut child = command
+        .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
         .current_dir(directory)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", directory.join("absent-config"))

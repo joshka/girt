@@ -13,20 +13,7 @@
     "empty_vectors": 0
   },
   "Read a file at a revision": {
-    "lines": 11,
-    "imported_names": 3,
-    "defaults": 0,
-    "never_cancel": 0,
-    "byte_vectors": 0,
-    "object_formats": 0,
-    "identity_literals": 0,
-    "commit_fields": 0,
-    "branch_names": 0,
-    "boxed_errors": 1,
-    "empty_vectors": 0
-  },
-  "Log first N in date order with exclusions": {
-    "lines": 10,
+    "lines": 7,
     "imported_names": 1,
     "defaults": 0,
     "never_cancel": 0,
@@ -35,7 +22,20 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
+    "empty_vectors": 0
+  },
+  "Log first N in date order with exclusions": {
+    "lines": 9,
+    "imported_names": 1,
+    "defaults": 0,
+    "never_cancel": 0,
+    "byte_vectors": 0,
+    "object_formats": 0,
+    "identity_literals": 0,
+    "commit_fields": 0,
+    "branch_names": 0,
+    "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Diff two commits: tree and content": {
@@ -52,8 +52,8 @@
     "empty_vectors": 0
   },
   "Status": {
-    "lines": 7,
-    "imported_names": 3,
+    "lines": 5,
+    "imported_names": 1,
     "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
@@ -65,8 +65,8 @@
     "empty_vectors": 0
   },
   "Stage and commit": {
-    "lines": 17,
-    "imported_names": 7,
+    "lines": 7,
+    "imported_names": 2,
     "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
@@ -104,22 +104,22 @@
     "empty_vectors": 1
   },
   "Fetch by remote name": {
-    "lines": 14,
-    "imported_names": 5,
+    "lines": 6,
+    "imported_names": 1,
     "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
     "identity_literals": 0,
     "commit_fields": 0,
-    "branch_names": 1,
+    "branch_names": 0,
     "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Push the current branch": {
-    "lines": 24,
-    "imported_names": 6,
-    "defaults": 1,
+    "lines": 16,
+    "imported_names": 2,
+    "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
@@ -143,8 +143,8 @@
     "empty_vectors": 0
   },
   "Read effective config values": {
-    "lines": 10,
-    "imported_names": 3,
+    "lines": 7,
+    "imported_names": 1,
     "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
@@ -156,8 +156,8 @@
     "empty_vectors": 0
   },
   "Rev-parse": {
-    "lines": 10,
-    "imported_names": 2,
+    "lines": 6,
+    "imported_names": 1,
     "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
@@ -169,8 +169,8 @@
     "empty_vectors": 0
   },
   "Checkout or switch branch": {
-    "lines": 10,
-    "imported_names": 2,
+    "lines": 5,
+    "imported_names": 1,
     "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,
