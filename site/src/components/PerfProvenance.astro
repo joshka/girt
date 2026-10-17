@@ -1,8 +1,6 @@
 ---
-import { COMMIT_URL, SIZES, provenance } from '../data/jj-performance';
+import { COMMIT_URL, provenance } from '../data/jj-performance';
 
-const number = new Intl.NumberFormat('en-US');
-const bytes = (value: number) => `${(value / 1024 ** 2).toFixed(0)} MiB`;
 const short = (sha: string) => sha.slice(0, 12);
 const current = provenance.current_main_rebuild;
 ---
@@ -33,37 +31,3 @@ const current = provenance.current_main_rebuild;
   <li>Git: {provenance.git_version.replace(/^git version /, '')} (release commit <code>{short(provenance.git_commit)}</code>).</li>
   <li>Build: {provenance.build}.</li>
 </ul>
-
-<div class="perf-scroll" tabindex="0" role="region" aria-label={"Benchmark repositories"}>
-  <table class="perf-facts">
-    <thead>
-      <tr>
-        <th scope="col">Size</th>
-        <th scope="col">Repository</th>
-        <th scope="col">Objects</th>
-        <th scope="col">Refs</th>
-        <th scope="col">Tags</th>
-        <th scope="col">Worktree files</th>
-        <th scope="col">Pack size</th>
-      </tr>
-    </thead>
-    <tbody>
-      {
-        SIZES.map((size) => {
-          const fixture = provenance.fixtures[size];
-          return (
-            <tr>
-              <th scope="row">{size}</th>
-              <td>{fixture.name}</td>
-              <td>{number.format(Number(fixture.objects))}</td>
-              <td>{number.format(Number(fixture.refs))}</td>
-              <td>{number.format(fixture.tags)}</td>
-              <td>{number.format(fixture.worktree_files)}</td>
-              <td>{bytes(fixture.pack_bytes)}</td>
-            </tr>
-          );
-        })
-      }
-    </tbody>
-  </table>
-</div>

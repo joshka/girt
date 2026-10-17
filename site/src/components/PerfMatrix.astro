@@ -1,0 +1,190 @@
+---
+// Every benchmarked command against each repository size. The default view is rendered here; the
+// script re-renders it with the same functions when a reader changes a control or opens a row.
+import { payload } from '../data/jj-performance';
+import {
+  DEFAULT_STATE,
+  THRESHOLDS,
+  formatThreshold,
+  renderHiddenNote,
+  renderLegend,
+  renderMatrix,
+} from '../data/perf-render';
+
+const controls = [
+  {
+    key: 'arrange',
+    label: 'Arrange',
+    options: [
+      ['workflow', 'by how often you run it'],
+      ['cost', 'by extra time'],
+    ],
+  },
+  {
+    key: 'colour',
+    label: 'Colour by',
+    options: [
+      ['extra', 'extra time'],
+      ['ratio', 'ratio'],
+    ],
+  },
+  {
+    key: 'base',
+    label: 'Compare with',
+    options: [
+      ['stock', 'stock jj'],
+      ['git', 'git CLI'],
+    ],
+  },
+  {
+    key: 'threshold',
+    label: 'Hide commands that change by less than',
+    options: THRESHOLDS.map((ms) => [String(ms), formatThreshold(ms)]),
+  },
+] as const;
+const current = (key: string) => String(DEFAULT_STATE[key as keyof typeof DEFAULT_STATE]);
+---
+
+<div class="jjp" data-jjp>
+  <div class="jjp-controls">
+    {
+      controls.map((control) => (
+        <div class="jjp-control" role="group" aria-label={control.label}>
+          <span class="jjp-control-label">{control.label}</span>
+          <span class="jjp-seg" data-control={control.key}>
+            {control.options.map(([value, text]) => (
+              <button type="button" data-value={value} aria-pressed={value === current(control.key)}>
+                {text}
+              </button>
+            ))}
+          </span>
+        </div>
+      ))
+    }
+  </div>
+  <div class="jjp-legend" data-legend set:html={renderLegend(DEFAULT_STATE)} />
+  <div class="jjp-scroll" tabindex="0" role="region" aria-label="Benchmark matrix">
+    <table class="jjp-matrix" data-matrix set:html={renderMatrix(payload, DEFAULT_STATE)} />
+  </div>
+  <p class="jjp-hidden" data-hidden set:html={renderHiddenNote(payload, DEFAULT_STATE)} />
+  <div class="jjp-tip" data-tip role="tooltip" hidden></div>
+  <script type="application/json" data-payload set:html={JSON.stringify(payload).replace(/</g, '\\u003c')} />
+</div>
+
+<script>
+  import {
+    DEFAULT_STATE,
+    renderHiddenNote,
+    renderLegend,
+    renderMatrix,
+    tooltipHtml,
+    type Payload,
+    type Size,
+    type ViewState,
+  } from '../data/perf-render';
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-jjp]')) {
+    const payload: Payload = JSON.parse(root.querySelector('[data-payload]')!.textContent!);
+    const rows = new Map(payload.rows.map((row) => [row.key, row]));
+    const matrix = root.querySelector<HTMLElement>('[data-matrix]')!;
+    const legend = root.querySelector<HTMLElement>('[data-legend]')!;
+    const hidden = root.querySelector<HTMLElement>('[data-hidden]')!;
+    const tip = root.querySelector<HTMLElement>('[data-tip]')!;
+    const state: ViewState = { ...DEFAULT_STATE, open: [] };
+
+    // The view is kept in the query string so a reader can link to it.
+    const params = new URLSearchParams(location.search);
+    const pick = <K extends 'arrange' | 'colour' | 'base'>(key: K, values: ViewState[K][]) => {
+      const value = params.get(key) as ViewState[K] | null;
+      if (value && values.includes(value)) state[key] = value;
+    };
+    pick('arrange', ['workflow', 'cost']);
+    pick('colour', ['extra', 'ratio']);
+    pick('base', ['stock', 'git']);
+    if (params.has('hide')) state.threshold = Math.max(0, Number(params.get('hide')) || 0);
+    state.open = params.getAll('open').filter((key) => rows.has(key));
+
+    function save() {
+      const next = new URLSearchParams();
+      for (const key of ['arrange', 'colour', 'base'] as const) {
+        if (state[key] !== DEFAULT_STATE[key]) next.set(key, state[key]);
+      }
+      if (state.threshold !== DEFAULT_STATE.threshold) next.set('hide', String(state.threshold));
+      for (const key of state.open) next.append('open', key);
+      const query = next.toString();
+      history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+    }
+
+    function render() {
+      matrix.innerHTML = renderMatrix(payload, state);
+      legend.innerHTML = renderLegend(state);
+      hidden.innerHTML = renderHiddenNote(payload, state);
+      for (const seg of root.querySelectorAll<HTMLElement>('[data-control]')) {
+        const value = String(state[seg.dataset.control as keyof ViewState]);
+        for (const button of seg.querySelectorAll<HTMLButtonElement>('button')) {
+          button.setAttribute('aria-pressed', String(button.dataset.value === value));
+        }
+      }
+      tip.hidden = true;
+      save();
+    }
+
+    root.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      const option = target.closest<HTMLButtonElement>('[data-control] button');
+      if (option) {
+        const key = option.closest<HTMLElement>('[data-control]')!.dataset.control!;
+        const value = option.dataset.value!;
+        if (key === 'threshold') state.threshold = Number(value);
+        else (state as unknown as Record<string, string>)[key] = value;
+        render();
+        return;
+      }
+      const reveal = target.closest<HTMLButtonElement>('[data-threshold]');
+      if (reveal) {
+        state.threshold = Number(reveal.dataset.threshold);
+        render();
+        return;
+      }
+      const toggle = target.closest<HTMLButtonElement>('.jjp-toggle');
+      if (toggle) {
+        const key = toggle.dataset.key!;
+        state.open = state.open.includes(key) ? state.open.filter((k) => k !== key) : [...state.open, key];
+        render();
+        // Re-rendering replaced the button; keep keyboard focus on it.
+        if ((event as MouseEvent).detail === 0) {
+          root.querySelector<HTMLButtonElement>(`.jjp-toggle[data-key="${CSS.escape(key)}"]`)?.focus();
+        }
+      }
+    });
+
+    function show(cell: HTMLElement) {
+      const row = rows.get(cell.dataset.key!);
+      if (!row) return;
+      tip.innerHTML = tooltipHtml(row, cell.dataset.size as Size, state);
+      tip.hidden = false;
+      const box = cell.getBoundingClientRect();
+      const width = tip.offsetWidth;
+      const height = tip.offsetHeight;
+      const left = Math.max(8, Math.min(box.left, innerWidth - width - 8));
+      const below = box.bottom + 6;
+      tip.style.left = `${left}px`;
+      tip.style.top = `${below + height > innerHeight ? box.top - height - 6 : below}px`;
+    }
+    const cellOf = (event: Event) => (event.target as HTMLElement).closest<HTMLElement>('.jjp-cell[data-key]');
+    root.addEventListener('mouseover', (event) => {
+      const cell = cellOf(event);
+      if (cell) show(cell);
+      else tip.hidden = true;
+    });
+    root.addEventListener('mouseleave', () => (tip.hidden = true));
+    root.addEventListener('focusin', (event) => {
+      const cell = cellOf(event);
+      if (cell) show(cell);
+    });
+    root.addEventListener('focusout', () => (tip.hidden = true));
+    addEventListener('scroll', () => (tip.hidden = true), { passive: true });
+
+    if (location.search) render();
+  }
+</script>

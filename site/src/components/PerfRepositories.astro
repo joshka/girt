@@ -1,0 +1,30 @@
+---
+// What each benchmark repository is, with its size from the committed provenance.
+import { REPOSITORIES } from '../data/jj-commands';
+import { SIZES, provenance } from '../data/jj-performance';
+
+const number = new Intl.NumberFormat('en-US');
+const bytes = (value: number) => `${number.format(Math.round(value / 1024 ** 2))} MiB`;
+---
+
+<div class="jjp-repos">
+  {
+    SIZES.map((size) => {
+      const fixture = provenance.fixtures[size];
+      return (
+        <div>
+          <p class="jjp-repo-name">
+            {size}: {REPOSITORIES[size].label}
+            <span class="jjp-muted"> (fixture <code>{fixture.name}</code>)</span>
+          </p>
+          <p>{REPOSITORIES[size].description}</p>
+          <p class="jjp-repo-facts">
+            {number.format(Number(fixture.objects))} objects · {number.format(Number(fixture.refs))} refs ·{' '}
+            {number.format(fixture.tags)} tags · {number.format(fixture.worktree_files)} files ·{' '}
+            {bytes(fixture.pack_bytes)} pack
+          </p>
+        </div>
+      );
+    })
+  }
+</div>
