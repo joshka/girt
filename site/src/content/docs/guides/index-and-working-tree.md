@@ -100,6 +100,27 @@ exclusive ownership even if a preceding status succeeded. Limits bound reads, vi
 and content bytes. Cancellation is cooperative; these synchronous APIs belong on the application's
 blocking worker when used from an async runtime.
 
+### Interpret every status category
+
+A path with unresolved stages appears in `unmerged`, not in either change list. Present the
+base/ours/theirs entries that exist and preserve their IDs until an explicit resolution replaces
+them with stage zero. An empty change list does not resolve a conflict.
+
+An unstaged `Deleted` means the exact tracked name or an ancestor is absent. `Obstructed` means
+another filesystem kind or a repository boundary blocks that path. Report the obstruction's path
+rather than offering to discard it. `Modified` carries the observed identity and mode, so a
+mode-only change can be explained without inventing a content edit.
+
+`unchecked_gitlinks` contains every stage-zero gitlink, including those whose directory appears
+unchanged. Girt does not open its commit target or inspect submodule dirtiness. A UI that needs that
+information must perform a separate submodule observation. Nested repository boundaries likewise
+mean traversal stopped; their contents are not untracked leaves.
+
+Choose budgets for the whole observation: a single-file ceiling does not bound the sum of thousands
+of small files. `Untracked::Omit` reduces unrelated traversal, but tracked-path verification still
+reads content. A limit failure returns no partial report. Preserve the last successful display with
+an explicit failure state rather than replacing it with a clean result.
+
 ## Apply ignore rules with provenance
 
 `Ignore` is a pure byte-path matcher. The caller loads the configured global excludes file,
@@ -132,48 +153,6 @@ paths and supply the observed `InputKind`; a symlink is a file, never a director
 Backslash remains a literal byte, including on Windows. A path or work-limit error supplies no
 partial decision; do not silently translate it into included or excluded.
 
-## Materialize a tree conservatively
-
-`Repository::checkout_tree` writes a selected tree and matching index without switching HEAD or
-refs. Supply the tree represented by the clean current index as the baseline, or `None` for an empty
-index such as a no-checkout clone. A nonempty baseline with a missing index is refused. See the
-runnable
-[checkout example](https://docs.rs/girt/latest/girt/checkout/).
-
-Hold exclusive control of worktree writers, root/ancestor renames and metadata replacement for the
-whole call. The index lock coordinates cooperating index writers; it does not lock working files.
-Preparation verifies trees, blobs, the clean baseline, names and obstructions before mutation.
-Checkout refuses dirty tracked paths, conflicts, untracked obstructions, gitlinks, nested
-repositories, unsupported extended flags and unsafe/aliased paths. It retains unrelated content and
-empty directories. Files receive permissions 0644 or 0755; ownership, ACLs and other metadata are
-not preserved.
-
-Checkout has no automatic rollback or batch atomicity. A late failure can leave changed working
-files and the old index. Inspect `Failure.report.applied`, the stage, `index_published`, the cause
-and every cleanup failure. Reconcile actual files under exclusive ownership before choosing a new
-baseline; blindly retrying the original call can be unsafe. Cancellation follows the same rule.
-
-### Interpret every status category
-
-A path with unresolved stages appears in `unmerged`, not in either change list. Present the
-base/ours/theirs entries that exist and preserve their IDs until an explicit resolution replaces
-them with stage zero. An empty change list does not resolve a conflict.
-
-An unstaged `Deleted` means the exact tracked name or an ancestor is absent. `Obstructed` means
-another filesystem kind or a repository boundary blocks that path. Report the obstruction's path
-rather than offering to discard it. `Modified` carries the observed identity and mode, so a
-mode-only change can be explained without inventing a content edit.
-
-`unchecked_gitlinks` contains every stage-zero gitlink, including those whose directory appears
-unchanged. Girt does not open its commit target or inspect submodule dirtiness. A UI that needs that
-information must perform a separate submodule observation. Nested repository boundaries likewise
-mean traversal stopped; their contents are not untracked leaves.
-
-Choose budgets for the whole observation: a single-file ceiling does not bound the sum of thousands
-of small files. `Untracked::Omit` reduces unrelated traversal, but tracked-path verification still
-reads content. A limit failure returns no partial report. Preserve the last successful display with
-an explicit failure state rather than replacing it with a clean result.
-
 ### Match patterns as byte paths
 
 A slashless pattern such as `*.log` matches a basename at any depth below its source. A leading
@@ -196,6 +175,27 @@ parent.
 Source addition is atomic on a budget failure. Existing rules remain usable, but the rejected source
 has contributed no rules. Query work exhaustion produces no decision. Retain source labels indexed
 by successful additions so `Match.source` and its physical line number can explain the result.
+
+## Materialize a tree conservatively
+
+`Repository::checkout_tree` writes a selected tree and matching index without switching HEAD or
+refs. Supply the tree represented by the clean current index as the baseline, or `None` for an empty
+index such as a no-checkout clone. A nonempty baseline with a missing index is refused. See the
+runnable
+[checkout example](https://docs.rs/girt/latest/girt/checkout/).
+
+Hold exclusive control of worktree writers, root/ancestor renames and metadata replacement for the
+whole call. The index lock coordinates cooperating index writers; it does not lock working files.
+Preparation verifies trees, blobs, the clean baseline, names and obstructions before mutation.
+Checkout refuses dirty tracked paths, conflicts, untracked obstructions, gitlinks, nested
+repositories, unsupported extended flags and unsafe/aliased paths. It retains unrelated content and
+empty directories. Files receive permissions 0644 or 0755; ownership, ACLs and other metadata are
+not preserved.
+
+Checkout has no automatic rollback or batch atomicity. A late failure can leave changed working
+files and the old index. Inspect `Failure.report.applied`, the stage, `index_published`, the cause
+and every cleanup failure. Reconcile actual files under exclusive ownership before choosing a new
+baseline; blindly retrying the original call can be unsafe. Cancellation follows the same rule.
 
 ## API reference
 
