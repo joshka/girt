@@ -82,7 +82,7 @@
 //! create a new repository. The core APIs also cover operations this module does not, such as
 //! retaining a fetched pack against repacking while the caller checks it before publishing
 //! references, or publishing shallow boundaries under caller control. Depth-limited fetches
-//! themselves are supported here through [`FetchOptions::depth`].
+//! themselves are supported here through [`FetchOptions::with_depth`].
 //!
 //! # What a configured transfer does
 //!
@@ -197,11 +197,11 @@
 //! - It captures [`Environment::from_process`] once and layers jj's own overrides on top with
 //!   [`Environment::with`], so tests and subprocesses see exactly the variables jj chose.
 //! - `jj git fetch` builds [`FetchOptions`] from the user's branch patterns, including negative
-//!   `^refs/heads/…` refspecs, and always enables [`FetchOptions::prune`]. It passes the requested
-//!   [`FetchOptions::depth`], records reflog entries with [`FetchOptions::reflog`], and keeps
-//!   per-remote tags in a [`FetchOptions::tag_namespace`]. Branches named exactly but absent on the
-//!   remote arrive in [`FetchOutcome::missing_sources`] and are logged rather than failing the
-//!   fetch.
+//!   `^refs/heads/…` refspecs, and always enables [`FetchOptions::with_prune`]. It passes the
+//!   requested [`FetchOptions::with_depth`], records reflog entries with
+//!   [`FetchOptions::with_reflog`], and keeps per-remote tags in a
+//!   [`FetchOptions::with_tag_namespace`]. Branches named exactly but absent on the remote arrive
+//!   in [`FetchOutcome::missing_sources`] and are logged rather than failing the fetch.
 //! - After a fetch, jj reopens its [`Repository`] and object store. An open
 //!   [`Objects`](crate::Objects) reader keeps the pack list it started with, so it cannot see the
 //!   pack the fetch just installed.
@@ -326,8 +326,8 @@ pub fn remote_head(
 /// # What is and isn't updated
 ///
 /// Destinations must be remote-tracking references (`refs/remotes/…`), tags (`refs/tags/…`), or
-/// references below a namespace allowed with [`FetchOptions::tag_namespace`]. Local branches are
-/// never fetch destinations, so a fetch cannot move the branch a working tree has checked out.
+/// references below a namespace allowed with [`FetchOptions::with_tag_namespace`]. Local branches
+/// are never fetch destinations, so a fetch cannot move the branch a working tree has checked out.
 /// Without a `+` prefix, a remote-tracking reference whose old and new values are both commits
 /// may only fast-forward, and an existing tag may not change; either violation fails the fetch
 /// without updating any reference. A remote-tracking reference pointing to another kind of object,
@@ -454,7 +454,7 @@ pub fn fetch(
 ///     &repo,
 ///     "origin",
 ///     vec![command],
-///     &PushOptions::default().identity(person),
+///     &PushOptions::default().with_identity(person),
 ///     &environment,
 ///     &mut NoCallbacks,
 /// )?;
@@ -854,8 +854,8 @@ impl TransferCallbacks for NoCallbacks {}
 ///     // Negative refspecs exclude matching sources, as in Git.
 ///     "^refs/heads/wip/*",
 /// ])
-/// .prune(true)
-/// .reflog(person, "fetch origin");
+/// .with_prune(true)
+/// .with_reflog(person, "fetch origin");
 /// # let _ = options;
 /// ```
 #[derive(Clone, Debug)]
@@ -930,11 +930,12 @@ impl FetchOptions {
     ///
     /// use girt::workflow::FetchOptions;
     ///
-    /// let latest_only =
-    ///     FetchOptions::new(["+refs/heads/main:refs/remotes/origin/main"]).depth(NonZeroU32::new(1));
+    /// let latest_only = FetchOptions::new(["+refs/heads/main:refs/remotes/origin/main"])
+    ///     .with_depth(NonZeroU32::new(1));
     /// # let _ = latest_only;
     /// ```
-    pub fn depth(mut self, depth: Option<NonZeroU32>) -> Self {
+    #[must_use]
+    pub fn with_depth(mut self, depth: Option<NonZeroU32>) -> Self {
         self.depth = depth;
         self
     }
@@ -942,7 +943,7 @@ impl FetchOptions {
     /// Deletes local destinations whose remote sources no longer exist, like `git fetch --prune`.
     ///
     /// Pruning applies to remote-tracking references under `refs/remotes/` and to any
-    /// [`Self::tag_namespace`], within the destinations the refspecs could produce. For a glob
+    /// [`Self::with_tag_namespace`], within the destinations the refspecs could produce. For a glob
     /// refspec, that is every existing reference the destination pattern matches; for an exact
     /// refspec, its one destination. Ordinary tags under `refs/tags/` are never pruned. Pruned
     /// references lose their reflogs, as in Git.
@@ -954,7 +955,7 @@ impl FetchOptions {
     /// use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
     /// # let (_directory, upstream, repo, _, _) = include!("doctest/remote.rs");
     /// let environment = Environment::default();
-    /// let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).prune(true);
+    /// let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).with_prune(true);
     /// workflow::fetch(&repo, "origin", &options, &environment, &mut NoCallbacks)?;
     ///
     /// // `main` is deleted upstream, so the next fetch deletes its remote-tracking reference.
@@ -974,7 +975,8 @@ impl FetchOptions {
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn prune(mut self, prune: bool) -> Self {
+    #[must_use]
+    pub fn with_prune(mut self, prune: bool) -> Self {
         self.prune = prune;
         self
     }
@@ -984,8 +986,8 @@ impl FetchOptions {
     /// By default a fetch writes only remote-tracking references and `refs/tags/`. Keeping each
     /// remote's tags in its own namespace avoids conflicts when two remotes have a tag with the
     /// same name, which is how jj stores remote tags. References in such a namespace behave like
-    /// remote-tracking references: a forced refspec may replace them, and [`Self::prune`] deletes
-    /// them when the remote's tag disappears. Call this once per namespace.
+    /// remote-tracking references: a forced refspec may replace them, and [`Self::with_prune`]
+    /// deletes them when the remote's tag disappears. Call this once per namespace.
     ///
     /// # Examples
     ///
@@ -994,12 +996,13 @@ impl FetchOptions {
     /// use girt::workflow::FetchOptions;
     ///
     /// let options = FetchOptions::new(["+refs/tags/*:refs/remote-tags/origin/*"])
-    ///     .tag_namespace(RefName::new("refs/remote-tags/origin")?)
-    ///     .prune(true);
+    ///     .with_tag_namespace(RefName::new("refs/remote-tags/origin")?)
+    ///     .with_prune(true);
     /// # let _ = options;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn tag_namespace(mut self, namespace: RefName) -> Self {
+    #[must_use]
+    pub fn with_tag_namespace(mut self, namespace: RefName) -> Self {
         self.tag_namespaces.push(namespace);
         self
     }
@@ -1008,7 +1011,8 @@ impl FetchOptions {
     ///
     /// Without this, no reflog entries are written and existing reflogs are left alone. `git
     /// fetch` uses messages such as `fetch origin`. Unchanged references get no entry.
-    pub fn reflog(mut self, committer: crate::Signature, message: impl Into<Vec<u8>>) -> Self {
+    #[must_use]
+    pub fn with_reflog(mut self, committer: crate::Signature, message: impl Into<Vec<u8>>) -> Self {
         self.reflog = Some((committer, message.into()));
         self
     }
@@ -1097,8 +1101,8 @@ pub struct FetchOutcome {
 ///
 /// // Ask a Gerrit server to add a reviewer, and record who pushed in local reflogs.
 /// let options = PushOptions::default()
-///     .push_option("r=reviewer@example.com")
-///     .identity(person);
+///     .with_push_option("r=reviewer@example.com")
+///     .with_identity(person);
 /// # let _ = options;
 /// ```
 #[derive(Clone, Debug, Default)]
@@ -1117,9 +1121,10 @@ impl PushOptions {
     ///
     /// ```
     /// let _options =
-    ///     girt::workflow::PushOptions::default().compression(girt::PackCompression::Ordinary);
+    ///     girt::workflow::PushOptions::default().with_compression(girt::PackCompression::Ordinary);
     /// ```
-    pub fn compression(mut self, compression: crate::PackCompression) -> Self {
+    #[must_use]
+    pub fn with_compression(mut self, compression: crate::PackCompression) -> Self {
         self.compression = Some(compression);
         self
     }
@@ -1130,7 +1135,8 @@ impl PushOptions {
     /// remote-tracking references a successful push updates (message `update by push`). Without
     /// it, those references are updated without reflog entries. Network servers write their own
     /// reflogs; this identity is not sent to them.
-    pub fn identity(mut self, identity: crate::Signature) -> Self {
+    #[must_use]
+    pub fn with_identity(mut self, identity: crate::Signature) -> Self {
         self.identity = Some(identity);
         self
     }
@@ -1140,7 +1146,8 @@ impl PushOptions {
     /// Servers use push options for per-push settings such as Gerrit reviewers or GitLab merge
     /// request creation. Values are sent as given, in order. Push options require the server to
     /// advertise `push-options`; otherwise the push fails before any command is sent.
-    pub fn push_option(mut self, option: impl Into<Vec<u8>>) -> Self {
+    #[must_use]
+    pub fn with_push_option(mut self, option: impl Into<Vec<u8>>) -> Self {
         self.push_options.push(option.into());
         self
     }

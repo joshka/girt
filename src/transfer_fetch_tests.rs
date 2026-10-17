@@ -93,7 +93,7 @@ fn fetch(repository: &Repository) {
     repository
         .fetch(
             "origin",
-            &FetchOptions::new(SPECS).prune(true),
+            &FetchOptions::new(SPECS).with_prune(true),
             &Environment::from_process(),
             &mut NoCallbacks,
         )
@@ -208,7 +208,7 @@ fn reference_changed_during_transfer_is_not_clobbered(#[case] race: Race) {
     }));
     let result = repository.fetch(
         "origin",
-        &FetchOptions::new(SPECS).prune(true),
+        &FetchOptions::new(SPECS).with_prune(true),
         &Environment::from_process(),
         &mut callbacks,
     );
@@ -282,7 +282,7 @@ fn wide(
 fn try_fetch(repository: &Repository) -> Result<FetchOutcome, TransferError> {
     repository.fetch(
         "origin",
-        &FetchOptions::new(SPECS).prune(true),
+        &FetchOptions::new(SPECS).with_prune(true),
         &Environment::from_process(),
         &mut NoCallbacks,
     )
@@ -365,7 +365,7 @@ fn dependency_removed_before_installation_is_rejected(#[case] format: &str) {
     let mut callbacks = DuringTransfer(Some(|| std::fs::remove_file(&path).unwrap()));
     let result = repository.fetch(
         "origin",
-        &FetchOptions::new(SPECS).prune(true),
+        &FetchOptions::new(SPECS).with_prune(true),
         &Environment::from_process(),
         &mut callbacks,
     );
@@ -515,7 +515,7 @@ fn wrong_kind_complete_dependency_is_rejected(#[case] selected: Selected) {
     }));
     let result = repository.fetch(
         "origin",
-        &FetchOptions::new(SPECS).prune(true),
+        &FetchOptions::new(SPECS).with_prune(true),
         &Environment::from_process(),
         &mut callbacks,
     );

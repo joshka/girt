@@ -192,7 +192,7 @@ fn try_push(
 ) -> Result<PushReport, TransferError> {
     // Installed thin packs include receiver bases appended during repair. Keep this selection
     // corpus ordinary so its exact index counts continue to measure objects transmitted.
-    let options = PushOptions::default().compression(girt::PackCompression::Ordinary);
+    let options = PushOptions::default().with_compression(girt::PackCompression::Ordinary);
     girt::workflow::push(
         &Repository::open(&pair.work).unwrap(),
         "origin",
