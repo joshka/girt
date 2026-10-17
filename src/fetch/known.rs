@@ -534,6 +534,28 @@ impl KnownHistory {
     /// Fails on missing/corrupt objects, malformed payloads, mistyped edges, cancellation or
     /// bounds. Declared shallow commits stop parent traversal and are sent to the peer. To request
     /// a full transfer into a complete destination, explicitly use [`KnownHistory::default`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::PackLimits;
+    /// use girt::fetch::{FetchLimits, KnownHistory};
+    /// # let (_directory, upstream, _, main, _) = include!("../doctest/remote.rs");
+    ///
+    /// // Read and verify everything reachable from `main`, within the limits.
+    /// let objects = upstream.objects(PackLimits::default())?;
+    /// let known = KnownHistory::new(
+    ///     &objects,
+    ///     &[main],
+    ///     FetchLimits::default(),
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// assert_eq!(known.object_count(), 2);
+    /// assert_eq!(known.haves(), [main]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new(
         store: &Objects,
         roots: &[ObjectId],

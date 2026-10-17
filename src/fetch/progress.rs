@@ -33,6 +33,30 @@ pub enum LocalFetchProgress {
 /// entries have been decoded. Finishing either count does not establish a valid fetch: index
 /// construction, thin-pack rewriting and selected-tip connectivity can still fail. Only
 /// `complete` marks successful validation. Installation and reference publication remain separate.
+///
+/// # Examples
+///
+/// Render a snapshot the way `git` prints its progress lines:
+///
+/// ```
+/// use girt::fetch::ValidationProgress;
+///
+/// fn render(progress: ValidationProgress) -> String {
+///     let (done, total) = progress.objects;
+///     let mut line = format!("Receiving objects: {done}/{total}");
+///     if let Some((done, total)) = progress.deltas {
+///         line.push_str(&format!(", resolving deltas: {done}/{total}"));
+///     }
+///     if progress.complete {
+///         line.push_str(", done.");
+///     }
+///     line
+/// }
+///
+/// let mut progress = ValidationProgress::default();
+/// progress.objects = (3, 10);
+/// assert_eq!(render(progress), "Receiving objects: 3/10");
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ValidationProgress {

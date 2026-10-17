@@ -7,6 +7,34 @@ use super::{FetchLimits, KnownHistory, LocalFetchProgress, ValidationProgress};
 ///
 /// Empty knowledge requests full history. The caller keeps verified history available through
 /// installation; this request grants no retention against concurrent destination collection.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::fetch::{FetchLimits, KnownHistory, LocalFetchRequest};
+/// # let (_directory, _, repo, _, _) = include!("../doctest/remote.rs");
+/// # let commit = include!("../doctest/commit.rs");
+/// # let tip = commit(&repo, &[], "Local work")?;
+///
+/// // A full transfer:
+/// let full = LocalFetchRequest::new(FetchLimits::default());
+/// assert!(full.known.is_none());
+///
+/// // An incremental one, excluding what the destination already has:
+/// let objects = repo.objects(PackLimits::default())?;
+/// let known = KnownHistory::new(
+///     &objects,
+///     &[tip],
+///     FetchLimits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+/// let incremental = LocalFetchRequest::new(FetchLimits::default()).with_known(&known);
+/// assert!(incremental.known.is_some());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct LocalFetchRequest<'a> {

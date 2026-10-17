@@ -110,6 +110,33 @@ pub enum RemoteHead {
 /// A preview can become stale before transfer. Consumers must plan mutations against the
 /// advertisement from the actual transfer session. Discovery retains unknown capability tokens
 /// for inspection but never requests them. No object is downloaded or local repository mutated.
+///
+/// # Examples
+///
+/// Check what a local source offers before deciding to fetch:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::ObjectFormat;
+/// use girt::fetch::{FetchLimits, ProtocolVersion, discover_local};
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, _, _) = include!("../doctest/remote.rs");
+///
+/// let cancel = AtomicBool::new(false);
+/// let discovery = discover_local(
+///     upstream.git_dir(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+/// )?;
+/// // A local repository is read directly, with no wire protocol.
+/// assert_eq!(discovery.version, ProtocolVersion::Native);
+/// // Fails early if the source uses SHA-256 and the destination SHA-1, or the reverse.
+/// discovery.require_format(repo.object_format())?;
+/// assert_eq!(discovery.object_format, ObjectFormat::Sha1);
+/// assert!(discovery.supports_current_fetch());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RemoteDiscovery {
@@ -217,6 +244,35 @@ impl RemoteDiscovery {
 /// # Errors
 ///
 /// Rejects malformed, truncated, over-limit, unsupported-version and inconsistent responses.
+///
+/// # Examples
+///
+/// A v0 server opens with its references as pkt-lines: a four-digit hexadecimal length, then
+/// the line. The first line also carries the capabilities after a NUL byte, including the
+/// `symref` hint that names `HEAD`'s branch:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{FetchLimits, ProtocolVersion, RemoteHead, discover};
+///
+/// fn pkt(out: &mut Vec<u8>, line: &str) {
+///     out.extend(format!("{:04x}{line}", line.len() + 4).bytes());
+/// }
+///
+/// let id = "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0";
+/// let mut advertisement = Vec::new();
+/// pkt(&mut advertisement, &format!("{id} HEAD\0side-band-64k ofs-delta symref=HEAD:refs/heads/main\n"));
+/// pkt(&mut advertisement, &format!("{id} refs/heads/main\n"));
+/// advertisement.extend(b"0000");
+///
+/// let discovery = discover(&mut advertisement.as_slice(), FetchLimits::default(), &AtomicBool::new(false))?;
+/// assert_eq!(discovery.version, ProtocolVersion::V0);
+/// assert_eq!(discovery.advertisement.refs.len(), 2);
+/// assert!(discovery.advertises(b"side-band-64k"));
+/// assert!(matches!(discovery.head, RemoteHead::Symbolic { ref branch, .. } if branch.as_bytes() == b"refs/heads/main"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn discover(
     reader: &mut impl Read,
     limits: FetchLimits,
@@ -271,6 +327,57 @@ pub fn discover_session(
 /// Returns [`discover_session`]'s errors. Empty prefixes, prefixes longer than 4096 bytes or
 /// containing NUL or LF, and more than [`FetchLimits::max_refs`] prefixes are rejected before any
 /// request is written.
+///
+/// # Examples
+///
+/// A protocol v2 server opens with capabilities instead of references; the client then asks for
+/// references with an `ls-refs` command. Here both directions are in memory, so the example shows
+/// the request girt writes:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{FetchLimits, ProtocolVersion, discover_session_with_prefixes};
+///
+/// fn pkt(out: &mut Vec<u8>, line: &str) {
+///     out.extend(format!("{:04x}{line}", line.len() + 4).bytes());
+/// }
+///
+/// let id = "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0";
+/// let mut server = Vec::new();
+/// for capability in [
+///     "version 2\n",
+///     "ls-refs=unborn\n",
+///     "fetch=shallow\n",
+///     "object-format=sha1\n",
+/// ] {
+///     pkt(&mut server, capability);
+/// }
+/// server.extend(b"0000");
+/// // The server's answer to `ls-refs`.
+/// pkt(
+///     &mut server,
+///     &format!("{id} HEAD symref-target:refs/heads/main\n"),
+/// );
+/// pkt(&mut server, &format!("{id} refs/heads/main\n"));
+/// server.extend(b"0000");
+///
+/// let mut request = Vec::new();
+/// let discovery = discover_session_with_prefixes(
+///     &mut server.as_slice(),
+///     &mut request,
+///     &[b"refs/heads/"],
+///     FetchLimits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+/// assert_eq!(discovery.version, ProtocolVersion::V2);
+/// assert_eq!(discovery.advertisement.refs.len(), 2);
+///
+/// let request = String::from_utf8(request)?;
+/// assert!(request.starts_with("0014command=ls-refs\n"));
+/// assert!(request.contains("ref-prefix refs/heads/\n"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn discover_session_with_prefixes(
     reader: &mut impl Read,
     writer: &mut impl Write,

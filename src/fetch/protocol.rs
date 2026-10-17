@@ -24,6 +24,38 @@ pub enum AdvertisementKind {
 }
 
 /// One byte-preserving reference advertisement. Peeling hints cannot be selected as wants.
+///
+/// # Examples
+///
+/// An annotated tag is advertised twice: once as the tag object, and once as a peeled hint naming
+/// the commit it points to. Only the first can be fetched, and mapping ignores the hint:
+///
+/// ```
+/// use girt::fetch::{AdvertisedRef, Advertisement, AdvertisementKind};
+/// use girt::refs::RefName;
+/// use girt::remote::{Direction, Refspecs};
+/// use girt::{ObjectFormat, ObjectKind};
+///
+/// let tag = ObjectFormat::Sha1.hash_object(ObjectKind::Tag, b"tag object");
+/// let commit = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"tagged commit");
+/// let name = RefName::new("refs/tags/v1.0")?;
+/// let advertisement = Advertisement::new(
+///     vec![
+///         AdvertisedRef::new(name.clone(), tag, AdvertisementKind::Tip),
+///         AdvertisedRef::new(name, commit, AdvertisementKind::PeeledHint),
+///     ],
+///     Vec::new(),
+/// );
+///
+/// let specs = Refspecs::parse(Direction::Fetch, ["refs/tags/*:refs/tags/*"])?;
+/// let mappings = specs.map_advertisement(&advertisement)?;
+/// assert_eq!(mappings.len(), 1);
+/// assert_eq!(
+///     mappings[0].source.as_ref().map(|source| source.id),
+///     Some(tag)
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct AdvertisedRef {
@@ -123,6 +155,51 @@ impl Advertisement {
 /// kinds are checked within the pack. Gitlinks are external submodule roots and are not followed.
 /// Payload checks use girt's supported parsers and tree validation, not a claim of complete `git
 /// fsck` equivalence.
+///
+/// # Examples
+///
+/// Fetch everything over the streams of a `git upload-pack` process. The example needs a Git
+/// executable and the path of a repository, so it is not run:
+///
+/// ```no_run
+/// use std::ops::ControlFlow;
+/// use std::process::{Command, Stdio};
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{FetchLimits, receive};
+///
+/// let mut server = Command::new("git")
+///     .args(["upload-pack", "/srv/git/project.git"])
+///     .stdin(Stdio::piped())
+///     .stdout(Stdio::piped())
+///     .spawn()?;
+/// let mut input = server.stdin.take().expect("piped");
+/// let mut output = server.stdout.take().expect("piped");
+///
+/// let received = receive(
+///     &mut output,
+///     &mut input,
+///     // Want every branch tip.
+///     |advertisement| {
+///         advertisement
+///             .refs
+///             .iter()
+///             .filter(|reference| reference.name.as_bytes().starts_with(b"refs/heads/"))
+///             .map(|reference| reference.id)
+///             .collect()
+///     },
+///     FetchLimits::default(),
+///     &AtomicBool::new(false),
+///     |message| {
+///         eprint!("remote: {}", String::from_utf8_lossy(message));
+///         ControlFlow::Continue(())
+///     },
+/// )?;
+/// drop(input);
+/// server.wait()?;
+/// println!("received {} objects", received.object_count());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn receive(
     reader: &mut impl Read,
     writer: &mut impl Write,

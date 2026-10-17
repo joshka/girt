@@ -294,6 +294,20 @@ pub use protocol::{
 /// `depth` counts commits from each selected tip. `None` requests no depth change. A positive
 /// depth can return shallow boundaries; ordinary installation rejects such a result until
 /// coordinated boundary publication is available.
+///
+/// # Examples
+///
+/// ```
+/// use std::num::NonZeroU32;
+///
+/// use girt::fetch::{FetchLimits, FetchOptions};
+///
+/// // For `receive_with_known_depth`: the latest commit of each tip, under default limits.
+/// let options = FetchOptions::default()
+///     .with_limits(FetchLimits::default())
+///     .with_depth(NonZeroU32::new(1));
+/// assert_eq!(options.depth, NonZeroU32::new(1));
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
 pub struct FetchOptions {

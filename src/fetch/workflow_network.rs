@@ -15,6 +15,65 @@ use crate::transport::TransportControl;
 /// [`Self::validate`] before installation/publication. The network future spools response bytes to
 /// a temporary file; object validation runs on the worker. Dropping this value removes the
 /// temporary file and releases history without changing repository files.
+///
+/// # Examples
+///
+/// Download on the async runtime, validate on a blocking thread, then publish. Network I/O is
+/// async; validation hashes every object and belongs off the executor. This example needs a
+/// server, so it is not run:
+///
+/// ```no_run
+/// use std::collections::BTreeSet;
+/// use std::ops::ControlFlow;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::Repository;
+/// use girt::fetch::{FetchLimits, FetchRequest, FetchUpdateLimits};
+/// use girt::refs::Reflog;
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// use girt::transport::http::HttpRemote;
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// runtime
+///     .block_on(async {
+///         let repo = Repository::open("project")?;
+///         let origin = Remote::find(repo.config(), b"origin")?.ok_or("no origin")?;
+///         let request = FetchRequest::prepare(
+///             repo.clone(),
+///             origin.fetch_refspecs().clone(),
+///             BTreeSet::new(),
+///             Reflog::Preserve,
+///         )?;
+///         let remote = HttpRemote::new("https://example.com/project.git", &[], &[])?;
+///
+///         let cancel = AtomicBool::new(false);
+///         let download = request
+///             .receive_http(
+///                 &remote,
+///                 None,
+///                 FetchLimits::default(),
+///                 TransportControl::new(&cancel),
+///             )
+///             .await?;
+///
+///         // The download owns everything it needs, so it can move to a blocking thread.
+///         let report = tokio::task::spawn_blocking(
+///             move || -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+///                 let cancel = AtomicBool::new(false);
+///                 let ready = download.validate(&cancel, |_| ControlFlow::Continue(()))?;
+///                 Ok(ready.finish(FetchUpdateLimits::default(), &cancel)?)
+///             },
+///         )
+///         .await??;
+///         println!("updated {} references", report.references.len());
+///         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+///     })
+///     .map_err(|error| error as Box<dyn std::error::Error>)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct FetchDownload {
     request: FetchRequest,

@@ -25,6 +25,52 @@ use crate::packet::Wire;
 /// queue/validation time. Subscriber state must not assume release on the initiating thread.
 /// Callers bound queued downloads, temporary disk use and active workers, and observe worker
 /// completion even after requesting cancellation; dropping a worker handle does not stop its work.
+///
+/// # Examples
+///
+/// Download one branch's objects over HTTPS and validate them on a blocking thread. This needs a
+/// server, so it is not run:
+///
+/// ```no_run
+/// use std::ops::ControlFlow;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{FetchLimits, receive_http};
+/// use girt::transport::TransportControl;
+/// use girt::transport::http::HttpRemote;
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let received = runtime
+///     .block_on(async {
+///         let remote = HttpRemote::new("https://example.com/project.git", &[], &[])?;
+///         let cancel = AtomicBool::new(false);
+///         let download = receive_http(
+///             &remote,
+///             |advertisement| {
+///                 advertisement
+///                     .refs
+///                     .iter()
+///                     .filter(|reference| reference.name.as_bytes() == b"refs/heads/main")
+///                     .map(|reference| reference.id)
+///                     .collect()
+///             },
+///             None,
+///             FetchLimits::default(),
+///             TransportControl::new(&cancel),
+///         )
+///         .await?;
+///         let received = tokio::task::spawn_blocking(move || {
+///             download.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+///         })
+///         .await??;
+///         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(received)
+///     })
+///     .map_err(|error| error as Box<dyn std::error::Error>)?;
+/// println!("validated {} objects", received.object_count());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct DownloadedFetch {
     #[cfg(feature = "tracing")]
     pub(super) trace: crate::trace::DownloadContext,
