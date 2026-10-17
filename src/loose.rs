@@ -540,6 +540,16 @@ impl LooseObjects {
         result
     }
 
+    /// Reports whether a loose file exists for `id`, without reading it.
+    pub(crate) fn contains(&self, id: ObjectId) -> Result<bool, Error> {
+        id.require_format(self.format)?;
+        match fs::metadata(self.object_path(id)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     fn object_path(&self, id: ObjectId) -> PathBuf {
         let hex = id.to_string();
         self.directory.join(&hex[..2]).join(&hex[2..])

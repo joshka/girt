@@ -1024,6 +1024,61 @@ impl Objects {
         self.read_controlled(id, limits, &AtomicBool::new(false))
     }
 
+    /// Reports whether this snapshot holds `id`, without reading or verifying the stored copy.
+    ///
+    /// Searches the same stores in the same order as [`Self::read`]: each store's pinned pack
+    /// indexes, then its live loose files, primary before alternates. The canonical empty tree is
+    /// always present, as in [`Self::read`]. A pack published after this snapshot was taken is not
+    /// seen, so a `false` can be out of date; [`Self::refresh`] picks up new packs.
+    ///
+    /// Use this to skip storing content the repository already has, as Git does when it writes an
+    /// object that is already packed. A `true` is the store's claim, not proof that the copy
+    /// decodes: [`Self::read`] verifies identity and reports a damaged copy when the object is
+    /// read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObjectReadError::Loose`] wrapping a format error for a foreign-format `id`,
+    /// and storage errors when a pack index or loose object directory cannot be read. A
+    /// missing loose file is absence, not an error. No filesystem changes occur.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, ObjectId, PackLimits, Repository};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let stored = repo.loose_objects().write_blob(b"payload\n")?;
+    /// let objects = repo.objects(PackLimits::default())?;
+    /// assert!(objects.contains(stored)?);
+    ///
+    /// // Hash first, then store only what the repository lacks.
+    /// let content = b"new content\n";
+    /// let id = ObjectId::for_blob(ObjectFormat::Sha1, content);
+    /// assert!(!objects.contains(id)?);
+    /// assert_eq!(repo.loose_objects().write_blob(content)?, id);
+    /// assert!(objects.contains(id)?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn contains(&self, id: ObjectId) -> Result<bool, ObjectReadError> {
+        id.require_format(self.format)
+            .map_err(crate::loose::Error::from)?;
+        for store in &self.stores {
+            for pack in &store.packs {
+                if pack.find(id)?.is_some() {
+                    return Ok(true);
+                }
+            }
+            if store.loose.contains(id)? {
+                return Ok(true);
+            }
+        }
+        Ok(id == self.format.hash_object(ObjectKind::Tree, b""))
+    }
+
     /// Reads and parses the commit `id`.
     ///
     /// Use this when `id` came from a reference or a history walk and must be a commit. Unlike
