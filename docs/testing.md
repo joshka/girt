@@ -285,6 +285,8 @@ Windows does not expose a Windows SSH adapter.
 
 The Windows integration selection follows implemented operations, not just file portability:
 
+- `short_ids`: Both-format prefix resolution, ambiguity, loose/pack/alternate lookup and automatic
+  abbreviation parity against Git in original disposable repositories.
 - `object_ids`: Format-aware identity/hash vectors and storage-boundary refusal (both hashes).
 - `sha256`: Both-format codecs, loose storage, Git interoperability, layouts, traversal and SHA-256
   storage. Portable cases use Git-created refs/worktrees; packed checkout/status cases are

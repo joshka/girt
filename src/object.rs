@@ -21,9 +21,9 @@
 //! # Identity is not existence or validation
 //!
 //! IDs retain their format. Parsing full hexadecimal text does not read storage or infer kind;
-//! abbreviations require a separate lookup policy and are rejected here. [`ObjectId::null`] is an
-//! all-zero sentinel, not an empty blob's ID. Use [`crate::Objects::read`] to establish existence
-//! and verify bytes, then decode the payload with [`crate::Tree`], [`crate::Commit`], or
+//! abbreviations use [`ObjectIdPrefix`] and [`crate::Objects::resolve_prefix`]. [`ObjectId::null`]
+//! is an all-zero sentinel, not an empty blob's ID. Use [`crate::Objects::read`] to establish
+//! existence and verify bytes, then decode the payload with [`crate::Tree`], [`crate::Commit`], or
 //! [`crate::Tag`].
 //!
 //! [`ParseObjectIdError`] means the width, selected format, or hexadecimal spelling is wrong: pass
@@ -45,7 +45,9 @@ use std::hash::Hash;
 use std::str::FromStr;
 
 mod id_hash;
+mod prefix;
 pub(crate) use id_hash::{IdMap, IdSet, PeerIdMap, PeerIdSet};
+pub use prefix::{ObjectIdPrefix, ParseObjectIdPrefixError};
 
 /// One of Git's four object kinds, also used to declare an annotated tag's target type.
 ///

@@ -36,8 +36,14 @@ representations it accepts.
 
 `ObjectId` carries either SHA-1 or SHA-256 digest bytes. A repository selects one format, and
 embedded IDs must agree with it. Parsing hexadecimal text does not prove that an object exists or
-reveal its kind. The ID parser accepts complete IDs; expanding an abbreviation needs a lookup in a
-repository.
+reveal its kind. `ObjectId` accepts complete IDs. Parse shorter text with
+`ObjectIdPrefix::from_hex(format, text)`, then use `Objects::resolve_prefix` to select one stored
+identity. Ambiguous prefixes report all candidates across loose objects, indexed packs and
+alternates. `Objects::abbreviate(id, minimum)` chooses a unique prefix; use
+`Objects::auto_abbrev_len()` for Git's repository-size minimum. These operations inspect filenames
+and indexes without decoding payloads. Abbreviation caches loose buckets as they are first
+inspected; prefix resolution sees current loose names. Refresh the reader to see new packs or clear
+abbreviation snapshots. Concurrent writes can invalidate uniqueness.
 
 The all-zero ID is an absence sentinel in contexts such as reflogs. It is not the ID of an empty
 blob or empty tree. Converting an object graph to another hash format would require translating its

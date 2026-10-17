@@ -814,6 +814,19 @@ impl FilePack {
         Ok(self.table.find(&self.index_bytes, id))
     }
 
+    pub(crate) fn prefix_matches(
+        &self,
+        prefix: crate::ObjectIdPrefix,
+    ) -> Result<Vec<ObjectId>, Error> {
+        self.index.check_snapshot_not_truncated()?;
+        let range = self.table.prefix_range(&self.index_bytes, prefix)?;
+        range.map(|position| self.identity(position)).collect()
+    }
+
+    pub(crate) fn object_count(&self) -> usize {
+        self.table.len()
+    }
+
     /// Pack offset of the entry at index `position`, which must be below the index's length.
     pub(crate) fn offset(&self, position: usize) -> usize {
         self.table.offset(&self.index_bytes, position)

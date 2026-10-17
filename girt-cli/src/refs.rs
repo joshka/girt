@@ -12,7 +12,6 @@ use girt::{Config, ObjectId, ObjectKind, Repository, Signature};
 
 use crate::Context;
 use crate::common::{self, display_bytes};
-use crate::history::abbrev;
 
 /// Maximum symbolic-ref hops shown by `girt ref show`.
 const MAX_DEPTH: usize = 5;
@@ -70,9 +69,8 @@ pub enum Command {
     /// Show a reference's reflog, newest first (like `git reflog show`).
     ///
     /// Prints `<new-id> <old-id> <message>` per line. With `--git`, prints
-    /// `<abbrev> <name>@{N}: <message>`; IDs are abbreviated to `core.abbrev` or 7 digits without
-    /// Git's uniqueness check or repository-size scaling, so large repositories (where Git picks a
-    /// longer abbreviation) differ.
+    /// `<abbrev> <name>@{N}: <message>`; IDs honor `core.abbrev`, automatic repository-size
+    /// scaling, and uniqueness across all stored object kinds.
     Log {
         /// Reference name, e.g. `HEAD` or `main`.
         name: String,
@@ -284,17 +282,14 @@ fn log(
         .reflog(&full)
         .wrap_err_with(|| format!("reading reflog of {name}"))?
         .unwrap_or_default();
-    let width = abbrev(repository);
+    let objects = common::objects(repository)?;
+    let width = common::abbrev_len(repository, &objects)?;
     let mut out = common::stdout();
     for (index, entry) in entries.iter().rev().enumerate() {
         let message = display_bytes(&entry.message);
         if context.git {
-            let hex = entry.new.to_string();
-            writeln!(
-                out,
-                "{} {name}@{{{index}}}: {message}",
-                &hex[..width.min(hex.len())]
-            )?;
+            let hex = objects.abbreviate(entry.new, width)?.to_string();
+            writeln!(out, "{} {name}@{{{index}}}: {message}", hex)?;
         } else {
             writeln!(out, "{} {} {message}", entry.new, entry.old)?;
         }

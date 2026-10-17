@@ -131,7 +131,7 @@ jobs:
         if: ${{ needs.changes.outputs.full == 'true' }}
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
-          --lib --test layout_shallow --test worktree_create --test worktree_admin --test object_ids --test sha256 --test commits --test decoding --test packs --test index --test colocation --test references --test references_portable --test reflog_expiry --test retention --test retention_noop --test retention_integrity --test retention_survivors --test retention_repack_contracts
+          --lib --test layout_shallow --test worktree_create --test worktree_admin --test object_ids --test short_ids --test sha256 --test commits --test decoding --test packs --test index --test colocation --test references --test references_portable --test reflog_expiry --test retention --test retention_noop --test retention_integrity --test retention_survivors --test retention_repack_contracts
       - name: Core-only library
         if: ${{ needs.changes.outputs.full == 'true' }}
         run: cargo +stable check --locked --lib --no-default-features
@@ -263,7 +263,7 @@ jobs:
         if: ${{ matrix.suite == 'integrations' }}
         run: >-
           cargo +stable nextest run --profile windows-ci --locked --no-default-features --no-fail-fast
-          --test object_ids --test sha256 --test blobs --test trees --test commits --test decoding --test discovery --test tags --test packs --test pack_index_rebuild
+          --test object_ids --test short_ids --test sha256 --test blobs --test trees --test commits --test decoding --test discovery --test tags --test packs --test pack_index_rebuild
           --test history --test repositories --test layout_shallow --test worktree_create --test worktree_admin --test config_resolution --test config_edit --test remotes --test tree_compare --test content_diff --test index --test colocation --test status_portable --test checkout_portable --test references --test references_portable --test reflog_expiry --test retention
       - name: Portable HTTP runtime
         if: ${{ !cancelled() && matrix.suite == 'integrations' }}

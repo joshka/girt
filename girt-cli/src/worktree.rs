@@ -92,8 +92,8 @@ pub enum WorktreeCommand {
     /// List the main worktree and registered linked worktrees (like `git worktree list`).
     ///
     /// Default output is `<path> <HEAD id> <branch or "(detached)">` with full IDs and a trailing
-    /// state for missing or unreadable checkouts. With `--git`, IDs are abbreviated to 7
-    /// characters (Git lengthens ambiguous abbreviations; girt does not) and `locked`/`prunable`
+    /// state for missing or unreadable checkouts. With `--git`, IDs honor `core.abbrev`
+    /// and lengthen collisions; `locked`/`prunable`
     /// annotations are not printed.
     List,
     /// Protect a registration from pruning.
@@ -459,7 +459,9 @@ fn list_worktrees(repository: &Repository, git: bool) -> Result<()> {
         .map(|(path, ..)| path.as_os_str().len())
         .max()
         .unwrap_or(0);
-    let mut out = stdout();
+    let objects = crate::common::objects(repository)?;
+    let abbrev = crate::common::abbrev_len(repository, &objects)?;
+    let mut formatted = Vec::new();
     for (path, git_dir, state) in rows {
         let head = std::fs::read(git_dir.join("HEAD")).unwrap_or_default();
         let head = head.trim_ascii_end();
@@ -474,7 +476,12 @@ fn list_worktrees(repository: &Repository, git: bool) -> Result<()> {
             }
             None => (display_bytes(head).parse::<ObjectId>().ok(), None),
         };
-        let mut id = id.map_or_else(|| "0".repeat(40), |id| id.to_string());
+        let id = id.unwrap_or_else(|| ObjectId::null(repository.object_format()));
+        let id = if git {
+            objects.abbreviate(id, abbrev)?.to_string()
+        } else {
+            id.to_string()
+        };
         let branch = match branch {
             Some(name) => {
                 let short = name.strip_prefix(b"refs/heads/").unwrap_or(name);
@@ -482,11 +489,20 @@ fn list_worktrees(repository: &Repository, git: bool) -> Result<()> {
             }
             None => "(detached HEAD)".to_owned(),
         };
+        formatted.push((path, id, branch, state));
+    }
+    let abbrev = formatted
+        .iter()
+        .map(|(_, id, _, _)| id.len())
+        .max()
+        .unwrap_or(0)
+        .max(abbrev);
+    let mut out = stdout();
+    for (path, id, branch, state) in formatted {
         if git {
-            id.truncate(7);
             writeln!(
                 out,
-                "{:width$} {id} {branch}",
+                "{:width$} {id:abbrev$} {branch}",
                 path.display(),
                 width = width
             )?;

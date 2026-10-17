@@ -14,8 +14,6 @@ use crate::common::{not_cancelled, objects, read_limits, resolve_tree, stdout};
 
 /// Lines of unchanged context around each patch hunk.
 const CONTEXT: usize = 3;
-/// Hex digits shown for abbreviated object IDs in patch `index` lines.
-const ABBREV: usize = 7;
 
 /// Compare two trees.
 ///
@@ -25,10 +23,9 @@ const ABBREV: usize = 7;
 /// With `--git`, output mirrors `git diff-tree -r --name-status <a> <b>` (add `-M` / `-C` for
 /// `--renames` / `--copies`), and `--patch` mirrors `git diff --no-renames <a> <b>` (or
 /// `git diff -M <a> <b>` with `--renames`). Known patch differences: girt's line diff is plain
-/// Myers without Git's indent heuristic, so ambiguous hunks may align differently; abbreviated IDs
-/// are always 7 hex digits, never lengthened for ambiguity; binary detection scans whole blobs
-/// for NUL rather than the first 8000 bytes; attributes, textconv and funcname drivers are
-/// ignored.
+/// Myers without Git's indent heuristic, so ambiguous hunks may align differently; binary detection
+/// scans whole blobs for NUL rather than the first 8000 bytes; attributes, textconv and funcname
+/// drivers are ignored.
 #[derive(Debug, clap::Args)]
 pub struct DiffArgs {
     /// The old revision (commit or tree).
@@ -79,9 +76,10 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
     let new = resolve_tree(&repository, &objects, &args.b)?;
     let entries = compare(&objects, old, new, args.renames || args.copies, args.copies)?;
     let mut out = stdout();
+    let width = crate::common::abbrev_len(&repository, &objects)?;
     if args.patch {
         for entry in &entries {
-            write_patch(&mut out, &objects, entry)?;
+            write_patch(&mut out, &objects, entry, width)?;
         }
     } else {
         for entry in &entries {
@@ -218,17 +216,23 @@ fn octal(mode: EntryMode) -> &'static str {
 }
 
 /// Writes the patch for one entry, splitting type changes into a deletion and an addition.
-fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry) -> Result<()> {
+fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry, width: usize) -> Result<()> {
     match entry {
         Entry::Change(change) => match (change.old, change.new) {
             (Some(old), Some(new)) if kind_of(old.mode) != kind_of(new.mode) => {
                 let path = &change.path;
-                write_file_patch(out, objects, path, path, Some(old), None, None)?;
-                write_file_patch(out, objects, path, path, None, Some(new), None)
+                write_file_patch(out, objects, (path, path), Some(old), None, None, width)?;
+                write_file_patch(out, objects, (path, path), None, Some(new), None, width)
             }
-            (old, new) => {
-                write_file_patch(out, objects, &change.path, &change.path, old, new, None)
-            }
+            (old, new) => write_file_patch(
+                out,
+                objects,
+                (&change.path, &change.path),
+                old,
+                new,
+                None,
+                width,
+            ),
         },
         Entry::Rewrite {
             kind,
@@ -240,11 +244,11 @@ fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry) -> Result
         } => write_file_patch(
             out,
             objects,
-            source,
-            target,
+            (source, target),
             Some(*old),
             Some(*new),
             Some((*kind, *similarity)),
+            width,
         ),
     }
 }
@@ -252,11 +256,11 @@ fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry) -> Result
 fn write_file_patch(
     out: &mut impl Write,
     objects: &Objects,
-    old_path: &[u8],
-    new_path: &[u8],
+    (old_path, new_path): (&[u8], &[u8]),
     old: Option<TreeValue>,
     new: Option<TreeValue>,
     rewrite: Option<(Kind, u8)>,
+    width: usize,
 ) -> Result<()> {
     let a = quote(&[b"a/", old_path].concat());
     let b = quote(&[b"b/", new_path].concat());
@@ -294,10 +298,10 @@ fn write_file_patch(
         _ => String::new(),
     };
     let abbrev = |id: Option<ObjectId>| match id {
-        Some(id) => id.to_string()[..ABBREV].to_owned(),
-        None => "0".repeat(ABBREV),
+        Some(id) => objects.abbreviate(id, width).map(|p| p.to_string()),
+        None => Ok("0".repeat(width.min(objects.object_format().digest_len() * 2))),
     };
-    writeln!(out, "index {}..{}{mode}", abbrev(old_id), abbrev(new_id))?;
+    writeln!(out, "index {}..{}{mode}", abbrev(old_id)?, abbrev(new_id)?)?;
 
     let (old_bytes, new_bytes) = read_sides(objects, old, new)?;
     let a = if old.is_some() {

@@ -195,11 +195,13 @@ pub use history::{HistoryError, HistoryLimits};
 pub use loose::{Error, LooseObjects};
 pub(crate) use object::{IdMap, IdSet, PeerIdMap, PeerIdSet};
 pub use object::{
-    ObjectFormat, ObjectFormatError, ObjectId, ObjectKind, ParseObjectIdError, encode_blob,
+    ObjectFormat, ObjectFormatError, ObjectId, ObjectIdPrefix, ObjectKind, ParseObjectIdError,
+    ParseObjectIdPrefixError, encode_blob,
 };
 pub(crate) use objects::UnverifiedObject;
 pub use objects::{
     AlternateLimits, Object, ObjectReadError, Objects, PackLimits, ReadCommitError, ReadLimits,
+    ResolvePrefixError,
 };
 pub use pack::{
     DeltaOptions, DeltaStats, PackCompression, PackObject, PackWriteError, PackWriteLimits,

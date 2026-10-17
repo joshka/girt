@@ -62,10 +62,13 @@ operation spans to stderr; at debug level the active spans also appear in error 
 
 These come from the library; each command's help repeats the ones that apply to it.
 
-- Revisions are full object IDs or reference names; short IDs and expressions such as `HEAD~1` are
-  in progress.
-- Abbreviated IDs in `--git` output are always seven digits, so compare with `git -c core.abbrev=7`
-  on larger repositories.
+- Revisions accept full IDs, unique hexadecimal prefixes of at least four digits, and reference
+  names. Expressions such as `HEAD~1` remain unsupported. Reference names take precedence over short
+  IDs; Git's ambiguous-name warning is not reproduced.
+- Abbreviated IDs honor `core.abbrev` (automatic by default), lengthening collisions across loose
+  objects, indexed packs and alternates. Unindexed packs and objects absent locally do not
+  participate. Each output operation retains loose buckets as they are first inspected, so
+  concurrent writes can invalidate uniqueness.
 - `status` and `checkout` compare raw bytes on macOS and Linux, without attributes, filters, line
   ending conversion or `core.filemode`. `checkout` refuses indexes that carry fsmonitor or
   untracked-cache data.

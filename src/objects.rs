@@ -55,12 +55,14 @@
     reason = "parses untrusted repository or network input (#103)"
 )]
 mod alternates;
+mod prefix;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::{fs, io};
 
 pub use alternates::AlternateLimits;
+pub use prefix::ResolvePrefixError;
 
 use crate::pack::FilePack;
 use crate::pack::reader::check_cancelled;
@@ -521,6 +523,7 @@ pub struct Objects {
     pub(crate) shallow: crate::ShallowRoots,
     /// Artifact-generation evidence survives refresh without retaining old handles/tables.
     damage_history: Arc<crate::pack::DamageHistory>,
+    abbreviations: Arc<prefix::LooseAbbreviations>,
 }
 
 #[derive(Debug, Clone)]
@@ -619,6 +622,7 @@ impl Objects {
                 format,
                 stores,
                 damage_history,
+                abbreviations: Arc::default(),
                 directory,
                 shallow: crate::ShallowRoots::empty(format),
             })
@@ -634,6 +638,7 @@ impl Objects {
     }
 
     /// Replaces this reader's pack and alternate view after one successful bounded scan.
+    /// Also clears lazy loose-directory snapshots used by [`Self::abbreviate`].
     ///
     /// Rediscover from the original canonical primary directory using the supplied aggregate
     /// limits. Newly installed indexed packs and alternate topology become visible; removed packs
@@ -735,6 +740,7 @@ impl Objects {
         check_cancelled(cancelled)?;
         share_pack_damage(&mut candidate.stores, &self.damage_history)?;
         self.stores = candidate.stores;
+        self.abbreviations = candidate.abbreviations;
         Ok(())
     }
 

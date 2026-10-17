@@ -54,10 +54,14 @@ spans are also captured in error reports.
 
 These come from the library and are listed in each command's `--help`:
 
-- Revisions are full object IDs or ref names (`main`, `v1`, `refs/remotes/origin/main`, `HEAD`).
-  Short IDs and expressions such as `HEAD~1` or `main^{tree}` are not supported yet.
-- Abbreviated IDs in `--git` output are always seven digits; Git lengthens them on larger
-  repositories, so compare with `git -c core.abbrev=7`.
+- Revisions accept full IDs, unique hexadecimal prefixes of at least four digits, or ref names
+  (`main`, `v1`, `refs/remotes/origin/main`, `HEAD`). Expressions such as `HEAD~1` or `main^{tree}`
+  are not supported yet. Ref names take precedence over short IDs; Git's ambiguous-name warning is
+  not reproduced.
+- Abbreviated IDs honor `core.abbrev` (automatic by default) and lengthen collisions across loose
+  objects, indexed packs and alternates. Unindexed packs and promised objects not present locally do
+  not participate. Each output operation retains loose buckets as they are first inspected;
+  concurrent writes can invalidate a previously unique abbreviation.
 - `status` and `checkout` compare raw bytes on macOS and Linux: no attributes, filters, EOL
   conversion or `core.filemode`. macOS paths must be ASCII. `checkout` drops derived index caches,
   including fsmonitor and untracked caches, for Git to rebuild. Split/sparse indexes, resolve-undo
