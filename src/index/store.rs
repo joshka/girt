@@ -909,30 +909,32 @@ impl IndexEdit {
     ///
     /// Preserves entries, stat words, flags, framing version and opaque `TREE`/`REUC`/`sdir`
     /// payloads. Both offset caches must be removed: canonical re-encoding can change entry byte
-    /// boundaries even when version and logical entries are unchanged. With neither cache present,
-    /// the original encoding is retained. Publication remains explicit through [`Self::commit`].
+    /// boundaries even when version and logical entries are unchanged. Also drops fsmonitor
+    /// (`FSMN`) and untracked (`UNTR`) caches. With no derived cache present, the original
+    /// encoding is retained. Publication remains explicit through [`Self::commit`].
     ///
     /// # Errors
     ///
-    /// Other extensions, including split-index `link`, prevent this bounded rewrite. Extension or
-    /// output-limit failures leave the snapshot and storage unchanged. Cache payloads are not
-    /// interpreted or repaired; they are discarded.
+    /// Extensions other than `TREE`, `REUC`, `sdir` and these four caches, including split-index
+    /// `link`, prevent this bounded rewrite. Extension or output-limit failures leave the snapshot
+    /// and storage unchanged. Cache payloads are not interpreted or repaired; they are
+    /// discarded.
     pub fn invalidate_entry_offsets(&mut self) -> Result<(), Error> {
         self.index.invalidate_entry_offsets(self.limits)
     }
 
     /// Discards a standalone index's resolve-undo (`REUC`) information under the held lock.
     ///
-    /// Preserves entries, stat words, flags, version and `TREE` payloads. Resolve-undo payloads
-    /// are discarded opaquely, without interpreting or repairing them. Use this only when the
-    /// caller's operation intentionally forgets previous conflict resolutions. An absent `REUC`
-    /// retains the original encoding. Publication remains explicit through [`Self::commit`].
+    /// Preserves entries, stat words, flags, version and `TREE` payloads. A removal also drops
+    /// `FSMN`, `UNTR`, `EOIE` and `IEOT` caches. Resolve-undo payloads are discarded opaquely,
+    /// without interpreting or repairing them. Use this only when the caller's operation
+    /// intentionally forgets previous conflict resolutions. An absent `REUC` retains the
+    /// original encoding. Publication remains explicit through [`Self::commit`].
     ///
     /// # Errors
     ///
-    /// Any extension other than `TREE` or `REUC`, including split `link`, prevents this edit.
-    /// Call [`Self::invalidate_entry_offsets`] first if `EOIE` or `IEOT` is present. Extension
-    /// and output-limit errors preserve the draft and storage; the lock remains held. This does
+    /// Unknown extensions, sparse `sdir` and split `link` prevent this edit. Extension and
+    /// output-limit errors preserve the draft and storage; the lock remains held. This does
     /// not relax the extension policies of entry replacement or tree-cache invalidation.
     ///
     /// # Examples
@@ -954,14 +956,15 @@ impl IndexEdit {
     /// Discards a standalone index's `TREE` cache under the held lock.
     ///
     /// Entry replacement already discards `TREE` when entries change. Use this method when the
-    /// cached tree must be removed even though the entries are unchanged. No bytes are written
+    /// cached tree must be removed even though the entries are unchanged. Also drops derived
+    /// `FSMN`, `UNTR`, `EOIE` and `IEOT` caches, which Git can rebuild. No bytes are written
     /// until [`Self::commit`]. An index without extensions is accepted as a no-op.
     ///
     /// # Errors
     ///
-    /// Any extension other than `TREE`, including a split-index `link`, prevents this edit.
-    /// Resource-limit failure also leaves the draft and stored index unchanged. The lock remains
-    /// held after either failure.
+    /// Any extension other than these five derived caches, including `REUC`, `sdir` and split
+    /// `link`, prevents this edit. Resource-limit failure also leaves the draft and stored index
+    /// unchanged. The lock remains held after either failure.
     pub fn invalidate_tree_cache(&mut self) -> Result<(), Error> {
         self.index.invalidate_tree_cache(self.limits)
     }
@@ -1152,8 +1155,8 @@ impl IndexEdit {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(crate) fn discard_tree_cache(&mut self) {
-        self.index.discard_tree_cache();
+    pub(crate) fn discard_checkout_caches(&mut self) {
+        self.index.discard_checkout_caches();
     }
 
     // Used by worktree checkout, which is available only on Linux and macOS.

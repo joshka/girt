@@ -572,7 +572,7 @@ impl Index {
         if let Some(extension) = self.extensions.iter().find(|extension| {
             !matches!(
                 &extension.signature,
-                b"TREE" | b"REUC" | b"sdir" | b"EOIE" | b"IEOT"
+                b"TREE" | b"REUC" | b"sdir" | b"EOIE" | b"IEOT" | b"FSMN" | b"UNTR"
             )
         }) {
             return Err(Error::ExtensionPreventsEdit(extension.signature));
@@ -580,15 +580,15 @@ impl Index {
         if !self
             .extensions
             .iter()
-            .any(|extension| matches!(&extension.signature, b"EOIE" | b"IEOT"))
+            .any(|extension| matches!(&extension.signature, b"EOIE" | b"IEOT" | b"FSMN" | b"UNTR"))
         {
             self.encoded_len(limits)?;
             return Ok(());
         }
         let mut replacement = self.clone();
-        replacement
-            .extensions
-            .retain(|extension| !matches!(&extension.signature, b"EOIE" | b"IEOT"));
+        replacement.extensions.retain(|extension| {
+            !matches!(&extension.signature, b"EOIE" | b"IEOT" | b"FSMN" | b"UNTR")
+        });
         // Canonical encoding can move entry boundaries even without changing the version.
         replacement.original = None;
         replacement.encoded_len(limits)?;
@@ -597,11 +597,12 @@ impl Index {
     }
 
     pub(super) fn discard_resolve_undo(&mut self, limits: Limits) -> Result<(), Error> {
-        if let Some(extension) = self
-            .extensions
-            .iter()
-            .find(|extension| !matches!(&extension.signature, b"TREE" | b"REUC"))
-        {
+        if let Some(extension) = self.extensions.iter().find(|extension| {
+            !matches!(
+                &extension.signature,
+                b"TREE" | b"REUC" | b"FSMN" | b"UNTR" | b"EOIE" | b"IEOT"
+            )
+        }) {
             return Err(Error::ExtensionPreventsEdit(extension.signature));
         }
         if !self
@@ -613,9 +614,12 @@ impl Index {
             return Ok(());
         }
         let mut replacement = self.clone();
-        replacement
-            .extensions
-            .retain(|extension| extension.signature != *b"REUC");
+        replacement.extensions.retain(|extension| {
+            !matches!(
+                &extension.signature,
+                b"REUC" | b"FSMN" | b"UNTR" | b"EOIE" | b"IEOT"
+            )
+        });
         replacement.original = None;
         replacement.encoded_len(limits)?;
         *self = replacement;
@@ -623,11 +627,12 @@ impl Index {
     }
 
     pub(super) fn invalidate_tree_cache(&mut self, limits: Limits) -> Result<(), Error> {
-        if let Some(extension) = self
-            .extensions
-            .iter()
-            .find(|extension| extension.signature != *b"TREE")
-        {
+        if let Some(extension) = self.extensions.iter().find(|extension| {
+            !matches!(
+                &extension.signature,
+                b"TREE" | b"FSMN" | b"UNTR" | b"EOIE" | b"IEOT"
+            )
+        }) {
             return Err(Error::ExtensionPreventsEdit(extension.signature));
         }
         if self.extensions.is_empty() {
@@ -659,10 +664,14 @@ impl Index {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(crate) fn discard_tree_cache(&mut self) {
+    pub(crate) fn discard_checkout_caches(&mut self) {
         self.original = None;
-        self.extensions
-            .retain(|extension| !matches!(&extension.signature, b"TREE" | b"link"));
+        self.extensions.retain(|extension| {
+            !matches!(
+                &extension.signature,
+                b"TREE" | b"FSMN" | b"UNTR" | b"EOIE" | b"IEOT"
+            )
+        });
     }
 
     /// Parses a complete index, copying paths and optional extensions into owned storage.
@@ -1518,9 +1527,6 @@ mod dual_format_tests {
     ) {
         let mut index = cached_index(format, true);
         index.original = None;
-        index
-            .extensions
-            .retain(|e| !matches!(&e.signature, b"UNTR" | b"FSMN"));
         let bytes = index.encode(Limits::default()).unwrap();
         let mut index = Index::parse(format, &bytes, Limits::default()).unwrap();
         let entries = index.entries.clone();
@@ -1545,8 +1551,6 @@ mod dual_format_tests {
     #[rstest]
     #[case::unknown(*b"TEST")]
     #[case::split(*b"link")]
-    #[case::untracked(*b"UNTR")]
-    #[case::fsmonitor(*b"FSMN")]
     fn discard_entry_offsets_refusal_is_atomic(
         #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
         #[case] signature: [u8; 4],
@@ -1609,8 +1613,10 @@ mod dual_format_tests {
         index.version = version;
         index
             .extensions
-            .retain(|e| matches!(&e.signature, b"TREE" | b"REUC"));
-        index.extensions[1].data = payload.to_vec();
+            .iter_mut()
+            .find(|e| e.signature == *b"REUC")
+            .unwrap()
+            .data = payload.to_vec();
         for stage in [Stage::Base, Stage::Ours, Stage::Theirs] {
             let mut entry = Entry::new(
                 b"unmerged".to_vec(),
@@ -1653,8 +1659,7 @@ mod dual_format_tests {
     #[rstest]
     fn discard_resolve_undo_rejects_unsupported_extensions_atomically(
         #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
-        #[values(*b"EOIE", *b"IEOT", *b"link", *b"sdir", *b"UNTR", *b"FSMN", *b"TEST")]
-        signature: [u8; 4],
+        #[values(*b"link", *b"sdir", *b"TEST")] signature: [u8; 4],
     ) {
         let mut index = resolve_undo_fixture(format, Version::V4, true, b"opaque");
         index.extensions.push(Extension {

@@ -13,6 +13,9 @@ use girt::{InitKind, ObjectFormat, ObjectId, Repository};
 use rstest::rstest;
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
+    git_with_locks(root, args, "0")
+}
+fn git_with_locks(root: &Path, args: &[&str], locks: &str) -> Vec<u8> {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -46,7 +49,7 @@ fn git(root: &Path, args: &[&str]) -> Vec<u8> {
         .env("GIT_AUTHOR_EMAIL", "checkout@example.invalid")
         .env("GIT_COMMITTER_NAME", "Checkout Fixture")
         .env("GIT_COMMITTER_EMAIL", "checkout@example.invalid")
-        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_OPTIONAL_LOCKS", locks)
         .env("LC_ALL", "C")
         .output()
         .unwrap();
@@ -281,4 +284,133 @@ fn missing_index_requires_empty_explicit_baseline() {
     assert!(error.report.applied.is_empty());
     assert!(!dest.join("dir").exists());
     checkout(&repo, None, target);
+}
+
+// Git CLI-generated extensions; format contract: https://git-scm.com/docs/gitformat-index.
+// The hook reports a full rescan, so the fixture also runs on Linux without a native daemon.
+fn cache_status(root: &Path, monitor: &str) -> Vec<u8> {
+    git_with_locks(
+        root,
+        &[
+            "-c",
+            monitor,
+            "-c",
+            "core.untrackedCache=true",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ],
+        "1",
+    )
+}
+fn assert_monitor_caches(repo: &Repository) {
+    let index = repo.read_index(Default::default()).unwrap().unwrap();
+    assert!(index.extensions().iter().any(|e| e.signature() == *b"FSMN"));
+    assert!(index.extensions().iter().any(|e| e.signature() == *b"UNTR"));
+}
+
+#[rstest]
+#[case::hook("core.fsmonitor=.git/hooks/test-monitor")]
+#[cfg_attr(target_os = "macos", case::builtin("core.fsmonitor=true"))]
+fn checkout_drops_git_monitor_caches_and_git_rebuilds_them(
+    #[case] monitor: &str,
+    #[values(false, true)] changed: bool,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(temp.path());
+    let root = repo.worktree().unwrap();
+    let baseline = tree(root);
+    fs::write(root.join("dir/raw"), b"replacement\n").unwrap();
+    git(root, &["add", "."]);
+    let target: ObjectId = std::str::from_utf8(&git(root, &["write-tree"]))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    git(root, &["reset", "--hard", "HEAD"]);
+    let hook = repo.git_dir().join("hooks/test-monitor");
+    fs::write(&hook, b"#!/bin/sh\nprintf 'token\\0/\\0'\n").unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(cache_status(root, monitor).is_empty());
+    assert_monitor_caches(&repo);
+    let report = repo
+        .raw_status(
+            girt::status::Baseline::Head,
+            girt::status::Untracked::RawFilesWithoutIgnores,
+            Default::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(report.staged.is_empty());
+    assert!(report.unstaged.is_empty());
+    let mut edit = repo.edit_index(Default::default()).unwrap();
+    edit.invalidate_tree_cache().unwrap();
+    edit.commit().unwrap();
+    assert!(cache_status(root, monitor).is_empty());
+    assert_monitor_caches(&repo);
+    let target = if changed { target } else { baseline };
+    checkout(&repo, Some(baseline), target);
+    assert!(
+        repo.read_index(Default::default())
+            .unwrap()
+            .unwrap()
+            .extensions()
+            .is_empty()
+    );
+    // Compare against HEAD: checkout deliberately leaves HEAD at the baseline.
+    let expected = if changed {
+        b"M  dir/raw\n".as_slice()
+    } else {
+        b""
+    };
+    assert_eq!(cache_status(root, monitor), expected);
+    assert_monitor_caches(&repo);
+    fs::write(root.join("run"), b"dirty\n").unwrap();
+    fs::write(root.join("untracked"), b"new\n").unwrap();
+    let mut expected = expected.to_vec();
+    expected.extend_from_slice(b" M run\n?? untracked\n");
+    assert_eq!(cache_status(root, monitor), expected);
+    #[cfg(target_os = "macos")]
+    if monitor == "core.fsmonitor=true" {
+        git(root, &["fsmonitor--daemon", "stop"]);
+    }
+}
+
+#[test]
+fn checkout_drops_git_written_entry_offset_accelerators() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(temp.path());
+    let root = repo.worktree().unwrap();
+    // Enough entries for Git to emit a multi-block IEOT with two index threads.
+    for number in 0..2000 {
+        fs::write(root.join(format!("entry-{number:04}")), b"fixture\n").unwrap();
+    }
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "offset fixture"]);
+    git(
+        root,
+        &[
+            "-c",
+            "index.threads=2",
+            "-c",
+            "index.recordOffsetTable=true",
+            "-c",
+            "index.recordEndOfIndexEntries=true",
+            "update-index",
+            "--force-write-index",
+        ],
+    );
+    let index = repo.read_index(Default::default()).unwrap().unwrap();
+    assert!(index.extensions().iter().any(|e| e.signature() == *b"EOIE"));
+    assert!(index.extensions().iter().any(|e| e.signature() == *b"IEOT"));
+    let baseline = tree(root);
+    checkout(&repo, Some(baseline), baseline);
+    assert!(
+        repo.read_index(Default::default())
+            .unwrap()
+            .unwrap()
+            .extensions()
+            .is_empty()
+    );
+    assert!(git(root, &["status", "--porcelain"]).is_empty());
 }
