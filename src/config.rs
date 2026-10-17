@@ -109,3 +109,7 @@ mod options_tests;
 
 #[cfg(test)]
 mod user_home_tests;
+
+#[cfg(doctest)]
+#[doc = include_str!("../site/src/content/docs/guides/configuration.md")]
+mod website_configuration_guide {}
