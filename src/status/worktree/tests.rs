@@ -152,16 +152,16 @@ fn never_follows_substituted_root_ancestor() {
 }
 
 #[rstest]
-#[case::file_limit(Limits { max_file_bytes: 2, ..Limits::default() })]
-#[case::total_bytes(Limits { max_worktree_bytes: 2, ..Limits::default() })]
-#[case::entries(Limits { max_directory_entries: 0, ..Limits::default() })]
-#[case::paths(Limits { max_path_bytes: 0, ..Limits::default() })]
-#[case::depth(Limits { max_depth: 0, ..Limits::default() })]
-fn enforces_scan_limits(#[case] limits: Limits) {
+#[case::file_limit(Limits { max_file_bytes: 2, ..Limits::default() }, "file bytes")]
+#[case::total_bytes(Limits { max_worktree_bytes: 2, ..Limits::default() }, "worktree bytes")]
+#[case::entries(Limits { max_directory_entries: 0, ..Limits::default() }, "directory entries")]
+#[case::paths(Limits { max_path_bytes: 0, ..Limits::default() }, "path bytes")]
+#[case::depth(Limits { max_depth: 0, ..Limits::default() }, "directory depth")]
+fn enforces_scan_limits(#[case] limits: Limits, #[case] expected: &str) {
     let (_temp, repo, entries) = fixture(b"dir/file", b"old");
     assert!(matches!(
         observe(&repo, &entries, limits),
-        Err(Error::Limit(_))
+        Err(Error::Limit(label)) if label == expected
     ));
 }
 
