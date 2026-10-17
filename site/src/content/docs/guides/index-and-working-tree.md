@@ -61,8 +61,8 @@ An entry has a byte path, mode, identity, conflict stage, flags and cached stat 
 validates structure and stage relationships, not object existence or checkout safety. Stage zero is
 a resolved selection. Stages one, two and three describe the base, ours and theirs of an unresolved
 conflict; a missing side represents an absent file. Resolve a conflict by replacing its stages with
-one normal entry. `intent_to_add`, `skip_worktree` and `assume_valid` are preserved as data;
-girt doesn't decide from them which paths are staged or checked out sparsely.
+one normal entry. `intent_to_add`, `skip_worktree` and `assume_valid` are preserved as data; girt
+doesn't decide from them which paths are staged or checked out sparsely.
 
 Reading a split index resolves its immutable shared file. An edit that changes entries publishes a
 standalone index, and `make_standalone` removes the dependency without changing entries. Sparse
@@ -85,11 +85,11 @@ insufficient. Keep both files when diagnosing a failed read. A missing shared fi
 if the primary index is present and has a valid checksum.
 
 `Repository::edit_index` reads that same logical snapshot and publishes a standalone replacement
-when entries change. `IndexEdit::make_standalone` also allows conversion without
-changing entries. It removes derived caches but retains resolve-undo information. Conversion never
-deletes the shared file: another index may still depend on it. Publication checks that both original
-files still match the snapshot, so a changed shared file can reject a commit even though the
-replacement no longer needs it.
+when entries change. `IndexEdit::make_standalone` also allows conversion without changing entries.
+It removes derived caches but retains resolve-undo information. Conversion never deletes the shared
+file: another index may still depend on it. Publication checks that both original files still match
+the snapshot, so a changed shared file can reject a commit even though the replacement no longer
+needs it.
 
 Choose an explicit path for an alternate index, such as a temporary staging view. These methods do
 not consult `GIT_INDEX_FILE`:
@@ -119,18 +119,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The basic alternate-index methods refuse split dependencies and leaf symlinks. Use
-`edit_index_at_with_options` only when you need those layouts. Split dependencies
-resolve beside the selected lexical path. Following a leaf symlink reads its referent, but commit
-replaces the symlink itself; it does not write through it. Keep this in mind when a caller supplies
-the index path.
+`edit_index_at_with_options` only when you need those layouts. Split dependencies resolve beside the
+selected lexical path. Following a leaf symlink reads its referent, but commit replaces the symlink
+itself; it does not write through it. Keep this in mind when a caller supplies the index path.
 
 ### Expand sparse entries without changing the checkout
 
 A sparse index collapses a skipped directory into a tree entry. `Index::expand_sparse` reads that
 tree and produces its leaf entries in memory. It does not create files, publish an index, or clear
-skip-worktree flags, so raw status and checkout still refuse unsupported flags after expansion.
-Your application has to decide which paths take part before it uses those operations. See
-the runnable
+skip-worktree flags, so raw status and checkout still refuse unsupported flags after expansion. Your
+application has to decide which paths take part before it uses those operations. See the runnable
 [sparse expansion example](https://docs.rs/girt/latest/girt/index/struct.Index.html#method.expand_sparse).
 
 Expansion has independent traversal and output budgets. Cancellation, a missing object, a wrong
@@ -139,9 +137,9 @@ failure through its source chain, because raising a budget cannot restore a miss
 
 ### Decide which extension information may be lost
 
-Optional extensions can carry information an edit would invalidate, and being optional in the
-format does not make them safe to discard. A rejected edit leaves the guard and its draft available;
-choose a supported operation or abort instead of retrying with an empty index.
+Optional extensions can carry information an edit would invalidate, and being optional in the format
+does not make them safe to discard. A rejected edit leaves the guard and its draft available; choose
+a supported operation or abort instead of retrying with an empty index.
 
 - Entry-offset accelerators (`EOIE`, `IEOT`) can be removed together with `invalidate_entry_offsets`
   before `discard_resolve_undo` or `invalidate_tree_cache`, which refuse those caches. Entry
@@ -159,11 +157,11 @@ them; removing one cache successfully does not mean every later rewrite is allow
 
 `replace_entries_reusing_stat` preserves old stat words only for entries with the same path, stage,
 mode, identity and flags. Use it when you rebuild the whole entry list and want to keep the cached
-stat data. Changed entries retain the supplied stat words. The operation never checks
-the working file, and cached equality is not proof that its content is unchanged. Commit clears
-cached size for entries modified at or after the earlier of the previous index modification time and
-the current write time. Stat-cache consumers must then verify content, even when rewriting the index
-would otherwise hide a racily clean entry.
+stat data. Changed entries retain the supplied stat words. The operation never checks the working
+file, and cached equality is not proof that its content is unchanged. Commit clears cached size for
+entries modified at or after the earlier of the previous index modification time and the current
+write time. Stat-cache consumers must then verify content, even when rewriting the index would
+otherwise hide a racily clean entry.
 
 The index version doesn't affect which entries are staged: v4 compresses repeated path prefixes,
 while v2 is useful for older consumers. Extended flags require v3 or v4; requesting v2 does not
@@ -188,12 +186,12 @@ hide ignored files, apply ignore rules yourself. Use the executable
 [raw status example](https://docs.rs/girt/latest/girt/status/) for a staged file that is modified in
 the working tree.
 
-A status report describes the files as they were while it ran. It is not an atomic snapshot and
-does not make it safe to overwrite files. A `Changed` error means a file, a directory, the index or
-`HEAD` changed while status ran; retrying can refresh a display. Mutation needs
-exclusive ownership even if a preceding status succeeded. Limits bound reads, visited names, paths
-and content bytes. Cancellation is cooperative; these synchronous APIs belong on the application's
-blocking worker when used from an async runtime.
+A status report describes the files as they were while it ran. It is not an atomic snapshot and does
+not make it safe to overwrite files. A `Changed` error means a file, a directory, the index or
+`HEAD` changed while status ran; retrying can refresh a display. Mutation needs exclusive ownership
+even if a preceding status succeeded. Limits bound reads, visited names, paths and content bytes.
+Cancellation is cooperative; these synchronous APIs belong on the application's blocking worker when
+used from an async runtime.
 
 ### Interpret every status category
 

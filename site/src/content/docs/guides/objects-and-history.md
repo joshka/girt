@@ -5,8 +5,8 @@ description: Construct a snapshot and inspect a branch point with verified objec
 
 A commit connects a directory snapshot to its parents. To build one, store file bytes as blobs,
 store the root tree with entries pointing to those blobs, then store a commit pointing to that tree.
-Objects are immutable, so a branch name lives in a separate reference that can move between
-commits. The program below builds a small snapshot and traces its ancestry.
+Objects are immutable, so a branch name lives in a separate reference that can move between commits.
+The program below builds a small snapshot and traces its ancestry.
 
 ## Construct a branch point
 

@@ -95,8 +95,9 @@ available in storage.
 Store the objects before publishing a reference to them. Give the update a precondition so you don't
 silently overwrite a change another writer made in between. Reference transactions do not prove
 object existence, kind, ancestry, or authorization. Files-backed batches can have partial
-publication; inspect their outcomes before deciding how to recover. The [references
-guide](/girt/guides/refs/) shows how to publish a reference and choose whether to log the change.
+publication; inspect their outcomes before deciding how to recover. The
+[references guide](/girt/guides/refs/) shows how to publish a reference and choose whether to log
+the change.
 
 ## Repository metadata supplies context
 

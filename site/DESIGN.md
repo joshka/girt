@@ -233,14 +233,14 @@ components:
 This file is the source of truth for how the girt site at <https://www.joshka.net/girt/> looks. The
 YAML front matter holds the normative values, in the
 [DESIGN.md format](https://github.com/google-labs-code/design.md/blob/main/docs/spec.md) (alpha).
-The prose explains how to apply them. Tokens without a `light-` prefix are the dark theme; the
-light theme swaps in its `light-` counterparts and keeps every other rule.
+The prose explains how to apply them. Tokens without a `light-` prefix are the dark theme; the light
+theme swaps in its `light-` counterparts and keeps every other rule.
 
 ## Overview
 
-girt is an idiomatic Rust library for Git repositories and the Git backend for an experimental
-build of jj. Its readers are Rust developers who build version-control tools, forges and build
-systems. They are technical and sceptical, and they want facts and code quickly.
+girt is an idiomatic Rust library for Git repositories and the Git backend for an experimental build
+of jj. Its readers are Rust developers who build version-control tools, forges and build systems.
+They are technical and sceptical, and they want facts and code quickly.
 
 The site should feel like a well-made tool: calm, precise and crafted, never loud. It explains; it
 doesn't sell.
@@ -257,10 +257,10 @@ doesn't sell.
 
 The palette has three families.
 
-- **Graphite (`inset` to `surface-raised`):** four neutral greys that create depth by layering.
-  The page sits in the middle, chrome rises above it, and code is set into it.
-- **Rust (`rust-950` to `rust-500`):** a dark iron-oxide red. `rust-900` (`#3a1410`) is the base
-  the identity is built on. Rust is used as a surface and an edge colour: the primary button, the
+- **Graphite (`inset` to `surface-raised`):** four neutral greys that create depth by layering. The
+  page sits in the middle, chrome rises above it, and code is set into it.
+- **Rust (`rust-950` to `rust-500`):** a dark iron-oxide red. `rust-900` (`#3a1410`) is the base the
+  identity is built on. Rust is used as a surface and an edge colour: the primary button, the
   current navigation node, link underlines, refusal callouts and "slower" bars.
 - **Verdigris (`verdigris-900` to `verdigris-500`):** weathered copper green, the counterpart to
   rust. It marks "faster" results and string literals.
@@ -277,28 +277,28 @@ Rules for colour:
 
 Checked contrast ratios (WCAG 2.x):
 
-| Pair | Ratio |
-| --- | --- |
-| `on-surface` on `background` | 12.3:1 |
-| `on-surface-muted` on `background` | 6.5:1 |
-| `on-surface-secondary` on `surface` (navigation) | 8.4:1 |
-| `on-surface-strong` on `rust-700` (primary button) | 8.9:1 |
-| `on-surface-strong` on `rust-800` (failure chip) | 11.5:1 |
+| Pair                                                            | Ratio             |
+| --------------------------------------------------------------- | ----------------- |
+| `on-surface` on `background`                                    | 12.3:1            |
+| `on-surface-muted` on `background`                              | 6.5:1             |
+| `on-surface-secondary` on `surface` (navigation)                | 8.4:1             |
+| `on-surface-strong` on `rust-700` (primary button)              | 8.9:1             |
+| `on-surface-strong` on `rust-800` (failure chip)                | 11.5:1            |
 | `on-surface-strong` on `rust-900` and `verdigris-900` (heatmap) | 14.2:1 and 10.3:1 |
-| `code-keyword` and `code-string` on `inset` | 6.9:1 and 8.1:1 |
-| `light-on-surface` on `light-background` | 10.6:1 |
-| `light-on-surface-muted` on `light-background` | 5.8:1 |
-| `rust-700` and `verdigris-700` on `light-background` | 9.2:1 and 5.6:1 |
+| `code-keyword` and `code-string` on `inset`                     | 6.9:1 and 8.1:1   |
+| `light-on-surface` on `light-background`                        | 10.6:1            |
+| `light-on-surface-muted` on `light-background`                  | 5.8:1             |
+| `rust-700` and `verdigris-700` on `light-background`            | 9.2:1 and 5.6:1   |
 
 Every new pair must pass AA: 4.5:1 for text, 3:1 for large text and meaningful graphics. Bars may
 fall below 3:1 against the page only when the same information is written next to them in text.
 
 ## Typography
 
-- **Headings:** Source Serif 4 (SIL Open Font License 1.1), bold. A sturdy serif gives the
-  site its character, and the plain "girt" wordmark is set in it. Self-host the Latin subset.
-- **Body:** the system UI stack (`system-ui`, `-apple-system`, `Segoe UI`, and so on). It costs
-  no bytes, causes no layout shift and reads well at length.
+- **Headings:** Source Serif 4 (SIL Open Font License 1.1), bold. A sturdy serif gives the site its
+  character, and the plain "girt" wordmark is set in it. Self-host the Latin subset.
+- **Body:** the system UI stack (`system-ui`, `-apple-system`, `Segoe UI`, and so on). It costs no
+  bytes, causes no layout shift and reads well at length.
 - **Code, labels and numbers:** JetBrains Mono (SIL Open Font License 1.1). Labels are small
   uppercase mono with wide tracking (`label-caps`) and stay muted. Numbers in tables use tabular
   figures so they align.
@@ -312,12 +312,12 @@ with the web fonts blocked.
 ## Layout
 
 - A 4px base unit; most spacing uses `sm`, `md`, `lg` and `xl`.
-- Docs pages use three columns at desktop widths: the sidebar (`sidebar-width`), the content
-  column (at most `content-max`) and the table of contents. The performance page drops the table
-  of contents so the heatmap has room.
-- The landing page has a two-column hero, with the name, description and actions on the left and
-  a facts column (install, status, licence, no subprocess) on the right. Below it come a code
-  example, the comparison card and three plain link cards.
+- Docs pages use three columns at desktop widths: the sidebar (`sidebar-width`), the content column
+  (at most `content-max`) and the table of contents. The performance page drops the table of
+  contents so the heatmap has room.
+- The landing page has a two-column hero, with the name, description and actions on the left and a
+  facts column (install, status, licence, no subprocess) on the right. Below it come a code example,
+  the comparison card and three plain link cards.
 - At phone width everything stacks into one column. Wide tables scroll sideways inside their own
   frame, never the page.
 
@@ -325,8 +325,8 @@ with the web fonts blocked.
 
 Depth comes from tonal layers, not decoration.
 
-- **Inset (`inset`):** code blocks, inline code and the search field. They are set into the
-  page, with a soft inner shadow and a hairline border.
+- **Inset (`inset`):** code blocks, inline code and the search field. They are set into the page,
+  with a soft inner shadow and a hairline border.
 - **Page (`background`):** prose sits here.
 - **Surface (`surface`):** the header, sidebar, callouts and cards. A 1px black edge plus a 1px
   `rule` highlight separates them from the page.
@@ -338,9 +338,9 @@ subtle: no textures, no photographic or noise images, no glows.
 
 ## Shapes
 
-Corners are small and consistent: `xs` (4px) for inline code and chips, `sm` (6px) for buttons
-and inputs, `md` (8px) for code blocks and callouts, and `lg` (12px) for cards. Lines are
-hairlines (1px), with 1.5px for table header rules and 2px for link underlines.
+Corners are small and consistent: `xs` (4px) for inline code and chips, `sm` (6px) for buttons and
+inputs, `md` (8px) for code blocks and callouts, and `lg` (12px) for cards. Lines are hairlines
+(1px), with 1.5px for table header rules and 2px for link underlines.
 
 ## Components
 
@@ -355,17 +355,17 @@ underline.
 The sidebar is drawn as a `git log --graph`. It must look like a real graph, not decorative
 squiggles:
 
-- **Lanes on a grid.** Every row is exactly `nav-row` (30px) tall. Lane 0, the trunk, is a
-  straight vertical line at a fixed x position. Lane 1, for pages, sits one lane width (18px) to
-  the right. Lines snap to whole or half pixels.
-- **Sections are commits on the trunk.** Each section title (Start here, Guides, and so on) is
-  an open node on lane 0, centred on its row, with the label beside it in `label-caps`.
+- **Lanes on a grid.** Every row is exactly `nav-row` (30px) tall. Lane 0, the trunk, is a straight
+  vertical line at a fixed x position. Lane 1, for pages, sits one lane width (18px) to the right.
+  Lines snap to whole or half pixels.
+- **Sections are commits on the trunk.** Each section title (Start here, Guides, and so on) is an
+  open node on lane 0, centred on its row, with the label beside it in `label-caps`.
 - **Each page is a branch.** Each page forks from the trunk with one straight 45° edge, as in gitk.
   The edge leaves the trunk just above the page's row and meets the node at the row centre on lane
   1. Every fork has the same shape, so the rows read as evenly spaced commits. Curved edges were
   tried and rejected: they hook into the node from the side and look uneven.
-- **Open dots.** Nodes are hollow circles: `surface` fill with a 1.5 to 2px `graph-node` stroke.
-  The node for the current page is filled `rust-600` with a `rust-500` stroke, and its label is
+- **Open dots.** Nodes are hollow circles: `surface` fill with a 1.5 to 2px `graph-node` stroke. The
+  node for the current page is filled `rust-600` with a `rust-500` stroke, and its label is
   `on-surface-strong` at semibold weight. There is no background highlight and no accent bar.
 - **Draw order.** Lines first, nodes on top, so no line ever crosses through a hollow node.
 - **Semantics.** Each section is a list item holding the section label and a nested list of its
@@ -407,13 +407,13 @@ Columns: command, girt, stock jj and Git (median times), then the ratio and a di
 - **Times:** girt's time is bold. Git's time is muted, as the reference point.
 - **Ratio:** neutral text in dark mode ("1.8× slower"). In light mode it is `rust-700` or
   `verdigris-700`.
-- **Bar:** centred on parity on a log scale, verdigris to the left for faster and rust to the
-  right for slower. A timeout is a hatched rust bar plus a `status-chip-failed` chip.
+- **Bar:** centred on parity on a log scale, verdigris to the left for faster and rust to the right
+  for slower. A timeout is a hatched rust bar plus a `status-chip-failed` chip.
 - **Selection:** the card states that its rows are hand-picked best and worst. Its summary covers
   all repository sizes: how many cells are less than 20% slower than stock jj (faster cells
-  included), out of the cells where both finished, plus how many did not finish with girt. It
-  also gives the machine and dates and links to the full results. All figures are computed at
-  build time from `docs/jj-performance.json`.
+  included), out of the cells where both finished, plus how many did not finish with girt. It also
+  gives the machine and dates and links to the full results. All figures are computed at build time
+  from `docs/jj-performance.json`.
 
 ### Performance heatmap
 
@@ -426,8 +426,8 @@ outlined in rust.
 
 - Do write plain, factual copy. Don't write taglines, slogans or marketing claims.
 - Do show losses alongside wins, and link to the full benchmark.
-- Do keep text neutral in the dark theme. Don't use bright, orange-leaning or pastel reds for
-  text. Don't use neon accents of any kind.
+- Do keep text neutral in the dark theme. Don't use bright, orange-leaning or pastel reds for text.
+  Don't use neon accents of any kind.
 - Don't use left accent bars ("fingernails") on selected items, callouts or cards.
 - Don't put textures, noise, photos or strong gradients behind content. A faint `rust-900` wash in
   the landing hero is the most allowed.

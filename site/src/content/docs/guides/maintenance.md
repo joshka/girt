@@ -3,8 +3,8 @@ title: Maintenance and garbage collection
 description: Plan retention, choose cutoffs, and reclaim storage without losing readable objects.
 ---
 
-Maintenance removes stored data that nothing still needs and keeps every object that something
-does. Walking from refs alone misses data that is still in use:
+Maintenance removes stored data that nothing still needs and keeps every object that something does.
+Walking from refs alone misses data that is still in use:
 [staged blobs](/girt/guides/index-and-working-tree/), reflog history, linked worktrees, recent
 writes, application-owned heads and alternate-store relationships can all keep data alive. Girt
 can't discover every external reader or writer, so your application chooses the retention policy and
@@ -85,10 +85,10 @@ full integrity check. Drop the plan promptly: it pins the object-store generatio
 handles can keep retired pack storage allocated.
 
 Unknown, malformed, missing or unsupported inputs make the plan incomplete. Partial clones,
-precious-object repositories and `gc.recentObjectsHook` are outside the supported subset.
-Limits bound names, roots, edges and decoded graph bytes. `RetentionError::kind()` groups recovery
-into limit, unsupported, malformed, changed, cancelled or read; inspect the underlying storage cause
-of a read failure before deciding to retry.
+precious-object repositories and `gc.recentObjectsHook` are outside the supported subset. Limits
+bound names, roots, edges and decoded graph bytes. `RetentionError::kind()` groups recovery into
+limit, unsupported, malformed, changed, cancelled or read; inspect the underlying storage cause of a
+read failure before deciding to retry.
 
 These operations preserve Git's object relationships and conservative expiry rules; they do not
 reproduce every `git gc` policy or read all of its configuration automatically. The caller chooses
@@ -122,16 +122,16 @@ endpoint is disconnected. Null endpoints count as live in configured policy.
 
 `ReflogExpiry::from_config` takes a caller-supplied Unix clock. Global defaults are 90 days for
 general expiry and 30 days for unreachable history. Reference-pattern sections can override them;
-absent matching patterns leave `refs/stash` protected even when global settings request expiry.
-Only a limited date syntax is supported; unsupported expressions are errors rather than guesses.
+absent matching patterns leave `refs/stash` protected even when global settings request expiry. Only
+a limited date syntax is supported; unsupported expressions are errors rather than guesses.
 
 ## Establish exclusion before deletion
 
 Implement `MaintenanceIsolation` with a guard that excludes all relevant Git and girt writers,
 readers still depending on old data, and repositories using this store as an alternate. Hold that
 boundary for the full operation. Girt cannot enforce external relationships; a mutex that only your
-own girt calls take is not enough. If your application cannot establish exclusion, return an
-error from `acquire` and use read-only planning or additive repacking instead.
+own girt calls take is not enough. If your application cannot establish exclusion, return an error
+from `acquire` and use read-only planning or additive repacking instead.
 
 This program needs `girt` and `tempfile`. It returns early on non-Unix hosts because composed GC
 requires Unix directory-durability support. It gives an old unreferenced loose blob a deterministic
@@ -225,9 +225,9 @@ steps could copy a different generation than the plan described. Before removing
 1. Revalidates input/replacement handles and metadata, then retires eligible old artifacts.
 
 A pack checksum or CRC can establish intact bytes without proving that an index names the correct
-object or that a delta chain reconstructs it under the reader's limits. Decoding and hashing
-the surviving copies proves that. Individually valid delta chains can exceed limits when combined;
-the writer must re-encode them to fit, or verification refuses to retire the old storage after the
+object or that a delta chain reconstructs it under the reader's limits. Decoding and hashing the
+surviving copies proves that. Individually valid delta chains can exceed limits when combined; the
+writer must re-encode them to fit, or verification refuses to retire the old storage after the
 replacement is published.
 
 Old pack indexes are removed before their packs. An interrupted sequence can leave an unindexed pack

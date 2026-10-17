@@ -22,10 +22,10 @@ cheaper, but equality does not prove existence or validity. Visited trees are ve
 validated; leaf targets are not read. Both SHA-1 and SHA-256 repositories are supported.
 
 For each structural change, `content_diff::BlobContent::read` loads and verifies both blob sides.
-Missing sides become empty buffers, so keep the original `TreeChange` too: content alone can't
-show an added empty file, whose content is unchanged, or a mode-only change. A symlink's content is
-its stored target bytes; girt doesn't dereference any filesystem path. Trees and gitlinks are
-refused as blob inputs.
+Missing sides become empty buffers, so keep the original `TreeChange` too: content alone can't show
+an added empty file, whose content is unchanged, or a mode-only change. A symlink's content is its
+stored target bytes; girt doesn't dereference any filesystem path. Trees and gitlinks are refused as
+blob inputs.
 
 The
 [tree comparison API](https://docs.rs/girt/latest/girt/struct.Objects.html#method.compare_trees)
@@ -33,8 +33,8 @@ and
 [content loading API](https://docs.rs/girt/latest/girt/content_diff/struct.BlobContent.html#method.read)
 document each contract in detail.
 
-This program compares two trees, loads both sides of the added file and passes the verified
-payloads to content diff:
+This program compares two trees, loads both sides of the added file and passes the verified payloads
+to content diff:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -134,16 +134,15 @@ offer to retry with a larger budget or to show a raw or binary view.
 ## Infer renames and copies
 
 `Objects::detect_rewrites` compares two trees and infers relationships between deleted regular or
-executable files and added regular or executable files. Git stores no rename records, so a
-returned `Rewrite` only says the contents are similar. It doesn't prove the user renamed or copied
-the file, and it isn't grounds for changing merge history. Symlinks, gitlinks and directories are
-never rewrite results.
+executable files and added regular or executable files. Git stores no rename records, so a returned
+`Rewrite` only says the contents are similar. It doesn't prove the user renamed or copied the file,
+and it isn't grounds for changing merge history. Symlinks, gitlinks and directories are never
+rewrite results.
 
 Default options require 50% similarity, disable copies and exclude empty source blobs.
 `Copies::Modified` also considers modified files' preimages and permits source reuse; unchanged
 files are not searched. `ModifiedPostimage` scores a modified source's new content while reporting
-its old identity. Use it only when your caller wants copies scored against the source's new
-content.
+its old identity. Use it only when your caller wants copies scored against the source's new content.
 
 Exact identity matches run first. Edited matching compares repeated byte spans split at LF or after
 64 significant bytes; the order of spans doesn't matter. Text scoring drops CR before LF, while
@@ -158,9 +157,9 @@ Girt implements its own heuristic. Its scores and pairings differ from Git's in 
 doesn't reproduce every Git shortcut or tie-break.
 
 An optional target-path list filters after inference. It does not reduce candidate work or change
-pairing/classification, and an omitted candidate can still cause an error. Keep unmatched
-additions and removals alongside inferred rewrites. If you only need a cheap list of changed paths,
-use structural comparison rather than filtering a rewrite result.
+pairing/classification, and an omitted candidate can still cause an error. Keep unmatched additions
+and removals alongside inferred rewrites. If you only need a cheap list of changed paths, use
+structural comparison rather than filtering a rewrite result.
 
 ### Interpret a postimage copy
 
@@ -291,8 +290,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Diagnose failures and schedule work
 
 Structural errors preserve the visited tree ID and path. Content-loading errors preserve the blob
-ID, mode and storage cause; keep the structural change to add old/new side and path context. Treat
-a missing or corrupt object as something to recover, and never substitute an empty payload for the
+ID, mode and storage cause; keep the structural change to add old/new side and path context. Treat a
+missing or corrupt object as something to recover, and never substitute an empty payload for the
 failed read. Keep Rust error source chains for diagnostics.
 
 All comparisons are synchronous. Cancellation is cooperative and cannot interrupt one syscall,

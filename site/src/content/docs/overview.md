@@ -41,11 +41,10 @@ and what it rejects.
 
 ## Where it stands
 
-girt is experimental and its API still changes between minor releases. It runs jj's full
-test suite and an end-to-end script against real Git. Performance is the main open work.
-Medium-sized repositories are mostly at parity with stock jj, while some operations on very large
-repositories are still several times slower. The [benchmark](/girt/performance/jj-benchmark/) shows
-where.
+girt is experimental and its API still changes between minor releases. It runs jj's full test suite
+and an end-to-end script against real Git. Performance is the main open work. Medium-sized
+repositories are mostly at parity with stock jj, while some operations on very large repositories
+are still several times slower. The [benchmark](/girt/performance/jj-benchmark/) shows where.
 
 ## How this site relates to the API docs
 
