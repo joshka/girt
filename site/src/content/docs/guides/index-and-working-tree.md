@@ -40,7 +40,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     entries.push(Entry::new(b"hello.txt".to_vec(), Mode::Regular, id));
     edit.replace_entries(entries)?;
     edit.commit()?;
-    assert_eq!(repository.read_index(Default::default())?.unwrap().entries()[0].id, id);
+    assert_eq!(
+        repository
+            .read_index(Default::default())?
+            .unwrap()
+            .entries()[0]
+            .id,
+        id
+    );
     Ok(())
 }
 ```

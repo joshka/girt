@@ -35,4 +35,4 @@ limits. The [compatibility record](compatibility.md#raw-tree-checkout) contains 
 and failures.
 
 For an end-to-end introduction to staging, raw status, ignores and checkout, see the
-[working tree and index guide](../site/src/content/docs/guides/working-tree-and-index.md).
+[working tree and index guide](../site/src/content/docs/guides/index-and-working-tree.md).
