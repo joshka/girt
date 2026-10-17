@@ -11,22 +11,33 @@ permissions:
 
 jobs:
   ci:
-    name: Wait for full main CI
+    name: Linux publish check
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
-    timeout-minutes: 95
-    permissions:
-      contents: read
-      actions: read
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
-      - name: Wait for successful push CI on this SHA
+      - run: rustup toolchain install stable --profile minimal
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/wait-for-release-ci.sh
+          RUSTUP_TOOLCHAIN: stable
+        with:
+          shared-key: release-check
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build supported Linux feature configurations
+        run: |
+          cargo +stable build --locked
+          cargo +stable check --locked --all-targets --all-features
+          cargo +stable check --locked --lib --no-default-features
+          cargo +stable check --locked --lib --no-default-features --features http
+          cargo +stable check --locked --lib --no-default-features --features ssh
+      - name: Linux library tests
+        # Tracing fixture dispatchers share tracing-core's global callsite cache.
+        run: cargo +stable test --locked --all-features --lib -- --test-threads=1
 
   release:
     name: Publish
