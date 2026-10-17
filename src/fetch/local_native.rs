@@ -1,6 +1,7 @@
 //! Native local advertisement and reachable-pack construction.
 
 use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
@@ -139,6 +140,10 @@ pub(super) fn receive_depth_observed(
     let mut commit_trees = Vec::new();
     // Each object's actual kind once read. Every edge naming it must require that kind.
     let mut observed = IdMap::<ObjectKind>::default();
+    // The kind the first edge required of each object queued but not yet read. Trees name the
+    // same objects many times before the walk reaches them; queueing each once keeps the queue
+    // proportional to the objects rather than to the tree entries (tens of millions on git/git).
+    let mut queued = IdMap::<ObjectKind>::default();
     let mut selected = Vec::<ObjectId>::new();
     let mut dependencies = Vec::new();
     let mut boundaries = super::boundaries::TreeBoundaries::new(known, limits);
@@ -159,6 +164,7 @@ pub(super) fn receive_depth_observed(
             }) {
                 prefetch.popped();
                 check(control)?;
+                queued.remove(&id);
                 if let Some(&actual) = observed.get(&id) {
                     if kind.is_some_and(|kind| kind != actual) {
                         return Err(FetchError::Kind(id));
@@ -266,6 +272,20 @@ pub(super) fn receive_depth_observed(
                         dependencies.push(target);
                         return Ok(());
                     }
+                    // An object queued once is read once, and its read checks the first
+                    // required kind. Another edge requiring a different kind cannot match it.
+                    match queued.entry(target) {
+                        Entry::Occupied(entry) => {
+                            return if *entry.get() == kind {
+                                Ok(())
+                            } else {
+                                Err(FetchError::Kind(target))
+                            };
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(kind);
+                        }
+                    }
                     if object_kind == ObjectKind::Commit && kind == ObjectKind::Tree {
                         commit_trees.push((target, Some(kind)));
                     } else {
@@ -290,7 +310,7 @@ pub(super) fn receive_depth_observed(
         },
     )?;
     // The walk's tables are proportional to the whole history; release them before writing.
-    drop((pending, commit_trees, observed));
+    drop((pending, commit_trees, observed, queued));
     check(control)?;
     if progress(&[]) == ControlFlow::Break(()) {
         return Err(FetchError::Cancelled);
