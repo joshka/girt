@@ -18,7 +18,11 @@ starts a Git process. Disposable end-to-end examples are linked where setup and 
 For incomplete tasks, the snippet implements only the supported portion described below. Linked
 runnable examples provide disposable setup and cleanup; their fixtures are excluded from caller-cost
 totals. Unsupported tasks have no code cost and remain visible in the capability-gap count. These
-counts measure caller burden, not correctness or performance.
+counts measure caller burden, not correctness or performance. Current variants use `trusted::Handle`
+where it supplies the task policy; the dated baseline retains the direct-core costs. Each handle
+method links to the explicit APIs it composes. The handle also exposes an empty `TreeEditor` and a
+leased-command `push`; staging, push destination selection and the independent capability gaps
+remain explicit.
 
 The scorecard counts nonblank, non-comment physical lines, explicitly imported names (including
 standard-library and example dependencies), default/trusted constructor calls, never-cancel
@@ -41,15 +45,17 @@ alongside the guides. Linked examples compile with `nice -n 10 cargo check --loc
 
 <!-- ergonomics-status: supported -->
 
-Supported. Discovery already avoids hand-written parent traversal. Configuration is a separate
-choice; see the config task.
+Supported. Discovery already avoids hand-written parent traversal. The handle loads Git-default
+configuration; the core `Repository::discover` leaves configuration inputs explicit.
+
+With the trusted handle:
 
 ```rust,no_run
-use girt::Repository;
+use girt::trusted::Handle;
 
 fn main() -> girt::Result<()> {
-    let repo = Repository::discover(".")?;
-    println!("{}", repo.git_dir().display());
+    let git = Handle::discover(".")?;
+    println!("{}", git.repository().git_dir().display());
     Ok(())
 }
 ```
@@ -63,18 +69,16 @@ handle work in [408](https://github.com/joshka/girt/issues/408).
 
 Supported for the revision grammar implemented by `revision`. Resolving to Blob checks the kind;
 reading by ID alone does not; `read_blob` checks the kind and reports a missing object as an error.
-Verbosity: separate object and resolver handles.
+The handle composes revision resolution and typed reads, refreshing once on an object miss.
+
+With the trusted handle:
 
 ```rust,no_run
-use girt::revision::Resolver;
-use girt::{ObjectKind, Repository};
+use girt::trusted::Handle;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repository::open("repo")?;
-    let objects = repo.objects()?;
-    let resolver = Resolver::new(&repo, &objects)?;
-    let id = resolver.resolve_to(&"HEAD:src/lib.rs".parse()?, ObjectKind::Blob)?;
-    let blob = objects.read_blob(id)?;
+fn main() -> girt::Result<()> {
+    let mut git = Handle::discover("repo")?;
+    let blob = git.blob_at("HEAD", b"src/lib.rs")?;
     println!("{} bytes", blob.len());
     Ok(())
 }
@@ -88,18 +92,20 @@ Desired sketch: `git.blob_at("HEAD", b"src/lib.rs")?`. Gap closure:
 
 <!-- ergonomics-status: partial -->
 
-Partial: this eager walk truncates its result after traversal; it promises neither date order nor
-exclusions. Missing capability: a lazy date-ordered excluding walk; parsing a range already produces
-include/exclude roots.
+Partial: the handle walks lazily in committer-date priority among discovered commits. It does not
+provide exclusions or Git topological date order; timestamp-skewed ancestors can follow older
+children. Those remaining walk capabilities belong to
+[416](https://github.com/joshka/girt/issues/416).
+
+With the trusted handle:
 
 ```rust,no_run
-use girt::Repository;
+use girt::trusted::Handle;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repository::open("repo")?;
-    let objects = repo.objects()?;
-    let root = repo.head()?.id.ok_or("unborn HEAD")?;
-    for id in objects.walk(&[root])?.into_iter().take(20) {
+fn main() -> girt::Result<()> {
+    let mut git = Handle::discover("repo")?;
+    for entry in git.log("HEAD")?.take(20) {
+        let (id, _) = entry?;
         println!("{id}");
     }
     Ok(())
@@ -171,22 +177,19 @@ Partial: status lists untracked files through the ignore rules Git reads, but co
 and working-tree content as literal bytes. Attributes, filters, EOL conversion and `core.filemode`
 need application policy; `raw_status` remains for consumers that own all of it.
 
-```rust,no_run
-use girt::Repository;
-use girt::status::{Baseline, UntrackedFiles};
-use girt::workflow::Environment;
+With the trusted handle:
 
-fn status(repo: &Repository, environment: &Environment) -> girt::Result<()> {
-    let rules = repo.ignore_rules(environment)?;
-    let report = repo.status(Baseline::Head, UntrackedFiles::Collapsed, &rules)?;
-    println!("{report:#?}");
+```rust,no_run
+use girt::trusted::Handle;
+
+fn status(git: &Handle) -> girt::Result<()> {
+    println!("{:#?}", git.status()?);
     Ok(())
 }
 ```
 
-Open `repo` with Git's configuration sources (see
-[Read effective config values](#read-effective-config-values)) so a global `core.excludesFile`
-applies.
+`Handle::discover` loads Git-default configuration, including a global `core.excludesFile`;
+`Handle::new` uses the caller-supplied repository configuration.
 
 Disposable end-to-end evidence: [status](../examples/status.rs).
 
@@ -197,27 +200,21 @@ Desired sketch: `git.status()?`. Gap closure: [408](https://github.com/joshka/gi
 
 <!-- ergonomics-status: partial -->
 
-Partial: the index now writes nested trees and the commit builder defaults the committer to the
-supplied author. Reference publication remains an explicit no-reflog choice. Path staging and
-normalization still need application policy; this snippet commits an already staged index.
+Partial: the index writes nested trees. The handle resolves configured author and committer
+identities, advances HEAD conditionally and appends HEAD/branch reflogs. Path staging and
+normalization still need application policy; this snippet commits an already staged index. `commit`
+leaves that index and the files unchanged. Supplying a tree built separately requires materializing
+its index/files before a later `switch`, whose baseline is HEAD.
+
+With the trusted handle:
 
 ```rust,no_run
-use girt::refs::{Expected, RefName, Target};
-use girt::{Commit, Repository, Signature};
+use girt::trusted::Handle;
 use girt::index::Index;
 
-fn commit_tree(
-    repo: &Repository,
-    index: &Index,
-    identity: Signature,
-) -> girt::Result<()> {
-    let tree = index.write_tree(repo)?;
-    let refs = repo.references()?;
-    let parent = refs.resolve(&RefName::HEAD)?.id;
-    let expected = parent.map_or(Expected::Absent, |id| Expected::Value(Target::Direct(id)));
-    let commit = Commit::builder(tree, identity, b"Snapshot\n").parents(parent).build()?;
-    let id = repo.loose_objects().write_commit(&commit)?;
-    refs.update_resolved_without_reflog(&RefName::HEAD, id, expected)?;
+fn commit_tree(git: &mut Handle, index: &Index) -> girt::Result<()> {
+    let tree = index.write_tree(git.repository())?;
+    git.commit(tree, "Snapshot\n")?;
     Ok(())
 }
 ```
@@ -310,23 +307,18 @@ explicit). `RefName::tag` came from [405](https://github.com/joshka/girt/issues/
 <!-- ergonomics-status: supported -->
 
 Supported for configured trusted remotes and enabled transports. Errors retain partial effects. The
-convenience workflow already supplies limits and never-cancel behavior. Verbosity: explicit
-repository, options, environment and callbacks.
+handle supplies default limits, no cancellation, the captured environment and no prompt callbacks.
+It requires the remote's configured fetch refspecs. Remote tag/prune configuration is not
+interpreted by this prototype; explicit workflow options remain available.
+
+With the trusted handle:
 
 ```rust,no_run
-use girt::Repository;
-use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
+use girt::trusted::Handle;
 
 fn main() -> girt::Result<()> {
-    let repo = Repository::open("repo")?;
-    let outcome = workflow::fetch(
-        &repo,
-        "origin",
-        &FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]),
-        &Environment::from_process(),
-        &mut NoCallbacks,
-    )?;
-    println!("{:?}", outcome);
+    let git = Handle::discover("repo")?;
+    println!("{:?}", git.fetch("origin")?);
     Ok(())
 }
 ```
@@ -343,27 +335,21 @@ requires the remote branch to be absent; an existing branch needs an observed ex
 HEAD is refused. Automatic upstream selection and push.default are not supplied by workflow::push.
 Inspect the report for rejected commands; errors retain partial effects.
 
+With the trusted handle:
+
 ```rust,no_run
-use girt::Repository;
+use girt::trusted::Handle;
 use girt::push::PushCommand;
-use girt::workflow::{self, Environment, NoCallbacks, PushOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repository::open("repo")?;
-    let head = repo.head()?;
+    let git = Handle::discover("repo")?;
+    let head = git.repository().head()?;
     if !head.name.is_branch() {
         return Err("current HEAD is not a branch".into());
     }
     let tip = head.id.ok_or("unborn branch")?;
     let command = PushCommand::new(head.name, None, tip);
-    let report = workflow::push(
-        &repo,
-        "origin",
-        vec![command],
-        &PushOptions::default(),
-        &Environment::from_process(),
-        &mut NoCallbacks,
-    )?;
+    let report = git.push("origin", vec![command])?;
     if !report.all_succeeded() {
         return Err(format!("push rejected: {report:?}").into());
     }
@@ -432,18 +418,17 @@ Desired sketch: `CloneOptions::new(url, destination).with_checkout(true).run()?`
 <!-- ergonomics-status: supported -->
 
 Supported. Git-default config inputs were delivered by
-[390](https://github.com/joshka/girt/issues/390). A plain open does not request these inputs. The
+[390](https://github.com/joshka/girt/issues/390). The handle requests these inputs at discovery. The
 optional subsection is structural, not a resource limit default.
 
+With the trusted handle:
+
 ```rust,no_run
-use girt::Repository;
-use girt::config::ConfigInputs;
-use girt::workflow::Environment;
+use girt::trusted::Handle;
 
 fn main() -> girt::Result<()> {
-    let inputs = ConfigInputs::git_default(&Environment::from_process())?;
-    let repo = Repository::open_with_config("repo", &inputs)?;
-    let email = repo.config().string("user", None, "email");
+    let git = Handle::discover("repo")?;
+    let email = git.repository().config().string("user", None, "email");
     println!("{email:?}");
     Ok(())
 }
@@ -457,18 +442,16 @@ Desired sketch: `git.config().string("user", None, "email")`. Gap closure: remai
 <!-- ergonomics-status: supported -->
 
 Supported within the documented revision grammar; unsupported expressions return errors. Verbose:
-objects and resolver handles.
+the handle composes the resolver and object view.
+
+With the trusted handle:
 
 ```rust,no_run
-use girt::Repository;
-use girt::revision::Resolver;
+use girt::trusted::Handle;
 
 fn main() -> girt::Result<()> {
-    let repo = Repository::open("repo")?;
-    let objects = repo.objects()?;
-    let resolver = Resolver::new(&repo, &objects)?;
-    let id = resolver.resolve(&"HEAD~1".parse()?)?;
-    println!("{id}");
+    let mut git = Handle::discover("repo")?;
+    println!("{}", git.rev_parse("HEAD~1")?);
     Ok(())
 }
 ```
@@ -479,24 +462,22 @@ Desired sketch: `git.rev_parse("HEAD~1")?`. Gap closure:
 
 ### Checkout or switch branch
 
-<!-- ergonomics-status: partial -->
+<!-- ergonomics-status: supported -->
 
-Partial: checkout_tree updates raw files and the index from explicit baseline/target tree IDs under
-exclusive ownership. It does not switch HEAD. A branch switch must coordinate HEAD, dirty state,
-index and files; moving a symref alone is insufficient. Verbosity: tree lookup; missing capability:
-branch switch orchestration.
+Supported within raw checkout's Linux/macOS scope: the handle checks out an existing local branch
+and changes HEAD with a reflog, holding prepared reference locks across checkout. The caller must
+exclude other working-tree/reference writers, including linked-worktree activity. Branch occupancy,
+filters and normalization remain caller policy. Dirty and obstructed checkouts are refused; errors
+preserve partial effects for recovery.
+
+With the trusted handle:
 
 ```rust,no_run
-use girt::{ObjectId, Repository};
+use girt::trusted::Handle;
 
-fn checkout(
-    repo: &Repository,
-    old: Option<ObjectId>,
-    new: ObjectId,
-) -> girt::Result<()> {
-    // Caller holds exclusive ownership and supplies the actual baseline tree.
-    let report = repo.checkout_tree(old, Some(new))?;
-    println!("{report:?}");
+fn switch(git: &mut Handle) -> girt::Result<()> {
+    // Caller excludes other working-tree and reference writers across this call.
+    println!("{:?}", git.switch("topic")?);
     Ok(())
 }
 ```

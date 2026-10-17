@@ -80,6 +80,7 @@
 //! | Interpret named remotes and refspecs | [`remote`] |
 //! | Fetch, push, or clone with explicit publication | [`fetch`], [`push`], [`clone`] |
 //! | Use configured-remote convenience workflows | [`workflow`] |
+//! | Compose everyday operations on a trusted repository | [`trusted::Handle`] |
 //! | Use HTTP/SSH and credentials | [`transport`], [`remote::CredentialStore`] |
 //! | Compare snapshots and file contents | [`Objects::compare_trees`], [`content_diff`], [`rewrites`] |
 //! | Print paths, modes, statuses and dates as Git does | [`display`] |
@@ -192,6 +193,7 @@ pub mod tag;
 pub mod transport;
 pub mod tree;
 mod tree_compare;
+pub mod trusted;
 pub mod workflow;
 
 pub mod tree_diff;

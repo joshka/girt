@@ -2,7 +2,8 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use girt::{ObjectId, Repository};
+use girt::ObjectId;
+use girt::trusted::Handle;
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
@@ -18,12 +19,13 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let root = args.commit;
-    let repo = Repository::open(args.path)?;
-    let objects = repo.objects()?;
-    for id in objects.walk(&[root])? {
+    let mut git = Handle::discover(args.path)?;
+    for entry in git.log(&root.to_string())? {
+        let (id, _) = entry?;
         println!("{id}");
     }
     if let Some(other) = args.other_commit {
+        let objects = git.repository().objects()?;
         println!("ancestor: {}", objects.is_ancestor(root, other)?);
         println!("merge bases: {:?}", objects.merge_bases(root, other)?);
     }
