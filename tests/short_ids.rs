@@ -75,6 +75,9 @@ fn resolves_ambiguous_loose_packed_and_alternate_ids_like_git() {
                     .map(|entry| entry.unwrap().path())
                     .find(|path| path.extension().is_some_and(|e| e == "pack"))
                     .unwrap();
+                // Git on Windows cannot replace the existing index during installation.
+                // The preceding iteration's reader is dropped before this fixture rewrite.
+                std::fs::remove_file(pack.with_extension("idx")).unwrap();
                 git(
                     &path,
                     &[
