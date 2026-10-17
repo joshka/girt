@@ -70,7 +70,7 @@ These come from the library; each command's help repeats the ones that apply to 
   ending conversion or `core.filemode`. `checkout` refuses indexes that carry fsmonitor or
   untracked-cache data.
 - `diff --patch` uses a plain Myers diff, so ambiguous hunks can line up differently from Git.
-- `clone` does not check out files, and `clone` and `remote heads` do not yet use SSH.
+- `clone` and `remote heads` do not yet use SSH.
 - `maintenance run` deletes data. It requires `--yes`, and nothing else may use the repository while
   it runs.
 

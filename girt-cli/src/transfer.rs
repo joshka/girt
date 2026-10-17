@@ -25,7 +25,7 @@ use crate::config::{
     Endpoint, block_on, configured_repository, endpoint, find_remote, http_remote,
 };
 
-/// Copy a repository into a new directory, without checking out files.
+/// Copy a repository into a new directory and check out its `HEAD`.
 ///
 /// Supports local paths, `file://` and anonymous `http(s)://` URLs; SSH is not supported yet.
 /// `--git` is ignored.
@@ -39,6 +39,9 @@ pub struct CloneArgs {
     /// Create a bare repository.
     #[arg(long)]
     bare: bool,
+    /// Leave the working tree and index empty (`girt checkout HEAD` fills them later).
+    #[arg(short, long)]
+    no_checkout: bool,
 }
 
 /// Fetch a remote's configured refspecs, printing each updated ref as `<old>..<new> <ref>`.
@@ -124,15 +127,36 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         }
         other => writeln!(out, "HEAD {other:?}")?,
     }
-    if !args.bare && !matches!(report.head, CloneHead::Unborn(_)) {
-        writeln!(
-            out,
-            "hint: no files were checked out; run `girt -C {} checkout HEAD`",
-            destination.display()
-        )?;
-    }
     out.flush()?;
+    let has_head = matches!(
+        report.head,
+        CloneHead::Branch { .. } | CloneHead::Detached(_)
+    );
+    if !args.bare && !args.no_checkout && has_head {
+        check_out_head(&destination).wrap_err_with(|| {
+            format!(
+                "the clone succeeded but checkout failed; retry with `girt -C {} checkout HEAD`",
+                destination.display()
+            )
+        })?;
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Fills the new clone's empty index and working tree from `HEAD`.
+fn check_out_head(destination: &std::path::Path) -> Result<()> {
+    let repository = Repository::open(destination).wrap_err("opening the clone")?;
+    let objects = crate::common::objects(&repository)?;
+    let tree = crate::common::resolve_tree(&repository, &objects, "HEAD")?;
+    repository
+        .checkout_tree(
+            None,
+            Some(tree),
+            Default::default(),
+            crate::common::not_cancelled(),
+        )
+        .map_err(|failure| eyre!("{failure}"))?;
+    Ok(())
 }
 
 /// Git's default clone directory: the last path component, without `.git` unless bare.
