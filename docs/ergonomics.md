@@ -447,12 +447,11 @@ Desired sketch: `git.switch("topic")?`. Gap closure:
 
 ### Blame-style queries
 
-<!-- ergonomics-status: missing -->
+<!-- ergonomics-status: supported -->
 
-Missing: there is no supported blame operation. History traversal and content diff are
-prerequisites, not a correct blame implementation. There is no current-code snippet or zero-cost
-success here.
-
-Desired sketch: `git.blame("HEAD", b"src/lib.rs")?`. Gap closure:
-[413](https://github.com/joshka/girt/issues/413) closes the missing capability; blame is outside the
-stated [408](https://github.com/joshka/girt/issues/408) prototype.
+`git.blame("HEAD", b"src/lib.rs")?` returns structured ranges with commit, original byte path,
+original line and destination line. `Objects::blame` takes a commit id; `blame_with` on either
+surface exposes limits and cancellation. File renames and merge parents are followed. NUL-containing
+files and reached shallow boundaries are explicitly refused. Copy/move detection, ignore-revs,
+attributes and incremental output are unsupported. Repetitive content can align differently from
+Git; see [440](https://github.com/joshka/girt/issues/440).

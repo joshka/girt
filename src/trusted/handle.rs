@@ -208,6 +208,44 @@ impl Handle {
         self.reader.read_blob(id)
     }
 
+    /// Attributes lines through [`crate::Objects::blame`] with default limits.
+    /// Resolves `revision` to a commit; paths remain literal bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns revision resolution and blame errors, without mutation.
+    pub fn blame(
+        &self,
+        revision: impl Display,
+        path: impl AsRef<[u8]>,
+    ) -> crate::Result<Vec<crate::blame::Hunk>> {
+        self.blame_with(
+            revision,
+            path,
+            Default::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+    }
+
+    /// Attributes lines through [`crate::Objects::blame_with`] with explicit controls.
+    ///
+    /// # Errors
+    ///
+    /// Returns revision resolution and blame errors, without partial attribution.
+    pub fn blame_with(
+        &self,
+        revision: impl Display,
+        path: impl AsRef<[u8]>,
+        limits: crate::blame::Limits,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> crate::Result<Vec<crate::blame::Hunk>> {
+        let commit = self.reader.resolve(revision, Some(ObjectKind::Commit))?;
+        Ok(self
+            .reader
+            .snapshot()?
+            .blame_with(commit, path, limits, cancel)?)
+    }
+
     /// Compares HEAD, index and working files with ignore-aware collapsed untracked paths.
     ///
     /// Loads [`Repository::ignore_rules`] with the captured environment, then calls

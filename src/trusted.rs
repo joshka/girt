@@ -13,7 +13,7 @@
 //! Commit and switch do not run hooks, filters or signing programs. Status loads repository ignore
 //! rules and collapses untracked directories. Tracked comparisons and checkout use raw bytes
 //! without normalization policy. Patches detect renames but read no diff configuration. Blame
-//! remains separate.
+//! follows file renames with bounded history traversal.
 //!
 //! ```
 //! use girt::trusted::Handle;
