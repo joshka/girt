@@ -10,6 +10,11 @@ use super::{
 };
 
 /// Contextual resolution failure. Source locations may contain private paths; tracing omits them.
+///
+/// Inspect [`Self::location`], [`Self::included_from`], and the source chain to identify the
+/// source or include directive. Cycles require correcting include topology; missing expansion
+/// context requires supplying it in [`ConfigInputs`]. A budget error calls for a resource decision,
+/// not skipping a source. Resolution is read-only and returns no partial effective configuration.
 #[derive(Debug, thiserror::Error)]
 #[error("configuration resolution failed")]
 #[non_exhaustive]
@@ -63,6 +68,34 @@ impl Config {
     /// Missing optional roots and include files are ignored. Runtime relative includes require a
     /// file origin and fail; use absolute paths. Unix paths preserve bytes; other platforms require
     /// valid UTF-8 in path values. `~user` and prefix expansion require explicit context mappings.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
+    /// let directory = tempfile::tempdir()?;
+    /// let global = directory.path().join("global");
+    /// let local = directory.path().join("local");
+    /// std::fs::write(&global, b"[core]\neditor = user-editor\n")?;
+    /// std::fs::write(&local, b"[core]\neditor = project-editor\n")?;
+    /// // Scope determines precedence even though the caller lists local first.
+    /// let inputs = ConfigInputs::default().with_files(vec![
+    ///     ConfigFile::new(local.clone(), ConfigScope::Local),
+    ///     ConfigFile::new(global, ConfigScope::Global),
+    /// ]);
+    /// let config = Config::resolve(&inputs)?;
+    /// assert_eq!(
+    ///     config.string("core", None, "editor"),
+    ///     Some(&b"project-editor"[..])
+    /// );
+    /// let winning = config
+    ///     .entries()
+    ///     .last()
+    ///     .and_then(|entry| entry.origin.as_ref())
+    ///     .ok_or("origin absent")?;
+    /// assert_eq!(winning.scope, ConfigScope::Local);
+    /// assert_eq!(winning.location.path.as_deref(), Some(local.as_path()));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn resolve(inputs: &ConfigInputs) -> Result<Self, ResolveError> {
         Self::resolve_with_include_placement(inputs, IncludePlacement::InPlace)
     }
