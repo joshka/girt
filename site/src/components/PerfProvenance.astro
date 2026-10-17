@@ -1,0 +1,69 @@
+---
+import { COMMIT_URL, SIZES, provenance } from '../data/jj-performance';
+
+const number = new Intl.NumberFormat('en-US');
+const bytes = (value: number) => `${(value / 1024 ** 2).toFixed(0)} MiB`;
+const short = (sha: string) => sha.slice(0, 12);
+const current = provenance.current_main_rebuild;
+---
+
+<ul>
+  <li>Measured {provenance.dates}.</li>
+  <li>Machine: {provenance.machine}.</li>
+  <li>
+    girt: <a href={`${COMMIT_URL.girt}${provenance.girt_commit}`}><code>{short(provenance.girt_commit)}</code></a>
+    {
+      current && (
+        <>
+          ; cells re-measured after fixes used{' '}
+          <a href={`${COMMIT_URL.girt}${current.girt_commit}`}>
+            <code>{short(current.girt_commit)}</code>
+          </a>
+        </>
+      )
+    }
+    .
+  </li>
+  <li>
+    jj with girt: adapter commit{' '}
+    <a href={`${COMMIT_URL.jj}${provenance.jj_adapter_commit}`}><code>{short(provenance.jj_adapter_commit)}</code></a>;
+    stock jj: <a href={`${COMMIT_URL.jj}${provenance.jj_stock_base}`}><code>{short(provenance.jj_stock_base)}</code></a>,
+    the adapter's base.
+  </li>
+  <li>Git: {provenance.git_version.replace(/^git version /, '')} (release commit <code>{short(provenance.git_commit)}</code>).</li>
+  <li>Build: {provenance.build}.</li>
+</ul>
+
+<div class="perf-scroll" tabindex="0" role="region" aria-label={"Benchmark repositories"}>
+  <table class="perf-facts">
+    <thead>
+      <tr>
+        <th scope="col">Size</th>
+        <th scope="col">Repository</th>
+        <th scope="col">Objects</th>
+        <th scope="col">Refs</th>
+        <th scope="col">Tags</th>
+        <th scope="col">Worktree files</th>
+        <th scope="col">Pack size</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        SIZES.map((size) => {
+          const fixture = provenance.fixtures[size];
+          return (
+            <tr>
+              <th scope="row">{size}</th>
+              <td>{fixture.name}</td>
+              <td>{number.format(Number(fixture.objects))}</td>
+              <td>{number.format(Number(fixture.refs))}</td>
+              <td>{number.format(fixture.tags)}</td>
+              <td>{number.format(fixture.worktree_files)}</td>
+              <td>{bytes(fixture.pack_bytes)}</td>
+            </tr>
+          );
+        })
+      }
+    </tbody>
+  </table>
+</div>

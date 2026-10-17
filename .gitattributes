@@ -1,0 +1,8 @@
+# Site images are stored with Git LFS so binary files never enter Git history directly. The site
+# workflow checks out with `lfs: true`.
+site/**/*.png filter=lfs diff=lfs merge=lfs -text
+site/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+site/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+site/**/*.gif filter=lfs diff=lfs merge=lfs -text
+site/**/*.webp filter=lfs diff=lfs merge=lfs -text
+site/**/*.avif filter=lfs diff=lfs merge=lfs -text

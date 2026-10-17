@@ -116,8 +116,9 @@ Ordinary Rust pull requests run all-feature tests, Clippy and Rust formatting on
 API compatibility and path-selected Index, References and Security jobs. Feature permutations,
 examples and documentation builds run on main, nightly and full-matrix pull requests. No test shards
 are added. Documentation-only changes run `Docs` (`just docs-check`); Rust and platform tests skip
-even with `full-ci`. The `required` job aggregates failures and cancellations, treating skipped jobs
-as passing; include every new job in its `needs` list. Rust caches are saved only on main.
+even with `full-ci`. Changes under `site/` run only the `Site` workflow and, for Markdown, `Docs`.
+The `required` job aggregates failures and cancellations, treating skipped jobs as passing; include
+every new job in its `needs` list. Rust caches are saved only on main.
 
 A trusted completion workflow updates one `CI regression on main` issue with failing jobs and run
 links after main or nightly CI. It reopens the issue on a new failure and closes it on recovery. New
@@ -128,6 +129,27 @@ coordinator should claim and repair failures promptly, add a regression check wh
 publish a patch if a released version is affected. Repairs are small reviewed changes; unrelated
 ready work continues. A workflow that never starts cannot report itself and needs the coordinator's
 health check.
+
+## Website
+
+The project website in `site/` is an [Astro Starlight](https://starlight.astro.build/) site,
+published to GitHub Pages from `main` by `.github/workflows/site.yml`. It complements docs.rs with
+concepts, task guides, the compatibility and safety model and the jj benchmark. API details stay in
+Rustdoc, and site pages link to them. Node and pnpm versions are pinned in `site/.node-version` and
+`site/package.json`. To work on it:
+
+```sh
+cd site
+pnpm install
+pnpm dev          # local preview at http://localhost:4321/girt/
+pnpm check        # type-check
+pnpm build        # build, checking internal links
+pnpm check:links  # after a build: external and docs.rs links, including anchors
+```
+
+The performance page renders `docs/jj-performance.json` and `docs/jj-performance-provenance.json` at
+build time; update those files rather than editing numbers in the site. Commit no images directly:
+store any image with Git LFS (see `.gitattributes`), or prefer SVG or HTML generated at build time.
 
 ## API Compatibility Gate
 

@@ -541,7 +541,9 @@ jobs:
           printf '%s\n' "$changed"
           # Documentation-only files, including everything under docs/.
           prose='(\.md$|^docs/|^LICENSE|^\.vale\.ini$|^\.config/rumdl\.toml$|^\.config/vale/)'
-          if [ -n "${all:-}" ] || grep -qvE "$prose" <<<"$changed"; then
+          # The website has its own workflow (site.yml) and never affects the Rust checks.
+          site='(^site/|^\.github/workflows/site\.yml$|^\.gitattributes$)'
+          if [ -n "${all:-}" ] || grep -vE "$site" <<<"$changed" | grep -qvE "$prose"; then
             echo rust=true >> "$GITHUB_OUTPUT"
           else
             echo rust=false >> "$GITHUB_OUTPUT"

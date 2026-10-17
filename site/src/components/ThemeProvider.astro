@@ -1,0 +1,14 @@
+---
+// Default first-time visitors to the dark theme. Starlight stores '' for an explicit "Auto"
+// choice, so only a missing key (never chosen) is replaced; every picker choice still sticks.
+import Default from '@astrojs/starlight/components/ThemeProvider.astro';
+---
+
+<script is:inline>
+  try {
+    if (localStorage.getItem('starlight-theme') === null) {
+      localStorage.setItem('starlight-theme', 'dark');
+    }
+  } catch {}
+</script>
+<Default />
