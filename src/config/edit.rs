@@ -27,6 +27,23 @@ use crate::Repository;
 /// Drop performs blocking, best-effort filesystem cleanup. Use [`Self::abort`] for observable
 /// cleanup; errors retain both primary and cleanup causes. Inspect a residual lock before manual
 /// recovery, then acquire a fresh lifecycle and reread sources before retrying.
+///
+/// ```
+/// use girt::config::ConfigEdit;
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("config");
+/// std::fs::write(&path, b"# keep comment\n[core]\neditor = old\n")?;
+/// let mut edit = ConfigEdit::open(&path, 4096)?;
+/// edit.document_mut().set_value(0, b"new editor")?;
+/// edit.commit()?;
+/// let bytes = std::fs::read(&path)?;
+/// assert!(bytes.starts_with(b"# keep comment\n"));
+/// assert_eq!(
+///     girt::Config::parse(&bytes)?.string("core", None, "editor"),
+///     Some(&b"new editor"[..])
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct ConfigEdit {
     destination: PathBuf,
@@ -109,6 +126,22 @@ impl ConfigEdit {
     /// # Errors
     ///
     /// Returns contention, read, parse and size errors, retaining cleanup failures.
+    ///
+    /// ```
+    /// use girt::config::{ConfigEdit, EditError};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("config");
+    /// let first = ConfigEdit::open(&path, 4096)?; // Missing source starts an empty draft.
+    /// assert!(matches!(
+    ///     ConfigEdit::open(&path, 4096),
+    ///     Err(EditError::Locked(_))
+    /// ));
+    /// first.abort()?; // Release this lifecycle before acquiring another.
+    /// ConfigEdit::open(&path, 4096)?.abort()?;
+    /// assert!(!path.exists()); // Opening and aborting do not publish the missing source.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn open(path: impl AsRef<Path>, max_bytes: usize) -> Result<Self, EditError> {
         let _lock_operation = crate::locks::operation();
         #[cfg(feature = "tracing")]
@@ -231,6 +264,23 @@ impl ConfigEdit {
     /// failures. Failed preparation or rename preserves original bytes except independent writes.
     /// Cleanup errors retain both causes; inspect state before retrying. Success is publication,
     /// not crash durability or confirmation of the resulting effective configuration.
+    ///
+    /// ```
+    /// use girt::config::ConfigEdit;
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("config");
+    /// let mut edit = ConfigEdit::open(&path, 4096)?;
+    /// edit.document_mut()
+    ///     .append("core", None, "editor", b"editor with spaces")?;
+    /// edit.commit()?;
+    /// let bytes = std::fs::read(&path)?;
+    /// assert_eq!(
+    ///     girt::Config::parse(&bytes)?.string("core", None, "editor"),
+    ///     Some(&b"editor with spaces"[..])
+    /// );
+    /// assert!(!path.with_extension("lock").exists());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn commit(mut self) -> Result<(), EditError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -265,6 +315,19 @@ impl ConfigEdit {
     /// recovery; no config or working-tree content is changed.
     /// An `Interrupted` I/O cause after caller cleanup means the guard was invalidated; consult
     /// cleanup's earlier report rather than inferring that an owned lock still needs recovery.
+    ///
+    /// ```
+    /// use girt::config::ConfigEdit;
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("config");
+    /// let bytes = b"[core]\neditor = old\n";
+    /// std::fs::write(&path, bytes)?;
+    /// let mut edit = ConfigEdit::open(&path, 4096)?;
+    /// edit.document_mut().set_value(0, b"discarded")?;
+    /// edit.abort()?;
+    /// assert_eq!(std::fs::read(path)?, bytes);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn abort(mut self) -> Result<(), EditError> {
         let _lock_operation = crate::locks::operation();
         #[cfg(feature = "tracing")]

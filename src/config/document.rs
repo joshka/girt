@@ -9,6 +9,18 @@ use super::{Config, ConfigError};
 /// variables and duplicate ordering. New entries use quoted values and LF; existing line endings
 /// remain unchanged. Removed syntax leaves its surrounding whitespace/comments in place. No files
 /// are read or written. Occurrence indices come from [`Self::config`] and become stale after edits.
+///
+/// ```
+/// use girt::config::Document;
+/// let mut document = Document::parse(b"# keep\n[core]\neditor = old\n")?;
+/// document.set_value(0, b"new editor")?;
+/// assert!(document.as_bytes().starts_with(b"# keep\n"));
+/// assert_eq!(
+///     document.config().string("core", None, "editor"),
+///     Some(&b"new editor"[..])
+/// );
+/// # Ok::<(), girt::ConfigError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct Document {
     bytes: Vec<u8>,
@@ -59,6 +71,19 @@ impl Document {
     /// # Errors
     ///
     /// Returns the same syntax failures as [`Config::parse`].
+    ///
+    /// ```
+    /// use girt::config::Document;
+    /// let bytes = b"# hand-written\n[core]\n  editor = 'literal' # keep spelling\n";
+    /// let document = Document::parse(bytes)?;
+    /// assert_eq!(document.as_bytes(), bytes); // Reading alone preserves all syntax.
+    /// assert_eq!(
+    ///     document.config().string("core", None, "editor"),
+    ///     Some(&b"'literal'"[..])
+    /// );
+    /// assert!(Document::parse(b"[unterminated").is_err());
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
     pub fn parse(bytes: &[u8]) -> Result<Self, ConfigError> {
         let (config, layout) = Config::parse_layout(bytes)?;
         Ok(Self {
@@ -178,6 +203,23 @@ impl Document {
         clippy::indexing_slicing,
         reason = "layout.entries parallels config.entries, checked by get above"
     )]
+    ///
+    /// ```
+    /// use girt::config::Document;
+    /// let mut document = Document::parse(b"[core]\neditor = first\neditor = second\n")?;
+    /// document.set_value(1, b"replacement")?;
+    /// assert_eq!(
+    ///     document
+    ///         .config()
+    ///         .values("core", None, "editor")
+    ///         .collect::<Vec<_>>(),
+    ///     [Some(&b"first"[..]), Some(&b"replacement"[..])]
+    /// );
+    /// let unchanged = document.as_bytes().to_vec();
+    /// assert!(document.set_value(99, b"invalid occurrence").is_err());
+    /// assert_eq!(document.as_bytes(), unchanged);
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
     pub fn set_value(&mut self, occurrence: usize, value: &[u8]) -> Result<(), ConfigError> {
         let entry = self
             .config
@@ -223,6 +265,18 @@ impl Document {
         clippy::indexing_slicing,
         reason = "last and its entries index the parsed layout, whose spans lie in self.bytes"
     )]
+    ///
+    /// ```
+    /// use girt::config::Document;
+    /// let mut document = Document::parse(b"[core]\neditor = first\n")?;
+    /// document.append("core", None, "editor", b"second")?;
+    /// assert_eq!(document.config().values("core", None, "editor").count(), 2);
+    /// assert_eq!(
+    ///     document.config().string("core", None, "editor"),
+    ///     Some(&b"second"[..])
+    /// );
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
     pub fn append(
         &mut self,
         section: &str,

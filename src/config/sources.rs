@@ -21,6 +21,19 @@ pub enum ConfigScope {
 }
 
 /// A file selected by the caller; relative paths use the process working directory at resolution.
+///
+/// ```
+/// use girt::Config;
+/// use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
+/// let directory = tempfile::tempdir()?;
+/// let source = ConfigFile::new(directory.path().join("not-created"), ConfigScope::Global);
+/// assert!(Config::resolve(&ConfigInputs::default().with_files(vec![source.clone()])).is_err());
+/// // Optional means NotFound is allowed; syntax and permission failures still fail.
+/// let optional = source.with_optional(true);
+/// let config = Config::resolve(&ConfigInputs::default().with_files(vec![optional]))?;
+/// assert!(config.entries().is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ConfigFile {
@@ -140,6 +153,19 @@ impl IncludeContext {
 }
 
 /// Finite work budgets applied independently to scan and effective expansion.
+///
+/// ```
+/// use girt::config::{ConfigFile, ConfigInputs, ConfigScope, ResolveFailure, ResolveLimits};
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("config");
+/// std::fs::write(&path, b"[core]\neditor = too-many-bytes\n")?;
+/// let inputs = ConfigInputs::default()
+///     .with_files(vec![ConfigFile::new(path, ConfigScope::Global)])
+///     .with_limits(ResolveLimits::default().with_bytes(4));
+/// let error = girt::Config::resolve(&inputs).expect_err("source exceeds selected budget");
+/// assert!(matches!(error.source, ResolveFailure::Limit(_)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct ResolveLimits {
@@ -205,6 +231,23 @@ impl Default for ResolveLimits {
 /// Repeated and empty values remain ordered; reset semantics belong to the consuming variable.
 /// Each call rereads sources; an existing snapshot never changes. Concurrent external writers can
 /// yield a mixed snapshot across files; no locks, writes, or environment mutation occur.
+///
+/// ```
+/// use girt::Config;
+/// use girt::config::ConfigInputs;
+/// let inputs = ConfigInputs::default()
+///     .with_environment(Some(Config::parse(
+///         b"[core]\neditor = environment-editor\n",
+///     )?))
+///     .with_command(Some(Config::parse(b"[core]\neditor = caller-editor\n")?));
+/// let effective = Config::resolve(&inputs)?;
+/// assert_eq!(
+///     effective.string("core", None, "editor"),
+///     Some(&b"caller-editor"[..])
+/// );
+/// assert_eq!(effective.values("core", None, "editor").count(), 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct ConfigInputs {

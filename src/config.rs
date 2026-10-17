@@ -1,5 +1,10 @@
 //! Byte-oriented Git configuration parsing and explicit layered resolution.
 //!
+//! Configuration has three distinct forms. [`Config`] is an ordered set of decoded occurrences
+//! for lookup. [`ConfigInputs`] selects sources and include context for a fresh effective snapshot.
+//! [`Document`] retains one file's syntax for editing. An effective snapshot can contain many
+//! sources; editing it as if it were one file would lose both provenance and precedence.
+//!
 //! # Parsing, resolving, and editing configuration
 //!
 //! - [`Config::parse`] reads one supplied byte source without I/O.
@@ -11,6 +16,43 @@
 //!
 //! [`crate::Repository::open_with_config`] adds repository sources while keeping format bootstrap
 //! separate. No operation reads or mutates process-global environment.
+//!
+//! # Values and precedence
+//!
+//! Section and variable names fold ASCII case; quoted subsection bytes compare exactly. Scalar
+//! lookup uses the last occurrence, while [`Config::values`] preserves repeated occurrences.
+//! Repeated variables have consumer-specific semantics: a remote's URLs or refspecs are not
+//! necessarily a last-value scalar. [`Entry::origin`] identifies the source and include ancestry
+//! after resolution, which helps explain why an effective setting won.
+//!
+//! Absence, an implicit assignment, and an explicit empty value are different. [`Config::value`]
+//! returns `None`, `Some(None)`, and `Some(Some(b""))` respectively. [`Config::boolean`] interprets
+//! implicit as true and empty as false. [`Config::string`] treats implicit as absent. Select typed
+//! interpretation according to the variable, then apply policy separately.
+//!
+//! Resolution orders files by scope, preserving caller order within each scope, then applies
+//! supplied environment and command overrides. Includes expand in place by default. Repository
+//! opening adds local/worktree sources but keeps direct format bootstrap separate: overrides
+//! cannot reinterpret stored SHA-1 objects as SHA-256. Supply user and system sources explicitly.
+//!
+//! # Errors, refresh, and editing
+//!
+//! [`ConfigError`] identifies invalid syntax and its physical line. [`InvalidValue`] means syntax
+//! parsed but the requested type cannot represent the selected value. [`ResolveError`] adds source
+//! and include ancestry around I/O, cycles, missing expansion context, and exhausted budgets.
+//! Fix the indicated source or context; increase budgets only after considering trusted input and
+//! resource cost. Parsing and resolution run no commands and never mutate the process environment.
+//!
+//! [`ConfigEdit`] locks a selected direct file until commit or abort. Its draft is a [`Document`],
+//! not the effective snapshot. Edits preserve unrelated bytes but do not follow includes or update
+//! repository handles. After publication, re-resolve or reopen before using the new settings.
+//! [`EditError`] distinguishes lock contention, changed source, invalid edits, publication, and
+//! cleanup failures. Obtain a fresh lock and reread before retrying; inspect residual owned locks
+//! rather than removing another writer's lock. See [`ConfigEdit`] for filesystem assumptions.
+//!
+//! Parsing allocates with input size. [`ResolveLimits`] bounds source bytes, entries, include
+//! depth, and matching work; snapshots are owned and are not automatically refreshed. Files read in
+//! one resolution need not come from a single moment under concurrent external writers.
 //!
 //! # Example
 //!

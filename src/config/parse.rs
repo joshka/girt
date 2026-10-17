@@ -98,6 +98,10 @@ pub struct Entry {
 }
 
 /// Invalid syntax, decoded names, or construction limits in supplied configuration.
+///
+/// [`Self::line`] and [`Self::reason`] locate the problem in supplied bytes. Correct that source
+/// before parsing again; successful parsing does not imply a variable has the type required by
+/// its consumer. Typed lookup reports [`InvalidValue`] separately.
 #[derive(Debug, Error)]
 #[error("configuration line {line}: {reason}")]
 #[non_exhaustive]
@@ -121,6 +125,15 @@ impl Config {
     /// # Errors
     ///
     /// Returns the physical line and reason for invalid or unsupported syntax.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[core]\nquiet\nempty =\nsize = 2k\n")?;
+    /// assert_eq!(config.value("core", None, "quiet"), Some(None));
+    /// assert_eq!(config.value("core", None, "empty"), Some(Some(&b""[..])));
+    /// assert_eq!(config.value("core", None, "absent"), None);
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
     pub fn parse(bytes: &[u8]) -> Result<Self, ConfigError> {
         Self::parse_internal::<false>(bytes).map(|(config, _)| config)
     }
@@ -324,6 +337,14 @@ impl Config {
 
     /// Returns all occurrences, preserving order and distinguishing implicit from empty values.
     /// Names use ASCII case folding; subsection bytes are exact. No key-string splitting is done.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[remote \"origin\"]\nurl = first\nurl = second\n")?;
+    /// let urls: Vec<_> = config.values("remote", Some(b"origin"), "url").collect();
+    /// assert_eq!(urls, [Some(&b"first"[..]), Some(&b"second"[..])]);
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
     pub fn values<'a>(
         &'a self,
         section: &'a str,
@@ -341,6 +362,14 @@ impl Config {
     }
 
     /// Returns the last occurrence; outer `None` means absent, inner `None` means implicit true.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[core]\nquiet\nempty =\nsize = 2k\n")?;
+    /// assert_eq!(config.value("CORE", None, "quiet"), Some(None));
+    /// assert_eq!(config.value("core", None, "absent"), None);
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
     pub fn value(
         &self,
         section: &str,
@@ -412,6 +441,15 @@ impl Config {
     /// # Errors
     ///
     /// Returns [`InvalidValue`] for an implicit assignment or an unreadable integer.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[core]\nquiet\nempty =\nsize = 2k\n")?;
+    /// assert_eq!(config.integer("core", None, "size")?, Some(2048));
+    /// assert!(config.integer("core", None, "quiet").is_err()); // Implicit is not an integer.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn integer(
         &self,
         section: &str,
