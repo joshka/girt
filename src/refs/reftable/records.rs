@@ -82,6 +82,42 @@ pub struct LogValue {
 }
 
 /// A reflog entry or deletion at one reference and transaction index.
+///
+/// A log tombstone hides one `(name, update_index)` key, not the entire history. The codec
+/// preserves that key alongside older live log entries; stack merging applies the deletion.
+///
+/// ```
+/// use girt::refs::reftable::{Limits, LogRecord, LogValue, RecordName, Table};
+///
+/// let record = LogRecord {
+///     name: RecordName::new("refs/tags/topic")?,
+///     update_index: 7,
+///     value: None,
+/// };
+/// let older = LogRecord {
+///     name: record.name.clone(),
+///     update_index: 6,
+///     value: Some(LogValue {
+///         old: girt::ObjectId::null(girt::ObjectFormat::Sha1),
+///         new: girt::ObjectId::for_blob(girt::ObjectFormat::Sha1, b"tagged"),
+///         name: b"Writer".to_vec(),
+///         email: b"writer@example.com".to_vec(),
+///         seconds: 1_700_000_000,
+///         offset_minutes: 0,
+///         message: b"created".to_vec(),
+///     }),
+/// };
+/// let table = Table {
+///     format: girt::ObjectFormat::Sha1,
+///     min_update_index: 6,
+///     max_update_index: 7,
+///     references: vec![],
+///     logs: vec![record.clone(), older.clone()],
+/// };
+/// let decoded = Table::decode(&table.encode(Limits::default())?, Limits::default())?;
+/// assert_eq!(decoded.logs, [record, older]);
+/// # Ok::<(), girt::refs::reftable::Error>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogRecord {
     /// Reference whose history contains the record.

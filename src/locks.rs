@@ -55,6 +55,36 @@ thread_local! { static DEPTH: Cell<usize> = const { Cell::new(0) }; }
 /// removed. Inspect `failures` and `preserved`. Unix invalidates the old guard even when a
 /// replacement path is preserved; never remove that replacement merely because it has the same
 /// name. Persistent worktree lock markers and pack `.keep` files are outside this registry.
+///
+/// # Preserve a replacement lock path
+///
+/// A different file at the registered name belongs to a different owner. Cleanup invalidates the
+/// old guard on Unix and preserves the replacement, even though its spelling is identical.
+///
+/// ```standalone_crate
+/// # #[cfg(unix)]
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Worktree,
+/// )?;
+/// let edit = repo.edit_index(Default::default())?;
+/// let lock = repo.git_dir().join("index.lock");
+/// // The registered guard pins its inode, so this replacement has a distinct identity.
+/// std::fs::remove_file(&lock)?;
+/// std::fs::write(&lock, b"another owner")?;
+/// let report = girt::locks::cleanup()?;
+/// assert_eq!(report.preserved, [lock.clone()]);
+/// assert!(edit.commit().is_err());
+/// assert_eq!(std::fs::read(&lock)?, b"another owner");
+/// # Ok(())
+/// # }
+/// # #[cfg(not(unix))]
+/// # fn main() {}
+/// ```
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct CleanupReport {
@@ -67,6 +97,13 @@ pub struct CleanupReport {
 }
 
 /// One cleanup refusal or filesystem failure, retaining its path and underlying cause.
+///
+/// Registry processing continues for unrelated locks. Keep this diagnostic even when other
+/// locks were removed successfully; a failure neither establishes that the path is absent nor
+/// authorizes removing a replacement. On Unix, the old guard is already invalidated: abort and
+/// drop cannot remove a leftover owned lock after this failure. Manual recovery must establish
+/// exclusive control and verify ownership before removal. On unsupported platforms, the guard
+/// stays valid and ordinary abort/drop still performs its cleanup.
 #[derive(Debug, thiserror::Error)]
 #[error("lock cleanup at {path:?}")]
 #[non_exhaustive]
