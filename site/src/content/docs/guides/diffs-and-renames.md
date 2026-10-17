@@ -38,14 +38,26 @@ shows the three layers together:
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::atomic::AtomicBool;
+
+    use girt::content_diff::{BinaryMode, BlobContent, ContentDiff, DiffLimits, diff};
     use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
-    use girt::content_diff::BlobContent;
+
     let directory = tempfile::tempdir()?;
-    let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Bare)?;
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        directory.path().join("r"),
+        InitKind::Bare,
+    )?;
     let loose = repo.loose_objects();
     let id = loose.write_blob(b"added\n")?;
-    let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1,
-        vec![TreeEntry { name: b"file".to_vec(), mode: EntryMode::Blob, id }])?)?;
+    let tree = loose.write_tree(&Tree::new(
+        ObjectFormat::Sha1,
+        vec![TreeEntry {
+            name: b"file".to_vec(),
+            mode: EntryMode::Blob,
+            id,
+        }],
+    )?)?;
     let objects = repo.objects(Default::default())?;
     let cancel = AtomicBool::new(false);
     let changes = objects.compare_trees(None, Some(tree), Default::default(), &cancel)?;
@@ -54,9 +66,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(content.old.is_empty());
     assert_eq!(content.new, b"added\n");
     assert!(changes[0].old.is_none()); // Keep existence independently from the empty content buffer.
-    use girt::content_diff::{diff, BinaryMode, ContentDiff, DiffLimits};
-    let ContentDiff::Text(text) = diff(&content.old, &content.new, BinaryMode::Auto,
-        DiffLimits::default(), &cancel)? else { panic!("expected an insertion"); };
+    let ContentDiff::Text(text) = diff(
+        &content.old,
+        &content.new,
+        BinaryMode::Auto,
+        DiffLimits::default(),
+        &cancel,
+    )?
+    else {
+        panic!("expected an insertion");
+    };
     assert!(text.edits()[0].old_bytes.is_empty());
     assert_eq!(text.new_bytes(), b"added\n");
     Ok(())
@@ -73,7 +92,8 @@ identical payloads. No binary patch is encoded.
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::atomic::AtomicBool;
-    use girt::content_diff::{diff, BinaryMode, ContentDiff, DiffLimits};
+
+    use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
 
     let result = diff(
         b"one\ntwo\n",
@@ -172,6 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     use girt::rewrites::{Error, Limits, Options};
     use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+
     let directory = tempfile::tempdir()?;
     let repo = Repository::init(
         ObjectFormat::Sha1,
@@ -228,8 +249,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         Err(Error::Candidates { .. })
     ));
-    let retried = objects.detect_rewrites_or_exact(Some(old), Some(new),
-        options.with_candidate_limit(skipped.suggested_limit()), Limits::default(), None, &cancel)?;
+    let retried = objects.detect_rewrites_or_exact(
+        Some(old),
+        Some(new),
+        options.with_candidate_limit(skipped.suggested_limit()),
+        Limits::default(),
+        None,
+        &cancel,
+    )?;
     assert!(retried.inexact_skipped.is_none());
     assert_eq!(retried.rewrites.len(), 2);
     Ok(())
