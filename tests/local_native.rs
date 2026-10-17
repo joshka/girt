@@ -705,6 +705,89 @@ fn native_fetch_rejects_missing_source_object_without_installation() {
     assert!(matches!(result, Err(FetchError::Missing(missing)) if missing == id));
 }
 
+/// Publishes `main` at a commit whose root tree has `entries`, written without Git's mode checks.
+fn commit_tree(repository: &Repository, entries: Vec<girt::TreeEntry>) -> girt::ObjectId {
+    let store = repository.loose_objects();
+    let tree = Tree::new(repository.object_format(), entries).unwrap();
+    store.write_tree(&tree).unwrap();
+    let person = Signature {
+        name: b"Local Test".to_vec(),
+        email: b"local@example.invalid".to_vec(),
+        seconds: 1_700_000_000,
+        offset_minutes: 0,
+    };
+    let id = store
+        .write_commit(
+            &Commit::new(CommitFields {
+                tree: tree.id(),
+                parents: vec![],
+                author: person.clone(),
+                committer: person,
+                extra_headers: vec![],
+                message: b"Repeated entries\n".to_vec(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    repository
+        .references()
+        .unwrap()
+        .update_without_reflog(
+            &RefName::new("refs/heads/main").unwrap(),
+            Target::Direct(id),
+            Expected::Any,
+        )
+        .unwrap();
+    id
+}
+
+/// Trees name one object many times; the selection walk reads it once and checks every edge's
+/// kind against the first, whether or not the object has been read yet.
+#[test]
+fn native_fetch_checks_every_kind_of_a_repeated_entry() {
+    use girt::EntryMode;
+    let entry = |mode, name: &str, id| girt::TreeEntry {
+        mode,
+        name: name.as_bytes().to_vec(),
+        id,
+    };
+    let fetch = |source: &Repository, tip| {
+        receive_local(
+            source.git_dir(),
+            |_| vec![tip],
+            girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+            girt::transport::TransportControl::new(&AtomicBool::new(false)),
+            girt::fetch::LocalFetchObserver::default(),
+        )
+    };
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", ObjectFormat::Sha1, Backend::Files);
+    let store = source.loose_objects();
+    let blob = store.write_blob(b"shared\n").unwrap();
+    let nested = Tree::new(ObjectFormat::Sha1, vec![entry(EntryMode::Blob, "x", blob)]).unwrap();
+    store.write_tree(&nested).unwrap();
+    let tip = commit_tree(
+        &source,
+        vec![
+            entry(EntryMode::Blob, "a", blob),
+            entry(EntryMode::Executable, "b", blob),
+            entry(EntryMode::Tree, "c", nested.id()),
+            entry(EntryMode::Tree, "d", nested.id()),
+        ],
+    );
+    let received = fetch(&source, tip).unwrap();
+    assert_eq!(received.wants(), [tip]);
+
+    let tip = commit_tree(
+        &source,
+        vec![
+            entry(EntryMode::Blob, "a", blob),
+            entry(EntryMode::Tree, "b", blob),
+        ],
+    );
+    assert!(matches!(fetch(&source, tip), Err(FetchError::Kind(id)) if id == blob));
+}
+
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
