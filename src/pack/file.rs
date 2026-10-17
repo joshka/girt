@@ -8,7 +8,7 @@
     clippy::indexing_slicing,
     reason = "parses untrusted repository or network input (#103)"
 )]
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::panic::AssertUnwindSafe;
@@ -297,7 +297,7 @@ pub(crate) struct FilePack {
     damage: Arc<Damage>,
 }
 
-/// Readers own shared validation and independent pins; the process LRU holds only weak pointers.
+/// Readers own shared validation and independent pins; the process cache holds only weak pointers.
 /// The pins prevent file-ID reuse while a generation can be reused, and drop with its last reader.
 /// Each reader keeps its own checksum/damage/decoder state.
 #[derive(Debug)]
@@ -323,23 +323,60 @@ impl CachedIndex {
     }
 }
 
-const INDEX_CACHE_PAIRS: usize = 8;
-static INDEX_CACHE: Mutex<IndexCache> = Mutex::new(IndexCache(VecDeque::new()));
+static INDEX_CACHE: Mutex<IndexCache> = Mutex::new(IndexCache::new());
 
+/// Native identities of an index file and its pack file.
+type IndexCacheKey = ((u64, u64), (u64, u64));
+
+/// Map size below which dead records are left for a later prune.
+const INDEX_CACHE_MIN_PRUNE: usize = 16;
+
+/// Weak records keyed by native file identity, one per index/pack pair.
+///
+/// The pack count never evicts a live record, and a lookup is one ordered-map search. A newer
+/// generation of the same pair replaces the older record; its existing readers keep their shared
+/// validation, and later opens of the older generation miss and validate again. Dead records hold
+/// no handles or buffers, only their map slot and weak allocation, and are pruned once the map has
+/// doubled since the last prune. The map thus holds at most 16 records, or twice those live at the
+/// last prune, and inserts cost amortized logarithmic time.
 #[derive(Debug)]
-struct IndexCache(VecDeque<Weak<CachedIndex>>);
+struct IndexCache {
+    records: BTreeMap<IndexCacheKey, Weak<CachedIndex>>,
+    prune_at: usize,
+}
 
 impl IndexCache {
-    fn prune(&mut self) {
-        self.0.retain(|entry| entry.strong_count() != 0);
+    const fn new() -> Self {
+        Self {
+            records: BTreeMap::new(),
+            prune_at: INDEX_CACHE_MIN_PRUNE,
+        }
     }
 
-    fn insert(&mut self, entry: Arc<CachedIndex>) {
-        self.prune();
-        while self.0.len() >= INDEX_CACHE_PAIRS {
-            self.0.pop_front();
+    fn key(index: &Artifact, pack: &Artifact) -> IndexCacheKey {
+        (index.stamp.identity, pack.stamp.identity)
+    }
+
+    fn get(
+        &self,
+        format: ObjectFormat,
+        index: &Artifact,
+        pack: &Artifact,
+    ) -> Option<Arc<CachedIndex>> {
+        self.records
+            .get(&Self::key(index, pack))
+            .and_then(Weak::upgrade)
+            .filter(|entry| entry.matches(format, index, pack))
+    }
+
+    /// Records `entry`, replacing any record for another generation of the same files.
+    fn insert(&mut self, index: &Artifact, pack: &Artifact, entry: &Arc<CachedIndex>) {
+        if self.records.len() >= self.prune_at {
+            self.records.retain(|_, entry| entry.strong_count() != 0);
+            self.prune_at = (self.records.len() * 2).max(INDEX_CACHE_MIN_PRUNE);
         }
-        self.0.push_back(Arc::downgrade(&entry));
+        self.records
+            .insert(Self::key(index, pack), Arc::downgrade(entry));
     }
 }
 
@@ -357,17 +394,8 @@ fn cached_index(
     {
         return None;
     }
-    let mut cache = cache.lock().unwrap_or_else(|error| error.into_inner());
-    cache.prune();
-    let (position, entry) = cache
-        .0
-        .iter()
-        .enumerate()
-        .filter_map(|(position, entry)| entry.upgrade().map(|entry| (position, entry)))
-        .find(|(_, entry)| entry.matches(format, index, pack))?;
-    let weak = cache.0.remove(position)?;
-    cache.0.push_back(weak);
-    Some(entry)
+    let cache = cache.lock().unwrap_or_else(|error| error.into_inner());
+    cache.get(format, index, pack)
 }
 
 fn retain_index(
@@ -402,16 +430,10 @@ fn retain_index(
         table: table.clone(),
     });
     let mut cache = cache.lock().unwrap_or_else(|error| error.into_inner());
-    cache.prune();
-    if let Some(previous) = cache
-        .0
-        .iter()
-        .filter_map(Weak::upgrade)
-        .find(|entry| entry.matches(format, index, pack))
-    {
+    if let Some(previous) = cache.get(format, index, pack) {
         return Some(previous);
     }
-    cache.insert(entry.clone());
+    cache.insert(index, pack, &entry);
     Some(entry)
 }
 
@@ -1448,8 +1470,8 @@ mod publication_tests {
     fn repeated_open_shares_index_without_reading_it(#[case] format: ObjectFormat) {
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "shared", format, b"content");
-        // Isolate the LRU from unrelated tests opening other pack generations concurrently.
-        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        // Isolate the cache from unrelated tests opening other pack generations concurrently.
+        let cache = Mutex::new(IndexCache::new());
         let open = || {
             FilePack::open_cached_after_index(
                 format,
@@ -1481,7 +1503,7 @@ mod publication_tests {
     fn restored_index_mtime_cannot_reuse_validation() {
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "restored", ObjectFormat::Sha1, b"content");
-        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        let cache = Mutex::new(IndexCache::new());
         let first = FilePack::open_cached_after_index(
             ObjectFormat::Sha1,
             &path,
@@ -1515,7 +1537,7 @@ mod publication_tests {
     fn restored_pack_mtime_cannot_reuse_index_validation() {
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "restored-pack", ObjectFormat::Sha1, b"content");
-        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        let cache = Mutex::new(IndexCache::new());
         let open = || {
             FilePack::open_cached_after_index(
                 ObjectFormat::Sha1,
@@ -1549,7 +1571,7 @@ mod publication_tests {
     fn index_cache_does_not_outlive_last_reader() {
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "lifetime", ObjectFormat::Sha1, b"content");
-        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        let cache = Mutex::new(IndexCache::new());
         let open = || {
             FilePack::open_cached_after_index(
                 ObjectFormat::Sha1,
@@ -1591,7 +1613,7 @@ mod publication_tests {
         };
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "restored", ObjectFormat::Sha1, b"content");
-        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        let cache = Mutex::new(IndexCache::new());
         let open = || {
             FilePack::open_cached_after_index(
                 ObjectFormat::Sha1,
@@ -1659,7 +1681,7 @@ mod publication_tests {
     fn dropping_last_reader_releases_delete_pending_names() {
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "deleted", ObjectFormat::Sha1, b"content");
-        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        let cache = Mutex::new(IndexCache::new());
         let open = || {
             FilePack::open_cached_after_index(
                 ObjectFormat::Sha1,
@@ -1685,7 +1707,7 @@ mod publication_tests {
     fn cached_open_still_charges_index_budget() {
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "budget", ObjectFormat::Sha1, b"content");
-        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        let cache = Mutex::new(IndexCache::new());
         let open = |budget: &mut PackLimits| {
             FilePack::open_cached_after_index(
                 ObjectFormat::Sha1,
@@ -1813,34 +1835,62 @@ mod publication_tests {
     }
 
     #[test]
-    fn index_cache_bounds_pairs_not_representation_size() {
+    fn live_readers_stay_discoverable_whatever_the_pack_count() {
         let root = tempfile::tempdir().unwrap();
-        let path = pair(root.path(), "bounds", ObjectFormat::Sha1, b"content");
-        let reader = open_pair(&path, ObjectFormat::Sha1);
-        let entry = |bytes: Arc<Vec<u8>>| {
-            Arc::new(CachedIndex {
-                format: reader.format,
-                index_stamp: reader.index.stamp.clone(),
-                pack_stamp: reader.pack.stamp.clone(),
-                index_change: reader.index.cache_change,
-                pack_change: reader.pack.cache_change,
-                _index_file: reader.index.file.try_clone().unwrap(),
-                _pack_file: reader.pack.file.try_clone().unwrap(),
-                bytes,
-                table: reader.table.clone(),
+        let format = ObjectFormat::Sha1;
+        let paths: Vec<PathBuf> = (0..20)
+            .map(|i| {
+                pair(
+                    root.path(),
+                    &format!("pack-{i}"),
+                    format,
+                    format!("content {i}").as_bytes(),
+                )
             })
+            .collect();
+        let cache = Mutex::new(IndexCache::new());
+        let open = |path: &PathBuf| {
+            FilePack::open_cached_after_index(
+                format,
+                path,
+                &mut PackLimits::default(),
+                &AtomicBool::new(false),
+                || {},
+                &cache,
+            )
+            .unwrap()
         };
-        let small = entry(reader.index_bytes.clone());
-        let mut cache = IndexCache(VecDeque::new());
-        for _ in 0..INDEX_CACHE_PAIRS + 1 {
-            cache.insert(small.clone());
+        // A store with more packs than any fixed bound reopens in the same order, as a refresh
+        // or a second reader of the same repository does.
+        let first: Vec<FilePack> = paths.iter().map(open).collect();
+        let second: Vec<FilePack> = paths.iter().map(open).collect();
+        for (first, second) in first.iter().zip(&second) {
+            assert!(Arc::ptr_eq(&first.table, &second.table));
+            assert_eq!(second.index.bytes_read.load(Ordering::Relaxed), 0);
         }
-        assert_eq!(cache.0.len(), INDEX_CACHE_PAIRS);
-        // Weak records retain nothing, so a Git-scale representation is shared like any other.
-        let large = entry(Arc::new(Vec::with_capacity(128 * 1024 * 1024)));
-        cache.insert(large.clone());
-        assert_eq!(cache.0.len(), INDEX_CACHE_PAIRS);
-        assert!(cache.0.back().unwrap().ptr_eq(&Arc::downgrade(&large)));
+        assert_eq!(cache.lock().unwrap().records.len(), paths.len());
+        drop((first, second));
+        // Dead records retain no handles or buffers. Opening other pairs, each dropped at once,
+        // prunes them once the map has doubled, so it stays within twice its live records.
+        let more: Vec<PathBuf> = (0..40)
+            .map(|i| {
+                pair(
+                    root.path(),
+                    &format!("later-{i}"),
+                    format,
+                    format!("later {i}").as_bytes(),
+                )
+            })
+            .collect();
+        for path in &more {
+            let reader = open(path);
+            assert_eq!(
+                reader.index.bytes_read.load(Ordering::Relaxed),
+                reader.index.len
+            );
+            assert!(cache.lock().unwrap().records.len() <= 2 * paths.len());
+        }
+        assert!(cache.lock().unwrap().records.len() < paths.len());
     }
 
     // Original malformed framing, with independent artifact checksums and CRCs rebuilt so the
