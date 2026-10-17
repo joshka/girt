@@ -1,0 +1,59 @@
+---
+// Header links before the social icons. The mobile menu footer reuses this component, where the
+// sidebar already covers these links, so they are hidden there.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+
+const { id } = Astro.locals.starlightRoute;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const links = [
+  { label: 'Guides', href: `${base}/guides/open-a-repository/`, current: id.startsWith('guides/') },
+  {
+    label: 'Performance',
+    href: `${base}/performance/jj-benchmark/`,
+    current: id.startsWith('performance/'),
+  },
+  { label: 'API (docs.rs)', href: 'https://docs.rs/girt/latest/girt/', current: false },
+];
+---
+
+<nav class="girt-header-nav" aria-label="Sections">
+  {
+    links.map((link) => (
+      <a href={link.href} aria-current={link.current ? 'true' : undefined}>
+        {link.label}
+      </a>
+    ))
+  }
+</nav>
+<Default />
+
+<style>
+  .girt-header-nav {
+    display: flex;
+    gap: 1.25rem;
+    margin-inline-end: 0.5rem;
+  }
+
+  .girt-header-nav a {
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .girt-header-nav a:hover {
+    color: var(--sl-color-white);
+  }
+
+  .girt-header-nav a[aria-current] {
+    color: var(--sl-color-white);
+    text-decoration: underline;
+    text-decoration-color: var(--girt-underline);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 0.45em;
+  }
+
+  :global(.mobile-preferences) .girt-header-nav {
+    display: none;
+  }
+</style>

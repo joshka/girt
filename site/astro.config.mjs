@@ -1,9 +1,16 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import { readFileSync } from 'node:fs';
 import starlight from '@astrojs/starlight';
+import { ExpressiveCodeTheme } from '@astrojs/starlight/expressive-code';
 import starlightLinksValidator from 'starlight-links-validator';
 
 const base = '/girt';
+
+// Code themes from DESIGN.md: muted rust keywords, verdigris strings, nothing bright.
+/** @param {string} name */
+const codeTheme = (name) =>
+  ExpressiveCodeTheme.fromJSONString(readFileSync(new URL(`./src/styles/${name}.json`, import.meta.url), 'utf8'));
 
 // GitHub Pages serves `/girt` without a trailing slash; send it to the canonical index.
 const canonicalBasePathScript = [
@@ -26,7 +33,43 @@ export default defineConfig({
         'An idiomatic Rust Git library: objects, references, the index and transfer, with Git formats preserved exactly.',
       customCss: ['./src/styles/custom.css'],
       components: {
+        Head: './src/components/Head.astro',
+        Hero: './src/components/Hero.astro',
+        Sidebar: './src/components/Sidebar.astro',
+        SiteTitle: './src/components/SiteTitle.astro',
+        SocialIcons: './src/components/SocialIcons.astro',
         ThemeProvider: './src/components/ThemeProvider.astro',
+      },
+      expressiveCode: {
+        themes: [codeTheme('girt-dark'), codeTheme('girt-light')],
+        useStarlightUiThemeColors: false,
+        // Shell snippets get the same plain inset panel as other code, not a terminal window.
+        defaultProps: { frame: 'code' },
+        styleOverrides: {
+          borderRadius: '8px',
+          borderColor: 'var(--sl-color-hairline-light)',
+          codeFontFamily: 'var(--__sl-font-mono)',
+          codeFontSize: '0.84375rem',
+          codeLineHeight: '1.7',
+          codePaddingBlock: '0.9rem',
+          codePaddingInline: '1.1rem',
+          uiFontFamily: 'var(--__sl-font-mono)',
+          frames: {
+            frameBoxShadowCssValue: ({ theme }) =>
+              theme.type === 'dark' ? 'inset 0 2px 10px rgb(0 0 0 / 0.3)' : 'inset 0 1px 3px rgb(0 0 0 / 0.06)',
+            editorActiveTabBackground: 'transparent',
+            editorActiveTabIndicatorTopColor: 'transparent',
+            editorActiveTabIndicatorBottomColor: 'transparent',
+            editorTabBarBackground: 'transparent',
+            editorTabBarBorderBottomColor: 'var(--sl-color-hairline-light)',
+            editorActiveTabForeground: 'var(--sl-color-gray-3)',
+            terminalTitlebarBackground: 'transparent',
+            terminalTitlebarBorderBottomColor: 'var(--sl-color-hairline-light)',
+            terminalTitlebarForeground: 'var(--sl-color-gray-3)',
+            terminalBackground: 'var(--girt-inset)',
+            tooltipSuccessBackground: 'var(--girt-verdigris-700)',
+          },
+        },
       },
       head: [{ tag: 'script', content: canonicalBasePathScript }],
       editLink: {

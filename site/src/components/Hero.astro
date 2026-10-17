@@ -1,0 +1,131 @@
+---
+// The landing hero: the name, one plain sentence, the actions and a column of facts. Other splash
+// pages (such as the 404 page) keep Starlight's default hero.
+import Default from '@astrojs/starlight/components/Hero.astro';
+
+const { id, entry } = Astro.locals.starlightRoute;
+const isHome = id === '';
+const { title = entry.data.title, tagline, actions = [] } = entry.data.hero ?? {};
+---
+
+{
+  isHome ? (
+    <div class="girt-hero">
+      <div class="copy">
+        <h1 id="_top" data-page-title set:html={title} />
+        {tagline && <p class="lede" set:html={tagline} />}
+        <div class="actions">
+          {actions.map(({ text, link, variant, attrs }) => (
+            <a href={link} class:list={['girt-button', variant ?? 'primary']} {...attrs}>
+              {text}
+            </a>
+          ))}
+        </div>
+      </div>
+      <dl class="facts">
+        <div>
+          <dt>Install</dt>
+          <dd>
+            <code>cargo add girt</code>
+          </dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>Experimental. The API changes between minor releases.</dd>
+        </div>
+        <div>
+          <dt>Licence</dt>
+          <dd>MIT or Apache-2.0.</dd>
+        </div>
+        <div>
+          <dt>No subprocess</dt>
+          <dd>
+            No <code>git</code> binary and no C library.
+          </dd>
+        </div>
+      </dl>
+    </div>
+  ) : (
+    <Default />
+  )
+}
+
+<style>
+  .girt-hero {
+    display: grid;
+    gap: 2.5rem;
+    padding-block: 2.5rem 2rem;
+  }
+
+  h1 {
+    font-family: var(--girt-font-heading);
+    font-size: clamp(2.75rem, 2rem + 4vw, 4rem);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--sl-color-white);
+    margin-bottom: 1.1rem;
+  }
+
+  .lede {
+    font-size: var(--sl-text-lg);
+    line-height: 1.65;
+    max-width: 40rem;
+    margin-bottom: 1.6rem;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .facts {
+    margin: 0;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+
+  .facts div + div {
+    margin-top: 1rem;
+  }
+
+  .facts dt {
+    font-family: var(--__sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+
+  .facts dd {
+    margin: 0.2rem 0 0;
+  }
+
+  .facts code {
+    font-family: var(--__sl-font-mono);
+    font-size: 0.8125rem;
+    color: var(--sl-color-white);
+    background: var(--girt-inset);
+    border: 1px solid var(--sl-color-hairline-light);
+    border-radius: 4px;
+    padding: 0.05rem 0.35rem;
+  }
+
+  @media (min-width: 50rem) {
+    .girt-hero {
+      grid-template-columns: minmax(0, 1fr) 17rem;
+      gap: 3.5rem;
+      padding-block: 3.5rem 2.75rem;
+    }
+
+    .facts {
+      align-self: start;
+      margin-top: 0.75rem;
+      padding-inline-start: 1.6rem;
+      border-inline-start: 1px solid var(--sl-color-hairline-light);
+    }
+  }
+</style>

@@ -1,0 +1,50 @@
+---
+// Self-hosted fonts (SIL Open Font License 1.1, via Fontsource): Source Serif 4 for headings and
+// JetBrains Mono for code. Only the Latin subsets are preloaded; Latin Extended loads on demand
+// through `unicode-range`. Metric-adjusted local fallbacks keep text close to its final size while
+// the web fonts load, which reduces (but on unmeasured systems can't eliminate) layout shift.
+import Default from '@astrojs/starlight/components/Head.astro';
+import serifLatin from '@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2?url';
+import serifLatinExt from '@fontsource-variable/source-serif-4/files/source-serif-4-latin-ext-wght-normal.woff2?url';
+import monoLatin from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
+import monoLatinExt from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2?url';
+
+const latin =
+  'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD';
+const latinExt =
+  'U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF';
+
+const face = (family: string, weights: string, url: string, range: string) =>
+  `@font-face{font-family:'${family}';font-style:normal;font-display:swap;font-weight:${weights};src:url(${url}) format('woff2');unicode-range:${range}}`;
+
+const fallback = (
+  family: string,
+  weight: number,
+  src: string,
+  size: string,
+  ascent: string,
+  descent: string,
+) =>
+  `@font-face{font-family:'${family}';font-weight:${weight};src:${src};size-adjust:${size};ascent-override:${ascent};descent-override:${descent};line-gap-override:0%}`;
+
+const css = [
+  face('Source Serif 4', '200 900', serifLatinExt, latinExt),
+  face('Source Serif 4', '200 900', serifLatin, latin),
+  face('JetBrains Mono', '100 800', monoLatinExt, latinExt),
+  face('JetBrains Mono', '100 800', monoLatin, latin),
+  // Fallbacks, one family per local font, with metrics measured separately for each weight the
+  // site uses (headings are 700, inline serif text 400). Measured with fontTools against the
+  // Latin subset at those weights.
+  fallback('Source Serif Fallback Georgia', 400, "local('Georgia')", '106.6%', '97.2%', '31.4%'),
+  fallback('Source Serif Fallback Georgia', 700, "local('Georgia Bold'), local('Georgia-Bold')", '95.6%', '108.4%', '35%'),
+  fallback('Source Serif Fallback Times', 400, "local('Times New Roman'), local('TimesNewRomanPSMT')", '115.5%', '89.7%', '29%'),
+  fallback('Source Serif Fallback Times', 700, "local('Times New Roman Bold'), local('TimesNewRomanPS-BoldMT')", '113.7%', '91.2%', '29.5%'),
+  fallback('JetBrains Mono Fallback Menlo', 400, "local('Menlo'), local('Menlo-Regular')", '99.7%', '102.3%', '30.1%'),
+  fallback('JetBrains Mono Fallback Courier', 400, "local('Courier New'), local('CourierNewPSMT')", '100%', '102%', '30%'),
+].join('');
+---
+
+<link rel="preload" href={serifLatin} as="font" type="font/woff2" crossorigin />
+<link rel="preload" href={monoLatin} as="font" type="font/woff2" crossorigin />
+<style is:inline set:html={css}></style>
+<Default />

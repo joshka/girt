@@ -1,0 +1,226 @@
+---
+// Selected jj commands on the large repository: jj on girt against stock jj and Git, with a
+// diverging bar centred on parity. Wins and losses are shown together.
+import { formatMs } from '../data/jj-performance';
+import { comparisonRepo, comparisons, measured, parity } from '../data/landing';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+// Half the bar track spans a 40× difference on a log scale.
+const HALF = Math.log2(40);
+const width = (ratio: number) => `${Math.min(1, Math.abs(Math.log2(ratio)) / HALF) * 48}%`;
+const times = (ratio: number) => {
+  const factor = ratio < 1 ? 1 / ratio : ratio;
+  return factor >= 10 ? `${Math.floor(factor)}×` : `${factor.toFixed(1)}×`;
+};
+---
+
+<div class="girt-compare not-content">
+  <div class="scroll" tabindex="0" role="region" aria-label={`jj on girt compared with stock jj on ${comparisonRepo}`}>
+    <table>
+      <thead>
+        <tr class="group">
+          <td></td>
+          <th scope="colgroup" colspan="3">Median time</th>
+          <th scope="colgroup" colspan="2">girt vs stock jj</th>
+        </tr>
+        <tr>
+          <th scope="col">Command</th>
+          <th scope="col" class="num">girt</th>
+          <th scope="col" class="num">stock jj</th>
+          <th scope="col" class="num">Git</th>
+          <th scope="col" class="num">Ratio</th>
+          <th scope="col"><span class="sr-only">Bar</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          comparisons.map((row) => (
+            <tr>
+              <th scope="row">
+                <code>{row.command}</code>
+              </th>
+              <td class="num girt">{row.girtMs == null ? '—' : formatMs(row.girtMs)}</td>
+              <td class="num">{formatMs(row.stockMs)}</td>
+              <td class="num git">{row.gitMs == null ? '—' : formatMs(row.gitMs)}</td>
+              <td class:list={['num', 'ratio', row.ratio == null || row.ratio >= 1 ? 'slower' : 'faster']}>
+                {row.ratio == null ? (
+                  <span class="failed">times out</span>
+                ) : row.ratio < 1 ? (
+                  `${times(row.ratio)} faster`
+                ) : (
+                  `${times(row.ratio)} slower`
+                )}
+              </td>
+              <td class="bar-cell" aria-hidden="true">
+                <div class="track">
+                  {row.ratio == null ? (
+                    <span class="bar timeout" style="inset-inline-start: 50%; width: 48%" />
+                  ) : row.ratio < 1 ? (
+                    <span class="bar faster" style={`inset-inline-end: 50%; width: ${width(row.ratio)}`} />
+                  ) : (
+                    <span class="bar slower" style={`inset-inline-start: 50%; width: ${width(row.ratio)}`} />
+                  )}
+                </div>
+              </td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+  <p class="note">
+    {comparisonRepo}, selected rows, best and worst. Across all three repositories, jj on girt is
+    less than 20% slower than stock jj (or faster) in {parity.atMost20PercentSlower} of the{' '}
+    {parity.compared} cells where both finished
+    {parity.unfinished > 0 && <>; {parity.unfinished} more did not finish with girt</>}. {measured.machine},{' '}
+    {measured.dates}.{' '}
+    <a href={`${base}/performance/jj-benchmark/`}>All results</a>
+  </p>
+</div>
+
+<style>
+  .girt-compare {
+    background: var(--sl-color-bg-sidebar);
+    border: 1px solid var(--sl-color-hairline-light);
+    border-radius: 12px;
+    padding: 1.1rem 1.25rem 0.9rem;
+    box-shadow: var(--girt-card-shadow);
+    margin-block: 1rem 2rem;
+  }
+
+  .scroll {
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--sl-text-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  th,
+  td {
+    padding: 0.55rem 0.6rem;
+    text-align: start;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  thead th {
+    color: var(--sl-color-white);
+    font-weight: 600;
+    border-bottom: 1.5px solid var(--sl-color-gray-2);
+  }
+
+  thead .group th {
+    font-family: var(--__sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: center;
+    color: var(--sl-color-gray-3);
+    border-bottom: 1px solid var(--sl-color-hairline-light);
+    padding-bottom: 0.3rem;
+  }
+
+  tbody th {
+    font-weight: normal;
+  }
+
+  tbody th,
+  tbody td {
+    border-bottom: 1px solid var(--sl-color-hairline-light);
+  }
+
+  .num {
+    text-align: end;
+    font-family: var(--__sl-font-mono);
+  }
+
+  .girt {
+    color: var(--sl-color-white);
+    font-weight: 700;
+  }
+
+  .git {
+    color: var(--sl-color-gray-3);
+  }
+
+  .ratio {
+    color: var(--sl-color-gray-2);
+  }
+
+  :global([data-theme='light']) .ratio.slower {
+    color: var(--girt-rust-700);
+  }
+
+  :global([data-theme='light']) .ratio.faster {
+    color: var(--girt-verdigris-700);
+  }
+
+  .failed {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: 4px;
+    background: var(--girt-failed-bg);
+    border: 1px solid var(--girt-rust-700);
+    color: var(--girt-on-fill);
+  }
+
+  .bar-cell {
+    width: 32%;
+    min-width: 12rem;
+  }
+
+  .track {
+    position: relative;
+    height: 1rem;
+  }
+
+  .track::before {
+    content: '';
+    position: absolute;
+    inset-inline-start: 50%;
+    top: -0.3rem;
+    bottom: -0.3rem;
+    width: 1px;
+    background: var(--girt-graph-line);
+  }
+
+  .bar {
+    position: absolute;
+    top: 0.2rem;
+    height: 0.6rem;
+    border-radius: 1px;
+  }
+
+  .bar.faster {
+    background: var(--girt-verdigris-700);
+    border: 1px solid var(--girt-verdigris-500);
+  }
+
+  .bar.slower {
+    background: var(--girt-rust-700);
+    border: 1px solid var(--girt-rust-600);
+  }
+
+  .timeout {
+    background: repeating-linear-gradient(45deg, var(--girt-rust-600) 0 3px, transparent 3px 7px);
+    border: 1px solid var(--girt-rust-600);
+  }
+
+  .note {
+    margin: 0.8rem 0 0;
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-gray-3);
+  }
+
+  .note a {
+    color: var(--sl-color-white);
+    text-decoration-color: var(--girt-underline);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 0.22em;
+  }
+</style>

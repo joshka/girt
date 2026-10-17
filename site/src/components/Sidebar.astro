@@ -1,0 +1,214 @@
+---
+// The sidebar drawn as a `git log --graph`: each group is a commit on the trunk (lane 0) and each
+// page forks off it to lane 1. Every row has the same height and the same fork, so the graph sits
+// on a strict grid. See "Navigation commit graph" in DESIGN.md.
+import MobileMenuFooter from '@astrojs/starlight/components/MobileMenuFooter.astro';
+import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
+
+type Entry = (typeof Astro.locals.starlightRoute.sidebar)[number];
+type Link = Extract<Entry, { type: 'link' }>;
+
+type Trunk = 'full' | 'below' | 'none';
+
+interface Page {
+  link: Link;
+  external: boolean;
+  /** How the trunk runs through this row. */
+  trunk: Trunk;
+}
+
+interface Section {
+  id: string;
+  label: string;
+  trunk: Trunk;
+  pages: Page[];
+}
+
+const { sidebar } = Astro.locals.starlightRoute;
+
+// Nested groups are rare here; their pages join the enclosing section.
+const pagesOf = (entries: Entry[]): Link[] =>
+  entries.flatMap((entry) => (entry.type === 'link' ? [entry] : pagesOf(entry.entries)));
+
+const loose = sidebar.filter((entry): entry is Link => entry.type === 'link');
+const sections: Section[] = sidebar
+  .filter((entry) => entry.type === 'group')
+  .map((group, index) => ({
+    id: `girt-nav-${index}`,
+    label: group.label,
+    trunk: index === 0 ? 'below' : 'full',
+    pages: pagesOf(group.entries).map((link) => ({
+      link,
+      external: /^https?:\/\//.test(link.href),
+      trunk: 'full' as Trunk,
+    })),
+  }));
+
+// The last page forks from the trunk at the top of its row, so the trunk stops there.
+const lastPage = sections.at(-1)?.pages.at(-1);
+if (lastPage) lastPage.trunk = 'none';
+
+// Lane geometry, in pixels within the 30px row.
+const TRUNK = 10;
+const LANE = 28;
+const MID = 15;
+// A straight 45° edge, as in gitk: it leaves the trunk just above the row and meets the node centre.
+const fork = `M${TRUNK} ${MID - (LANE - TRUNK)} L${LANE} ${MID}`;
+---
+
+<SidebarPersister>
+  <nav class="girt-graph" aria-label="Site">
+    <ul>
+      {
+        sections.map((section) => (
+          <li>
+            <div class:list={['row', 'group', `trunk-${section.trunk}`]}>
+              <svg class="wire" width="40" height="30" aria-hidden="true">
+                <circle class="node group-node" cx={TRUNK} cy={MID} r="5" />
+              </svg>
+              <span class="label" id={section.id}>
+                {section.label}
+              </span>
+            </div>
+            <ul aria-labelledby={section.id}>
+              {section.pages.map((page) => (
+                <li class:list={['row', 'page', `trunk-${page.trunk}`, { current: page.link.isCurrent }]}>
+                  <svg class="wire" width="40" height="30" aria-hidden="true">
+                    <path class="edge" d={fork} />
+                    <circle class="node" cx={LANE} cy={MID} r={page.link.isCurrent ? 5.5 : 4.5} />
+                  </svg>
+                  <a
+                    href={page.link.href}
+                    class="label"
+                    aria-current={page.link.isCurrent ? 'page' : undefined}
+                    {...page.link.attrs}
+                  >
+                    {page.link.label}
+                    {page.external && (
+                      <>
+                        <span aria-hidden="true"> ↗</span>
+                        <span class="sr-only"> (external)</span>
+                      </>
+                    )}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))
+      }
+    </ul>
+    {
+      loose.length > 0 && (
+        <ul class="loose">
+          {loose.map((link) => (
+            <li>
+              <a href={link.href} aria-current={link.isCurrent ? 'page' : undefined}>
+                {link.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </nav>
+</SidebarPersister>
+
+<div class="md:sl-hidden">
+  <MobileMenuFooter />
+</div>
+
+<style>
+  .girt-graph ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .row {
+    position: relative;
+    display: flex;
+    min-height: 30px;
+    padding-inline-start: 44px;
+  }
+
+  /* The trunk is a CSS line so it stretches if a label wraps; forks and nodes are drawn over it. */
+  .row::before {
+    content: '';
+    position: absolute;
+    inset-inline-start: 9px;
+    width: 2px;
+    top: 0;
+    bottom: 0;
+    background: var(--girt-graph-line);
+  }
+  .row.trunk-below::before {
+    top: 15px;
+  }
+  .row.trunk-none::before {
+    content: none;
+  }
+
+  .wire {
+    position: absolute;
+    inset-inline-start: 0;
+    top: 0;
+    overflow: visible;
+  }
+
+  .edge {
+    fill: none;
+    stroke: var(--girt-graph-line);
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+
+  .node {
+    fill: var(--sl-color-bg-sidebar);
+    stroke: var(--girt-graph-node);
+    stroke-width: 1.75;
+  }
+
+  .group-node {
+    stroke: var(--sl-color-gray-2);
+    stroke-width: 2;
+  }
+
+  .current .node {
+    fill: var(--girt-rust-600);
+    stroke: var(--girt-rust-500);
+    stroke-width: 1.5;
+  }
+
+  .label {
+    padding-block: 5px;
+    line-height: 20px;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+  }
+
+  .group .label {
+    padding-inline-start: 0;
+    margin-inline-start: -18px;
+    font-family: var(--__sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+
+  a.label:hover {
+    color: var(--sl-color-white);
+  }
+
+  a.label[aria-current='page'] {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  .loose {
+    margin-top: 1rem;
+  }
+</style>

@@ -1,0 +1,117 @@
+{
+  "name": "girt-dark",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#0d0d0e",
+    "editor.foreground": "#d6d3cc"
+  },
+  "tokenColors": [
+    {
+      "scope": [
+        "comment",
+        "punctuation.definition.comment"
+      ],
+      "settings": {
+        "foreground": "#8a8780",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "scope": [
+        "keyword",
+        "storage",
+        "storage.type",
+        "storage.modifier",
+        "keyword.operator.borrow",
+        "keyword.other",
+        "constant.language",
+        "variable.language"
+      ],
+      "settings": {
+        "foreground": "#c98a7a"
+      }
+    },
+    {
+      "scope": [
+        "string",
+        "string.quoted",
+        "punctuation.definition.string",
+        "constant.character.escape",
+        "markup.inline.raw"
+      ],
+      "settings": {
+        "foreground": "#8fae9f"
+      }
+    },
+    {
+      "scope": [
+        "entity.name.type",
+        "entity.name.struct",
+        "entity.name.enum",
+        "entity.name.trait",
+        "support.type",
+        "entity.name.namespace",
+        "entity.name.module",
+        "storage.type.core"
+      ],
+      "settings": {
+        "foreground": "#e9dcc4"
+      }
+    },
+    {
+      "scope": [
+        "constant.numeric",
+        "constant.other"
+      ],
+      "settings": {
+        "foreground": "#d9b99b"
+      }
+    },
+    {
+      "scope": [
+        "entity.name.function",
+        "support.function",
+        "meta.function-call entity.name.function",
+        "entity.name.function.macro",
+        "support.macro"
+      ],
+      "settings": {
+        "foreground": "#e6e2d9"
+      }
+    },
+    {
+      "scope": [
+        "punctuation",
+        "keyword.operator"
+      ],
+      "settings": {
+        "foreground": "#9c9a94"
+      }
+    },
+    {
+      "scope": [
+        "variable",
+        "meta.definition.variable"
+      ],
+      "settings": {
+        "foreground": "#d6d3cc"
+      }
+    },
+    {
+      "scope": [
+        "markup.inserted"
+      ],
+      "settings": {
+        "foreground": "#8fae9f"
+      }
+    },
+    {
+      "scope": [
+        "markup.deleted"
+      ],
+      "settings": {
+        "foreground": "#c98a7a"
+      }
+    }
+  ]
+}
