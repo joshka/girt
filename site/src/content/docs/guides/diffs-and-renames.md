@@ -152,7 +152,9 @@ identities. Girt's independently implemented heuristic has known score/pairing d
 and does not promise every Git shortcut or tie decision.
 
 An optional target-path list filters after inference. It does not reduce candidate work or change
-pairing/classification. Retain unmatched additions and removals alongside inferred rewrites.
+pairing/classification, and an omitted candidate can still cause an error. Retain unmatched
+additions and removals alongside inferred rewrites. For a cheap changed-path list, choose structural
+comparison instead of narrowing a rewrite result.
 
 ### Interpret a postimage copy
 
@@ -163,16 +165,13 @@ Suppose `source` changes from blob A to blob B, and the new tree also adds `copy
 | source | A        | B        |
 | copy   | absent   | B        |
 
-With `Copies::ModifiedPostimage` and `similarity == 100`, `copy` can be an exact copy scored against
-B. The returned `source_id` is still A, because it identifies `source` in the old snapshot;
-`target_id` is B. Keep the selected policy with the result when presenting the comparison, and read
-the new source value separately if a renderer needs the bytes used for scoring. The runnable
-[postimage copy example](https://docs.rs/girt/latest/girt/rewrites/struct.Rewrite.html)
-shows this identity distinction.
-
-Destination filters apply after this global inference. Asking only for `copy` cannot change which
-source won, convert it from a copy to a rename, or avoid an error in an omitted candidate. For a
-cheap changed-path list, choose structural comparison instead of narrowing a rewrite result.
+With `Copies::ModifiedPostimage`, `copy` is an exact copy scored against B. This pair is found at
+any valid similarity threshold, including the identity-only threshold of 100. The returned
+`source_id` is still A, because it identifies `source` in the old snapshot; `target_id` is B. Keep
+the selected policy with the result when presenting the comparison, and read the new source value
+separately if a renderer needs the bytes used for scoring. The
+[rewrite identity fields](https://docs.rs/girt/latest/girt/rewrites/struct.Rewrite.html#structfield.source_id)
+describe the reported source and target identities.
 
 ## Handle the candidate limit explicitly
 

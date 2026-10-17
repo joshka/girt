@@ -127,17 +127,18 @@ fn read_side(
 ///
 /// ```
 /// use girt::{InitKind, ObjectFormat, Repository};
+/// use std::sync::atomic::AtomicBool;
+/// use girt::{EntryMode, Tree, TreeEntry};
+/// use girt::content_diff::{BlobContent, ContentReadError};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Bare)?;
 ///
-/// use std::sync::atomic::AtomicBool;
-/// use girt::{EntryMode, Tree, TreeEntry};
 /// let loose = repo.loose_objects();
 /// let entry = |name: &[u8], id, mode| TreeEntry { name: name.to_vec(), id, mode };
 /// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
 /// let cancel = AtomicBool::new(false);
 ///
-/// use girt::content_diff::{BlobContent, ContentReadError};
 /// let missing = girt::ObjectId::for_blob(ObjectFormat::Sha1, b"not stored");
 /// let root = tree(vec![entry(b"file", missing, EntryMode::Blob)])?;
 /// let objects = repo.objects(Default::default())?;

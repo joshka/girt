@@ -94,17 +94,14 @@ pub struct TreeValue {
 /// building a patch; there is no synthetic directory change record.
 ///
 /// ```
-/// use girt::{InitKind, ObjectFormat, Repository};
-/// let directory = tempfile::tempdir()?;
-/// let repo = Repository::init(
-///     ObjectFormat::Sha1,
-///     directory.path().join("r"),
-///     InitKind::Bare,
-/// )?;
-///
 /// use std::sync::atomic::AtomicBool;
 ///
-/// use girt::{EntryMode, Tree, TreeEntry};
+/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
 /// let loose = repo.loose_objects();
 /// let entry = |name: &[u8], id, mode| TreeEntry {
 ///     name: name.to_vec(),
@@ -152,17 +149,17 @@ pub struct TreeChange {
 /// the existing pack snapshot and per-read decoding workspace. These are not exact heap limits.
 ///
 /// ```
-/// use girt::{InitKind, ObjectFormat, Repository};
-/// let directory = tempfile::tempdir()?;
-/// let repo = Repository::init(
-///     ObjectFormat::Sha1,
-///     directory.path().join("r"),
-///     InitKind::Bare,
-/// )?;
-///
 /// use std::sync::atomic::AtomicBool;
 ///
-/// use girt::{EntryMode, Tree, TreeEntry};
+/// use girt::{
+///     EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeCompareError, TreeCompareLimits,
+///     TreeEntry,
+/// };
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
 /// let loose = repo.loose_objects();
 /// let entry = |name: &[u8], id, mode| TreeEntry {
 ///     name: name.to_vec(),
@@ -172,7 +169,6 @@ pub struct TreeChange {
 /// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
 /// let cancel = AtomicBool::new(false);
 ///
-/// use girt::{TreeCompareError, TreeCompareLimits};
 /// let id = loose.write_blob(b"data")?;
 /// let root = tree(vec![entry(b"file", id, EntryMode::Blob)])?;
 /// let objects = repo.objects(Default::default())?;

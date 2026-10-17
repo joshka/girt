@@ -127,17 +127,15 @@ impl Options {
     /// Sets [`Self::track_empty`].
     ///
     /// ```
-    /// use girt::{InitKind, ObjectFormat, Repository};
-    /// let directory = tempfile::tempdir()?;
-    /// let repo = Repository::init(
-    ///     ObjectFormat::Sha1,
-    ///     directory.path().join("r"),
-    ///     InitKind::Bare,
-    /// )?;
-    ///
     /// use std::sync::atomic::AtomicBool;
     ///
-    /// use girt::{EntryMode, Tree, TreeEntry};
+    /// use girt::rewrites::Options;
+    /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r");
+    /// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
     /// let loose = repo.loose_objects();
     /// let entry = |name: &[u8], id, mode| TreeEntry {
     ///     name: name.to_vec(),
@@ -147,7 +145,6 @@ impl Options {
     /// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
     /// let cancel = AtomicBool::new(false);
     ///
-    /// use girt::rewrites::Options;
     /// let id = loose.write_blob(b"")?;
     /// let old = tree(vec![entry(b"old", id, EntryMode::Blob)])?;
     /// let new = tree(vec![entry(b"new", id, EntryMode::Blob)])?;
@@ -175,6 +172,7 @@ impl Options {
     /// assert_eq!(matches.len(), 1);
     /// assert_eq!(matches[0].similarity, 100);
     /// // Empty content has no distinguishing evidence; choose whether such inferred moves are useful.
+    /// assert_eq!(matches[0].kind, girt::rewrites::Kind::Rename);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[must_use]
@@ -197,17 +195,15 @@ impl Options {
     /// the remaining pair.
     ///
     /// ```
-    /// use girt::{InitKind, ObjectFormat, Repository};
-    /// let directory = tempfile::tempdir()?;
-    /// let repo = Repository::init(
-    ///     ObjectFormat::Sha1,
-    ///     directory.path().join("r"),
-    ///     InitKind::Bare,
-    /// )?;
-    ///
     /// use std::sync::atomic::AtomicBool;
     ///
-    /// use girt::{EntryMode, Tree, TreeEntry};
+    /// use girt::rewrites::Options;
+    /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r");
+    /// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
     /// let loose = repo.loose_objects();
     /// let entry = |name: &[u8], id, mode| TreeEntry {
     ///     name: name.to_vec(),
@@ -217,7 +213,6 @@ impl Options {
     /// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
     /// let cancel = AtomicBool::new(false);
     ///
-    /// use girt::rewrites::Options;
     /// let before = loose.write_blob(b"before\0binary")?;
     /// let after = loose.write_blob(b"after\0binary")?;
     /// let old = tree(vec![entry(b"old", before, EntryMode::Blob)])?;
@@ -274,21 +269,20 @@ impl Default for Options {
 /// overhead; these bounds are not exact heap/RSS limits. Allocation failure follows Rust's
 /// allocator behavior. No files are written and no handles remain owned by the result.
 ///
-/// Exact-only fallback relaxes the candidate policy, not resource limits. Even exact matching reads
-/// and verifies blobs; a resource failure returns an error from both APIs.
+/// Exact-only fallback relaxes the candidate policy, not the independent byte, span, pair or work
+/// budgets. Exact selection also charges [`Self::max_pairs`]; exhausting it returns an error from
+/// both APIs, as this example demonstrates.
 ///
 /// ```
-/// use girt::{InitKind, ObjectFormat, Repository};
-/// let directory = tempfile::tempdir()?;
-/// let repo = Repository::init(
-///     ObjectFormat::Sha1,
-///     directory.path().join("r"),
-///     InitKind::Bare,
-/// )?;
-///
 /// use std::sync::atomic::AtomicBool;
 ///
-/// use girt::{EntryMode, Tree, TreeEntry};
+/// use girt::rewrites::{Error, Limits, Options};
+/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
 /// let loose = repo.loose_objects();
 /// let entry = |name: &[u8], id, mode| TreeEntry {
 ///     name: name.to_vec(),
@@ -298,7 +292,6 @@ impl Default for Options {
 /// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
 /// let cancel = AtomicBool::new(false);
 ///
-/// use girt::rewrites::{Error, Limits, Options};
 /// let id = loose.write_blob(b"same")?;
 /// let old = tree(vec![entry(b"old", id, EntryMode::Blob)])?;
 /// let new = tree(vec![entry(b"new", id, EntryMode::Blob)])?;
@@ -310,7 +303,7 @@ impl Default for Options {
 ///     None,
 ///     &cancel,
 /// );
-/// assert!(matches!(result, Err(Error::Limit(_))));
+/// assert!(matches!(result, Err(Error::Limit("pairs"))));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Copy, Debug)]
@@ -418,17 +411,15 @@ pub enum Kind {
 /// Do not use that identity to reconstruct the scored input under postimage policy.
 ///
 /// ```
-/// use girt::{InitKind, ObjectFormat, Repository};
-/// let directory = tempfile::tempdir()?;
-/// let repo = Repository::init(
-///     ObjectFormat::Sha1,
-///     directory.path().join("r"),
-///     InitKind::Bare,
-/// )?;
-///
 /// use std::sync::atomic::AtomicBool;
 ///
-/// use girt::{EntryMode, Tree, TreeEntry};
+/// use girt::rewrites::{Copies, Kind, Options};
+/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
 /// let loose = repo.loose_objects();
 /// let entry = |name: &[u8], id, mode| TreeEntry {
 ///     name: name.to_vec(),
@@ -438,7 +429,6 @@ pub enum Kind {
 /// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
 /// let cancel = AtomicBool::new(false);
 ///
-/// use girt::rewrites::{Copies, Kind, Options};
 /// let before = loose.write_blob(b"before")?;
 /// let after = loose.write_blob(b"after")?;
 /// let old = tree(vec![entry(b"source", before, EntryMode::Blob)])?;
@@ -487,50 +477,6 @@ pub struct Rewrite {
 /// exact pairs, leave all other additions/deletions unpaired, and offer a retry using
 /// [`InexactSkipped::suggested_limit`]. The [fallback
 /// example](crate::Objects::detect_rewrites_or_exact) shows the full lifecycle.
-///
-/// ```
-/// use girt::{InitKind, ObjectFormat, Repository};
-/// let directory = tempfile::tempdir()?;
-/// let repo = Repository::init(
-///     ObjectFormat::Sha1,
-///     directory.path().join("r"),
-///     InitKind::Bare,
-/// )?;
-///
-/// use std::sync::atomic::AtomicBool;
-///
-/// use girt::{EntryMode, Tree, TreeEntry};
-/// let loose = repo.loose_objects();
-/// let entry = |name: &[u8], id, mode| TreeEntry {
-///     name: name.to_vec(),
-///     id,
-///     mode,
-/// };
-/// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
-/// let cancel = AtomicBool::new(false);
-///
-/// use girt::rewrites::Options;
-/// let before = loose.write_blob(b"before")?;
-/// let after = loose.write_blob(b"after")?;
-/// let old = tree(vec![entry(b"old", before, EntryMode::Blob)])?;
-/// let new = tree(vec![entry(b"new", after, EntryMode::Blob)])?;
-/// let detected = repo.objects(Default::default())?.detect_rewrites_or_exact(
-///     Some(old),
-///     Some(new),
-///     Options::default().with_candidate_limit(0),
-///     Default::default(),
-///     None,
-///     &cancel,
-/// )?;
-/// assert!(detected.rewrites.is_empty());
-/// let skipped = detected
-///     .inexact_skipped
-///     .expect("one inexact pair exceeded zero");
-/// assert_eq!((skipped.sources, skipped.targets), (1, 1));
-/// // Display these as unpaired additions/deletions and label edited detection as skipped.
-/// // This is different from complete detection finding no relationship.
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Detection {
