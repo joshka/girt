@@ -12,6 +12,25 @@ use crate::{ObjectFormat, ObjectId};
 /// Duplicate lines are coalesced and IDs are sorted. Empty or absent files mean no boundaries.
 /// Reading uses one file descriptor: atomic Git replacement yields the old or new file, never a
 /// mixture. In-place external edits are not synchronized; callers must exclude those writers.
+///
+/// Use this declaration set to interpret where traversal must stop. It is a snapshot of metadata,
+/// not evidence that its IDs exist or are commits. Reopening readers after a successful repository
+/// refresh is required to use new boundaries.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{ObjectFormat, ObjectId, ShallowRoots};
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("shallow");
+/// let boundary = ObjectId::Sha1([1; 20]);
+/// std::fs::write(&path, format!("{boundary}\n{boundary}\n"))?;
+/// let roots = ShallowRoots::read(&path, ObjectFormat::Sha1, 4096, &AtomicBool::new(false))?;
+/// assert!(roots.contains(boundary));
+/// assert_eq!(roots.iter().collect::<Vec<_>>(), [boundary]); // Duplicate declarations coalesce.
+///
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct ShallowRoots {
     format: ObjectFormat,
@@ -23,6 +42,8 @@ pub struct ShallowRoots {
 #[non_exhaustive]
 pub enum ShallowError {
     /// Filesystem failure, including inaccessible metadata.
+    /// Correct access or storage failures at the reported path; the prior repository snapshot
+    /// remains usable.
     #[error("cannot read shallow metadata {path}")]
     Io {
         /// File being read.
@@ -32,15 +53,19 @@ pub enum ShallowError {
         source: io::Error,
     },
     /// A line is not a full hexadecimal ID in the repository format.
+    /// Inspect the indicated line and repository hash format; supply full hexadecimal IDs rather
+    /// than abbreviations.
     #[error("invalid shallow root on line {line}")]
     InvalidRoot {
         /// One-based line number. Short or non-hexadecimal prefixes are invalid as well.
         line: usize,
     },
     /// The supplied byte budget is exhausted.
+    /// Choose a justified metadata byte budget before a fresh read.
     #[error("shallow metadata byte limit exceeded")]
     Limit,
     /// Cancellation was observed before opening or between bounded reads/lines.
+    /// Retry only with a new cancellation decision; no replacement snapshot was returned.
     #[error("shallow metadata read cancelled")]
     Cancelled,
 }
@@ -66,6 +91,20 @@ impl ShallowRoots {
     ///
     /// Returns structured I/O, line, budget or cancellation failures. A filesystem read cannot
     /// be interrupted. No object storage is accessed and no files are written.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::{ObjectFormat, ShallowError, ShallowRoots};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("shallow");
+    /// std::fs::write(&path, b"abbreviated\n")?;
+    /// assert!(matches!(
+    ///     ShallowRoots::read(&path, ObjectFormat::Sha1, 4096, &AtomicBool::new(false)),
+    ///     Err(ShallowError::InvalidRoot { line: 1 })
+    /// ));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read(
         path: impl AsRef<Path>,
         format: ObjectFormat,
