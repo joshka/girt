@@ -36,10 +36,14 @@
 //! drive a transfer, but [`RemoteUrls`], [`ConfiguredRemote`] and [`ConfiguredRemoteRecord`] can
 //! still read and display it.
 //!
-//! Every reader takes an explicit [`Config`](crate::Config) snapshot, usually
-//! [`Repository::config`](crate::Repository::config), and never reads files or environment
-//! variables itself. Results are owned snapshots: they do not change if the configuration file is
-//! edited later.
+//! The configuration readers ([`Remote`], [`RemoteUrls`], [`ConfiguredRemote`] and
+//! [`ConfiguredRemoteRecord`]) take an explicit [`Config`](crate::Config) snapshot, usually
+//! [`Repository::config`](crate::Repository::config), and read no files or environment variables
+//! themselves. They return owned snapshots that do not change if the configuration file is edited
+//! later. The other parts of the module differ: [`ParsedUrl`] borrows the bytes it parses,
+//! [`canonicalize_user_url`] inspects the filesystem to resolve local paths, and
+//! [`CredentialSession`] reads credential files and runs helper programs, blocking while it
+//! does.
 //!
 //! # Refspecs
 //!
@@ -84,10 +88,13 @@
 //! remote helpers are refused, and the network protocols are allowed. A `GIT_ALLOW_PROTOCOL`
 //! list, passed in through [`ProtocolEnvironment`], replaces that policy entirely.
 //!
-//! URLs can contain credentials (`https://user:token@host/…`). The byte accessors return them
-//! unchanged so a transfer can use them; the [`Debug`] implementations and error messages of this
-//! module omit URL bytes. Strip userinfo before logging a URL, for example with
-//! [`ParsedUrl::host`] and [`ParsedUrl::path`].
+//! URLs can contain credentials (`https://user:token@host/…`), and query strings can contain
+//! tokens. The byte accessors return URLs unchanged so a transfer can use them. Error messages in
+//! this module never include URL bytes, and the `Debug` output of [`Destination`],
+//! [`RemoteUrls`], [`ConfiguredRemote`], [`ConfiguredRemoteRecord`], [`ParsedUrl`] and the
+//! credential types omits them. [`Remote`]'s `Debug` output does include its URLs, so don't log
+//! it. To show a URL, build it from [`ParsedUrl::host`] and [`ParsedUrl::path`], which drop the
+//! username and password, and remove any query string from the path yourself.
 //!
 //! # Credentials
 //!
@@ -109,13 +116,65 @@
 //! name to a [`CredentialBackend`] it has approved: a [`CredentialProgram`] with an explicit
 //! executable and arguments, or the native [`CredentialStore`]. A configured helper without a
 //! mapping fails with [`CredentialError::UnapprovedHelper`] before anything runs.
-//! [`crate::workflow`] performs this mapping the way Git does, finding `git-credential-<name>`
-//! programs on `PATH` and Git's exec path, so most applications never construct helpers
-//! themselves.
+//!
+//! [`crate::workflow`] grants that approval automatically, the way Git does: a `!command` value
+//! runs as a shell command, an absolute path runs that program, and any other name runs
+//! `git-credential-<name>` from `PATH` or Git's exec path. Most applications therefore never
+//! construct helpers themselves, but they must trust the configuration they give `workflow`, or
+//! filter its `credential.helper` values first. The refusal above protects only applications that
+//! call [`CredentialSession::fill`] with their own mappings.
 //!
 //! [`CredentialStore`] answers Git's `store` helper without starting a process, reading and
 //! writing the same plain-text `~/.git-credentials` files with the same locking. It is useful for
 //! tests and for environments where Git is not installed. Its files hold passwords unencrypted.
+//!
+//! # Errors and recovery
+//!
+//! - [`EndpointError::Refused`]: `protocol.allow`, `protocol.<name>.allow` or `GIT_ALLOW_PROTOCOL`
+//!   forbids the remote's protocol. This is policy, not a malformed URL; show the user which
+//!   setting applies rather than retrying.
+//! - [`ConfiguredRemoteError::UnsupportedUrlSyntax`]: the URL is valid Git syntax that girt does
+//!   not yet interpret. Treat the whole remote as unsupported, rather than as invalid.
+//! - [`RemoteError::Refspec`]: a refspec is outside the subset that can drive a transfer; the
+//!   remote can still be displayed with [`ConfiguredRemote`].
+//! - [`CredentialError`]: a lookup was refused, failed or was cancelled. A successful
+//!   [`CredentialSession::fill`] can still return an incomplete credential when no prompt is
+//!   supplied, and helpers that exit unsuccessfully are listed in
+//!   [`CredentialSession::helper_failures`] while later helpers still run. Approving a credential
+//!   only reports that the server accepted it; it says nothing about whether the transfer finished.
+//!
+//! # Resolving where to connect
+//!
+//! Find a remote and resolve the endpoint a transfer would use. Resolution applies `insteadOf` and
+//! protocol policy but performs no I/O; [`crate::workflow::fetch`] shows the transfer itself.
+//!
+//! ```
+//! use girt::remote::{Protocol, ProtocolEnvironment, Remote, RemoteConfig};
+//! use girt::{InitKind, ObjectFormat, Repository};
+//!
+//! let directory = tempfile::tempdir()?;
+//! let path = directory.path().join("project");
+//! Repository::init(ObjectFormat::Sha1, &path, InitKind::Worktree)?;
+//! let mut edit = Repository::open(&path)?.edit_config(1 << 20)?;
+//! RemoteConfig::new(edit.document_mut()).add(
+//!     b"origin",
+//!     b"https://example.com/project.git",
+//!     &[b"+refs/heads/*:refs/remotes/origin/*"],
+//! )?;
+//! edit.commit()?;
+//!
+//! let repo = Repository::open(&path)?;
+//! let origin = Remote::find(repo.config(), b"origin")?.ok_or("no remote named origin")?;
+//! let destination = origin.fetch_destination(repo.config(), &ProtocolEnvironment::default())?;
+//! match destination.protocol() {
+//!     Protocol::Local | Protocol::File => println!("local path {:?}", destination.local_path()?),
+//!     Protocol::Https | Protocol::Http => println!("needs the `http` feature"),
+//!     Protocol::Ssh => println!("needs the `ssh` feature"),
+//!     _ => println!("unsupported transport"),
+//! }
+//! # assert_eq!(destination.protocol(), Protocol::Https);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 //!
 //! # Mapping a configured refspec
 //!

@@ -24,8 +24,9 @@ use super::credential::{Credential, CredentialContext, CredentialError};
 /// first file that exists, or creates the first file when none does. Rejection removes matching
 /// entries from every file. Each change holds a `<file>.lock` sibling from before the read until
 /// it is renamed over the file, so concurrent Git or girt writers fail instead of losing updates
-/// and an interrupted write leaves the old contents. New files are mode 0600; a rewrite drops group
-/// and other access, as Git does, and keeps stricter owner bits such as 0400.
+/// and an interrupted write leaves the old contents. On Unix, new files are mode 0600 and a
+/// rewrite drops group and other access, as Git does, keeping stricter owner bits such as 0400.
+/// Other platforms use the directory's inherited permissions.
 ///
 /// ```
 /// use std::path::Path;
@@ -57,8 +58,9 @@ impl std::fmt::Debug for CredentialStore {
 impl CredentialStore {
     /// Uses only `path`, like `git credential-store --file <path>`.
     ///
-    /// The file need not exist; it is created with mode 0600 when the first credential is
-    /// approved.
+    /// The file need not exist. It is created when a complete credential is first approved. On
+    /// Unix, a new file is created with owner-only permissions (mode 0600); on other platforms it
+    /// inherits the directory's permissions, so the application must keep the directory private.
     ///
     /// # Examples
     ///

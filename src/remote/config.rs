@@ -141,8 +141,10 @@ impl Remote {
     ///
     /// Empty headers are omitted here; [`Config::subsection_names`] includes them in sorted order.
     /// Names are not validated as paths or reference components; consumers must validate before
-    /// using them in either context. A name may belong to a remote with no URL; filter with
-    /// [`Self::find`] or [`super::ConfiguredRemoteRecord`] when only usable remotes are wanted.
+    /// using them in either context. A name may belong to a remote with no URL, such as a section
+    /// holding only a `fetch` refspec. To list only remotes with a URL, check
+    /// [`Self::fetch_url`] after [`Self::find`], or use [`super::ConfiguredRemote::find`], which
+    /// returns `None` for URL-free remotes. Neither establishes that the URL is usable.
     ///
     /// # Examples
     ///
