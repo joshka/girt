@@ -8,21 +8,25 @@ archive without these guides has nothing to check.
 
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 GUIDES = ROOT / "site/src/content/docs/guides"
-PAGES = ("index-and-working-tree.md", "diffs-and-renames.md", "maintenance.md")
 
 
 def main():
-    pages = [GUIDES / name for name in PAGES if (GUIDES / name).is_file()]
+    pages = sorted(
+        page for page in GUIDES.rglob("*")
+        if page.suffix in (".md", ".mdx")
+        and re.search(r"^```rust(?:[, \t][^\n]*)?\s*$", page.read_text(), re.MULTILINE)
+    )
     if not pages:
         print("No developer website guides in this checkout.")
         return
     result = subprocess.run(
-        ["cargo", "build", "--lib", "--all-features", "--message-format=json"],
+        ["cargo", "build", "--locked", "--lib", "--all-features", "--message-format=json"],
         cwd=ROOT, check=True, text=True, stdout=subprocess.PIPE,
     )
     libraries = {}
@@ -35,6 +39,9 @@ def main():
             for filename in message["filenames"]:
                 if filename.endswith(".rlib"):
                     libraries[name] = Path(filename)
+    missing = {"girt", "tempfile"} - libraries.keys()
+    if missing:
+        raise RuntimeError(f"Cargo did not report library artifacts for: {sorted(missing)}")
     externs = []
     for name in ("girt", "tempfile"):
         externs.extend(["--extern", f"{name}={libraries[name]}"])
