@@ -105,6 +105,47 @@ fn combines_loose_and_packed_reads_and_reports_absence(#[case] format: girt::Obj
 #[rstest]
 #[case::sha1(girt::ObjectFormat::Sha1)]
 #[case::sha256(girt::ObjectFormat::Sha256)]
+fn contains_reports_packed_loose_and_absent_objects_without_writing(
+    #[case] format: girt::ObjectFormat,
+) {
+    let fixture = Fixture::new(format, true, 4);
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let loose_dir_entries = || {
+        fs::read_dir(fixture.repo.object_dir())
+            .unwrap()
+            .filter(|entry| entry.as_ref().unwrap().file_name().len() == 2)
+            .count()
+    };
+    let before = loose_dir_entries();
+    for (id, _, _) in &fixture.records {
+        assert!(objects.contains(*id).unwrap(), "packed {id}");
+    }
+    let absent = ObjectId::for_blob(format, b"absent");
+    assert!(!objects.contains(absent).unwrap());
+    assert_eq!(loose_dir_entries(), before, "a query creates nothing");
+    assert!(
+        objects
+            .contains(format.hash_object(ObjectKind::Tree, b""))
+            .unwrap()
+    );
+
+    let id = fixture.repo.loose_objects().write_blob(b"absent").unwrap();
+    assert_eq!(id, absent);
+    assert!(objects.contains(id).unwrap(), "live loose files are seen");
+
+    let other = match format {
+        ObjectFormat::Sha1 => ObjectFormat::Sha256,
+        _ => ObjectFormat::Sha1,
+    };
+    assert!(matches!(
+        objects.contains(ObjectId::for_blob(other, b"absent")),
+        Err(ObjectReadError::Loose(girt::loose::Error::ObjectFormat(_)))
+    ));
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
 /// Observed with `git cat-file -p`: a corrupt loose copy of a packed object doesn't hide the
 /// valid packed copy.
 fn corrupt_loose_copy_does_not_hide_valid_pack(#[case] format: girt::ObjectFormat) {
