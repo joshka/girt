@@ -123,6 +123,8 @@ fn lists_packs_loose_and_alternates_like_git(#[case] format: ObjectFormat) {
     sorted.sort();
     assert_eq!(pack.ids().collect::<Vec<_>>(), sorted);
     assert_eq!(pack.ids().next_back(), sorted.last().copied());
+    assert!(packed.iter().all(|&id| pack.contains(id).unwrap()));
+    assert!(!pack.contains(loose[0]).unwrap());
 
     let mut primary: Vec<_> = stores[0]
         .loose_objects()

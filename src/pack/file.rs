@@ -867,11 +867,6 @@ impl FilePack {
         (self.pack.len as u64, self.index.len as u64)
     }
 
-    /// Whether the pinned in-memory index lists `id`; reads no file.
-    pub(crate) fn lists(&self, id: ObjectId) -> bool {
-        id.format() == self.format && self.table.find(&self.index_bytes, id).is_some()
-    }
-
     /// Identity at index `position`, which must be below [`Self::object_count`].
     pub(crate) fn identity_at(&self, position: usize) -> ObjectId {
         self.table.identity(&self.index_bytes, position)
