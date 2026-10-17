@@ -577,6 +577,71 @@ pub enum PushError {
 }
 
 /// Preparation or session failure cause. Remote per-ref rejections are [`Status`] values instead.
+///
+/// [`PreparedPush::new`](super::PreparedPush::new) returns this directly; sending wraps it in
+/// [`PushError`], whose variant says whether commands may have reached the receiver. The causes
+/// group by what to do next:
+///
+/// - **Fix the commands.** [`Command`](Self::Command) (duplicate destination, zero expected ID,
+///   name outside `refs/`), [`WouldForce`](Self::WouldForce) (a non-fast-forward update or tag
+///   replacement needs [`ForcePolicy::Allow`]), [`ObjectFormat`](Self::ObjectFormat) (a command or
+///   receiver root uses the other object format) and [`Identity`](Self::Identity) (an invalid
+///   reflog identity).
+/// - **The local repository can't supply the history.** [`Missing`](Self::Missing),
+///   [`Kind`](Self::Kind), [`Read`](Self::Read), [`Commit`](Self::Commit), [`Tree`](Self::Tree) and
+///   [`Tag`](Self::Tag): the commands point at objects that are absent, of the wrong kind or
+///   invalid. Fetch the missing history or correct the commands. [`Pack`](Self::Pack) is a failure
+///   building the pack, such as temporary-file I/O or a pack budget; see its nested error.
+/// - **The receiver's state changed.** [`KnowledgeChanged`](Self::KnowledgeChanged): a receiver
+///   root used to shrink the pack is no longer advertised. Prepare again from a fresh
+///   advertisement, as [`crate::workflow::push`] does automatically once.
+/// - **Limits, interruption and transport.** [`Limit`](Self::Limit) (raise that [`PushLimits`]
+///   field for a trusted receiver), [`Cancelled`](Self::Cancelled), [`Deadline`](Self::Deadline),
+///   [`Io`](Self::Io), [`Http`](Self::Http), [`Ssh`](Self::Ssh) and [`Process`](Self::Process).
+///   Retrying may succeed, but only after checking the receiver if the error is
+///   [`PushError::Uncertain`].
+/// - **The receiver refused or misbehaved.** [`Remote`](Self::Remote) (an error message from the
+///   receiver) and [`Protocol`](Self::Protocol).
+/// - **Something isn't supported.** [`Unsupported`](Self::Unsupported) covers a receiver missing a
+///   required capability such as `report-status` or `delete-refs`, a shallow source repository,
+///   and, for a local destination, a format, shallow state, configuration value or hook girt does
+///   not support. The message names which; change the request or destination, or use another
+///   implementation.
+/// - **A local destination failed.** [`Destination`](Self::Destination) (not a repository),
+///   [`Install`](Self::Install), [`Reference`](Self::Reference) and
+///   [`QuarantineCleanup`](Self::QuarantineCleanup). Inspect the destination before retrying;
+///   `QuarantineCleanup` holds the private directory that could not be removed.
+///
+/// # Examples
+///
+/// Preparation refuses two commands for one destination before reading any history:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::push::{PreparedPush, PushCommand, PushFailure, PushLimits};
+/// use girt::refs::RefName;
+/// # let (_directory, _, repo, _, _) = include!("../doctest/remote.rs");
+/// # let commit = include!("../doctest/commit.rs");
+/// let first = commit(&repo, &[], "First")?;
+/// let second = commit(&repo, &[], "Second")?;
+/// let main = RefName::new("refs/heads/main")?;
+/// let commands = vec![
+///     PushCommand::new(main.clone(), None, first),
+///     PushCommand::new(main, None, second),
+/// ];
+/// let objects = repo.objects(PackLimits::default())?;
+/// let result = PreparedPush::new(
+///     &objects,
+///     commands,
+///     &[],
+///     PushLimits::default(),
+///     &AtomicBool::new(false),
+/// );
+/// assert!(matches!(result, Err(PushFailure::Command(_))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PushFailure {

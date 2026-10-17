@@ -107,6 +107,24 @@ impl FetchUpdateLimits {
 }
 
 /// An installed transfer cannot be safely published under the selected update rules.
+///
+/// Raised by [`FetchReady::finish`](super::FetchReady::finish) after the pack is installed and
+/// before any reference changes, inside
+/// [`FetchFinishFailure::Update`](super::FetchFinishFailure::Update). No reference was updated.
+///
+/// - [`NonFastForward`](Self::NonFastForward): the remote moved a branch to a commit that does not
+///   descend from the local remote-tracking value. Fetch again with a `+` refspec and the
+///   destination named in the authorized set if that rewrite should be accepted; see
+///   [`FetchRequest::prepare`](super::FetchRequest::prepare) for an example.
+/// - [`History`](Self::History): the ancestry walk failed. Inspect the nested
+///   [`HistoryError`](crate::HistoryError): raise
+///   [`FetchUpdateLimits::history`](super::FetchUpdateLimits::history) only for a limit failure in
+///   a trusted repository; a missing, unreadable or malformed commit needs the history repaired or
+///   fetched, and a larger budget would only repeat the work.
+/// - [`Object`](Self::Object) and [`Peel`](Self::Peel): an installed or existing tip could not be
+///   read or peeled, the tag chain exceeded
+///   [`FetchUpdateLimits::max_tag_depth`](super::FetchUpdateLimits::max_tag_depth), or the
+///   operation was cancelled.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FetchUpdateError {

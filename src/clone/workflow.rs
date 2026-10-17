@@ -471,6 +471,47 @@ pub struct CloneReport {
 }
 
 /// Transfer or planning failure with no destination effects.
+///
+/// The destination was not created. [`Plan`](Self::Plan) means the branch choice doesn't fit the
+/// remote; see [`ClonePlanError`]. [`Transfer`](Self::Transfer) covers the connection, limits,
+/// cancellation and invalid data; see [`FetchError`] for what each cause means.
+///
+/// # Examples
+///
+/// ```
+/// use std::ops::ControlFlow;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::InitKind;
+/// use girt::clone::{BranchSelection, CloneRequest, CloneTransferError};
+/// use girt::fetch::{FetchError, FetchLimits};
+/// use girt::refs::Reflog;
+/// use girt::transport::TransportControl;
+/// # let (directory, upstream, _, _, _) = include!("../doctest/remote.rs");
+///
+/// let destination = directory.path().join("clone");
+/// let request = CloneRequest::prepare_tracking(
+///     &destination,
+///     InitKind::Worktree,
+///     b"../upstream.git",
+///     BranchSelection::Default,
+///     Reflog::Preserve,
+/// )?;
+/// // A tight limit stops the transfer; the destination is never created.
+/// let cancel = AtomicBool::new(false);
+/// let result = request.receive_local(
+///     upstream.git_dir(),
+///     FetchLimits::default().with_max_objects(1),
+///     TransportControl::new(&cancel),
+///     |_| ControlFlow::Continue(()),
+/// );
+/// assert!(matches!(
+///     result,
+///     Err(CloneTransferError::Transfer(FetchError::Limit(_)))
+/// ));
+/// assert!(!destination.exists());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CloneTransferError {
@@ -489,6 +530,51 @@ pub enum CloneTransferError {
 /// completed, so the caller can decide whether to remove it or leave it for inspection. Fetching
 /// into it does not finish it: the configuration, local branch and `HEAD` are published last, and
 /// a partially initialized repository needs repair first.
+///
+/// # Examples
+///
+/// Cancelling before `finish` creates the destination leaves nothing to clean up:
+///
+/// ```
+/// use std::ops::ControlFlow;
+/// use std::sync::atomic::{AtomicBool, Ordering};
+///
+/// use girt::InitKind;
+/// use girt::clone::{BranchSelection, CloneFailure, CloneRequest};
+/// use girt::fetch::{FetchError, FetchLimits, FetchUpdateLimits};
+/// use girt::refs::Reflog;
+/// use girt::transport::TransportControl;
+/// # let (directory, upstream, _, _, _) = include!("../doctest/remote.rs");
+///
+/// let destination = directory.path().join("clone");
+/// let request = CloneRequest::prepare_tracking(
+///     &destination,
+///     InitKind::Worktree,
+///     b"../upstream.git",
+///     BranchSelection::Default,
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let ready = request.receive_local(
+///     upstream.git_dir(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     |_| ControlFlow::Continue(()),
+/// )?;
+///
+/// cancel.store(true, Ordering::Relaxed);
+/// let error = ready
+///     .finish(FetchUpdateLimits::default(), &cancel)
+///     .unwrap_err();
+/// assert!(matches!(
+///     error.source,
+///     CloneFailure::Verification(FetchError::Cancelled)
+/// ));
+/// // Decide on cleanup from the report, not by guessing.
+/// assert!(!error.report.reserved && !error.report.initialized);
+/// assert!(!destination.exists());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[error("clone failed")]
 #[non_exhaustive]
@@ -504,6 +590,25 @@ pub struct CloneError {
 ///
 /// [`CloneRequest::prepare_tracking`] returns these directly; [`CloneReady::finish`] wraps them in
 /// a [`CloneError`] with a report of the completed phases.
+///
+/// - **Before anything is created:** [`Exists`](Self::Exists) (choose another path, or remove the
+///   existing one only after confirming it is disposable), [`Url`](Self::Url) (the stored URL is
+///   empty or contains NUL or a carriage return) and [`Plan`](Self::Plan) (the branch choice
+///   doesn't fit the remote).
+/// - **While creating the repository:** [`Io`](Self::Io) and
+///   [`Initialization`](Self::Initialization). Partial metadata may remain if the report says the
+///   destination was reserved.
+/// - **While fetching into it:** [`FetchPlan`](Self::FetchPlan) and [`Fetch`](Self::Fetch) (with
+///   its own [`FetchFinishError`] report).
+/// - **In more than one phase:** [`Open`](Self::Open) reopening the repository, which happens after
+///   the fetch and again at the very end, so the clone may be fully published.
+///   [`Verification`](Self::Verification) covers cancellation, which is checked before creation and
+///   between later phases, failures reading the installed objects, and a fetched branch whose tip
+///   is not a commit. For these, the [`CloneReport`] says what completed.
+/// - **While finishing:** [`Configuration`](Self::Configuration), [`Reference`](Self::Reference),
+///   [`PackRefs`](Self::PackRefs), [`Objects`](Self::Objects) and
+///   [`Publication`](Self::Publication). The objects and remote-tracking references are in place;
+///   the origin configuration, local branch or `HEAD` may be missing.
 ///
 /// # Examples
 ///

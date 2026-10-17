@@ -665,6 +665,35 @@ impl FetchLimits {
 /// [`ReceivedFetch::install`], or inside a [`FetchFinishError`], installation may have been
 /// partial; see those types.
 ///
+/// # Causes and remedies
+///
+/// Several variants can arise in more than one phase, reading either the source or the
+/// destination, so read the nested cause and note which operation returned the error before
+/// choosing a remedy. As a guide:
+///
+/// - **The connection or the caller interrupted the operation.** [`Io`](Self::Io),
+///   [`Http`](Self::Http), [`Ssh`](Self::Ssh), [`Process`](Self::Process),
+///   [`Deadline`](Self::Deadline) and [`Cancelled`](Self::Cancelled). Retrying may succeed; for
+///   SSH, show the diagnostics OpenSSH wrote to standard error.
+/// - **The peer refused or sent something girt cannot accept.** [`Protocol`](Self::Protocol),
+///   [`Remote`](Self::Remote) (an error message from the server), [`Pack`](Self::Pack) and the
+///   object checks [`Missing`](Self::Missing), [`Kind`](Self::Kind), [`Commit`](Self::Commit),
+///   [`Tree`](Self::Tree) and [`Tag`](Self::Tag). During a transfer these describe the source's
+///   data, and retrying the same source usually gives the same result. After installation,
+///   `Missing` and `Kind` can instead come from rechecking the destination's own history.
+/// - **The request does not fit.** [`Limit`](Self::Limit), [`FormatMismatch`](Self::FormatMismatch)
+///   and [`ObjectFormat`](Self::ObjectFormat) (SHA-1 and SHA-256 repositories cannot exchange
+///   objects), [`Unadvertised`](Self::Unadvertised) (select wants from the current advertisement),
+///   [`Unsupported`](Self::Unsupported) (a protocol feature the peer needs, or a request such as a
+///   native local depth greater than one), [`Source`](Self::Source) (the path is not a repository)
+///   and [`SourceObjects`](Self::SourceObjects) (often a large source refused by
+///   [`FetchLimits::source_packs`]; use [`crate::PackLimits::trusted`] for repositories you trust).
+/// - **Local storage failed.** [`LocalRead`](Self::LocalRead), [`PackWrite`](Self::PackWrite) and
+///   [`Peel`](Self::Peel) read the source during a native local transfer, or the destination when
+///   checking its history; [`Index`](Self::Index) builds the received pack's index;
+///   [`Destination`](Self::Destination) opens the destination. Check the repository named by the
+///   phase for missing files or permissions. [`Existing`](Self::Existing) is described below.
+///
 /// # Examples
 ///
 /// A local source path that is not a repository is reported as [`FetchError::Source`], which jj
@@ -713,9 +742,20 @@ pub enum FetchError {
     #[error("upload-pack reported an error: {0:?}")]
     Remote(Vec<u8>),
     /// An explicit want was not a non-peeled advertised reference tip.
+    ///
+    /// Wants must come from the advertisement of the same transfer, which the `select` callback
+    /// receives. An ID from an earlier discovery may no longer be advertised.
     #[error("unadvertised want {0}")]
     Unadvertised(ObjectId),
-    /// A resource budget was exhausted.
+    /// A resource budget was exhausted; the message names the budget, such as `wire bytes` or
+    /// `local objects`.
+    ///
+    /// During a transfer, nothing was installed: if the source is trusted, raise the matching
+    /// [`FetchLimits`] field or use [`FetchLimits::trusted`]; otherwise the source is asking for
+    /// more work than the caller allows. Inside a [`FetchFinishError`] the limit was reached while
+    /// checking the installed objects, which are then in place; raise
+    /// [`FetchUpdateLimits::verification`] for a trusted repository, and read the report for the
+    /// effects.
     #[error("fetch limit exceeded: {0}")]
     Limit(&'static str),
     /// The cancellation flag was set or the progress callback requested cancellation.
@@ -799,7 +839,13 @@ pub enum FetchError {
     /// A local upload-pack exited unsuccessfully after its protocol response.
     #[error("local upload-pack exited unsuccessfully: {0}")]
     Process(std::process::ExitStatus),
-    /// A live object artifact with the same name contains different bytes.
+    /// An object artifact already exists where girt needed to create one.
+    ///
+    /// Holds the path. Ordinary installation reports it when an installed pack or index with the
+    /// same name has different bytes. Retained installation reports it for any existing pack or
+    /// index, even an identical one, because a collector may already have chosen the old copy for
+    /// deletion. [`FetchRetention::release`] reports it when the `.keep` marker was replaced. girt
+    /// never overwrites or removes these files; inspect them before deciding what to keep.
     #[error("existing pack artifact differs: {0}")]
     Existing(std::path::PathBuf),
 }

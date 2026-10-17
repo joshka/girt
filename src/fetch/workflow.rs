@@ -1280,6 +1280,11 @@ impl RetainedFetchReady {
 }
 
 /// Retained workflow failure with completed effects and ownership of any acquired marker.
+///
+/// Like [`FetchFinishError`], with one addition: if the `.keep` marker was acquired,
+/// `retention` owns it. Dropping the error leaves the marker on disk, protecting the installed
+/// pack from repacking. Release it with [`FetchRetention::release`](super::FetchRetention::release)
+/// once references that keep the objects reachable are published, or when abandoning them.
 #[derive(Debug, thiserror::Error)]
 #[error("fetch finish failed")]
 #[non_exhaustive]
@@ -1452,7 +1457,8 @@ pub enum FetchWorkflowError {
 /// Installation/publication failure retaining completed effects.
 ///
 /// Returned by [`FetchReady::finish`] after the transfer was validated. Nothing is rolled back,
-/// so inspect `report` before deciding what to do:
+/// so inspect `report`, and [`FetchFinishFailure`] for how far the fetch got, before deciding
+/// what to do:
 ///
 /// - `report.installed` is `Some` only if the pack was installed; a failed installation can leave
 ///   an unindexed pack file behind.
@@ -1475,6 +1481,28 @@ pub struct FetchFinishError {
 }
 
 /// Failed phase after validated transfer.
+///
+/// [`FetchReady::finish`] takes the shallow lock if the boundaries change or the destination is
+/// already shallow, installs the pack,
+/// verifies the installed history, publishes the shallow file, rechecks worktrees, checks the
+/// update rules and finally publishes references. The variant says which step failed; the report
+/// in [`FetchFinishError`] has the exact effects.
+///
+/// | Variant | Pack installed | `.git/shallow` | References |
+/// | --- | --- | --- | --- |
+/// | [`Installation`](Self::Installation) | no, but maybe an unindexed pack | unchanged | unchanged |
+/// | [`Shallow`](Self::Shallow) | no if the lock was refused, yes if publishing failed | unchanged | unchanged |
+/// | [`Safety`](Self::Safety) | no for a refused shallow change, which is checked first; otherwise yes | maybe changed | unchanged |
+/// | [`BeforePublication`](Self::BeforePublication) | yes | maybe changed | unchanged |
+/// | [`Reopen`](Self::Reopen) | yes | maybe changed | unchanged |
+/// | [`Update`](Self::Update) | yes | maybe changed | unchanged |
+/// | [`Publication`](Self::Publication) | yes | maybe changed | possibly some; see the transaction error |
+///
+/// Fetching again with a new [`FetchRequest`] is safe after any of them. Before retrying,
+/// address the cause: [`Safety`](Self::Safety) means a worktree's `HEAD` or registration changed
+/// during the fetch, or the response would change shallow boundaries the request did not ask to
+/// change, [`Update`](Self::Update) is usually a refused non-fast-forward, and
+/// [`Publication`](Self::Publication) usually means another writer moved a destination.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FetchFinishFailure {
