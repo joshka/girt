@@ -305,3 +305,142 @@ fn damage_rescued_after_complete_plan_refuses_prune(#[case] format: crate::Objec
             .is_err()
     );
 }
+
+/// One commit, referenced by `refs/heads/main`, whose root tree has `entries`.
+///
+/// Trees are written with girt because Git refuses entries whose mode contradicts the target's
+/// kind; `entries` can name the commit itself through `None`.
+fn kind_fixture(
+    root: &Path,
+    entries: &[(crate::EntryMode, &str, Option<crate::ObjectId>)],
+) -> (Repository, crate::ObjectId) {
+    use crate::{Commit, CommitFields, Signature, Tree, TreeEntry};
+    git(root, &["init", "-q"], b"");
+    let repository = Repository::open(root).unwrap();
+    let loose = repository.loose_objects();
+    let format = repository.object_format();
+    let person = Signature {
+        name: b"A".to_vec(),
+        email: b"a@example.com".to_vec(),
+        seconds: 1_700_000_000,
+        offset_minutes: 0,
+    };
+    let commit_for = |tree| {
+        Commit::new(CommitFields {
+            tree,
+            parents: vec![],
+            author: person.clone(),
+            committer: person.clone(),
+            extra_headers: vec![],
+            message: b"kinds\n".to_vec(),
+        })
+        .unwrap()
+    };
+    // A commit cannot name a tree that names the commit, so self-references use a parent commit
+    // whose tree is empty; the tip's tree then names that parent.
+    let parent = commit_for(
+        loose
+            .write_tree(&Tree::new(format, vec![]).unwrap())
+            .unwrap(),
+    );
+    let parent_id = loose.write_commit(&parent).unwrap();
+    let tree = Tree::new(
+        format,
+        entries
+            .iter()
+            .map(|&(mode, name, id)| TreeEntry {
+                mode,
+                name: name.as_bytes().to_vec(),
+                id: id.unwrap_or(parent_id),
+            })
+            .collect(),
+    )
+    .unwrap();
+    let mut tip = commit_for(loose.write_tree(&tree).unwrap());
+    if entries.iter().any(|entry| entry.2.is_none()) {
+        tip = Commit::new(CommitFields {
+            tree: tree.id(),
+            parents: vec![parent_id],
+            author: person.clone(),
+            committer: person.clone(),
+            extra_headers: vec![],
+            message: b"kinds\n".to_vec(),
+        })
+        .unwrap();
+    }
+    let tip = loose.write_commit(&tip).unwrap();
+    git(
+        root,
+        &["update-ref", "refs/heads/main", &tip.to_string()],
+        b"",
+    );
+    (repository, parent_id)
+}
+
+fn plan_outcome(repository: &Repository) -> crate::retention::RetentionPlan {
+    let policy = RetentionPolicy {
+        recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
+        ..RetentionPolicy::trusted()
+    };
+    repository.plan_retention(&policy, &AtomicBool::new(false))
+}
+
+/// Every edge checks its kind, including edges to an identity the walk already queued or read.
+#[test]
+fn retention_walk_checks_kinds_of_repeated_edges() {
+    use crate::EntryMode::{Blob, Executable, Tree};
+    use crate::retention::{RetentionError, RetentionOutcome};
+    let blob = |root: &Path| -> crate::ObjectId {
+        git(root, &["init", "-q"], b"");
+        git(root, &["hash-object", "-w", "--stdin"], b"content\n")
+            .parse()
+            .unwrap()
+    };
+
+    // Repeated names of one blob, with either file mode, are one reachable object.
+    let dir = tempfile::tempdir().unwrap();
+    let id = blob(dir.path());
+    let (repository, _) = kind_fixture(
+        dir.path(),
+        &[
+            (Blob, "a", Some(id)),
+            (Executable, "b", Some(id)),
+            (Blob, "c", Some(id)),
+        ],
+    );
+    let plan = plan_outcome(&repository);
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    assert!(plan.reachable.contains(&id));
+    assert_eq!(plan.reachable.len(), 3, "one commit, one tree and one blob");
+
+    // A queued identity named again with another kind.
+    let dir = tempfile::tempdir().unwrap();
+    let id = blob(dir.path());
+    let (repository, _) = kind_fixture(dir.path(), &[(Blob, "a", Some(id)), (Tree, "b", Some(id))]);
+    assert!(matches!(
+        plan_outcome(&repository).outcome,
+        RetentionOutcome::Incomplete(RetentionError::ConflictingObjectKind(conflict)) if conflict == id
+    ));
+
+    // An edge asserting a tree whose target is read as a blob.
+    let dir = tempfile::tempdir().unwrap();
+    let id = blob(dir.path());
+    let (repository, _) = kind_fixture(dir.path(), &[(Tree, "a", Some(id))]);
+    assert!(matches!(
+        plan_outcome(&repository).outcome,
+        RetentionOutcome::Incomplete(RetentionError::WrongObjectKind(wrong)) if wrong == id
+    ));
+
+    // An edge naming, as a blob, a commit the walk has already read.
+    let dir = tempfile::tempdir().unwrap();
+    let (repository, parent) = kind_fixture(dir.path(), &[(Blob, "a", None)]);
+    git(
+        dir.path(),
+        &["update-ref", "refs/heads/parent", &parent.to_string()],
+        b"",
+    );
+    assert!(matches!(
+        plan_outcome(&repository).outcome,
+        RetentionOutcome::Incomplete(RetentionError::WrongObjectKind(wrong)) if wrong == parent
+    ));
+}

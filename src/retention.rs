@@ -200,6 +200,7 @@
 //!     Ok(())
 //! }
 //! ```
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::Read;
@@ -209,8 +210,7 @@ use std::time::SystemTime;
 
 use crate::refs::{ImportedRecord, RefName, ReflogLimits, Target};
 use crate::{
-    Commit, IdMap, IdSet, Object, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag,
-    Tree, index,
+    Commit, IdMap, Object, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag, index,
 };
 
 mod error;
@@ -1281,6 +1281,14 @@ fn recent_objects(
     Ok(())
 }
 
+/// What the walk knows about one identity it has queued.
+struct Node {
+    /// Kind a verified parent's edge asserts; `None` for a root no edge has named yet.
+    expected: Option<ObjectKind>,
+    /// Kind of the copy the walk read; `None` until it is read.
+    actual: Option<ObjectKind>,
+}
+
 fn walk(
     repo: &Repository,
     store: &crate::Objects,
@@ -1289,27 +1297,36 @@ fn walk(
     roots: &BTreeSet<ObjectId>,
     object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
 ) -> Result<BTreeSet<ObjectId>, RetentionError> {
-    let mut pending: VecDeque<_> = roots.iter().copied().collect();
-    // Hashed lookups: the walk probes these once or more per edge, on 100k-object histories.
-    let mut seen = IdSet::default();
-    let mut expected = IdMap::default();
-    let mut kinds = IdMap::default();
+    // Each identity is queued once, when it is first named, and keeps one entry for its asserted
+    // and read kinds. Trees name most identities many times over (tens of millions of edges on a
+    // large history), so an edge to a queued identity costs one hashed probe and no queue entry.
+    let mut nodes = IdMap::default();
+    let mut pending = VecDeque::with_capacity(roots.len());
+    for &root in roots {
+        nodes.insert(
+            root,
+            Node {
+                expected: None,
+                actual: None,
+            },
+        );
+        pending.push_back(root);
+    }
+    let mut visited = 0usize;
     let mut bytes = 0u64;
     let mut edges = 0usize;
     let mut blobs = Vec::new();
     while let Some(id) = pending.pop_front() {
         check(cancel)?;
-        if seen.contains(&id) {
-            continue;
-        }
-        if seen.len() >= policy.max_entries {
+        if visited >= policy.max_entries {
             return Err(RetentionError::ReachableObjectLimit);
         }
+        visited += 1;
+        let expected = nodes.get(&id).and_then(|node| node.expected);
         // Only blobs are located, after the graph walk and in pack order: they add no edges, and
         // locating them in graph order would read headers scattered across the pack. An edge
         // to a commit, tree or tag is decoded for its own edges, so it is never located first.
-        if expected.get(&id) == Some(&ObjectKind::Blob) && !roots.contains(&id) {
-            seen.insert(id);
+        if expected == Some(ObjectKind::Blob) && !roots.contains(&id) {
             blobs.push(id);
             continue;
         }
@@ -1319,18 +1336,23 @@ fn walk(
             .read_controlled(id, policy.read, cancel)
             .map_err(RetentionError::read)?
             .ok_or_else(|| RetentionError::MissingObject(id))?;
-        if expected
-            .get(&id)
-            .is_some_and(|asserted| *asserted != object.kind())
-        {
+        let kind = object.kind();
+        // An edge named this identity with another kind after it was queued.
+        let expected = nodes.get(&id).and_then(|node| node.expected);
+        if expected.is_some_and(|asserted| asserted != kind) {
             return Err(RetentionError::WrongObjectKind(id));
         }
-        if object.kind() == ObjectKind::Blob {
-            let kind = ObjectKind::Blob;
-            let size = object.data().len() as u64;
-            kinds.insert(id, kind);
-            object_info.insert(id, ObjectInfo { kind, size });
-            seen.insert(id);
+        if let Some(node) = nodes.get_mut(&id) {
+            node.actual = Some(kind);
+        }
+        object_info.insert(
+            id,
+            ObjectInfo {
+                kind,
+                size: object.data().len() as u64,
+            },
+        );
+        if kind == ObjectKind::Blob {
             continue;
         }
         bytes = bytes
@@ -1347,18 +1369,31 @@ fn walk(
             if target.is_null() {
                 return Err(RetentionError::NullEdge(id));
             }
-            if kinds.get(&target).is_some_and(|actual| *actual != kind) {
-                return Err(RetentionError::WrongObjectKind(target));
+            match nodes.entry(target) {
+                Entry::Occupied(mut entry) => {
+                    let node = entry.get_mut();
+                    if node.actual.is_some_and(|actual| actual != kind) {
+                        return Err(RetentionError::WrongObjectKind(target));
+                    }
+                    match node.expected {
+                        Some(previous) if previous != kind => {
+                            return Err(RetentionError::ConflictingObjectKind(target));
+                        }
+                        Some(_) => {}
+                        None => node.expected = Some(kind),
+                    }
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(Node {
+                        expected: Some(kind),
+                        actual: None,
+                    });
+                    pending.push_back(target);
+                }
             }
-            if let Some(previous) = expected.insert(target, kind)
-                && previous != kind
-            {
-                return Err(RetentionError::ConflictingObjectKind(target));
-            }
-            pending.push_back(target);
             Ok(())
         };
-        match object.kind() {
+        match kind {
             ObjectKind::Blob => {}
             ObjectKind::Commit => {
                 let commit = Commit::parse(repo.object_format(), object.data())
@@ -1371,13 +1406,14 @@ fn walk(
                 }
             }
             ObjectKind::Tree => {
-                let tree = Tree::parse(repo.object_format(), object.data())
-                    .map_err(RetentionError::malformed)?;
-                for entry in tree.entries() {
-                    match entry.mode {
+                // Borrowed entries: a tree is parsed only for its edges, so copying every name
+                // would allocate once per entry.
+                for entry in crate::tree::RawEntries::new(repo.object_format(), object.data()) {
+                    let (mode, _, target) = entry.map_err(RetentionError::malformed)?;
+                    match mode {
                         crate::EntryMode::Gitlink => {}
-                        crate::EntryMode::Tree => add(entry.id, ObjectKind::Tree)?,
-                        _ => add(entry.id, ObjectKind::Blob)?,
+                        crate::EntryMode::Tree => add(target, ObjectKind::Tree)?,
+                        _ => add(target, ObjectKind::Blob)?,
                     }
                 }
             }
@@ -1387,15 +1423,6 @@ fn walk(
                 add(tag.target(), tag.target_kind())?;
             }
         }
-        kinds.insert(id, object.kind());
-        object_info.insert(
-            id,
-            ObjectInfo {
-                kind: object.kind(),
-                size: object.data().len() as u64,
-            },
-        );
-        seen.insert(id);
     }
     let located = store
         .locate_all(blobs, policy.read, cancel)
@@ -1407,8 +1434,7 @@ fn walk(
         }
         object_info.insert(id, ObjectInfo { kind, size });
     }
-    let reachable: BTreeSet<_> = seen.into_iter().collect();
-    Ok(reachable)
+    Ok(nodes.into_keys().collect())
 }
 
 fn canonical_empty_tree(id: ObjectId) -> Option<Object> {
