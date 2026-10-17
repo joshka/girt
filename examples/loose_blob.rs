@@ -1,7 +1,7 @@
 //! Run with `cargo run --example loose_blob`; all storage is temporary.
 use girt::{LooseObjects, ObjectFormat};
 
-fn main() -> Result<(), girt::Error> {
+fn main() -> Result<(), girt::loose::Error> {
     let directory = tempfile::tempdir()?;
     let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
     let bytes = b"hello\0Git\xff";

@@ -14,7 +14,7 @@
 //! let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha256);
 //! let id = objects.write_blob(b"binary\0payload\xff")?;
 //! assert_eq!(objects.read_blob(id, 1024)?, b"binary\0payload\xff");
-//! # Ok::<(), girt::Error>(())
+//! # Ok::<(), girt::loose::Error>(())
 //! ```
 //!
 //! Supply the correct format: the object directory itself carries no format metadata. Repository
@@ -76,7 +76,7 @@ use crate::{
 /// let id = objects.write_blob(bytes)?;
 /// assert_eq!(id, ObjectId::for_blob(girt::ObjectFormat::Sha1, bytes));
 /// assert_eq!(objects.read_blob(id, 1024)?, bytes);
-/// # Ok::<(), girt::Error>(())
+/// # Ok::<(), girt::loose::Error>(())
 /// ```
 ///
 /// # Supported storage
@@ -112,7 +112,7 @@ impl LooseObjects {
     /// let objects = girt::LooseObjects::new(directory.path(), girt::ObjectFormat::Sha1);
     /// let id = objects.write_blob(b"standalone storage")?;
     /// assert_eq!(objects.read_blob(id, 1024)?, b"standalone storage");
-    /// # Ok::<(), girt::Error>(())
+    /// # Ok::<(), girt::loose::Error>(())
     /// ```
     pub fn new(directory: impl Into<PathBuf>, object_format: ObjectFormat) -> Self {
         Self {
@@ -147,7 +147,7 @@ impl LooseObjects {
     /// assert_eq!(objects.read_blob(id, 1024)?, b"hello\0Git");
     /// // A size refusal leaves the stored object intact.
     /// assert!(objects.read_blob(id, 1).is_err());
-    /// # Ok::<(), girt::Error>(())
+    /// # Ok::<(), girt::loose::Error>(())
     /// ```
     pub fn read_blob(&self, id: ObjectId, max_size: usize) -> Result<Vec<u8>, Error> {
         self.read_object(id, max_size, "blob")
@@ -378,7 +378,7 @@ impl LooseObjects {
     /// assert_eq!(first, second); // Publishing identical content is idempotent.
     /// assert_eq!(first, ObjectId::for_blob(ObjectFormat::Sha1, b"hello\0Git"));
     /// assert_ne!(first, objects.write_blob(b"hello Git")?);
-    /// # Ok::<(), girt::Error>(())
+    /// # Ok::<(), girt::loose::Error>(())
     /// ```
     pub fn write_blob(&self, bytes: &[u8]) -> Result<ObjectId, Error> {
         self.write_object(self.format, ObjectKind::Blob, bytes)
@@ -555,7 +555,8 @@ impl LooseObjects {
 /// rather than converting them to absence.
 ///
 /// ```
-/// use girt::{Error, InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
+/// use girt::loose::Error;
+/// use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,

@@ -215,7 +215,8 @@ impl Objects {
         id: ObjectId,
         min_len: usize,
     ) -> Result<ObjectIdPrefix, ObjectReadError> {
-        id.require_format(self.format).map_err(crate::Error::from)?;
+        id.require_format(self.format)
+            .map_err(crate::loose::Error::from)?;
         let hex = id.to_string();
         let mut length = min_len.clamp(4, hex.len());
         let prefix = ObjectIdPrefix::from_id(id, length);
@@ -235,7 +236,7 @@ impl Objects {
 
     fn require_prefix_format(&self, prefix: ObjectIdPrefix) -> Result<(), ObjectReadError> {
         if prefix.object_format() != self.format {
-            return Err(crate::Error::from(ObjectFormatError {
+            return Err(crate::loose::Error::from(ObjectFormatError {
                 expected: self.format,
                 actual: prefix.object_format(),
             })

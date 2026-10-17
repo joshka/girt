@@ -756,7 +756,8 @@ impl Objects {
         limits: ReadLimits,
         cancel: &AtomicBool,
     ) -> Result<Option<(ObjectKind, u64)>, ObjectReadError> {
-        id.require_format(self.format).map_err(crate::Error::from)?;
+        id.require_format(self.format)
+            .map_err(crate::loose::Error::from)?;
         for store in &self.stores {
             check_cancelled(cancel)?;
             for pack in &store.packs {
@@ -771,7 +772,7 @@ impl Objects {
                     }
                     return Ok(Some(located));
                 }
-                Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(crate::loose::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
         }
@@ -791,7 +792,8 @@ impl Objects {
         let mut located = Vec::new();
         let mut packed = Vec::new();
         'ids: for id in ids {
-            id.require_format(self.format).map_err(crate::Error::from)?;
+            id.require_format(self.format)
+                .map_err(crate::loose::Error::from)?;
             let mut pack_index = 0;
             for store in &self.stores {
                 check_cancelled(cancel)?;
@@ -810,7 +812,8 @@ impl Objects {
                         located.push((id, Some(loose)));
                         continue 'ids;
                     }
-                    Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(crate::loose::Error::Io(error))
+                        if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error.into()),
                 }
             }
@@ -1135,8 +1138,9 @@ impl Objects {
                         check_cancelled(cancelled)?;
                         return Ok(Some(object));
                     }
-                    Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(crate::Error::Corrupt(_)) if damage.is_some() => {}
+                    Err(crate::loose::Error::Io(error))
+                        if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(crate::loose::Error::Corrupt(_)) if damage.is_some() => {}
                     Err(error) => return Err(error.into()),
                 }
             }
@@ -1212,7 +1216,7 @@ impl Objects {
                         data: object.data,
                     }));
                 }
-                Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(crate::loose::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
         }
@@ -1331,7 +1335,8 @@ impl Objects {
         limits: ReadLimits,
         cancel: &AtomicBool,
     ) -> Result<Option<Transfer<'_>>, ObjectReadError> {
-        id.require_format(self.format).map_err(crate::Error::from)?;
+        id.require_format(self.format)
+            .map_err(crate::loose::Error::from)?;
         let mut pack_index = 0;
         for store in &self.stores {
             check_cancelled(cancel)?;
@@ -1356,7 +1361,7 @@ impl Objects {
                 Ok(object) => {
                     return Ok(Some(Transfer::Stored(object.kind(), object.data().len())));
                 }
-                Err(crate::Error::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(crate::loose::Error::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e.into()),
             }
         }
@@ -1630,7 +1635,7 @@ pub enum ObjectReadError {
     /// Inspect the loose-object source, distinguishing absence, wrong kind, corruption, and size
     /// refusal.
     #[error("loose object")]
-    Loose(#[from] crate::Error),
+    Loose(#[from] crate::loose::Error),
     /// The index version is neither supported headerless v1 nor headered v2.
     /// Provide a supported index-v1 or index-v2 representation.
     #[error("unsupported pack index version {0}")]

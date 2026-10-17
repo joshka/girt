@@ -98,7 +98,7 @@ fn combines_loose_and_packed_reads_and_reports_absence(#[case] format: girt::Obj
         None
     );
     assert!(
-        matches!(loose.read_blob(fixture.delta, 100000), Err(girt::Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound)
+        matches!(loose.read_blob(fixture.delta, 100000), Err(girt::loose::Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound)
     );
 }
 

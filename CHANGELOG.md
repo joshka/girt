@@ -20,6 +20,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `with_tag_namespace`, `with_reflog`, `with_compression`, `with_identity` and `with_push_option`.
   Behavior is unchanged; rename the calls. `with_tag_namespace` and `with_push_option` still add
   one value per call.
+- The crate root no longer re-exports `loose::Error` as `girt::Error`. That name read as a
+  crate-wide error type, but it only covers loose-object storage. Import `girt::loose::Error`
+  instead; the type itself is unchanged.
 
 ## [0.10.3](https://github.com/joshka/girt/compare/v0.10.2...v0.10.3) - 2026-10-17
 

@@ -32,8 +32,8 @@ fn io(error: &std::io::Error) -> &'static str {
     }
 }
 
-pub(crate) fn loose(error: &crate::Error) -> &'static str {
-    use crate::Error::*;
+pub(crate) fn loose(error: &crate::loose::Error) -> &'static str {
+    use crate::loose::Error::*;
     match error {
         ObjectFormat(_) | UnknownObjectType => "unsupported",
         Io(e) => io(e),
