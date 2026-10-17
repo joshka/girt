@@ -124,6 +124,32 @@ fn read_side(
 /// identity/mode and storage cause, while the change supplies the byte path and old/new sides.
 /// An unsupported gitlink requires submodule presentation rather than a text diff; a missing or
 /// corrupt blob needs recovery, not an empty buffer substituted for the failed read.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// use std::sync::atomic::AtomicBool;
+/// use girt::{EntryMode, Tree, TreeEntry};
+/// use girt::content_diff::{BlobContent, ContentReadError};
+///
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Bare)?;
+///
+/// let loose = repo.loose_objects();
+/// let entry = |name: &[u8], id, mode| TreeEntry { name: name.to_vec(), id, mode };
+/// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
+/// let cancel = AtomicBool::new(false);
+///
+/// let missing = girt::ObjectId::for_blob(ObjectFormat::Sha1, b"not stored");
+/// let root = tree(vec![entry(b"file", missing, EntryMode::Blob)])?;
+/// let objects = repo.objects(Default::default())?;
+/// let changes = objects.compare_trees(None, Some(root), Default::default(), &cancel)?;
+/// // Structural comparison succeeded without reading the leaf blob.
+/// let error = BlobContent::read(&objects, &changes[0], Default::default(), 1024, &cancel)
+///     .unwrap_err();
+/// assert!(matches!(error, ContentReadError::Missing(id) if id == missing));
+/// assert_eq!(changes[0].path, b"file"); // Retain this path alongside the storage diagnostic.
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ContentReadError {

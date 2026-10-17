@@ -125,6 +125,56 @@ impl Options {
     }
 
     /// Sets [`Self::track_empty`].
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::rewrites::Options;
+    /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r");
+    /// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
+    /// let loose = repo.loose_objects();
+    /// let entry = |name: &[u8], id, mode| TreeEntry {
+    ///     name: name.to_vec(),
+    ///     id,
+    ///     mode,
+    /// };
+    /// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
+    /// let cancel = AtomicBool::new(false);
+    ///
+    /// let id = loose.write_blob(b"")?;
+    /// let old = tree(vec![entry(b"old", id, EntryMode::Blob)])?;
+    /// let new = tree(vec![entry(b"new", id, EntryMode::Blob)])?;
+    /// let objects = repo.objects(Default::default())?;
+    /// assert!(
+    ///     objects
+    ///         .detect_rewrites(
+    ///             Some(old),
+    ///             Some(new),
+    ///             Options::default(),
+    ///             Default::default(),
+    ///             None,
+    ///             &cancel
+    ///         )?
+    ///         .is_empty()
+    /// );
+    /// let matches = objects.detect_rewrites(
+    ///     Some(old),
+    ///     Some(new),
+    ///     Options::default().with_track_empty(true),
+    ///     Default::default(),
+    ///     None,
+    ///     &cancel,
+    /// )?;
+    /// assert_eq!(matches.len(), 1);
+    /// assert_eq!(matches[0].similarity, 100);
+    /// // Empty content has no distinguishing evidence; choose whether such inferred moves are useful.
+    /// assert_eq!(matches[0].kind, girt::rewrites::Kind::Rename);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     #[must_use]
     pub fn with_track_empty(mut self, track_empty: bool) -> Self {
         self.track_empty = track_empty;
@@ -139,6 +189,60 @@ impl Options {
     }
 
     /// Sets [`Self::approximate_binary`].
+    ///
+    /// Disabling binary similarity does not remove those files from the candidate-limit
+    /// calculation. A UI can therefore see an inexact skip even when its policy would not score
+    /// the remaining pair.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::rewrites::Options;
+    /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r");
+    /// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
+    /// let loose = repo.loose_objects();
+    /// let entry = |name: &[u8], id, mode| TreeEntry {
+    ///     name: name.to_vec(),
+    ///     id,
+    ///     mode,
+    /// };
+    /// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
+    /// let cancel = AtomicBool::new(false);
+    ///
+    /// let before = loose.write_blob(b"before\0binary")?;
+    /// let after = loose.write_blob(b"after\0binary")?;
+    /// let old = tree(vec![entry(b"old", before, EntryMode::Blob)])?;
+    /// let new = tree(vec![entry(b"new", after, EntryMode::Blob)])?;
+    /// let objects = repo.objects(Default::default())?;
+    /// let options = Options::default()
+    ///     .with_approximate_binary(false)
+    ///     .with_candidate_limit(0);
+    /// let skipped = objects.detect_rewrites_or_exact(
+    ///     Some(old),
+    ///     Some(new),
+    ///     options,
+    ///     Default::default(),
+    ///     None,
+    ///     &cancel,
+    /// )?;
+    /// assert!(skipped.rewrites.is_empty());
+    /// assert!(skipped.inexact_skipped.is_some());
+    /// let complete = objects.detect_rewrites_or_exact(
+    ///     Some(old),
+    ///     Some(new),
+    ///     options.with_candidate_limit(1),
+    ///     Default::default(),
+    ///     None,
+    ///     &cancel,
+    /// )?;
+    /// assert!(complete.rewrites.is_empty());
+    /// assert!(complete.inexact_skipped.is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     #[must_use]
     pub fn with_approximate_binary(mut self, approximate_binary: bool) -> Self {
         self.approximate_binary = approximate_binary;
@@ -164,6 +268,44 @@ impl Default for Options {
 /// payload byte, candidate pairs and output paths. Span keys have at most 64 bytes, with map-node
 /// overhead; these bounds are not exact heap/RSS limits. Allocation failure follows Rust's
 /// allocator behavior. No files are written and no handles remain owned by the result.
+///
+/// Exact-only fallback relaxes the candidate policy, not the independent byte, span, pair or work
+/// budgets. Exact selection also charges [`Self::max_pairs`]; exhausting it returns an error from
+/// both APIs, as this example demonstrates.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::rewrites::{Error, Limits, Options};
+/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
+/// let loose = repo.loose_objects();
+/// let entry = |name: &[u8], id, mode| TreeEntry {
+///     name: name.to_vec(),
+///     id,
+///     mode,
+/// };
+/// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
+/// let cancel = AtomicBool::new(false);
+///
+/// let id = loose.write_blob(b"same")?;
+/// let old = tree(vec![entry(b"old", id, EntryMode::Blob)])?;
+/// let new = tree(vec![entry(b"new", id, EntryMode::Blob)])?;
+/// let result = repo.objects(Default::default())?.detect_rewrites_or_exact(
+///     Some(old),
+///     Some(new),
+///     Options::default().with_candidate_limit(0),
+///     Limits::default().with_max_pairs(0),
+///     None,
+///     &cancel,
+/// );
+/// assert!(matches!(result, Err(Error::Limit("pairs"))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Limits {
@@ -261,6 +403,55 @@ pub enum Kind {
 /// remains under investigation; its cause has not been established. A score of 100 for edited
 /// content can mean reordered spans, not identical bytes. `Options::similarity == 100` requires
 /// identity instead. No finite compatibility corpus establishes universal heuristic parity.
+///
+/// # Postimage copies retain the original source identity
+///
+/// When a source is edited and its new content is copied, postimage policy can infer the copy. Its
+/// score describes the postimage comparison; `source_id` still points at the old source snapshot.
+/// Do not use that identity to reconstruct the scored input under postimage policy.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::rewrites::{Copies, Kind, Options};
+/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
+/// let loose = repo.loose_objects();
+/// let entry = |name: &[u8], id, mode| TreeEntry {
+///     name: name.to_vec(),
+///     id,
+///     mode,
+/// };
+/// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
+/// let cancel = AtomicBool::new(false);
+///
+/// let before = loose.write_blob(b"before")?;
+/// let after = loose.write_blob(b"after")?;
+/// let old = tree(vec![entry(b"source", before, EntryMode::Blob)])?;
+/// let new = tree(vec![
+///     entry(b"source", after, EntryMode::Blob),
+///     entry(b"copy", after, EntryMode::Blob),
+/// ])?;
+/// let records = repo.objects(Default::default())?.detect_rewrites(
+///     Some(old),
+///     Some(new),
+///     Options::default()
+///         .with_copies(Copies::ModifiedPostimage)
+///         .with_similarity(100),
+///     Default::default(),
+///     None,
+///     &cancel,
+/// )?;
+/// assert_eq!(records[0].kind, Kind::Copy);
+/// assert_eq!(records[0].similarity, 100);
+/// assert_eq!(records[0].source_id, before);
+/// assert_eq!(records[0].target_id, after);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Rewrite {
