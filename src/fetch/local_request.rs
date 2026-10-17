@@ -37,6 +37,59 @@ type RemoteMessages<'a> = dyn FnMut(&[u8]) -> ControlFlow<()> + 'a;
 
 /// Independent synchronous native-fetch notifications.
 ///
+/// Each notification is optional; [`LocalFetchObserver::default`] observes nothing. Messages
+/// are the source's informational text; construction reports reading and packing the source's
+/// objects; validation reports checking them before installation.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{
+///     FetchLimits, FetchRequest, KnownHistory, LocalFetchObserver, LocalFetchProgress,
+///     ValidationProgress,
+/// };
+/// use girt::refs::Reflog;
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, _, _) = include!("../doctest/remote.rs");
+///
+/// let mut packing = Vec::new();
+/// let mut validation = Vec::new();
+/// let mut on_construction = |progress: LocalFetchProgress| {
+///     if let LocalFetchProgress::Packing { objects } = progress {
+///         packing.push(objects);
+///     }
+/// };
+/// let mut on_validation = |progress: ValidationProgress| validation.push(progress);
+/// let observer = LocalFetchObserver::default()
+///     .with_construction(&mut on_construction)
+///     .with_validation(&mut on_validation);
+///
+/// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+/// let request = FetchRequest::prepare(
+///     repo.clone(),
+///     origin.fetch_refspecs().clone(),
+///     BTreeSet::new(),
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// request.receive_local(
+///     upstream.git_dir(),
+///     &KnownHistory::default(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     observer,
+/// )?;
+///
+/// assert_eq!(packing.last(), Some(&(2, 2)));
+/// let last = validation.last().expect("a pack was validated");
+/// assert!(last.complete);
+/// assert_eq!(last.objects, (2, 2));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 /// Messages may cancel by returning `Break`. Construction and validation callbacks cannot undo
 /// completed work; set the transport cancellation flag to stop at the next cooperative check.
 /// Observers must return promptly. Completion never establishes installation or publication.

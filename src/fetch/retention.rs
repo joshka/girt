@@ -18,6 +18,53 @@ use crate::{ObjectId, PackLimits, Repository};
 /// installation/publication failures: inspect partial effects before releasing retention. After a
 /// crash, the owner may remove the marker at [`Self::path`] when no operation still relies on it.
 /// Abandoned markers can retain disk space indefinitely. No automatic expiry is provided.
+///
+/// # Examples
+///
+/// Install objects that no reference points to yet, keep them safe from repacking while the
+/// application decides what to publish, then release the marker:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::fetch::{FetchLimits, LocalFetchObserver, LocalFetchRequest, receive_local};
+/// use girt::refs::{Expected, RefName, Target};
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+///
+/// let cancel = AtomicBool::new(false);
+/// let received = receive_local(
+///     upstream.git_dir(),
+///     |advertisement| {
+///         advertisement
+///             .refs
+///             .iter()
+///             .map(|reference| reference.id)
+///             .collect()
+///     },
+///     LocalFetchRequest::new(FetchLimits::default()),
+///     TransportControl::new(&cancel),
+///     LocalFetchObserver::default(),
+/// )?;
+/// let (_installed, retention) =
+///     received.install_retained(&repo, PackLimits::default(), &cancel)?;
+/// assert!(
+///     retention
+///         .path()
+///         .extension()
+///         .is_some_and(|extension| extension == "keep")
+/// );
+///
+/// // Publish a reference that keeps the objects reachable, then release the marker.
+/// let name = RefName::new("refs/imports/main")?;
+/// repo.references()?
+///     .update_without_reflog(&name, Target::Direct(main), Expected::Absent)?;
+/// let marker = retention.path().to_owned();
+/// retention.release()?;
+/// assert!(!marker.exists());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 #[must_use = "release retention explicitly after publishing refs or abandoning the transfer"]
 pub struct FetchRetention {

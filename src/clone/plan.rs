@@ -4,6 +4,44 @@ use crate::refs::RefName;
 use crate::remote::{Direction, Mapping, MappingError, Refspecs};
 
 /// Explicit choice of initial local HEAD; all branches and tags are fetched in either case.
+///
+/// # Examples
+///
+/// Asking for a branch the remote doesn't have fails before anything is created:
+///
+/// ```
+/// use std::ops::ControlFlow;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::InitKind;
+/// use girt::clone::{BranchSelection, ClonePlanError, CloneRequest, CloneTransferError};
+/// use girt::fetch::FetchLimits;
+/// use girt::refs::{RefName, Reflog};
+/// use girt::transport::TransportControl;
+/// # let (directory, upstream, _, _, _) = include!("../doctest/remote.rs");
+///
+/// let destination = directory.path().join("clone");
+/// let request = CloneRequest::prepare_tracking(
+///     &destination,
+///     InitKind::Worktree,
+///     b"../upstream.git",
+///     BranchSelection::Branch(RefName::new("refs/heads/release")?),
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let result = request.receive_local(
+///     upstream.git_dir(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     |_| ControlFlow::Continue(()),
+/// );
+/// assert!(matches!(
+///     result,
+///     Err(CloneTransferError::Plan(ClonePlanError::MissingBranch(_)))
+/// ));
+/// assert!(!destination.exists());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum BranchSelection {
@@ -34,6 +72,45 @@ pub enum CloneHead {
 }
 
 /// In-memory preview; only a plan made inside the actual receive operation can be finished.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::InitKind;
+/// use girt::clone::{BranchSelection, CloneHead, CloneRequest};
+/// use girt::fetch::{FetchLimits, discover_local};
+/// use girt::refs::{RefName, Reflog};
+/// use girt::transport::TransportControl;
+/// # let (directory, upstream, _, main, _) = include!("../doctest/remote.rs");
+///
+/// let request = CloneRequest::prepare_tracking(
+///     directory.path().join("clone"),
+///     InitKind::Worktree,
+///     b"../upstream.git",
+///     BranchSelection::Default,
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let discovery = discover_local(
+///     upstream.git_dir(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+/// )?;
+/// let plan = request.plan(&discovery.advertisement)?;
+/// assert_eq!(
+///     plan.head,
+///     CloneHead::Branch {
+///         name: RefName::new("refs/heads/main")?,
+///         id: main
+///     }
+/// );
+/// // `main` maps to `refs/remotes/origin/main`; `HEAD` is fetched without a destination.
+/// let tracking = Some(RefName::new("refs/remotes/origin/main")?);
+/// assert!(plan.mappings.iter().any(|mapping| mapping.destination == tracking));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct ClonePlan {

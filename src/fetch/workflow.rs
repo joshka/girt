@@ -56,6 +56,49 @@ use crate::{ObjectId, Repository};
 /// This workflow does not write `FETCH_HEAD`, infer tags, clone, check out, edit
 /// configuration, discover credentials, or implement the full Git CLI. See
 /// `examples/fetch_remote.rs`.
+///
+/// # Examples
+///
+/// Preview what a fetch would do, using an advertisement from [`super::discover_local`]. The
+/// preview is only advisory: the transfer replans from the advertisement it actually receives.
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{FetchLimits, FetchRequest, FetchUpdateKind, discover_local};
+/// use girt::refs::{RefName, Reflog};
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+///
+/// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+/// let request = FetchRequest::prepare(
+///     repo.clone(),
+///     origin.fetch_refspecs().clone(),
+///     BTreeSet::new(),
+///     Reflog::Preserve,
+/// )?;
+///
+/// let cancel = AtomicBool::new(false);
+/// let discovery = discover_local(
+///     upstream.git_dir(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+/// )?;
+/// let updates = request.plan(&discovery.advertisement)?;
+/// assert_eq!(updates.len(), 1);
+/// assert_eq!(
+///     updates[0].mapping.destination,
+///     Some(RefName::new("refs/remotes/origin/main")?)
+/// );
+/// assert_eq!(updates[0].kind, FetchUpdateKind::Create);
+/// assert_eq!(
+///     updates[0].mapping.source.as_ref().map(|source| source.id),
+///     Some(main)
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct FetchRequest {
     repository: Repository,
@@ -85,6 +128,71 @@ impl FetchRequest {
     ///
     /// Rejects push refspecs, unsupported HEAD chains, inaccessible worktrees, or reference errors.
     /// Mapping-specific failures are returned when the transfer advertisement is available.
+    ///
+    /// # Examples
+    ///
+    /// A `+` refspec states the intent to force; `authorized_force` grants it. When upstream
+    /// rewrites `main`, the fetch refuses to move `refs/remotes/origin/main` backwards until the
+    /// caller authorizes that destination:
+    ///
+    /// ```
+    /// use std::collections::BTreeSet;
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::fetch::{
+    ///     FetchFinishFailure, FetchLimits, FetchRequest, FetchUpdateError, FetchUpdateKind,
+    ///     FetchUpdateLimits, KnownHistory, LocalFetchObserver,
+    /// };
+    /// use girt::refs::{Expected, RefName, Reflog, Target};
+    /// use girt::remote::Remote;
+    /// use girt::transport::TransportControl;
+    /// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+    /// # let commit = include!("../doctest/commit.rs");
+    /// let cancel = AtomicBool::new(false);
+    /// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+    /// let fetch = |authorized: BTreeSet<RefName>| -> Result<_, Box<dyn std::error::Error>> {
+    ///     let request = FetchRequest::prepare(
+    ///         repo.clone(),
+    ///         origin.fetch_refspecs().clone(),
+    ///         authorized,
+    ///         Reflog::Preserve,
+    ///     )?;
+    ///     let ready = request.receive_local(
+    ///         upstream.git_dir(),
+    ///         &KnownHistory::default(),
+    ///         FetchLimits::default(),
+    ///         TransportControl::new(&cancel),
+    ///         LocalFetchObserver::default(),
+    ///     )?;
+    ///     Ok(ready.finish(FetchUpdateLimits::default(), &cancel))
+    /// };
+    /// fetch(BTreeSet::new())??;
+    ///
+    /// // Upstream replaces `main` with an unrelated commit.
+    /// let rewritten = commit(&upstream, &[], "Rewritten history")?;
+    /// let main_ref = RefName::new("refs/heads/main")?;
+    /// upstream.references()?.update_without_reflog(
+    ///     &main_ref,
+    ///     Target::Direct(rewritten),
+    ///     Expected::Value(Target::Direct(main)),
+    /// )?;
+    ///
+    /// // `+` alone is not enough.
+    /// let error = fetch(BTreeSet::new())?.unwrap_err();
+    /// assert!(matches!(
+    ///     *error.source,
+    ///     FetchFinishFailure::Update(FetchUpdateError::NonFastForward(_))
+    /// ));
+    ///
+    /// let tracking = RefName::new("refs/remotes/origin/main")?;
+    /// let report = fetch(BTreeSet::from([tracking.clone()]))??;
+    /// assert_eq!(report.updates[0].kind, FetchUpdateKind::ForcedTracking);
+    /// assert_eq!(
+    ///     repo.references()?.read(&tracking)?,
+    ///     Some(Target::Direct(rewritten))
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn prepare(
         repository: Repository,
         specs: Refspecs,
@@ -227,6 +335,46 @@ impl FetchRequest {
     /// Network validation materializes any reachable known-local dependencies in a nonempty
     /// received pack. An empty object transfer verifies local dependencies during publication;
     /// the caller must continue excluding concurrent collection for that existing history.
+    ///
+    /// # Examples
+    ///
+    /// Fetch only the newest commit of `main`, like `git fetch --depth 1`:
+    ///
+    /// ```
+    /// use std::collections::BTreeSet;
+    /// use std::num::NonZeroU32;
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::fetch::{FetchLimits, FetchRequest, FetchUpdateLimits, KnownHistory, LocalFetchObserver};
+    /// use girt::refs::{Expected, RefName, Reflog, Target};
+    /// use girt::remote::Remote;
+    /// use girt::transport::TransportControl;
+    /// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+    /// # let commit = include!("../doctest/commit.rs");
+    /// // Upstream has two commits on `main`.
+    /// let second = commit(&upstream, &[main], "Second commit")?;
+    /// # upstream.references()?.update_without_reflog(&RefName::new("refs/heads/main")?, Target::Direct(second), Expected::Value(Target::Direct(main)))?;
+    ///
+    /// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+    /// let request =
+    ///     FetchRequest::prepare(repo.clone(), origin.fetch_refspecs().clone(), BTreeSet::new(), Reflog::Preserve)?
+    ///         .with_depth(NonZeroU32::MIN);
+    /// let cancel = AtomicBool::new(false);
+    /// let ready = request.receive_local(
+    ///     upstream.git_dir(),
+    ///     &KnownHistory::default(),
+    ///     FetchLimits::default(),
+    ///     TransportControl::new(&cancel),
+    ///     LocalFetchObserver::default(),
+    /// )?;
+    /// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
+    /// assert!(report.shallow_published);
+    ///
+    /// // `second` is now a shallow boundary: its parent was not fetched.
+    /// let repo = girt::Repository::open(repo.git_dir())?;
+    /// assert!(repo.shallow_roots().iter().any(|root| root == second));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn with_depth(mut self, depth: NonZeroU32) -> Self {
         self.depth = Some(depth);
         self
@@ -235,6 +383,60 @@ impl FetchRequest {
     /// Enables deletion of stale direct remote-tracking and added tag-namespace destinations
     /// owned by these refspecs. Exact snapshot values are required at publication. Built-in
     /// `refs/tags/*` destinations and excluded sources are retained.
+    ///
+    /// Choose what happens to a pruned reference's reflog with
+    /// [`Self::with_reflog_for_update_kind`] and [`FetchUpdateKind::Prune`]; Git deletes it
+    /// ([`Reflog::Delete`]).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::BTreeSet;
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::fetch::{
+    ///     FetchLimits, FetchRequest, FetchUpdateKind, FetchUpdateLimits, KnownHistory,
+    ///     LocalFetchObserver,
+    /// };
+    /// use girt::refs::{Expected, RefName, Reflog, Target};
+    /// use girt::remote::Remote;
+    /// use girt::transport::TransportControl;
+    /// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+    /// let cancel = AtomicBool::new(false);
+    /// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+    /// let fetch = || -> Result<_, Box<dyn std::error::Error>> {
+    ///     let request = FetchRequest::prepare(
+    ///         repo.clone(),
+    ///         origin.fetch_refspecs().clone(),
+    ///         BTreeSet::new(),
+    ///         Reflog::Preserve,
+    ///     )?
+    ///     .with_prune();
+    ///     let ready = request.receive_local(
+    ///         upstream.git_dir(),
+    ///         &KnownHistory::default(),
+    ///         FetchLimits::default(),
+    ///         TransportControl::new(&cancel),
+    ///         LocalFetchObserver::default(),
+    ///     )?;
+    ///     Ok(ready.finish(FetchUpdateLimits::default(), &cancel)?)
+    /// };
+    /// fetch()?;
+    ///
+    /// // `main` disappears upstream, so the next fetch prunes its remote-tracking reference.
+    /// let main_ref = RefName::new("refs/heads/main")?;
+    /// upstream
+    ///     .references()?
+    ///     .delete_without_reflog(&main_ref, Expected::Value(Target::Direct(main)))?;
+    /// let report = fetch()?;
+    /// assert_eq!(report.updates[0].kind, FetchUpdateKind::Prune);
+    /// assert_eq!(
+    ///     repo.references()?
+    ///         .read(&RefName::new("refs/remotes/origin/main")?)?,
+    ///     None
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn with_prune(mut self) -> Self {
         self.prune = true;
         self
@@ -547,6 +749,47 @@ pub(super) fn selected<T>(
 /// Owns all state needed for synchronous installation/publication; can move to a caller's worker.
 /// Dropping it has no storage side effects. No public API permits substituting a different
 /// transfer, destination or mapping after validation.
+///
+/// # Examples
+///
+/// Inspect a validated transfer before deciding to publish it:
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{
+///     FetchLimits, FetchRequest, FetchUpdateLimits, KnownHistory, LocalFetchObserver,
+/// };
+/// use girt::refs::Reflog;
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, _, _) = include!("../doctest/remote.rs");
+///
+/// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+/// let request = FetchRequest::prepare(
+///     repo.clone(),
+///     origin.fetch_refspecs().clone(),
+///     BTreeSet::new(),
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let ready = request.receive_local(
+///     upstream.git_dir(),
+///     &KnownHistory::default(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     LocalFetchObserver::default(),
+/// )?;
+/// // A commit and its empty tree, nothing written yet.
+/// assert_eq!(ready.received().object_count(), 2);
+/// assert!(repo.references()?.list()?.is_empty());
+///
+/// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
+/// assert!(report.installed.is_some());
+/// assert_eq!(report.references.len(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct FetchReady {
     pub(super) request: FetchRequest,
@@ -1121,6 +1364,41 @@ pub struct FetchReport {
 }
 
 /// Planning failed without changing repository contents.
+///
+/// # Examples
+///
+/// A fetch may not write local branches, so a refspec that maps into `refs/heads/` is refused
+/// once the advertisement is known, before anything is transferred:
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{
+///     FetchLimits, FetchPlanError, FetchRequest, FetchWorkflowError, KnownHistory,
+///     LocalFetchObserver,
+/// };
+/// use girt::refs::Reflog;
+/// use girt::remote::{Direction, Refspecs};
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, _, _) = include!("../doctest/remote.rs");
+///
+/// let specs = Refspecs::parse(Direction::Fetch, ["refs/heads/main:refs/heads/main"])?;
+/// let request = FetchRequest::prepare(repo.clone(), specs, BTreeSet::new(), Reflog::Preserve)?;
+/// let cancel = AtomicBool::new(false);
+/// let result = request.receive_local(
+///     upstream.git_dir(),
+///     &KnownHistory::default(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     LocalFetchObserver::default(),
+/// );
+/// assert!(matches!(
+///     result,
+///     Err(FetchWorkflowError::Plan(FetchPlanError::Destination(_)))
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FetchPlanError {
@@ -1154,6 +1432,12 @@ pub enum FetchPlanError {
 }
 
 /// A failure before any installation or reference publication.
+///
+/// The repository is unchanged, so the fetch can be retried as is.
+/// [`Plan`](Self::Plan) means the refspecs or destination policy cannot apply to what the remote
+/// advertised; retrying won't help without changing them. [`Transfer`](Self::Transfer) covers
+/// the transport, the protocol, validation, limits, cancellation and deadlines; see
+/// [`FetchError`] for each cause.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FetchWorkflowError {
@@ -1166,6 +1450,18 @@ pub enum FetchWorkflowError {
 }
 
 /// Installation/publication failure retaining completed effects.
+///
+/// Returned by [`FetchReady::finish`] after the transfer was validated. Nothing is rolled back,
+/// so inspect `report` before deciding what to do:
+///
+/// - `report.installed` is `Some` only if the pack was installed; a failed installation can leave
+///   an unindexed pack file behind.
+/// - `report.shallow_published` says whether `.git/shallow` changed.
+/// - A [`FetchFinishFailure::Publication`] error carries the reference and reflog edits that were
+///   published before the failure.
+///
+/// Fetching again with a fresh [`FetchRequest`] is always safe. See [`FetchRequest::prepare`] for
+/// an example that matches a refused non-fast-forward update.
 #[derive(Debug, thiserror::Error)]
 #[error("fetch finish failed")]
 #[non_exhaustive]
