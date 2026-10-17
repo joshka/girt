@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result};
+use color_eyre::eyre::{Result, WrapErr as _};
 use girt::refs::Backend;
 use girt::{InitKind, InitOptions, ObjectFormat, OperationLimits, Repository};
 
@@ -94,7 +94,7 @@ fn info(context: &Context) -> Result<ExitCode> {
         };
         let operations = repository
             .operation_state(OperationLimits::default())
-            .context("reading operation state")?;
+            .wrap_err("reading operation state")?;
         let roots: Vec<_> = operations.roots().collect();
         writeln!(out, "object-format: {format}")?;
         writeln!(out, "ref-backend: {backend}")?;
@@ -123,7 +123,7 @@ fn info(context: &Context) -> Result<ExitCode> {
 
 fn canonical(path: &Path) -> Result<PathBuf> {
     path.canonicalize()
-        .with_context(|| format!("resolving {}", path.display()))
+        .wrap_err_with(|| format!("resolving {}", path.display()))
 }
 
 /// `git rev-parse --git-dir`: `.` inside it, `.git` from the worktree top, else absolute.
@@ -178,14 +178,14 @@ pub fn init(args: InitArgs, context: &Context) -> Result<ExitCode> {
     if let Some(name) = &args.initial_branch {
         options = options
             .initial_branch(name)
-            .with_context(|| format!("invalid branch name `{name}`"))?;
+            .wrap_err_with(|| format!("invalid branch name `{name}`"))?;
     }
     let target = match &args.directory {
         Some(directory) => context.directory().join(directory),
         None => context.directory().to_path_buf(),
     };
     let repository = Repository::init_with_options(&target, &options)
-        .with_context(|| format!("initializing {}", target.display()))?;
+        .wrap_err_with(|| format!("initializing {}", target.display()))?;
     let git_dir = canonical(repository.git_dir())?;
     let mut out = stdout();
     if context.git {

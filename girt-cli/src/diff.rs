@@ -4,7 +4,7 @@ use std::io::Write;
 use std::ops::Range;
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result};
+use color_eyre::eyre::{Result, WrapErr as _};
 use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
 use girt::rewrites::{Copies, Kind, Limits, Options};
 use girt::{EntryMode, ObjectId, Objects, TreeChange, TreeCompareLimits, TreeValue};
@@ -107,7 +107,7 @@ fn compare(
             TreeCompareLimits::default(),
             not_cancelled(),
         )
-        .context("comparing trees")?;
+        .wrap_err("comparing trees")?;
     if !renames {
         return Ok(changes.into_iter().map(Entry::Change).collect());
     }
@@ -125,7 +125,7 @@ fn compare(
             None,
             not_cancelled(),
         )
-        .context("detecting renames")?;
+        .wrap_err("detecting renames")?;
     let find = |path: &[u8]| changes.iter().find(|change| change.path == path);
     let mut renamed_sources = Vec::new();
     let mut targets = Vec::new();
@@ -135,7 +135,7 @@ fn compare(
             find(&rewrite.source).and_then(|change| change.old),
             find(&rewrite.target).and_then(|change| change.new),
         ) else {
-            anyhow::bail!("rewrite paths missing from the tree comparison");
+            color_eyre::eyre::bail!("rewrite paths missing from the tree comparison");
         };
         if rewrite.kind == Kind::Rename {
             renamed_sources.push(rewrite.source.clone());
@@ -318,7 +318,7 @@ fn write_file_patch(
         limits,
         not_cancelled(),
     )
-    .context("diffing contents")?
+    .wrap_err("diffing contents")?
     {
         ContentDiff::Unchanged => {}
         ContentDiff::Binary { .. } => writeln!(out, "Binary files {a} and {b} differ")?,
@@ -326,7 +326,7 @@ fn write_file_patch(
             writeln!(out, "--- {a}\n+++ {b}")?;
             write_hunks(out, text.old_bytes(), text.new_bytes(), text.edits())?;
         }
-        _ => anyhow::bail!("girt does not support this content diff kind yet"),
+        _ => color_eyre::eyre::bail!("girt does not support this content diff kind yet"),
     }
     Ok(())
 }
@@ -349,8 +349,8 @@ fn read_side(objects: &Objects, value: Option<TreeValue>) -> Result<Vec<u8>> {
     }
     let object = objects
         .read(value.id, read_limits())
-        .with_context(|| format!("reading {}", value.id))?
-        .ok_or_else(|| anyhow::anyhow!("missing object {}", value.id))?;
+        .wrap_err_with(|| format!("reading {}", value.id))?
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing object {}", value.id))?;
     Ok(object.into_data())
 }
 

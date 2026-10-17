@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
-use anyhow::{Context as _, Result, bail};
+use color_eyre::eyre::{Result, WrapErr as _, bail};
 use girt::pack::{IndexRebuildLimits, IndexRebuildOutcome, rebuild_index};
 use girt::retention::{
     MaintenanceIsolation, ReflogExpiryPolicy, RepackLimits, RetentionPlan, RetentionPolicy,
@@ -99,7 +99,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
                     RepackLimits::trusted(),
                     not_cancelled(),
                 )
-                .context("repacking retained objects")?;
+                .wrap_err("repacking retained objects")?;
             let written = published.written;
             let path = pack_dir(&repository).join(format!("pack-{}.pack", written.checksum));
             writeln!(
@@ -125,7 +125,7 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
             for pack in pack_paths(&repository)? {
                 let ids = index_ids(&pack.with_extension("idx"), format)?;
                 let bytes = std::fs::metadata(&pack)
-                    .with_context(|| format!("reading {}", pack.display()))?
+                    .wrap_err_with(|| format!("reading {}", pack.display()))?
                     .len();
                 writeln!(out, "{} {} {bytes}", pack.display(), ids.len())?;
             }
@@ -135,7 +135,7 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
             match objects(&repository)?.verify_packs(not_cancelled()) {
                 Ok(()) => writeln!(stdout(), "ok")?,
                 Err(error) => {
-                    eprintln!("error: {:#}", anyhow::Error::new(error));
+                    eprintln!("error: {:#}", color_eyre::eyre::Report::new(error));
                     return Ok(ExitCode::FAILURE);
                 }
             }
@@ -151,7 +151,7 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
                 IndexRebuildLimits::default(),
                 not_cancelled(),
             )
-            .with_context(|| format!("rebuilding index for {}", pack.display()))?;
+            .wrap_err_with(|| format!("rebuilding index for {}", pack.display()))?;
             let mut out = stdout();
             if context.git {
                 writeln!(out, "{}", rebuilt.checksum)?;
@@ -237,13 +237,13 @@ fn run_phases(repository: &Repository, args: &RunArgs) -> Result<ExitCode> {
     if args.expire_reflogs {
         let report = repository
             .expire_reflogs(&mut isolation, &policy, cancel)
-            .context("expiring reflogs")?;
+            .wrap_err("expiring reflogs")?;
         writeln!(out, "expired-reflogs {}", report.changed.len())?;
     }
     if args.retire_packs {
         let report = repository
             .retire_old_packs(&mut isolation, &policy, RepackLimits::trusted(), cancel)
-            .context("retiring old packs")?;
+            .wrap_err("retiring old packs")?;
         if let Some(published) = report.published {
             writeln!(out, "new-pack pack-{}", published.written.checksum)?;
         }
@@ -254,7 +254,7 @@ fn run_phases(repository: &Repository, args: &RunArgs) -> Result<ExitCode> {
     if args.prune_loose {
         let report = repository
             .prune_unreachable_loose(&mut isolation, &policy, cancel)
-            .context("pruning loose objects")?;
+            .wrap_err("pruning loose objects")?;
         writeln!(out, "pruned-loose {}", report.deleted.len())?;
     }
     Ok(ExitCode::SUCCESS)
@@ -314,7 +314,7 @@ fn pack_paths(repository: &Repository) -> Result<Vec<PathBuf>> {
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error).with_context(|| format!("reading {}", dir.display())),
+        Err(error) => return Err(error).wrap_err_with(|| format!("reading {}", dir.display())),
     };
     let mut packs = Vec::new();
     for entry in entries {
@@ -358,14 +358,14 @@ fn loose_ids(dir: &Path, format: ObjectFormat) -> Result<BTreeSet<ObjectId>> {
 
 /// Object IDs listed by a version 1 or 2 pack index.
 fn index_ids(path: &Path, format: ObjectFormat) -> Result<Vec<ObjectId>> {
-    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let bytes = std::fs::read(path).wrap_err_with(|| format!("reading {}", path.display()))?;
     let width = format.digest_len();
     let (fanout, names, stride) = if bytes.starts_with(b"\xfftOc\0\0\0\x02") {
         (8, 8 + 1024, width)
     } else {
         (0, 1024, width + 4)
     };
-    let corrupt = || anyhow::anyhow!("corrupt pack index {}", path.display());
+    let corrupt = || color_eyre::eyre::eyre!("corrupt pack index {}", path.display());
     let count = bytes
         .get(fanout + 1020..fanout + 1024)
         .map(|word| u32::from_be_bytes([word[0], word[1], word[2], word[3]]) as usize)

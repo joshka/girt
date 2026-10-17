@@ -14,10 +14,13 @@ name = "girt"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1"
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
-girt = { path = "..", features = ["http", "ssh"] }
+color-eyre = "0.6"
+girt = { path = "..", features = ["http", "ssh", "tracing"] }
 tokio = { version = "1.4", features = ["rt-multi-thread"] }
+tracing = "0.1.40"
+tracing-error = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 tempfile = "3"

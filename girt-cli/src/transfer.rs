@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::clone::{BranchSelection, CloneHead, CloneRequest};
 use girt::fetch::{FetchLimits, FetchUpdateLimits};
 use girt::push::{ForcePolicy, PushCommand, RejectionOrigin, Status};
@@ -77,7 +77,7 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
     // Record an absolute path for local sources, so later fetches work from the new repository.
     let stored_url = match &source {
         Endpoint::Local(path) => std::fs::canonicalize(path)
-            .with_context(|| format!("reading {}", path.display()))?
+            .wrap_err_with(|| format!("reading {}", path.display()))?
             .to_string_lossy()
             .into_owned(),
         Endpoint::Http(url) => url.clone(),
@@ -94,7 +94,7 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         BranchSelection::Default,
         Reflog::Preserve,
     )
-    .context("preparing clone")?;
+    .wrap_err("preparing clone")?;
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let limits = FetchLimits::trusted();
@@ -108,10 +108,10 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
                 .and_then(|download| download.validate(&cancel, |_| ControlFlow::Continue(())))
         }
     }
-    .context("downloading")?;
+    .wrap_err("downloading")?;
     let report = ready
         .finish(FetchUpdateLimits::trusted(), &cancel)
-        .map_err(|error| anyhow!("{error} (inspect {})", destination.display()))?;
+        .map_err(|error| eyre!("{error} (inspect {})", destination.display()))?;
     let mut out = stdout();
     writeln!(out, "cloned into {}", destination.display())?;
     match &report.head {
@@ -143,7 +143,7 @@ fn default_directory(url: &str, bare: bool) -> Result<PathBuf> {
         .rsplit(['/', ':'])
         .next()
         .filter(|name| !name.is_empty())
-        .ok_or_else(|| anyhow!("cannot derive a directory name from `{url}`"))?;
+        .ok_or_else(|| eyre!("cannot derive a directory name from `{url}`"))?;
     let stem = last.strip_suffix(".git").unwrap_or(last);
     Ok(PathBuf::from(if bare {
         format!("{stem}.git")
@@ -155,7 +155,7 @@ fn default_directory(url: &str, bare: bool) -> Result<PathBuf> {
 /// Environment for workflow transfers, resolving relative remote paths against `-C`.
 fn environment(context: &Context) -> Result<Environment> {
     let directory = std::fs::canonicalize(context.directory())
-        .with_context(|| format!("reading {}", context.directory().display()))?;
+        .wrap_err_with(|| format!("reading {}", context.directory().display()))?;
     Ok(Environment::from_process().with_current_dir(directory))
 }
 
@@ -178,7 +178,7 @@ pub fn fetch(args: FetchArgs, context: &Context) -> Result<ExitCode> {
         &environment(context)?,
         &mut NoCallbacks,
     )
-    .with_context(|| format!("fetching {}", args.remote))?;
+    .wrap_err_with(|| format!("fetching {}", args.remote))?;
     let null = ObjectId::null(repository.object_format());
     let mut out = stdout();
     for change in &outcome.updated {
@@ -202,7 +202,7 @@ pub fn push(args: PushArgs, context: &Context) -> Result<ExitCode> {
     for refspec in &args.refspecs {
         commands.push(
             push_command(&repository, &remote, refspec)
-                .with_context(|| format!("planning {refspec}"))?,
+                .wrap_err_with(|| format!("planning {refspec}"))?,
         );
     }
     let report = workflow::push(
@@ -213,7 +213,7 @@ pub fn push(args: PushArgs, context: &Context) -> Result<ExitCode> {
         &environment(context)?,
         &mut NoCallbacks,
     )
-    .with_context(|| format!("pushing to {}", args.remote))?;
+    .wrap_err_with(|| format!("pushing to {}", args.remote))?;
     let mut out = stdout();
     for reference in &report.refs {
         let name = display_bytes(reference.command.name.as_bytes());
@@ -250,7 +250,7 @@ fn push_command(
         Some((source, destination)) => (source, Some(destination)),
         None => (spec, None),
     };
-    let references = repository.references().context("opening references")?;
+    let references = repository.references().wrap_err("opening references")?;
     let source_ref = if source.is_empty() {
         None
     } else {
@@ -272,7 +272,7 @@ fn push_command(
         }
         _ => bail!("cannot infer a destination for `{refspec}`; use <src>:<dst>"),
     };
-    let name = RefName::new(&destination).with_context(|| format!("invalid ref {destination}"))?;
+    let name = RefName::new(&destination).wrap_err_with(|| format!("invalid ref {destination}"))?;
     let expected = tracking_value(repository, remote, &name)?;
     Ok(PushCommand::new(name, expected, new).with_force(force))
 }
@@ -291,8 +291,8 @@ fn tracking_value(
     let mappings = remote
         .fetch_refspecs()
         .map(&probe)
-        .context("mapping fetch refspecs")?;
-    let references = repository.references().context("opening references")?;
+        .wrap_err("mapping fetch refspecs")?;
+    let references = repository.references().wrap_err("opening references")?;
     for tracking in mappings
         .iter()
         .filter_map(|mapping| mapping.destination.as_ref())
