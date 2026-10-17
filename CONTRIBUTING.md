@@ -123,12 +123,12 @@ every new job in its `needs` list. Rust caches are saved only on main.
 A trusted completion workflow updates one `CI regression on main` issue with failing jobs and run
 links after main or nightly CI. It reopens the issue on a new failure and closes it on recovery. New
 failures during an open incident also post a comment to preserve details and notify subscribers.
-Only the newest push/nightly CI run may update it, so an old completion cannot overwrite newer
-evidence. A newer run still in progress delays that update until it completes. Contributors and the
-coordinator should claim and repair failures promptly, add a regression check where appropriate, and
-publish a patch if a released version is affected. Repairs are small reviewed changes; unrelated
-ready work continues. A workflow that never starts cannot report itself and needs the coordinator's
-health check.
+Every eligible completion reconciles the newest push/nightly CI run, so delayed old events still
+report the current result. A newer run still in progress delays that update until it completes.
+Contributors and the coordinator should claim and repair failures promptly, add a regression check
+where appropriate, and publish a patch if a released version is affected. Repairs are small reviewed
+changes; unrelated ready work continues. A workflow that never starts cannot report itself and needs
+the coordinator's health check.
 
 ## Website
 
@@ -172,9 +172,9 @@ Rust caches are saved only on main, so PR builds cannot crowd out the shared bas
 The check uses the existing CI concurrency group and both jobs feed `required`. Administrator merges
 must satisfy the same policy with recorded local evidence when CI is pending. A separate job writes
 labels without checking out or building PR code. Fork pull requests receive the label from the
-trusted `Label semver breaks` workflow after CI finishes; its workflow must be present on the
-default branch. The compatibility gate covers Linux with all features; platform-specific API
-differences still need review and the existing platform checks.
+trusted `Label semver breaks` reusable workflow through `Main CI health` after CI finishes; both
+workflows must be present on the default branch. The compatibility gate covers Linux with all
+features; platform-specific API differences still need review and the existing platform checks.
 
 ## Fuzzing
 
@@ -251,9 +251,10 @@ The first `girt` release was published manually. Subsequent releases use
 pull request and independently checks that exact revision on Linux before publishing. The Linux
 publish check builds default features, checks all targets with all features and the core, HTTP-only
 and SSH-only library configurations, and runs all-feature library tests. A failed, cancelled or
-missing check prevents publishing. Full integration, feature, macOS and Windows checks continue in
-main CI; publishing does not wait for them. Repair a regression found after release and publish a
-patch release, or the appropriate breaking version if its fix changes the public API.
+missing check prevents publishing. Superseded Linux checks are cancelled; an active Publish job
+finishes. Full integration, feature, macOS and Windows checks continue in main CI; publishing does
+not wait for them. Repair a regression found after release and publish a patch release, or the
+appropriate breaking version if its fix changes the public API.
 
 Review the proposed version, changelog and supported scope before merging a release pull request.
 The release workflow uses GitHub's default token, so checks on that pull request may require

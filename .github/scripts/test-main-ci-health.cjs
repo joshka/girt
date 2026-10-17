@@ -7,7 +7,8 @@ const source = readFileSync(join(__dirname, '../workflows/main-ci-health.yml'), 
 const report = new (Object.getPrototypeOf(async function() {}).constructor)('github', 'context', 'core', source);
 
 async function run({conclusion = 'failure', latestId = 10, latestAttempt = 1,
-                    latestStatus = 'completed', latestEvent = 'push', path = '.github/workflows/validation.yml',
+                    latestStatus = 'completed', latestEvent = 'push', latestSha = 'checked-sha',
+                    latestConclusion = conclusion, latestExists = true, path = '.github/workflows/validation.yml',
                     issue, jobs = [], apiError = false} = {}) {
   const writes = [];
   const current = {path, id: 10, run_attempt: 1, head_sha: 'checked-sha', conclusion,
@@ -18,8 +19,9 @@ async function run({conclusion = 'failure', latestId = 10, latestAttempt = 1,
       assert.equal(args.branch, 'main');
       assert.equal(args.per_page, 1);
       if (apiError) throw new Error('API unavailable');
-      return {data: {workflow_runs: args.event === latestEvent ?
-        [{id: latestId, run_attempt: latestAttempt, status: latestStatus}] : []}};
+      return {data: {workflow_runs: args.event === latestEvent && latestExists ?
+        [{...current, id: latestId, run_attempt: latestAttempt, status: latestStatus,
+          head_sha: latestSha, conclusion: latestConclusion}] : []}};
     },
     listJobsForWorkflowRun: 'jobs',
   };
@@ -30,7 +32,7 @@ async function run({conclusion = 'failure', latestId = 10, latestAttempt = 1,
   };
   const github = {rest: {actions, issues}, paginate: async (method, args) => {
     if (method === 'jobs') {
-      assert.equal(args.run_id, 10);
+      assert.equal(args.run_id, latestId);
       assert.equal(args.filter, 'latest');
       return jobs;
     }
@@ -59,10 +61,11 @@ async function run({conclusion = 'failure', latestId = 10, latestAttempt = 1,
   assert.equal(recovered[0][1].state, 'closed');
   assert.match(recovered[0][1].body, /Recovered at checked-sha/);
   assert.deepEqual(await run({conclusion: 'success'}), []);
-  assert.deepEqual(await run({latestId: 11}), []);
-  assert.deepEqual(await run({latestEvent: 'schedule', latestId: 11}), []);
+  const delayed = await run({latestId: 11, latestSha: 'latest-sha'});
+  assert.match(delayed[0][1].body, /Main\/nightly CI failed at latest-sha/);
+  assert.equal((await run({latestEvent: 'schedule', latestId: 11}))[0][0], 'create');
   assert.deepEqual(await run({path: '.github/workflows/other.yml'}), []);
-  assert.deepEqual(await run({latestAttempt: 2}), []);
+  assert.equal((await run({latestAttempt: 2}))[0][0], 'create');
   assert.deepEqual(await run({latestStatus: 'in_progress'}), []);
   assert.equal((await run({conclusion: 'cancelled', issue}))[0][1].state, 'open');
   assert.equal((await run({conclusion: 'success', issue, jobs}))[0][1].state, 'open');
@@ -75,5 +78,10 @@ async function run({conclusion = 'failure', latestId = 10, latestAttempt = 1,
   assert.equal(changed[1][0], 'update');
   assert.equal(changed[1][1].state, undefined);
   assert.deepEqual(await run({issue: {...issue, state: 'open', body: changed[1][1].body}, jobs}), []);
-  console.log('Main CI health: 16 cases passed');
+  const lateRecovery = await run({latestId: 11, latestSha: 'recovered-sha',
+    latestConclusion: 'success', issue: {...issue, state: 'open'}});
+  assert.equal(lateRecovery[0][1].state, 'closed');
+  assert.match(lateRecovery[0][1].body, /Recovered at recovered-sha/);
+  assert.deepEqual(await run({latestExists: false}), []);
+  console.log('Main CI health: 18 cases passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

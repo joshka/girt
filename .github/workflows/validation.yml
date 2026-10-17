@@ -38,13 +38,11 @@ on:
 permissions:
   contents: read
 
-# Serialize duplicate deliveries without cancelling checks on the same PR head.
-# Keep multiple pending duplicates; the default queue replaces its pending run.
-# Different heads run independently, and superseded heads finish their checks.
+# Only the latest branch or PR run is relevant under start-and-repair.
+# Focused manual checks must not cancel the full main check.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: false
-  queue: max
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   jj-performance-page:

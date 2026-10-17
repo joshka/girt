@@ -4,21 +4,26 @@ on: # zizmor: ignore[dangerous-triggers] -- metadata-only reporter; no checkout 
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [main]
 
 permissions: {}
 
-# Serialize updates to the singleton issue; never execute the completed run's code.
-concurrency:
-  group: main-ci-health
-  cancel-in-progress: false
-  queue: max
-
 jobs:
+  semver-label:
+    if: github.event.workflow_run.event == 'pull_request'
+    permissions:
+      actions: read
+      pull-requests: write
+    uses: $/.github/workflows/semver-label.yml
+
   report:
     if: >-
+      github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule')
+    # Superseded completions must not accumulate behind the singleton issue.
+    concurrency:
+      group: main-ci-health-main
+      cancel-in-progress: true
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -29,18 +34,19 @@ jobs:
         with:
           script: |
             const {owner, repo} = context.repo;
-            const run = context.payload.workflow_run;
-            if (run.path !== '.github/workflows/validation.yml') return;
+            const trigger = context.payload.workflow_run;
+            if (trigger.path !== '.github/workflows/validation.yml') return;
             const candidates = await Promise.all(['push', 'schedule'].map(async event => {
               const {data} = await github.rest.actions.listWorkflowRuns({
                 owner, repo, workflow_id: 'validation.yml', branch: 'main', event, per_page: 1
               });
               return data.workflow_runs[0];
             }));
-            const latest = candidates.filter(Boolean).sort((a, b) => b.id - a.id)[0];
-            if (!latest || latest.id !== run.id || latest.run_attempt !== run.run_attempt ||
-                latest.status !== 'completed') {
-              core.info('A newer main/nightly run or attempt owns the health report');
+            // A delayed old completion can replace the newest report in the group.
+            // Always reconcile the newest run, even when another run triggered us.
+            const run = candidates.filter(Boolean).sort((a, b) => b.id - a.id)[0];
+            if (!run || run.status !== 'completed') {
+              core.info('The newest main/nightly run or attempt has not completed');
               return;
             }
             const title = 'CI regression on main';
