@@ -3,10 +3,10 @@ title: Diffs and renames
 description: Compare snapshots, produce byte-preserving line edits, and infer renames within budgets.
 ---
 
-Git trees describe snapshots. A changed path, a line edit and a rename are different questions.
-Start with structural comparison for a file list, load blob sides for a patch view, and request
-rewrite inference when relationships between different paths matter. None of these operations
-changes the repository, index or working files.
+Git trees store snapshots, so a changed path, a line edit and a rename each need a different
+comparison. Use structural comparison for a file list, load both blob sides for a patch view, and
+ask for rewrite inference when you need to relate different paths. None of these operations changes
+the repository, index or working files.
 
 ## Choose the comparison layer
 
@@ -22,18 +22,19 @@ cheaper, but equality does not prove existence or validity. Visited trees are ve
 validated; leaf targets are not read. Both SHA-1 and SHA-256 repositories are supported.
 
 For each structural change, `content_diff::BlobContent::read` loads and verifies both blob sides.
-Missing sides become empty buffers. Retain the original `TreeChange`: an added empty file has
-unchanged content, and a mode-only change also needs structural presentation. Symlinks are stored
-target bytes; no filesystem path is dereferenced. Trees and gitlinks are refused as blob inputs.
+Missing sides become empty buffers, so keep the original `TreeChange` too: content alone can't
+show an added empty file, whose content is unchanged, or a mode-only change. A symlink's content is
+its stored target bytes; girt doesn't dereference any filesystem path. Trees and gitlinks are
+refused as blob inputs.
 
 The
 [tree comparison API](https://docs.rs/girt/latest/girt/struct.Objects.html#method.compare_trees)
 and
 [content loading API](https://docs.rs/girt/latest/girt/content_diff/struct.BlobContent.html#method.read)
-describe structural and loading contracts separately.
+document each contract in detail.
 
-Load a structural addition and pass the verified payloads to content diff. This complete program
-shows the three layers together:
+This program compares two trees, loads both sides of the added file and passes the verified
+payloads to content diff:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -87,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `content_diff::diff` borrows two payloads and returns `Unchanged`, `Binary` or `Text`. Automatic
 binary classification looks for NUL anywhere in either changed payload. Explicit text mode accepts
 every byte, including NUL and invalid UTF-8. Explicit binary mode still returns `Unchanged` for
-identical payloads. No binary patch is encoded.
+identical payloads. girt doesn't produce binary patches.
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -121,40 +122,45 @@ Do not adjust subsequent offsets as if they referred to progressively edited tex
 exposes the original buffers and edit ranges for reconstruction.
 
 The result is a deterministic shortest line-edit sequence with no patch context or rendering.
-Attributes, textconv, whitespace normalization and external diff commands are caller policy. Escape
-untrusted bytes when rendering paths or content. A display may use lossy UTF-8, but preserve the
-original byte ranges if it also exports exact edits.
+Applying attributes, textconv, whitespace normalization and external diff commands is up to the
+caller. Escape untrusted bytes when rendering paths or content. A display can decode as lossy UTF-8,
+but if it also exports exact edits, keep the original byte ranges.
 
 Input, line, trace and work limits bound the comparison. Unrelated text can require quadratic
 search/trace growth; exceeding a limit returns an error rather than approximate edits. Even
-identical or binary inputs must fit the input-byte budget. A UI can explain the limit and offer a
-deliberately larger budget or a raw/binary view.
+identical or binary inputs must fit the input-byte budget. A UI can say which limit was hit and
+offer to retry with a larger budget or to show a raw or binary view.
 
 ## Infer renames and copies
 
 `Objects::detect_rewrites` compares two trees and infers relationships between deleted regular or
-executable files and added regular or executable files. Git stores no rename records. A returned
-`Rewrite` is evidence from content similarity, not proof of a user's action or permission to change
-merge history. Symlinks, gitlinks and directories are never rewrite results.
+executable files and added regular or executable files. Git stores no rename records, so a
+returned `Rewrite` only says the contents are similar. It doesn't prove the user renamed or copied
+the file, and it isn't grounds for changing merge history. Symlinks, gitlinks and directories are
+never rewrite results.
 
 Default options require 50% similarity, disable copies and exclude empty source blobs.
 `Copies::Modified` also considers modified files' preimages and permits source reuse; unchanged
 files are not searched. `ModifiedPostimage` scores a modified source's new content while reporting
-its old identity. Select this only when that scoring policy fits the consumer.
+its old identity. Use it only when your caller wants copies scored against the source's new
+content.
 
 Exact identity matches run first. Edited matching compares repeated byte spans split at LF or after
-64 significant bytes; span order is immaterial. Text scoring omits CR before LF, while binary
-scoring retains it. Rewrite scoring and `approximate_binary` classify binary by NUL in the first
-8000 bytes; content diff checks the entire payload. A NUL at byte 9000 can therefore yield binary
-patch presentation and text rename scoring. This differs from literal content diff. A rounded score
-of 100 can represent reordered spans; set `Options::similarity` to 100 to require identical object
-identities. Girt's independently implemented heuristic has known score/pairing differences from Git
-and does not promise every Git shortcut or tie decision.
+64 significant bytes; the order of spans doesn't matter. Text scoring drops CR before LF, while
+binary scoring keeps it.
+
+Rewrite scoring and `approximate_binary` classify content as binary by a NUL in the first 8000
+bytes, while content diff checks the entire payload. A file with a NUL at byte 9000 can therefore be
+classified as binary by content diff and as text for rename scoring. A rounded score of 100 can
+still mean reordered spans; set `Options::similarity` to 100 to require identical object identities.
+
+Girt implements its own heuristic. Its scores and pairings differ from Git's in known cases, and it
+doesn't reproduce every Git shortcut or tie-break.
 
 An optional target-path list filters after inference. It does not reduce candidate work or change
-pairing/classification, and an omitted candidate can still cause an error. Retain unmatched
-additions and removals alongside inferred rewrites. For a cheap changed-path list, choose structural
-comparison instead of narrowing a rewrite result.
+pairing/classification, and an omitted candidate can still cause an error. Keep unmatched
+additions and removals alongside inferred rewrites. If you only need a cheap list of changed paths,
+use structural comparison rather than filtering a rewrite result.
 
 ### Interpret a postimage copy
 
@@ -167,9 +173,9 @@ Suppose `source` changes from blob A to blob B, and the new tree also adds `copy
 
 With `Copies::ModifiedPostimage`, `copy` is an exact copy scored against B. This pair is found at
 any valid similarity threshold, including the identity-only threshold of 100. The returned
-`source_id` is still A, because it identifies `source` in the old snapshot; `target_id` is B. Keep
-the selected policy with the result when presenting the comparison, and read the new source value
-separately if a renderer needs the bytes used for scoring. The
+`source_id` is still A, because it identifies `source` in the old snapshot; `target_id` is B. When
+presenting the result, record that it came from `ModifiedPostimage`, and read the new source value
+separately if a renderer needs the bytes that were scored. The
 [rewrite identity fields](https://docs.rs/girt/latest/girt/rewrites/struct.Rewrite.html#structfield.source_id)
 describe the reported source and target identities.
 
@@ -189,13 +195,13 @@ Binary candidates still count when approximate binary matching is disabled. Empt
 when `track_empty` is enabled. Reused copy sources count after exact matching. Git's same-basename
 pre-pairing shortcut is not implemented, so near-limit behavior can differ.
 
-Choose the result contract that fits the application:
+Pick the method by how you want a blocked search reported:
 
 - `detect_rewrites` returns `Error::Candidates` with no partial result if the limit blocks
   inference.
 - `detect_rewrites_or_exact`, added in 0.10.0, returns exact matches plus
-  `Detection::inexact_skipped`. Display the skip, retain all other additions/removals, and offer an
-  explicit retry if useful.
+  `Detection::inexact_skipped`. Show the skip, keep all other additions and removals, and offer a
+  retry if useful.
 
 `InexactSkipped::suggested_limit` returns the larger remaining count, a sufficient but not always
 minimal candidate limit. It does not raise independent resource budgets. The
@@ -203,7 +209,7 @@ minimal candidate limit. It does not raise independent resource budgets. The
 returns the skip alongside the exact matches.
 
 Build one exact rename and one edited rename, accept the exact-only result at a zero candidate
-limit, then explicitly retry edited matching:
+limit, then retry with edited matching:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -285,14 +291,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Diagnose failures and schedule work
 
 Structural errors preserve the visited tree ID and path. Content-loading errors preserve the blob
-ID, mode and storage cause; retain the structural change to add old/new side and path context.
-Missing or corrupt objects need recovery, never an empty payload substituted for the failed read.
-Preserve Rust error source chains for diagnostics.
+ID, mode and storage cause; keep the structural change to add old/new side and path context. Treat
+a missing or corrupt object as something to recover, and never substitute an empty payload for the
+failed read. Keep Rust error source chains for diagnostics.
 
 All comparisons are synchronous. Cancellation is cooperative and cannot interrupt one syscall,
 object decode, parse, allocation or sort. Run substantial comparisons on a bounded blocking worker
-in an async application. Limits and cancellation return no partial edits or inference; retry only
-with an appropriate fresh flag, budget or repaired object view.
+in an async application. Limits and cancellation return no partial edits or inference. Before
+retrying, supply a fresh cancellation flag, a larger budget or a repaired object view, whichever
+caused the failure.
 
 ## API reference
 
