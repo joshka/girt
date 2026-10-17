@@ -11,7 +11,7 @@
 //!
 //! ```no_run
 //! let repo = girt::Repository::open("repo")?;
-//! let git = girt::trusted::Handle::new(repo);
+//! let git = girt::Repo::new(repo);
 //! for hunk in git.blame("HEAD", b"src/lib.rs")? {
 //!     println!(
 //!         "{}:{} ({})",

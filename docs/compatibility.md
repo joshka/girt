@@ -2074,12 +2074,11 @@ existing reader's storage boundary. No additional platform support is establishe
 
 ## Line Attribution
 
-`Objects::blame` and `trusted::Handle::blame` return consecutive line ranges with commit id,
-original byte path, original start line, destination start line and count. Coordinates are
-one-based; empty files have no ranges. Both object formats are supported. File renames use the tree
-rewrite inference policy. At merges, an identical parent file takes precedence; otherwise unchanged
-lines pass to the first matching parent in stored parent order. New lines belong to the merge
-itself.
+`Objects::blame` and `Repo::blame` return consecutive line ranges with commit id, original byte
+path, original start line, destination start line and count. Coordinates are one-based; empty files
+have no ranges. Both object formats are supported. File renames use the tree rewrite inference
+policy. At merges, an identical parent file takes precedence; otherwise unchanged lines pass to the
+first matching parent in stored parent order. New lines belong to the merge itself.
 
 `blame_with` takes whole-walk limits and cancellation. Verified blob content travels with pending
 history states and is shared across identical-parent edges. Pending states prefer newer committer

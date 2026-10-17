@@ -4,7 +4,7 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use super::reader::ObjectView;
-use super::{Error, Handle};
+use super::{Error, Repo};
 use crate::{Commit, HistoryError, HistoryLimits, ObjectId, ObjectKind};
 
 /// A lazy committer-date-priority walk, newest discovered commit first.
@@ -52,7 +52,7 @@ impl Ord for Candidate {
     }
 }
 
-impl Handle {
+impl Repo {
     /// Starts a lazy date-priority walk at a revision, peeling tags with
     /// [`crate::revision::Resolver::resolve_to`]. Accepts text or an [`ObjectId`], as in
     /// [`Self::rev_parse`]. See [`Log`] for ordering and scope.

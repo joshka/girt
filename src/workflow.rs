@@ -14,6 +14,10 @@
 //! snapshot instead of reading the process environment, and a [`TransferCallbacks`] implementation
 //! for progress and credential prompts. They return typed reports, never printed text.
 //!
+//! [`crate::Repo`] owns a repository and composes these transfers with Git defaults and a captured
+//! environment for trusted local use. Use [`Repository`] and these functions directly when callers
+//! need to select transfer options, callbacks, or environment explicitly.
+//!
 //! # Quick start
 //!
 //! Create a repository, add a remote to its configuration, then fetch from it. In this example

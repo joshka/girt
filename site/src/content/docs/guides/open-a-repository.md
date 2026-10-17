@@ -7,6 +7,12 @@ Use an explicit path when a project picker, command argument, or saved workspace
 a repository. Use discovery when a user selects a directory inside a checkout. Both operations read
 metadata. Neither scans all objects or changes files.
 
+For trusted local use, start with [`Repo`](https://docs.rs/girt/latest/girt/struct.Repo.html).
+`Repo::discover` loads Git-default configuration and opens object storage lazily with default
+limits. Use [`Repository`](https://docs.rs/girt/latest/girt/struct.Repository.html) for explicit
+control over configuration, limits, cancellation, and untrusted input. `Repo::repository()` exposes
+that API when one operation needs more control.
+
 ## Create a disposable project
 
 Add the dependencies with `cargo add girt tempfile`. This complete program creates a checkout, opens

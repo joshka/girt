@@ -39,10 +39,10 @@
     "empty_vectors": 0
   },
   "Diff two commits: tree and content": {
-    "lines": 30,
-    "imported_names": 9,
-    "defaults": 2,
-    "never_cancel": 1,
+    "lines": 9,
+    "imported_names": 3,
+    "defaults": 0,
+    "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
     "identity_literals": 0,
@@ -130,10 +130,10 @@
     "empty_vectors": 0
   },
   "Clone with checkout": {
-    "lines": 30,
-    "imported_names": 9,
-    "defaults": 2,
-    "never_cancel": 1,
+    "lines": 5,
+    "imported_names": 0,
+    "defaults": 0,
+    "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
     "identity_literals": 0,
@@ -182,8 +182,8 @@
     "empty_vectors": 0
   },
   "Blame-style queries": {
-    "lines": 0,
-    "imported_names": 0,
+    "lines": 6,
+    "imported_names": 1,
     "defaults": 0,
     "never_cancel": 0,
     "byte_vectors": 0,

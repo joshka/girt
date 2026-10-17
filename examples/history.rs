@@ -2,8 +2,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use girt::ObjectId;
-use girt::trusted::Handle;
+use girt::{ObjectId, Repo};
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
@@ -19,7 +18,7 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let root = args.commit;
-    let git = Handle::discover(args.path)?;
+    let git = Repo::discover(args.path)?;
     for entry in git.log(root)? {
         let (id, _) = entry?;
         println!("{id}");

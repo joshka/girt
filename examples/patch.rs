@@ -11,9 +11,10 @@ use girt::content_diff::DiffLimits;
 use girt::patch::{Limits, Options};
 use girt::revision::Resolver;
 use girt::tree::TreeEditor;
-use girt::trusted::Handle;
 use girt::workflow::Environment;
-use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository, rewrites};
+use girt::{
+    InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repo, Repository, rewrites,
+};
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
@@ -50,13 +51,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         editor.remove(b"old name")?;
         editor.set(b"new name", loose.write_blob(b"moved\ncontent\n")?)?;
         let new = editor.write()?;
-        let git = Handle::new(repo);
+        let git = Repo::new(repo);
         git.write_patch(&mut out, old, new)?;
         out.flush()?;
         return Ok(());
     };
     if args.unified == 3 && !args.trusted {
-        Handle::discover(path)?.write_patch(&mut out, &args.old, &args.new)?;
+        Repo::discover(path)?.write_patch(&mut out, &args.old, &args.new)?;
         out.flush()?;
         return Ok(());
     }
