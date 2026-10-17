@@ -19,6 +19,7 @@ fn inputs(root: &Path, source: &str) -> ConfigInputs {
             path: root.join("config"),
             scope: ConfigScope::Local,
             optional: false,
+            skip_unreadable: false,
         }],
         ..ConfigInputs::default()
     }

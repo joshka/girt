@@ -33,6 +33,7 @@ fn lookup_is_lazy_ordered_memoized_and_explicit_context_wins(
             path: root.path().join("root"),
             scope: ConfigScope::Global,
             optional: false,
+            skip_unreadable: false,
         }],
         command: Some(Config::parse(body).unwrap()),
         context: super::IncludeContext {
@@ -175,6 +176,7 @@ fn explicit_relative_mapping_preserves_file_relative_semantics() {
             path: root.path().join("root"),
             scope: ConfigScope::Global,
             optional: false,
+            skip_unreadable: false,
         }],
         context: super::IncludeContext {
             user_homes: vec![(b"u".to_vec(), PathBuf::new())],

@@ -330,6 +330,7 @@ fn included_invalid_tag_then_implicit_still_fails_first() {
             path: parent,
             scope: crate::config::ConfigScope::Global,
             optional: false,
+            skip_unreadable: false,
         }],
         ..Default::default()
     })
@@ -375,6 +376,7 @@ fn included_tag_sections_keep_their_membership(
             path,
             scope: crate::config::ConfigScope::Global,
             optional: false,
+            skip_unreadable: false,
         }],
         ..Default::default()
     })

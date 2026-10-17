@@ -97,10 +97,14 @@ Propagate a typed lookup error instead of silently substituting a default.
 
 ## Supply environment and include context explicitly
 
-Use `ConfigInputs::from_environment` with an application-owned environment snapshot to select
-system/global files and runtime assignments. Use `Config::from_environment` only to decode
-`GIT_CONFIG_COUNT` and numbered `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` pairs, where `n` starts at
-zero. Neither reads or mutates process-global state itself.
+To see the configuration `git` would see, pass an environment snapshot such as
+`workflow::Environment::from_process()` to `ConfigInputs::git_default`, then open with
+`Repository::discover_with_config` or `Repository::open_with_config`. It selects the system file,
+the XDG and home global files, the `GIT_CONFIG_*` file selectors and the runtime pairs, in Git's
+order. Use `ConfigInputs::from_environment` instead to choose the system file and pair budget
+yourself. Use `Config::from_environment` only to decode `GIT_CONFIG_COUNT` and numbered
+`GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` pairs, where `n` starts at zero. Neither reads or mutates
+process-global state itself.
 
 Conditional includes can depend on branch names, logical/canonical Git-directory aliases, or remote
 URLs. Expanding home and prefix paths needs that context too. Supply the facts the application

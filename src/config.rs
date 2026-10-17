@@ -33,7 +33,8 @@
 //! Resolution orders files by scope, preserving caller order within each scope, then applies
 //! supplied environment and command overrides. Includes expand in place by default. Repository
 //! opening adds local/worktree sources but keeps direct format bootstrap separate: overrides
-//! cannot reinterpret stored SHA-1 objects as SHA-256. Supply user and system sources explicitly.
+//! cannot reinterpret stored SHA-1 objects as SHA-256. Supply user and system sources explicitly;
+//! [`ConfigInputs::git_default`] selects the ones `git` reads from a caller-supplied environment.
 //!
 //! # Errors, refresh, and editing
 //!

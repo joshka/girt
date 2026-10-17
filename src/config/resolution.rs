@@ -443,7 +443,16 @@ impl<'a> Resolver<'a> {
                     ResolveFailure::Input("file scope must be system, global, local or worktree"),
                 ));
             }
-            self.file(&file.path, file.scope, file.optional, false)?;
+            match self.file(&file.path, file.scope, file.optional, false) {
+                // The root itself could not be opened; nothing from it was recorded.
+                Err(error)
+                    if file.skip_unreadable
+                        && error.included_from.is_empty()
+                        && error.location.path.as_deref() == Some(file.path.as_path())
+                        && matches!(&error.source, ResolveFailure::Io(e)
+                            if e.kind() == std::io::ErrorKind::PermissionDenied) => {}
+                result => result?,
+            }
         }
         for (config, scope) in [
             (&self.inputs.environment, ConfigScope::Environment),
@@ -1016,6 +1025,7 @@ mod tests {
                 path: path.clone(),
                 scope: ConfigScope::Local,
                 optional: false,
+                skip_unreadable: false,
             }],
             ..Default::default()
         })
@@ -1155,6 +1165,7 @@ mod tests {
                 path,
                 scope: ConfigScope::Local,
                 optional: false,
+                skip_unreadable: false,
             }],
             limits: super::super::ResolveLimits {
                 bytes,
@@ -1277,6 +1288,7 @@ mod tests {
                 path: root.path().join("parent"),
                 scope: ConfigScope::Global,
                 optional: false,
+                skip_unreadable: false,
             }],
             ..Default::default()
         })
@@ -1403,6 +1415,7 @@ mod tests {
                 path,
                 scope: ConfigScope::Local,
                 optional: false,
+                skip_unreadable: false,
             }],
             ..Default::default()
         };
