@@ -1,6 +1,22 @@
 use super::pattern::Pattern;
 
 /// The filesystem kind of a queried ignore path.
+///
+/// ```
+/// use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
+///
+/// let mut rules = Ignore::new(Case::Sensitive, Limits::default());
+/// rules.add(Source::Info, b"cache/\n")?;
+/// assert!(
+///     rules
+///         .check(b"cache", InputKind::Directory)?
+///         .unwrap()
+///         .ignored
+/// );
+/// assert!(rules.check(b"cache", InputKind::File)?.is_none());
+/// // Classify a symlink as File, including a symlink whose target is a directory.
+/// # Ok::<(), girt::ignore::Error>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum InputKind {
@@ -11,6 +27,21 @@ pub enum InputKind {
 }
 
 /// Explicit byte comparison policy, independent of the host filesystem.
+///
+/// ```
+/// use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
+///
+/// let mut rules = Ignore::new(Case::AsciiInsensitive, Limits::default());
+/// rules.add(Source::Directory(b"Src"), b"*.LOG\n")?;
+/// assert!(
+///     rules
+///         .check(b"src/build.log", InputKind::File)?
+///         .unwrap()
+///         .ignored
+/// );
+/// // This policy is explicit and does not inspect filesystem case sensitivity.
+/// # Ok::<(), girt::ignore::Error>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Case {
@@ -43,6 +74,20 @@ pub enum Source<'a> {
 /// (up to 40 bytes per pattern byte, plus vector/record overhead). Queries use two linear rows,
 /// never recursive backtracking. Allocation failure follows Rust's allocator policy; these limits
 /// are not a recoverable allocator or an exact RSS bound.
+///
+/// ```
+/// use girt::ignore::{Case, Error, Ignore, InputKind, Limits, Source};
+/// let mut rules = Ignore::new(Case::Sensitive, Limits::default().with_patterns(1));
+/// rules.add(Source::Info, b"*.log\n")?;
+/// assert!(matches!(
+///     rules.add(Source::Command, b"*.tmp\n"),
+///     Err(Error::Limit(_))
+/// ));
+/// // Failed addition is atomic: the previous rule set remains usable.
+/// assert!(rules.check(b"build.log", InputKind::File)?.unwrap().ignored);
+/// assert!(rules.check(b"scratch.tmp", InputKind::File)?.is_none());
+/// # Ok::<(), girt::ignore::Error>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Limits {
@@ -355,6 +400,29 @@ impl Ignore {
     ///
     /// Returns [`Error::Path`] for invalid paths and [`Error::Limit`] for path or matching-work
     /// exhaustion. No partial decision is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
+    ///
+    /// let mut rules = Ignore::new(Case::Sensitive, Limits::default());
+    /// rules.add(Source::Info, b"build/\n!build/keep\n")?;
+    /// assert!(
+    ///     !rules
+    ///         .check_direct(b"build/keep", InputKind::File)?
+    ///         .unwrap()
+    ///         .ignored
+    /// );
+    /// assert!(
+    ///     rules
+    ///         .check(b"build/keep", InputKind::File)?
+    ///         .unwrap()
+    ///         .ignored
+    /// );
+    /// // Direct queries explain leaf rules; full queries enforce excluded-parent behavior.
+    /// # Ok::<(), girt::ignore::Error>(())
+    /// ```
     pub fn check_direct(&self, path: &[u8], kind: InputKind) -> Result<Option<Match>, Error> {
         validate_path(path, false, self.limits.path_bytes)?;
         let mut work = self.limits.work;

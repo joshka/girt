@@ -76,6 +76,47 @@ pub enum Untracked {
 }
 
 /// Bounds for status phases; these are work/allocation ceilings, not exact heap limits.
+///
+/// Choose file and aggregate budgets separately: many small files can exhaust the total even when
+/// each file fits. Both can currently return `Error::Limit("file bytes")` because each read is
+/// capped by the remaining aggregate allowance. Inspect the configured budgets before choosing
+/// which one to raise. A limit failure supplies no partial report and must not become an empty
+/// display.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::index::{Entry, Mode};
+/// use girt::status::{Baseline, Error, Limits, Untracked};
+/// let id = repo.loose_objects().write_blob(b"12345")?;
+/// let mut edit = repo.edit_index(Default::default())?;
+/// edit.replace_entries(vec![
+///     Entry::new(b"a".to_vec(), Mode::Regular, id),
+///     Entry::new(b"b".to_vec(), Mode::Regular, id),
+/// ])?;
+/// edit.commit()?;
+/// std::fs::write(repo.worktree().unwrap().join("a"), b"12345")?;
+/// std::fs::write(repo.worktree().unwrap().join("b"), b"12345")?;
+/// let result = repo.raw_status(
+///     Baseline::Head,
+///     Untracked::Omit,
+///     Limits::default()
+///         .with_max_file_bytes(5)
+///         .with_max_worktree_bytes(8),
+///     &AtomicBool::new(false),
+/// );
+/// assert!(matches!(result, Err(Error::Limit("file bytes"))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Limits {
@@ -204,6 +245,46 @@ pub enum Comparison {
 /// cleanliness: inspect unmerged entries, unchecked gitlinks, boundaries, and untracked policy.
 /// Assume-valid entries are verified exactly like other entries. All index blob targets, including
 /// conflict stages, are verified; baseline leaf targets and gitlink commit targets are not read.
+///
+/// # Inspect unresolved entries before declaring a worktree clean
+///
+/// Conflict stages are excluded from both change lists. Preserve their identities when presenting a
+/// conflict; resolving it requires an explicit index edit, not a status refresh.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::index::{Entry, Mode, Stage};
+/// use girt::status::{Baseline, Limits, Untracked};
+/// let id = repo.loose_objects().write_blob(b"ours")?;
+/// let mut edit = repo.edit_index(Default::default())?;
+/// edit.replace_entries(vec![
+///     Entry::new(b"conflict".to_vec(), Mode::Regular, id).with_stage(Stage::Ours),
+/// ])?;
+/// edit.commit()?;
+///
+/// let report = repo.raw_status(
+///     Baseline::Head,
+///     Untracked::Omit,
+///     Limits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+///
+/// assert!(report.staged.is_empty());
+/// assert!(report.unstaged.is_empty());
+/// assert_eq!(report.unmerged[0].stage, Stage::Ours);
+/// assert_eq!(report.unmerged[0].id, id);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Report {
@@ -231,6 +312,44 @@ pub struct Report {
 }
 
 /// An index leaf whose observed worktree value differs or could not be inspected as a leaf.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::index::{Entry, Mode};
+/// use girt::status::{Baseline, Change, Limits, Untracked};
+/// let id = repo.loose_objects().write_blob(b"tracked")?;
+/// let mut edit = repo.edit_index(Default::default())?;
+/// edit.replace_entries(vec![Entry::new(b"missing".to_vec(), Mode::Regular, id)])?;
+/// edit.commit()?;
+///
+/// let report = repo.raw_status(
+///     Baseline::Head,
+///     Untracked::Omit,
+///     Limits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+///
+/// let change = &report.unstaged[0];
+/// assert_eq!(change.path, b"missing");
+/// assert_eq!(change.index.id, id);
+/// assert!(matches!(change.change, Change::Deleted));
+/// // The index still retains the staged blob; status does not stage this deletion.
+/// assert_eq!(
+///     repo.read_index(Default::default())?.unwrap().entries()[0].id,
+///     id
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct WorktreeChange {
@@ -243,6 +362,45 @@ pub struct WorktreeChange {
 }
 
 /// Literal worktree difference from one index leaf.
+///
+/// An obstruction differs from deletion: the tracked path is blocked by a different filesystem
+/// kind or a repository boundary, at the leaf or an ancestor. Keep the first blocking path in
+/// diagnostics; it can differ from the tracked entry path.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::index::{Entry, Mode};
+/// use girt::status::{Baseline, Change, Limits, Untracked};
+/// let id = repo.loose_objects().write_blob(b"tracked")?;
+/// let mut edit = repo.edit_index(Default::default())?;
+/// edit.replace_entries(vec![Entry::new(b"dir/file".to_vec(), Mode::Regular, id)])?;
+/// edit.commit()?;
+/// std::fs::write(repo.worktree().unwrap().join("dir"), b"untracked obstruction")?;
+///
+/// let report = repo.raw_status(
+///     Baseline::Head,
+///     Untracked::Omit,
+///     Limits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+///
+/// assert_eq!(report.unstaged[0].path, b"dir/file");
+/// assert!(matches!(
+///     &report.unstaged[0].change,
+///     Change::Obstructed { path } if path == b"dir"
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Change {

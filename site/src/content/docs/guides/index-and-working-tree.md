@@ -193,6 +193,30 @@ exclusive ownership even if a preceding status succeeded. Limits bound reads, vi
 and content bytes. Cancellation is cooperative; these synchronous APIs belong on the application's
 blocking worker when used from an async runtime.
 
+### Interpret every status category
+
+A path with unresolved stages appears in `unmerged`, not in either change list. Present the
+base/ours/theirs entries that exist and preserve their IDs until an explicit resolution replaces
+them with stage zero through
+[index editing](https://docs.rs/girt/latest/girt/struct.Repository.html#method.edit_index) and
+[entry replacement](https://docs.rs/girt/latest/girt/index/struct.IndexEdit.html#method.replace_entries).
+An empty change list does not resolve a conflict.
+
+An unstaged `Deleted` means the exact tracked name or an ancestor is absent. `Obstructed` means
+another filesystem kind or a repository boundary blocks that path. Report the obstruction's path
+rather than offering to discard it. `Modified` carries the observed identity and mode, so a
+mode-only change can be explained without inventing a content edit.
+
+`unchecked_gitlinks` contains every stage-zero gitlink, without inspecting whether a directory
+exists. Girt does not open its commit target or inspect submodule dirtiness. A UI that needs that
+information must perform a separate submodule observation. Nested repository boundaries likewise
+mean traversal stopped; their contents are not untracked leaves.
+
+Choose budgets for the whole observation: a single-file ceiling does not bound the sum of thousands
+of small files. `Untracked::Omit` reduces unrelated traversal, but tracked-path verification still
+reads content. A limit failure returns no partial report. Preserve the last successful display with
+an explicit failure state rather than replacing it with a clean result.
+
 ## Apply ignore rules with provenance
 
 `Ignore` is a pure byte-path matcher. The caller loads the configured global excludes file,
@@ -224,6 +248,29 @@ source index and one-based line support UI explanations. Use slash-separated rep
 paths and supply the observed `InputKind`; a symlink is a file, never a directory to traverse.
 Backslash remains a literal byte, including on Windows. A path or work-limit error supplies no
 partial decision; do not silently translate it into included or excluded.
+
+### Match patterns as byte paths
+
+A slashless pattern such as `*.log` matches a basename at any depth below its source. A leading
+slash anchors it to the source directory, and an embedded slash matches a relative path there. A
+trailing slash requires a directory; symlinks are queried as files. `*` and `?` stay within a path
+component, while supported `**` forms can cross directory boundaries. Character classes match bytes,
+not Unicode characters.
+
+A leading `#` starts a comment; escape it to match a literal leading hash. A leading `!` negates a
+rule; escape it for a literal exclamation mark. Unescaped trailing spaces are trimmed. CRLF and an
+initial UTF-8 BOM are recognized. Invalid glob syntax remains a rule that never matches, so adding
+it successfully is not evidence that it will select any path.
+
+Choose `Case::Sensitive` or `Case::AsciiInsensitive` explicitly. ASCII folding also affects
+directory source prefixes; neither policy performs Unicode normalization or detects filesystem
+behavior. `check` includes excluded-parent decisions. `check_direct` is useful while traversing only
+when the caller has already admitted every ancestor. It can return an including leaf negation even
+when a parent is excluded. Use `check` when the caller has not enforced parent decisions.
+
+Source addition is atomic on a budget failure. Existing rules remain usable, but the rejected source
+has contributed no rules. Query work exhaustion produces no decision. Retain source labels indexed
+by successful additions so `Match.source` and its physical line number can explain the result.
 
 ## Materialize a tree conservatively
 

@@ -6,7 +6,54 @@ use crate::{ObjectId, index};
 /// eagerly. File verification uses one additional bounded buffer. Cancellation is checked between
 /// entries and 64-KiB I/O chunks; one syscall/object decode cannot be interrupted. The caller owns
 /// blocking-worker scheduling. Directory names are enumerated again at mutation boundaries, so
-/// wide directories can require quadratic work in the number of selected paths.
+/// wide directories can require quadratic work in the number of selected paths. Blob decode
+/// ceilings are reported through `Error::Object` and its storage source; traversal and aggregate
+/// accounting can instead return `Error::Limit`. Nested tree budgets return `Error::Tree`; index
+/// budgets return `Error::Index` (or `Error::IndexFormat` during replacement validation). Inspect
+/// each source chain for the actual bound.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::checkout::Limits;
+/// use girt::{EntryMode, Tree, TreeEntry};
+/// let id = repo.loose_objects().write_blob(b"target")?;
+/// let tree = repo.loose_objects().write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![TreeEntry {
+///         name: b"file".to_vec(),
+///         mode: EntryMode::Blob,
+///         id,
+///     }],
+/// )?)?;
+///
+/// use girt::checkout::Error;
+/// let failure = repo
+///     .checkout_tree(
+///         None,
+///         Some(tree),
+///         Limits::default().with_max_file_bytes(4),
+///         &AtomicBool::new(false),
+///     )
+///     .unwrap_err();
+/// assert!(matches!(
+///     failure.cause.as_ref(),
+///     Error::Object(girt::ObjectReadError::Loose(girt::Error::TooLarge))
+/// ));
+/// assert_eq!(failure.report.stage, girt::checkout::Stage::Preparation);
+/// assert!(failure.report.applied.is_empty());
+/// assert!(!repo.worktree().unwrap().join("file").exists());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Limits {
@@ -137,6 +184,61 @@ pub enum Stage {
 }
 
 /// A namespace operation completed by this call.
+///
+/// One path can participate in several operations during a file-to-directory replacement. Use the
+/// ordered operations for progress or recovery diagnostics, rather than treating them as one final
+/// change per path.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::checkout::{Action, Limits};
+/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+/// let loose = repo.loose_objects();
+/// let id = loose.write_blob(b"data")?;
+/// let entry = |name: &[u8], mode, id| TreeEntry {
+///     name: name.to_vec(),
+///     mode,
+///     id,
+/// };
+/// let old = loose.write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![entry(b"path", EntryMode::Blob, id)],
+/// )?)?;
+/// let subtree = loose.write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![entry(b"child", EntryMode::Blob, id)],
+/// )?)?;
+/// let new = loose.write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![entry(b"path", EntryMode::Tree, subtree)],
+/// )?)?;
+/// let cancel = AtomicBool::new(false);
+/// repo.checkout_tree(None, Some(old), Limits::default(), &cancel)?;
+/// let report = repo.checkout_tree(Some(old), Some(new), Limits::default(), &cancel)?;
+/// let at_path: Vec<_> = report
+///     .applied
+///     .iter()
+///     .filter(|op| op.path == b"path")
+///     .map(|op| op.action)
+///     .collect();
+/// assert_eq!(at_path, [Action::Remove, Action::CreateDirectory]);
+/// assert!(
+///     report
+///         .applied
+///         .iter()
+///         .any(|op| op.path == b"path/child" && op.action == Action::Install)
+/// );
+/// assert!(report.index_published);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Action {
@@ -161,6 +263,51 @@ pub struct Applied {
 }
 
 /// Outcome of completed namespace operations, excluding changes by independent writers.
+///
+/// A successful report confirms publication and lets a UI describe completed filesystem operations.
+/// HEAD is unchanged; a checkout report does not establish that a branch was switched.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::checkout::Limits;
+/// use girt::{EntryMode, Tree, TreeEntry};
+/// let id = repo.loose_objects().write_blob(b"target")?;
+/// let tree = repo.loose_objects().write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![TreeEntry {
+///         name: b"file".to_vec(),
+///         mode: EntryMode::Blob,
+///         id,
+///     }],
+/// )?)?;
+///
+/// use girt::checkout::{Action, Stage};
+/// let report =
+///     repo.checkout_tree(None, Some(tree), Limits::default(), &AtomicBool::new(false))?;
+/// assert_eq!(report.stage, Stage::Publication);
+/// assert!(report.index_published);
+/// assert!(
+///     report
+///         .applied
+///         .iter()
+///         .any(|entry| entry.path == b"file" && entry.action == Action::Install)
+/// );
+/// assert_eq!(
+///     std::fs::read(repo.worktree().unwrap().join("file"))?,
+///     b"target"
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Report {
@@ -219,6 +366,52 @@ pub struct Failure {
 /// or worktree conditions requiring a new policy/baseline. Limits and cancellation can occur after
 /// mutation; an I/O error does not imply that all earlier paths are unchanged. Nested
 /// [`Error::Verification`] and [`Error::Object`] preserve their diagnostic source chains.
+///
+/// # Preserve an untracked obstruction
+///
+/// A refusal during preparation leaves the obstructing file intact. Ask the user to move it or
+/// abandon checkout; removing it automatically would turn a diagnostic into data loss.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::checkout::Limits;
+/// use girt::{EntryMode, Tree, TreeEntry};
+/// let id = repo.loose_objects().write_blob(b"target")?;
+/// let tree = repo.loose_objects().write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![TreeEntry {
+///         name: b"file".to_vec(),
+///         mode: EntryMode::Blob,
+///         id,
+///     }],
+/// )?)?;
+///
+/// use girt::checkout::{Error, Stage};
+/// let path = repo.worktree().unwrap().join("file");
+/// std::fs::write(&path, b"local notes")?;
+/// let failure = repo
+///     .checkout_tree(None, Some(tree), Limits::default(), &AtomicBool::new(false))
+///     .unwrap_err();
+/// assert!(matches!(
+///     failure.cause.as_ref(),
+///     Error::Refused { path, reason } if path == b"file" && !reason.is_empty()
+/// ));
+/// assert_eq!(failure.report.stage, Stage::Preparation);
+/// assert!(failure.report.applied.is_empty());
+/// assert!(!failure.report.index_published);
+/// assert_eq!(std::fs::read(path)?, b"local notes");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
