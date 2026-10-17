@@ -1,0 +1,117 @@
+{
+  "name": "girt-light",
+  "type": "light",
+  "colors": {
+    "editor.background": "#ffffff",
+    "editor.foreground": "#2b2925"
+  },
+  "tokenColors": [
+    {
+      "scope": [
+        "comment",
+        "punctuation.definition.comment"
+      ],
+      "settings": {
+        "foreground": "#6f6a5e",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "scope": [
+        "keyword",
+        "storage",
+        "storage.type",
+        "storage.modifier",
+        "keyword.operator.borrow",
+        "keyword.other",
+        "constant.language",
+        "variable.language"
+      ],
+      "settings": {
+        "foreground": "#8a2a1a"
+      }
+    },
+    {
+      "scope": [
+        "string",
+        "string.quoted",
+        "punctuation.definition.string",
+        "constant.character.escape",
+        "markup.inline.raw"
+      ],
+      "settings": {
+        "foreground": "#2f6b59"
+      }
+    },
+    {
+      "scope": [
+        "entity.name.type",
+        "entity.name.struct",
+        "entity.name.enum",
+        "entity.name.trait",
+        "support.type",
+        "entity.name.namespace",
+        "entity.name.module",
+        "storage.type.core"
+      ],
+      "settings": {
+        "foreground": "#4a3a20"
+      }
+    },
+    {
+      "scope": [
+        "constant.numeric",
+        "constant.other"
+      ],
+      "settings": {
+        "foreground": "#7a4a1a"
+      }
+    },
+    {
+      "scope": [
+        "entity.name.function",
+        "support.function",
+        "meta.function-call entity.name.function",
+        "entity.name.function.macro",
+        "support.macro"
+      ],
+      "settings": {
+        "foreground": "#1b1a17"
+      }
+    },
+    {
+      "scope": [
+        "punctuation",
+        "keyword.operator"
+      ],
+      "settings": {
+        "foreground": "#625f55"
+      }
+    },
+    {
+      "scope": [
+        "variable",
+        "meta.definition.variable"
+      ],
+      "settings": {
+        "foreground": "#2b2925"
+      }
+    },
+    {
+      "scope": [
+        "markup.inserted"
+      ],
+      "settings": {
+        "foreground": "#2f6b59"
+      }
+    },
+    {
+      "scope": [
+        "markup.deleted"
+      ],
+      "settings": {
+        "foreground": "#8a2a1a"
+      }
+    }
+  ]
+}

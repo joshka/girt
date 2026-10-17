@@ -1,42 +1,326 @@
-/* Stock Starlight with a teal accent. Grays stay at Starlight's defaults. */
+/* girt theme. DESIGN.md holds the tokens and the reasoning; this file maps them onto Starlight.
+   Dark is the default theme; the light theme swaps the same roles. */
+
 :root {
-  --sl-color-accent-low: #0b2e2a;
-  --sl-color-accent: #128275;
-  --sl-color-accent-high: #a7e8dd;
+  --girt-font-heading: 'Source Serif 4', 'Source Serif Fallback Georgia', 'Source Serif Fallback Times',
+    Georgia, serif;
+  --sl-font-mono: 'JetBrains Mono', 'JetBrains Mono Fallback Menlo', 'JetBrains Mono Fallback Courier',
+    ui-monospace, monospace;
+
+  /* Graphite surfaces, deepest first. */
+  --girt-inset: #0d0d0e;
+  --girt-surface-raised: #222326;
+  --girt-graph-line: #4a4c52;
+  --girt-graph-node: #8a8780;
+  --girt-text-secondary: #b9b6ae;
+
+  /* Rust and verdigris. */
+  --girt-rust-950: #24100c;
+  --girt-rust-900: #3a1410;
+  --girt-rust-800: #5a1a12;
+  --girt-rust-700: #7a2214;
+  --girt-rust-600: #a83222;
+  --girt-rust-500: #c4492f;
+  --girt-verdigris-900: #1f3d34;
+  --girt-verdigris-700: #2f6b59;
+  --girt-verdigris-500: #4f9a80;
+
+  --girt-underline: var(--girt-rust-600);
+  --girt-on-fill: #f3efe6;
+  --girt-failed-bg: var(--girt-rust-800);
+  --girt-refused-label: #c9a59b;
+  --girt-card-shadow: 0 10px 30px rgb(0 0 0 / 0.25);
+  --girt-hero-wash: linear-gradient(170deg, rgb(58 20 16 / 0.5) 0%, rgb(36 16 12 / 0.2) 45%, transparent 80%);
+
+  --sl-color-white: #f3efe6;
+  --sl-color-gray-1: #e6e2d9;
+  --sl-color-gray-2: #d6d3cc;
+  --sl-color-gray-3: #9c9a94;
+  --sl-color-gray-4: #4a4c52;
+  --sl-color-gray-5: #2a2b2e;
+  --sl-color-gray-6: #1b1c1e;
+  --sl-color-black: #141415;
+
+  --sl-color-accent-low: var(--girt-rust-950);
+  --sl-color-accent: var(--girt-rust-700);
+  --sl-color-accent-high: #f3efe6;
+  --sl-color-text-accent: #f3efe6;
+  --sl-color-text-invert: #f3efe6;
+
+  --sl-color-bg-nav: #1b1c1e;
+  --sl-color-bg-sidebar: #1b1c1e;
+  --sl-color-bg-inline-code: var(--girt-inset);
+  --sl-color-hairline-light: #2a2b2e;
+  --sl-color-hairline: #2a2b2e;
+  --sl-color-hairline-shade: #000;
+
+  --sl-nav-height: 3.625rem;
+  --sl-content-width: 50rem;
+  --sl-line-height: 1.75;
+  --sl-text-h1: 2.5rem;
+  --sl-text-h2: 1.5625rem;
+  --sl-text-h3: 1.1875rem;
+  --sl-text-h4: 1.0625rem;
 }
 
 :root[data-theme='light'] {
-  --sl-color-accent-low: #c9eee7;
-  --sl-color-accent: #0d6b61;
-  --sl-color-accent-high: #0a3f39;
+  --girt-inset: #ffffff;
+  --girt-surface-raised: #e8e3d7;
+  --girt-graph-line: #b9b3a2;
+  --girt-graph-node: #7a756a;
+  --girt-text-secondary: #4a473f;
+
+  --girt-rust-600: #7a2214;
+  --girt-rust-500: #7a2214;
+  --girt-underline: #7a2214;
+  --girt-failed-bg: #7a2214;
+  --girt-refused-label: #7a2214;
+  --girt-card-shadow: 0 4px 14px rgb(60 40 20 / 0.06);
+  --girt-hero-wash: linear-gradient(170deg, rgb(122 34 20 / 0.06), transparent 70%);
+
+  --sl-color-white: #1b1a17;
+  --sl-color-gray-1: #2b2925;
+  --sl-color-gray-2: #3a3832;
+  --sl-color-gray-3: #625f55;
+  --sl-color-gray-4: #b9b3a2;
+  --sl-color-gray-5: #ddd7c9;
+  --sl-color-gray-6: #efebe2;
+  --sl-color-gray-7: #f3f0e8;
+  --sl-color-black: #f6f3ec;
+
+  --sl-color-accent-low: #f3e2dc;
+  --sl-color-accent: #7a2214;
+  --sl-color-accent-high: #7a2214;
+  --sl-color-text-accent: #7a2214;
+  --sl-color-text-invert: #f3efe6;
+
+  --sl-color-bg-nav: #efebe2;
+  --sl-color-bg-sidebar: #efebe2;
+  --sl-color-hairline-light: #ddd7c9;
+  --sl-color-hairline: #ddd7c9;
+  --sl-color-hairline-shade: #d3ccbc;
 }
 
-/* Benchmark bands: the fastest band is green, the slowest red. Text colours meet WCAG AA on each
-   background in both themes. */
+/* Focus is always visible, on every surface. */
+:focus-visible {
+  outline: 2px solid var(--sl-color-white);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+}
+
+/* Header and sidebar: surfaces separated from the page by a dark edge and a hairline highlight. */
+.page > header.header {
+  border-bottom: 1px solid var(--sl-color-hairline-shade);
+  box-shadow: 0 1px 0 var(--sl-color-hairline-light);
+}
+
+#starlight__sidebar {
+  border-inline-end: 1px solid var(--sl-color-hairline-shade);
+  box-shadow: 1px 0 0 var(--sl-color-hairline-light);
+}
+
+site-search button[data-open-modal] {
+  background: var(--girt-inset);
+  border-color: var(--sl-color-hairline-light);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25);
+}
+
+/* Code reads as typed: no programming ligatures. */
+code,
+pre,
+kbd,
+.expressive-code {
+  font-variant-ligatures: none;
+  font-feature-settings: 'calt' 0, 'liga' 0;
+}
+
+/* "On this page" matches the other small labels. */
+starlight-toc h2,
+mobile-starlight-toc .toggle {
+  font-family: var(--__sl-font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sl-color-gray-3);
+}
+
+/* Headings use the serif. */
+h1#_top,
+.sl-markdown-content :is(h1, h2, h3, h4, h5) {
+  font-family: var(--girt-font-heading);
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+h1#_top {
+  letter-spacing: -0.01em;
+}
+
+/* Links: readable text with a rust underline. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-decoration-color: var(--girt-underline);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.22em;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  color: var(--sl-color-white);
+  text-decoration-color: currentColor;
+}
+
+/* Inline code is set into the page. */
+.sl-markdown-content code:not(:where(.not-content *)) {
+  border: 1px solid var(--sl-color-hairline-light);
+  border-radius: 4px;
+  color: var(--sl-color-white);
+}
+
+/* Tables: a firm header rule, hairline rows, tabular figures. */
+.sl-markdown-content table:not(:where(.not-content *)) {
+  font-variant-numeric: tabular-nums;
+}
+
+.sl-markdown-content th:not(:where(.not-content *)) {
+  border-bottom: 1.5px solid var(--girt-text-secondary);
+}
+
+.sl-markdown-content td:not(:where(.not-content *)) {
+  border-bottom-color: var(--sl-color-hairline-light);
+}
+
+/* Callouts: a hairline box with a small label. No accent bar. */
+.starlight-aside {
+  border: 1px solid var(--sl-color-hairline-light);
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  background: var(--sl-color-bg-sidebar);
+  color: var(--sl-color-gray-2);
+  --sl-color-asides-text-accent: var(--sl-color-gray-3);
+}
+
+.starlight-aside--caution,
+.starlight-aside--danger {
+  background: var(--girt-rust-950);
+  border-color: var(--girt-rust-800);
+  --sl-color-asides-text-accent: var(--girt-refused-label);
+}
+
+:root[data-theme='light'] :is(.starlight-aside--caution, .starlight-aside--danger) {
+  background: #f8ece8;
+  border-color: #e9c9bf;
+}
+
+.starlight-aside__title {
+  font-family: var(--__sl-font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.starlight-aside__icon {
+  display: none;
+}
+
+.starlight-aside__title + .starlight-aside__content {
+  margin-top: 0.2rem;
+}
+
+.starlight-aside__content a {
+  color: var(--sl-color-white);
+}
+
+/* Landing page. */
+[data-has-hero] .main-frame {
+  background: var(--girt-hero-wash) no-repeat top / 100% 34rem;
+}
+
+[data-has-hero] .sl-markdown-content h2 {
+  margin-top: 2.5rem;
+}
+
+.girt-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  font-size: var(--sl-text-sm);
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.girt-button.primary {
+  background: var(--girt-rust-700);
+  border: 1px solid var(--girt-rust-600);
+  color: var(--girt-on-fill);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 2px 6px rgb(0 0 0 / 0.3);
+}
+
+.girt-button.primary:hover {
+  background: var(--girt-rust-600);
+}
+
+:root[data-theme='light'] .girt-button.primary:hover {
+  background: var(--girt-rust-800);
+}
+
+.girt-button.secondary,
+.girt-button.minimal {
+  border: 1px solid var(--girt-graph-line);
+  color: var(--sl-color-white);
+}
+
+.girt-button.secondary:hover,
+.girt-button.minimal:hover {
+  background: var(--girt-surface-raised);
+}
+
+/* Benchmark bands: verdigris through graphite to dark rust. Text meets WCAG AA on each fill. */
 :root {
-  --perf-band-0-bg: #12391f;
-  --perf-band-0-fg: #b6f0c4;
-  --perf-band-1-bg: #3a3410;
-  --perf-band-1-fg: #f3e39a;
-  --perf-band-2-bg: #4a2a0c;
-  --perf-band-2-fg: #ffcf9e;
-  --perf-band-3-bg: #4f1717;
-  --perf-band-3-fg: #ffc2c2;
-  --perf-failed-bg: #2f2f3a;
-  --perf-failed-fg: #e6e6f0;
+  --perf-band-0-bg: var(--girt-verdigris-900);
+  --perf-band-0-edge: var(--girt-verdigris-700);
+  --perf-band-0-fg: #f3efe6;
+  --perf-band-1-bg: #2a2b2e;
+  --perf-band-1-edge: #3d3f44;
+  --perf-band-1-fg: #f3efe6;
+  --perf-band-2-bg: var(--girt-rust-900);
+  --perf-band-2-edge: var(--girt-rust-800);
+  --perf-band-2-fg: #f3efe6;
+  --perf-band-3-bg: var(--girt-rust-700);
+  --perf-band-3-edge: var(--girt-rust-600);
+  --perf-band-3-fg: #f3efe6;
+  --perf-failed-bg: transparent;
+  --perf-failed-edge: var(--girt-rust-600);
+  --perf-failed-fg: #f3efe6;
 }
 
 :root[data-theme='light'] {
-  --perf-band-0-bg: #d6f5de;
-  --perf-band-0-fg: #0f4a22;
-  --perf-band-1-bg: #faf0c2;
-  --perf-band-1-fg: #574800;
-  --perf-band-2-bg: #ffe2c4;
-  --perf-band-2-fg: #6b3300;
-  --perf-band-3-bg: #ffd6d6;
-  --perf-band-3-fg: #7a1010;
-  --perf-failed-bg: #e4e4ec;
-  --perf-failed-fg: #23232e;
+  --perf-band-0-bg: #dcebe4;
+  --perf-band-0-edge: #9cc5b3;
+  --perf-band-0-fg: #173d31;
+  --perf-band-1-bg: #e8e3d7;
+  --perf-band-1-edge: #cfc8b8;
+  --perf-band-1-fg: #2b2925;
+  --perf-band-2-bg: #f3e2dc;
+  --perf-band-2-edge: #d9b2a6;
+  --perf-band-2-fg: #5a1a12;
+  --perf-band-3-bg: #7a2214;
+  --perf-band-3-edge: #5a1a12;
+  --perf-band-3-fg: #ffffff;
+  --perf-failed-fg: #5a1a12;
 }
 
 .perf-legend {
@@ -57,6 +341,7 @@
 
 .perf-table th[scope='row'] {
   min-width: 12rem;
+  font-weight: normal;
 }
 
 .perf-table td {
@@ -67,7 +352,7 @@
 .perf-workload,
 .perf-detail {
   display: block;
-  color: var(--sl-color-gray-2);
+  color: var(--sl-color-gray-3);
   font-size: var(--sl-text-xs);
   font-weight: normal;
 }
@@ -78,8 +363,11 @@
 
 .perf-chip {
   display: inline-block;
-  padding: 0.05rem 0.45rem;
-  border-radius: 0.25rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-family: var(--__sl-font-mono);
+  font-size: 0.8125rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -87,49 +375,67 @@
 
 .perf-chip.band-0 {
   background: var(--perf-band-0-bg);
+  border-color: var(--perf-band-0-edge);
   color: var(--perf-band-0-fg);
 }
 .perf-chip.band-1 {
   background: var(--perf-band-1-bg);
+  border-color: var(--perf-band-1-edge);
   color: var(--perf-band-1-fg);
 }
 .perf-chip.band-2 {
   background: var(--perf-band-2-bg);
+  border-color: var(--perf-band-2-edge);
   color: var(--perf-band-2-fg);
 }
 .perf-chip.band-3 {
   background: var(--perf-band-3-bg);
+  border-color: var(--perf-band-3-edge);
   color: var(--perf-band-3-fg);
 }
 .perf-chip.perf-failed {
-  background: var(--perf-failed-bg);
+  background: repeating-linear-gradient(45deg, rgb(168 50 34 / 0.35) 0 3px, transparent 3px 7px);
+  border: 1px solid var(--perf-failed-edge);
   color: var(--perf-failed-fg);
-  border: 1px dashed currentColor;
 }
 
 .perf-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
-  margin-top: 0.2rem;
+  margin-top: 0.3rem;
   font-size: var(--sl-text-xs);
 }
 
 .perf-tag {
   padding: 0 0.35rem;
-  border: 1px solid currentColor;
-  border-radius: 0.25rem;
+  border: 1px solid var(--girt-graph-line);
+  border-radius: 4px;
+  color: var(--girt-text-secondary);
 }
 
 .perf-tag.tag-girt {
-  color: var(--sl-color-text-accent);
-}
-
-.perf-tag.tag-jj,
-.perf-tag.tag-boundary {
-  color: var(--sl-color-gray-2);
+  border-color: var(--girt-rust-600);
 }
 
 .perf-empty {
   color: var(--sl-color-gray-3);
+}
+
+/* Starlight's own link buttons (used by other splash pages) match the girt buttons. */
+.sl-link-button {
+  border-radius: 6px;
+  font-size: var(--sl-text-sm);
+  padding: 0.6rem 1rem;
+}
+
+.sl-link-button.primary {
+  background: var(--girt-rust-700);
+  border: 1px solid var(--girt-rust-600);
+  color: var(--girt-on-fill);
+}
+
+.sl-link-button.secondary {
+  border: 1px solid var(--girt-graph-line);
+  color: var(--sl-color-white);
 }

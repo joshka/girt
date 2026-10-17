@@ -1,0 +1,62 @@
+---
+// Plain link cards for the landing page.
+interface Props {
+  links: { title: string; href: string; description: string }[];
+}
+
+const { links } = Astro.props;
+---
+
+<ul class="girt-links not-content">
+  {
+    links.map((link) => (
+      <li>
+        <a href={link.href}>
+          <span class="title">{link.title}</span>
+          <span class="description">{link.description}</span>
+        </a>
+      </li>
+    ))
+  }
+</ul>
+
+<style>
+  .girt-links {
+    display: grid;
+    gap: 0.9rem;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    list-style: none;
+    padding: 0;
+    margin-block: 1.5rem 0;
+  }
+
+  a {
+    display: block;
+    height: 100%;
+    padding: 1rem 1.15rem;
+    border: 1px solid var(--sl-color-hairline-light);
+    border-radius: 10px;
+    text-decoration: none;
+    color: inherit;
+  }
+
+  a:hover {
+    background: var(--sl-color-bg-sidebar);
+    border-color: var(--girt-graph-line);
+  }
+
+  .title {
+    display: block;
+    font-family: var(--girt-font-heading);
+    font-size: var(--sl-text-lg);
+    font-weight: 700;
+    color: var(--sl-color-white);
+    margin-bottom: 0.25rem;
+  }
+
+  .description {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+    line-height: 1.5;
+  }
+</style>

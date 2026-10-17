@@ -1,41 +1,68 @@
 ---
 title: girt
-description: An idiomatic Rust Git library. It reads and writes Git's own formats and refuses what it doesn't support.
+description: A Rust library for Git repositories. It reads and writes Git's own formats and refuses what it doesn't support.
 template: splash
 hero:
-  tagline: An idiomatic Rust Git library. It reads and writes Git's formats exactly and refuses what it doesn't support.
+  title: girt
+  tagline: >-
+    A Rust library for Git repositories: objects, references, the index, the working tree, and fetch, clone and push. It reads and writes Git's on-disk formats and returns an error for anything it doesn't support. It is the Git backend for an experimental build of jj.
   actions:
-    - text: Get started
+    - text: Getting started
       link: /girt/getting-started/
-      icon: right-arrow
-    - text: API reference
+    - text: Guides
+      link: /girt/guides/open-a-repository/
+      variant: secondary
+    - text: API docs (docs.rs)
       link: https://docs.rs/girt/latest/girt/
-      icon: external
-      variant: minimal
+      variant: secondary
 ---
 
-import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import Comparison from '../../components/Comparison.astro';
+import LinkCards from '../../components/LinkCards.astro';
 
-<CardGrid>
-  <Card title="Git's concepts, directly" icon="seti:rust">
-    Objects, trees, commits, references, the index and repositories are Rust types. Writing an
-    object, moving a reference and updating a working tree are separate calls.
-  </Card>
-  <Card title="Git formats, exactly" icon="approve-check">
-    SHA-1 and SHA-256 repositories, loose and packed objects, files and reftable references, and
-    index v2–v4. Every format girt supports is checked against the Git executable.
-  </Card>
-  <Card title="Explicit refusals" icon="warning">
-    Unsupported inputs return an error instead of a guess. Operations that delete or rewrite data
-    verify the replacement before they retire anything.
-  </Card>
-  <Card title="Built for jj" icon="rocket">
-    girt's first consumer is [jj](https://github.com/jj-vcs/jj). An experimental jj branch runs on
-    girt with no gix, libgit2 or Git subprocess.
-  </Card>
-</CardGrid>
+## Read a repository
 
-<CardGrid>
-  <LinkCard title="Overview" href="/girt/overview/" description="What girt is, who it's for and where it stands." />
-  <LinkCard title="jj on girt benchmark" href="/girt/performance/jj-benchmark/" description="jj with girt compared with stock jj and Git, grouped by how often you run each command." />
-</CardGrid>
+Open a repository, resolve `HEAD` and count the commits reachable from it. The
+[getting started](/girt/getting-started/) page explains each step.
+
+```rust title="src/main.rs"
+use girt::refs::RefName;
+use girt::{HistoryLimits, PackLimits, Repository};
+
+let repository = Repository::open("path/to/repo")?;
+let head = repository.references()?.resolve(&RefName::new("HEAD")?, 5)?;
+let objects = repository.objects(PackLimits::default())?;
+if let Some(id) = head.id {
+    // Walk ancestry without trusting commit timestamps.
+    let count = objects.walk(&[id], HistoryLimits::default())?.len();
+    println!("{count} commits reachable from HEAD");
+}
+```
+
+## jj on girt compared with stock jj
+
+girt's first consumer is [jj](https://github.com/jj-vcs/jj). This table runs the same jj commands on
+girt and on stock jj, which uses gix and the `git` executable, with the closest `git` command for
+reference.
+
+<Comparison />
+
+<LinkCards
+  links={[
+    {
+      title: 'Overview',
+      href: '/girt/overview/',
+      description: "What girt is, who it's for and where it stands.",
+    },
+    {
+      title: 'Supported and refused',
+      href: '/girt/compatibility/supported-and-refused/',
+      description: 'What each area supports and what it rejects.',
+    },
+    {
+      title: 'jj on girt benchmark',
+      href: '/girt/performance/jj-benchmark/',
+      description: 'Every measured command, grouped by how often you run it.',
+    },
+  ]}
+/>
