@@ -1980,8 +1980,27 @@ impl Repository {
         // send-pack`, preparation excludes the history of every advertised object (`roots`), so
         // the pack holds only what the receiver lacks.
         let callbacks = std::cell::RefCell::new(callbacks);
+        // The source snapshot is needed only to prepare. Preparing takes it, so its mapped
+        // indexes and cached delta bases are released before the receiver validates and installs
+        // the pack, rather than holding both repositories' storage at once. A retry refills it.
+        let source = std::cell::RefCell::new(Some(objects));
+        let refill = || -> Result<(), TransferError> {
+            let mut source = source.borrow_mut();
+            if source.is_none() {
+                *source = Some(
+                    self.objects(crate::PackLimits::trusted())
+                        .map_err(TransferError::local)?,
+                );
+            }
+            Ok(())
+        };
         let prepare = |roots: &[ObjectId]| -> Result<PreparedPush, PushFailure> {
             before_prepare();
+            // Every transport prepares at most once per send, and each retry refills first.
+            let objects = source
+                .borrow_mut()
+                .take()
+                .ok_or(PushFailure::Unsupported("preparing one push attempt twice"))?;
             let prepared = PreparedPush::new_with_progress(
                 &objects,
                 commands.clone(),
@@ -2021,6 +2040,7 @@ impl Repository {
                 // The destination's references changed while preparing: prepare once more against
                 // the new ones. A second change is reported rather than retried.
                 if is_knowledge_changed(&result) {
+                    refill()?;
                     result = send();
                 }
                 // Receive hook output arrives with the report rather than live.
@@ -2058,6 +2078,7 @@ impl Repository {
                 if is_unauthorized_push(&result) {
                     let session = http.credentials(&mut **callbacks.borrow_mut())?;
                     let remote = http.remote(Some(session))?;
+                    refill()?;
                     result = send(&remote, &callbacks);
                 }
                 result
