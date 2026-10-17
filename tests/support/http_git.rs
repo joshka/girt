@@ -34,7 +34,7 @@ impl Server {
         if let Some((cert, key)) = tls {
             command.arg("--certificate").arg(cert).arg("--key").arg(key);
         }
-        let mut process = Process::spawn(&mut command, false);
+        let mut process = Process::spawn_grouped(&mut command, false);
         let port: u16 = process.ready(|line| line.trim().parse::<u16>().map_err(|e| e.to_string()));
         Self {
             _process: process,
