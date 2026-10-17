@@ -57,6 +57,28 @@ impl IndexCommitOptions {
 ///
 /// Defaults retain standalone, regular-file-only admission. These options do not select an index
 /// from environment or configuration, authorize directory replacement, or bypass snapshot checks.
+///
+/// Opt in only when the selected storage layout requires it. These options describe admission,
+/// not permission to ignore changed snapshots or replace an arbitrary directory.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+///
+/// use girt::index::EditOptions;
+/// let path = directory.path().join("alternate.index");
+/// let options = EditOptions::default().with_resolve_split(true);
+/// repo.edit_index_at_with_options(&path, Default::default(), options)?
+///     .commit()?;
+/// assert!(repo.read_index_at(&path, Default::default())?.is_some());
+/// assert!(repo.read_index(Default::default())?.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct EditOptions {
@@ -327,6 +349,24 @@ impl Repository {
     /// Returns [`Self::read_index`]'s bounded I/O, format and non-regular-file errors. Split `link`
     /// extensions are rejected as [`Error::MandatoryExtension`] without reading a shared file,
     /// even when `path` names the default index. Nothing is written.
+    ///
+    /// # Inspect a temporary index independently of the worktree index
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    ///
+    /// let path = directory.path().join("preview.index");
+    /// repo.edit_index_at(&path, Default::default())?.commit()?;
+    /// assert!(repo.read_index_at(&path, Default::default())?.is_some());
+    /// assert!(repo.read_index(Default::default())?.is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read_index_at(
         &self,
         path: impl AsRef<Path>,
@@ -438,10 +478,11 @@ impl Repository {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// # use girt::{Repository, index::Limits};
-    /// # let repository = Repository::open("project")?;
-    /// let mut edit = repository.edit_index_at("temporary.index", Limits::default())?;
+    /// # let directory = tempfile::tempdir()?;
+    /// # let repository = Repository::init(girt::ObjectFormat::Sha1, directory.path().join("r"), girt::InitKind::Bare)?;
+    /// let mut edit = repository.edit_index_at(directory.path().join("temporary.index"), Limits::default())?;
     /// edit.replace_entries(Vec::new())?;
     /// edit.commit()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -467,14 +508,15 @@ impl Repository {
     /// Returns the lock, bounded-read, format and cleanup errors of [`Self::edit_index_at`]. A
     /// required absent shared file is [`StorageError::MissingShared`], never an empty replacement.
     ///
-    /// ```no_run
+    /// ```
     /// # use girt::{Repository, index::{EditOptions, Limits}};
-    /// # let repository = Repository::open("project")?;
+    /// # let directory = tempfile::tempdir()?;
+    /// # let repository = Repository::init(girt::ObjectFormat::Sha1, directory.path().join("r"), girt::InitKind::Bare)?;
     /// let options = EditOptions::default()
     ///     .with_resolve_split(true)
     ///     .with_follow_symlink(true);
     /// let mut edit =
-    ///     repository.edit_index_at_with_options("alternate.index", Limits::default(), options)?;
+    ///     repository.edit_index_at_with_options(directory.path().join("alternate.index"), Limits::default(), options)?;
     /// edit.discard_optional_extensions(&[*b"REUC"])?;
     /// edit.commit()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -610,6 +652,33 @@ impl IndexEdit {
     ///
     /// Propagates [`Index::replace_entries`] errors and preserves the previous in-memory index.
     /// No bytes are written; the guard continues to own the lock after failure.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    ///
+    /// use girt::index::{Entry, Mode};
+    /// let id = repo.loose_objects().write_blob(b"staged")?;
+    /// let mut edit = repo.edit_index(Default::default())?;
+    /// edit.replace_entries(vec![Entry::new(b"file".to_vec(), Mode::Regular, id)])?;
+    /// edit.commit()?;
+    /// let mut edit = repo.edit_index(Default::default())?;
+    /// edit.replace_entries(Vec::new())?;
+    /// edit.commit()?;
+    /// assert!(
+    ///     repo.read_index(Default::default())?
+    ///         .unwrap()
+    ///         .entries()
+    ///         .is_empty()
+    /// );
+    /// assert_eq!(repo.loose_objects().read_blob(id, 1024)?, b"staged");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn replace_entries(&mut self, entries: Vec<Entry>) -> Result<(), Error> {
         self.index.replace_entries(entries, self.limits)
     }
@@ -623,6 +692,36 @@ impl IndexEdit {
     ///
     /// Foreign formats, limit failures and any `link` extension leave the previous draft intact.
     /// A replacement cannot introduce a shared dependency that this guard has not captured.
+    ///
+    /// Use this when a consumer has built a complete replacement with its own framing choice, while
+    /// retaining the original guard's publication preconditions.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    ///
+    /// use girt::index::{Entry, Index, Mode, Version};
+    /// let id = repo.loose_objects().write_blob(b"replacement")?;
+    /// let mut replacement = Index::new(
+    ///     ObjectFormat::Sha1,
+    ///     vec![Entry::new(b"file".to_vec(), Mode::Regular, id)],
+    ///     Default::default(),
+    /// )?;
+    /// replacement.set_version(Version::V4, Default::default())?;
+    /// let mut edit = repo.edit_index(Default::default())?;
+    /// edit.replace_index(replacement)?;
+    /// edit.commit()?;
+    /// assert_eq!(
+    ///     repo.read_index(Default::default())?.unwrap().version(),
+    ///     Version::V4
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn replace_index(&mut self, index: Index) -> Result<(), Error> {
         crate::ObjectId::null(index.object_format()).require_format(self.index.object_format())?;
         if index
@@ -678,6 +777,39 @@ impl IndexEdit {
     /// # Errors
     ///
     /// Returns validation/extension errors without changing the draft index or storage.
+    ///
+    /// Batch a consumer's reconstructed entry list without throwing away useful stat words for
+    /// identical entries. This is cache preservation, not worktree verification; an identity or
+    /// mode change must not inherit the old entry's stat evidence.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    ///
+    /// use girt::index::{Entry, Mode, Stat};
+    /// let id = repo.loose_objects().write_blob(b"original")?;
+    /// let stat = Stat {
+    ///     size: 8,
+    ///     ..Stat::default()
+    /// };
+    /// let original = Entry::new(b"file".to_vec(), Mode::Regular, id).with_stat(stat);
+    /// let mut edit = repo.edit_index(Default::default())?;
+    /// edit.replace_entries(vec![original.clone()])?;
+    /// let draft = Entry::new(b"file".to_vec(), Mode::Regular, id);
+    /// edit.replace_entries_reusing_stat(vec![draft])?;
+    /// assert_eq!(edit.index().entries()[0].stat, stat);
+    /// let mut changed = original.with_stat(Stat::default());
+    /// changed.id = repo.loose_objects().write_blob(b"replacement")?;
+    /// edit.replace_entries_reusing_stat(vec![changed])?;
+    /// assert_eq!(edit.index().entries()[0].stat, Stat::default());
+    /// edit.abort()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn replace_entries_reusing_stat(&mut self, mut entries: Vec<Entry>) -> Result<(), Error> {
         let old = self.index.entries();
         for entry in &mut entries {
@@ -731,9 +863,14 @@ impl IndexEdit {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let repository = girt::Repository::open("project")?;
+    /// let directory = tempfile::tempdir()?;
+    /// let repository = girt::Repository::init(
+    ///     girt::ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     girt::InitKind::Bare,
+    /// )?;
     /// let mut edit = repository.edit_index(girt::index::Limits::default())?;
     /// edit.make_standalone()?;
     /// edit.commit()?;
@@ -776,9 +913,10 @@ impl IndexEdit {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// # use girt::{Repository, index::Limits};
-    /// # let repository = Repository::open("project")?;
+    /// # let directory = tempfile::tempdir()?;
+    /// # let repository = Repository::init(girt::ObjectFormat::Sha1, directory.path().join("r"), girt::InitKind::Bare)?;
     /// let mut edit = repository.edit_index(Limits::default())?;
     /// edit.invalidate_entry_offsets()?;
     /// edit.discard_resolve_undo()?;
@@ -835,6 +973,27 @@ impl IndexEdit {
     ///
     /// Returns [`Self::commit`]'s errors plus invalid/unsupported mode and file-sync failures.
     /// Exact modes are validated before writing the lock. No synchronization failure is ignored.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    ///
+    /// use girt::index::{IndexCommitOptions, Version};
+    /// let mut edit = repo.edit_index(Default::default())?;
+    /// edit.set_version(Version::V4)?;
+    /// edit.commit_with_options(IndexCommitOptions::default().with_sync(true))?;
+    /// assert_eq!(
+    ///     repo.read_index(Default::default())?.unwrap().version(),
+    ///     Version::V4
+    /// );
+    /// // The lock file was flushed; the parent directory was not synchronized.
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn commit_with_options(mut self, options: IndexCommitOptions) -> Result<(), StorageError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
