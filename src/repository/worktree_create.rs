@@ -754,7 +754,7 @@ fn initial_head_table(
         min_update_index: 1,
         max_update_index: 1,
         references: vec![RefRecord {
-            name: RefName::new(b"HEAD").expect("fixed name").into(),
+            name: RefName::HEAD.into(),
             update_index: 1,
             target: Some(Target::Symbolic(branch.clone())),
             peeled: None,

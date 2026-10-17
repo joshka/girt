@@ -46,7 +46,7 @@ fn probe(
         write_binary(&repo, tip, count)?;
     }
     let refs = repo.references()?;
-    let name = RefName::new("HEAD")?;
+    let name = RefName::HEAD;
     let cancel = AtomicBool::new(false);
     let before = descriptors();
     let retained = refs

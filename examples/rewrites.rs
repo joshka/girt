@@ -4,23 +4,31 @@
 //! source and target byte paths.
 use std::error::Error;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
+use clap::Parser;
 use girt::rewrites::{Kind, Limits, Options};
 use girt::{ObjectId, PackLimits, Repository};
 
+#[derive(Parser)]
+#[command(about, long_about = None)]
+struct Args {
+    /// Repository to open.
+    repository: PathBuf,
+    /// ID of the old tree.
+    old_tree: ObjectId,
+    /// ID of the new tree.
+    new_tree: ObjectId,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let args: Vec<_> = std::env::args_os().collect();
-    if args.len() != 4 {
-        return Err("usage: rewrites REPOSITORY OLD_TREE NEW_TREE".into());
-    }
-    let old: ObjectId = args[2].to_str().ok_or("non-text old ID")?.parse()?;
-    let new: ObjectId = args[3].to_str().ok_or("non-text new ID")?.parse()?;
-    let repo = Repository::open(&args[1])?;
+    let args = Args::parse();
+    let repo = Repository::open(args.repository)?;
     let objects = repo.objects(PackLimits::default())?;
     let records = objects.detect_rewrites(
-        Some(old),
-        Some(new),
+        Some(args.old_tree),
+        Some(args.new_tree),
         Options::default(),
         Limits::default(),
         None,

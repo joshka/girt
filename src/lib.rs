@@ -198,7 +198,9 @@ pub use object::{
     ObjectFormat, ObjectFormatError, ObjectId, ObjectKind, ParseObjectIdError, encode_blob,
 };
 pub(crate) use objects::UnverifiedObject;
-pub use objects::{AlternateLimits, Object, ObjectReadError, Objects, PackLimits, ReadLimits};
+pub use objects::{
+    AlternateLimits, Object, ObjectReadError, Objects, PackLimits, ReadCommitError, ReadLimits,
+};
 pub use pack::{
     DeltaOptions, DeltaStats, PackCompression, PackObject, PackWriteError, PackWriteLimits,
     PackWritten, write_pack, write_pack_with_compression,

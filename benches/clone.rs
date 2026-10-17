@@ -35,7 +35,7 @@ fn clone_plan(c: &mut Criterion) {
             })
             .collect();
         refs.push(AdvertisedRef::new(
-            RefName::new("HEAD").unwrap(),
+            RefName::HEAD,
             refs[0].id,
             girt::fetch::AdvertisementKind::Tip,
         ));

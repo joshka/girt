@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         message: b"Initial commit\n".to_vec(),
     })?;
     let id = objects.write_commit(&commit)?;
-    let head = girt::refs::RefName::new("HEAD")?;
+    let head = girt::refs::RefName::HEAD;
     let tag = girt::refs::RefName::new("refs/tags/initial")?;
     let edits = [
         {

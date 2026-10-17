@@ -1,14 +1,21 @@
 //! Inspect repository paths, registrations and shallow roots without changing files.
 //! Run `cargo run --example repository_layout -- /path/to/repository`.
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
+use clap::Parser;
 use girt::Repository;
 
+#[derive(Parser)]
+#[command(about, long_about = None)]
+struct Args {
+    /// Repository to inspect.
+    path: PathBuf,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = std::env::args_os()
-        .nth(1)
-        .ok_or("usage: repository_layout PATH")?;
-    let repository = Repository::open(path)?;
+    let args = Args::parse();
+    let repository = Repository::open(args.path)?;
     println!("Git directory: {}", repository.git_dir().display());
     println!("Common directory: {}", repository.common_dir().display());
     println!("Bare: {}", repository.is_bare());

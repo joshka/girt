@@ -460,7 +460,7 @@ fn head_edits(head: &CloneHead, reflog: &Reflog) -> Vec<RefEdit> {
         Reflog::Preserve
     };
     edits.push(RefEdit {
-        name: RefName::new("HEAD").unwrap(),
+        name: RefName::HEAD,
         dereference: crate::refs::Dereference::Stored,
         target: Some(target),
         expected: Expected::Value(Target::Symbolic(crate::repository::initial_branch())),

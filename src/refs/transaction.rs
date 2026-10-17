@@ -45,7 +45,7 @@ pub enum Dereference {
 /// # })?)?;
 /// # let refs = repo.references()?;
 /// # let main = RefName::new("refs/heads/main")?;
-/// let head = RefName::new("HEAD")?;
+/// let head = RefName::HEAD;
 /// let edit = RefEdit::new(head.clone(), Some(Target::Direct(id)), Expected::Absent,
 ///     Reflog::Append { committer: person, message: b"commit (initial)".to_vec() })
 ///     .with_dereference(girt::refs::Dereference::Follow);

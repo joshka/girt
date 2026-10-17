@@ -15,7 +15,7 @@ fn references(c: &mut Criterion) {
     let repo = Repository::open(root.path()).unwrap();
     let refs = repo.references().unwrap();
     let main = RefName::new(b"refs/heads/main").unwrap();
-    let head = RefName::new(b"HEAD").unwrap();
+    let head = RefName::HEAD;
     let id = ObjectId::Sha1([1; 20]);
     refs.update_without_reflog(&main, Target::Direct(id), Expected::Absent)
         .unwrap();
@@ -149,7 +149,7 @@ fn transactions(c: &mut Criterion) {
     )
     .unwrap();
     let refs = repo.references().unwrap();
-    let head = RefName::new("HEAD").unwrap();
+    let head = RefName::HEAD;
     let unborn = Target::Symbolic(RefName::new("refs/heads/main").unwrap());
     let detach = RefEdit::new(
         head.clone(),

@@ -630,7 +630,7 @@ mod tests {
 
     fn edit() -> RefEdit {
         RefEdit {
-            name: RefName::new(b"HEAD").unwrap(),
+            name: RefName::HEAD,
             dereference: crate::refs::Dereference::Follow,
             target: None,
             expected: Expected::Exists,
@@ -659,19 +659,9 @@ mod tests {
             .output()
             .unwrap();
         assert!(!output.status.success());
-        assert!(
-            refs.resolve(&RefName::new(b"HEAD").unwrap(), 32)
-                .unwrap()
-                .id
-                .is_some()
-        );
+        assert!(refs.resolve(&RefName::HEAD, 32).unwrap().id.is_some());
         prepared.publish().unwrap();
-        assert!(
-            refs.resolve(&RefName::new(b"HEAD").unwrap(), 32)
-                .unwrap()
-                .id
-                .is_none()
-        );
+        assert!(refs.resolve(&RefName::HEAD, 32).unwrap().id.is_none());
     }
 
     #[test]
@@ -684,7 +674,7 @@ mod tests {
         );
         let repo = crate::Repository::open(&linked).unwrap();
         let refs = repo.references().unwrap();
-        let head = RefName::new(b"HEAD").unwrap();
+        let head = RefName::HEAD;
         let before = refs.reflog(&head).unwrap();
         let prepared = prepare(&refs, &[edit()]).unwrap();
         let cancel = AtomicBool::new(false);

@@ -221,7 +221,7 @@ mod supported {
 
     fn resolve_head(repo: &Repository) -> Result<refs::Resolution, Error> {
         let refs = repo.references()?;
-        let name = refs::RefName::new(b"HEAD").expect("HEAD is a valid name");
+        let name = refs::RefName::HEAD;
         if refs.read(&name)?.is_none() {
             return Err(Error::Unsupported {
                 path: b"HEAD".to_vec(),

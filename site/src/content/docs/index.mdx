@@ -22,20 +22,25 @@ import LinkCards from '../../components/LinkCards.astro';
 
 ## Read a repository
 
-Open a repository, resolve `HEAD` and count the commits reachable from it. The
-[getting started](/girt/getting-started/) page explains each step.
+Print the first ten commits in `HEAD`'s history. The [getting started](/girt/getting-started/) page
+builds this program step by step.
 
 ```rust title="src/main.rs"
-use girt::refs::RefName;
-use girt::{HistoryLimits, PackLimits, Repository};
+use girt::{HistoryLimits, PackLimits, ReadLimits, Repository};
 
-let repository = Repository::open("path/to/repo")?;
-let head = repository.references()?.resolve(&RefName::new("HEAD")?, 5)?;
-let objects = repository.objects(PackLimits::default())?;
-if let Some(id) = head.id {
-    // Walk ancestry without trusting commit timestamps.
-    let count = objects.walk(&[id], HistoryLimits::default())?.len();
-    println!("{count} commits reachable from HEAD");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let repository = Repository::open(".")?;
+    let head = repository.head()?;
+    let head_id = head.id.ok_or("HEAD has no commits yet")?;
+    let objects = repository.objects(PackLimits::default())?;
+    let history = objects.walk(&[head_id], HistoryLimits::default())?;
+    for id in history.into_iter().take(10) {
+        let commit = objects.read_commit(id, ReadLimits::default())?;
+        let message = String::from_utf8_lossy(commit.message());
+        let summary = message.lines().next().unwrap_or_default();
+        println!("{id} {summary}");
+    }
+    Ok(())
 }
 ```
 

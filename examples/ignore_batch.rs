@@ -1,14 +1,23 @@
 //! A bounded caller-owned loader and byte-path batch adapter for the ignore benchmark.
 //! Input paths are NUL-separated file paths; source content is one root .gitignore.
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
+use clap::Parser;
 use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
 
+#[derive(Parser)]
+#[command(about, long_about = None)]
+struct Args {
+    /// Root .gitignore file whose rules are applied to the NUL-separated paths on stdin.
+    file: PathBuf,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let file = std::env::args_os().nth(1).ok_or("supply an ignore file")?;
+    let args = Args::parse();
     let limits = Limits::default();
     let mut content = Vec::new();
-    std::fs::File::open(file)?
+    std::fs::File::open(args.file)?
         .take(limits.bytes as u64 + 1)
         .read_to_end(&mut content)?;
     let mut rules = Ignore::new(Case::Sensitive, limits);

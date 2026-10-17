@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let first = objects.write_commit(&Commit::new(fields.clone())?)?;
     let refs = repo.references()?;
-    let head = RefName::new(b"HEAD")?;
+    let head = RefName::HEAD;
     let branch = refs.update_resolved_without_reflog(&head, first, Expected::Absent)?;
     fields.parents.push(first);
     fields.message = b"Advance branch\n".to_vec();

@@ -860,6 +860,36 @@ impl Repository {
         crate::refs::References::new(self)
     }
 
+    /// Resolves `HEAD` to the reference it ends at and that reference's object ID.
+    ///
+    /// On a branch, the resolution names the branch. A detached `HEAD` names `HEAD` itself. An
+    /// unborn branch, one with no commits yet, resolves with `id: None`; the resolution still
+    /// names the branch. Follows at most five symbolic references, which covers an ordinary
+    /// `HEAD`. Use [`crate::refs::References::resolve`] to choose a different limit.
+    ///
+    /// This reads references only. It doesn't check that the object exists or is a commit; use
+    /// [`crate::Objects::read_commit`] for that.
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("repo.git");
+    /// let repository = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    /// let head = repository.head()?;
+    /// assert_eq!(head.name, RefName::new("refs/heads/main")?);
+    /// assert_eq!(head.id, None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the failures of [`Self::references`] and [`crate::refs::References::resolve`].
+    pub fn head(&self) -> Result<crate::refs::Resolution, crate::refs::ReferenceError> {
+        self.references()?.resolve(&crate::refs::RefName::HEAD, 5)
+    }
+
     /// Opens only the supplied location, without changing files.
     ///
     /// Reads `config` from the common directory; repeated scalar settings use the last value.

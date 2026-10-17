@@ -61,9 +61,7 @@ pub enum InitKind {
 ///     .object_format(ObjectFormat::Sha256)
 ///     .initial_branch("trunk")?;
 /// let repo = Repository::init_with_options(directory.path().join("new.git"), &options)?;
-/// let head = repo
-///     .references()?
-///     .resolve(&girt::refs::RefName::new("HEAD")?, 5)?;
+/// let head = repo.head()?;
 /// assert_eq!(head.name.as_bytes(), b"refs/heads/trunk");
 /// assert!(head.id.is_none());
 /// assert_eq!(repo.object_format(), ObjectFormat::Sha256);
@@ -87,13 +85,7 @@ impl InitOptions {
     ///     directory.path().join("default.git"),
     ///     &InitOptions::new(InitKind::Bare),
     /// )?;
-    /// assert_eq!(
-    ///     repo.references()?
-    ///         .resolve(&girt::refs::RefName::new("HEAD")?, 5)?
-    ///         .name
-    ///         .as_bytes(),
-    ///     b"refs/heads/master"
-    /// );
+    /// assert_eq!(repo.head()?.name.as_bytes(), b"refs/heads/master");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn new(kind: InitKind) -> Self {
@@ -159,13 +151,7 @@ impl InitOptions {
     /// let user = girt::Config::parse(b"[init]\ndefaultBranch = trunk\n")?;
     /// let options = InitOptions::new(InitKind::Bare).defaults_from(&user)?;
     /// let repo = Repository::init_with_options(directory.path().join("configured.git"), &options)?;
-    /// assert_eq!(
-    ///     repo.references()?
-    ///         .resolve(&girt::refs::RefName::new("HEAD")?, 5)?
-    ///         .name
-    ///         .as_bytes(),
-    ///     b"refs/heads/trunk"
-    /// );
+    /// assert_eq!(repo.head()?.name.as_bytes(), b"refs/heads/trunk");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn defaults_from(self, config: &crate::Config) -> Result<Self, InitError> {
@@ -338,12 +324,7 @@ impl Repository {
     ///     girt::refs::Backend::Reftable,
     /// )?;
     /// assert_eq!(repo.reference_backend(), girt::refs::Backend::Reftable);
-    /// assert!(
-    ///     repo.references()?
-    ///         .resolve(&girt::refs::RefName::new("HEAD")?, 5)?
-    ///         .id
-    ///         .is_none()
-    /// );
+    /// assert!(repo.head()?.id.is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn init_with_backend(
@@ -552,7 +533,7 @@ fn populate_reftable(
         min_update_index: 1,
         max_update_index: 1,
         references: vec![RefRecord {
-            name: RefName::new(b"HEAD").unwrap().into(),
+            name: RefName::HEAD.into(),
             update_index: 1,
             target: Some(Target::Symbolic(initial_branch.clone())),
             peeled: None,

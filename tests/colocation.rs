@@ -75,7 +75,7 @@ fn publishes_index_and_detached_head_without_touching_branch_or_files(
     let first = commit(root, b"first\n", "first");
     let second = commit(root, b"second\n", "second");
     let refs = repo.references().unwrap();
-    let head = RefName::new(b"HEAD").unwrap();
+    let head = RefName::HEAD;
     let original = refs.read(&head).unwrap().unwrap();
     let blob = repo.loose_objects().write_blob(b"first\n").unwrap();
     let mut edit = repo.edit_colocation(Limits::default()).unwrap();

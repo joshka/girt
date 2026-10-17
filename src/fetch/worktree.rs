@@ -27,7 +27,7 @@ pub(super) fn check(repository: &Repository) -> Result<(), FetchPlanError> {
 
 fn check_head(repository: &Repository) -> Result<(), FetchPlanError> {
     let refs = repository.references()?;
-    let mut name = RefName::new("HEAD").expect("valid HEAD");
+    let mut name = RefName::HEAD;
     for _ in 0..=32 {
         match refs.read(&name)? {
             Some(Target::Symbolic(next)) if next.as_bytes().starts_with(b"refs/heads/") => {

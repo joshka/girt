@@ -310,7 +310,7 @@ fn namespace_observations_keep_hints_within_namespace(#[case] format: ObjectForm
     );
     assert_eq!(observations[0].peeled_hint, Some(peeled));
     assert!(matches!(
-        refs.list_namespace_observations(&RefName::new("HEAD").unwrap()),
+        refs.list_namespace_observations(&RefName::HEAD),
         Err(ReferenceError::Unsupported(_))
     ));
 }

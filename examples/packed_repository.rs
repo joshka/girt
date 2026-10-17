@@ -4,20 +4,26 @@
 //! SHA-256 identity matching the repository's format.
 //! To prepare a disposable packed repository, create commits and run `git repack -ad` there.
 use std::io::{self, Write};
+use std::path::PathBuf;
 
+use clap::Parser;
 use girt::{ObjectId, PackLimits, ReadLimits, Repository};
 
+#[derive(Parser)]
+#[command(about, long_about = None)]
+struct Args {
+    /// Repository to open.
+    path: PathBuf,
+    /// Full object identity matching the repository's object format.
+    id: ObjectId,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args().skip(1);
-    let path = args.next().ok_or("expected repository path")?;
-    let id: ObjectId = args
-        .next()
-        .ok_or("expected full object identity")?
-        .parse()?;
-    let repository = Repository::open(path)?;
+    let args = Args::parse();
+    let repository = Repository::open(args.path)?;
     let objects = repository.objects(PackLimits::default())?;
     let object = objects
-        .read(id, ReadLimits::default())?
+        .read(args.id, ReadLimits::default())?
         .ok_or("object absent")?;
     eprintln!(
         "{} {} ({} bytes)",

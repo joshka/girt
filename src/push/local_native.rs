@@ -698,7 +698,7 @@ fn head_names(repository: &Repository, name: &RefName) -> Result<bool, PushFailu
     if repository.is_bare() {
         return Ok(false);
     }
-    let head = RefName::new(b"HEAD").expect("valid HEAD");
+    let head = RefName::HEAD;
     let refs = repository.references().map_err(PushFailure::reference)?;
     if !matches!(
         refs.read(&head).map_err(PushFailure::reference)?,

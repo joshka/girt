@@ -416,7 +416,7 @@ fn advertise_store(
         .map_err(|_| FetchError::Protocol("local references"))?;
     let mut advertised = Vec::new();
     let mut remaining = limits.max_advertisement_bytes;
-    let head = RefName::new(b"HEAD").expect("valid HEAD");
+    let head = RefName::HEAD;
     let head_target = refs
         .read(&head)
         .map_err(|_| FetchError::Protocol("local HEAD"))?;
