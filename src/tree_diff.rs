@@ -22,7 +22,7 @@
 //! editor.set(b"new", blob)?;
 //! let new = editor.write()?;
 //! let objects = repo.objects()?;
-//! let changes = objects.diff_with_renames(Some(old), Some(new))?;
+//! let changes = objects.diff_trees(Some(old), Some(new))?;
 //! assert!(matches!(
 //!     &changes.entries[0],
 //!     Entry::Rewrite {
@@ -114,15 +114,17 @@ pub enum Error {
 impl Objects {
     /// Compares trees and infers renames using default options and limits, without cancellation.
     ///
+    /// Wraps [`Self::diff_trees_with`] with default options and limits.
+    ///
     /// # Errors
     ///
     /// Returns storage, malformed-tree, resource or inference errors from the two explicit APIs.
-    pub fn diff_with_renames(
+    pub fn diff_trees(
         &self,
         old: Option<ObjectId>,
         new: Option<ObjectId>,
     ) -> Result<Comparison, Error> {
-        self.diff_with_renames_with(
+        self.diff_trees_with(
             old,
             new,
             Options::default(),
@@ -141,7 +143,7 @@ impl Objects {
     ///
     /// Returns storage, malformed-tree, resource, cancellation or inference errors. Nothing is
     /// written.
-    pub fn diff_with_renames_with(
+    pub fn diff_trees_with(
         &self,
         old: Option<ObjectId>,
         new: Option<ObjectId>,

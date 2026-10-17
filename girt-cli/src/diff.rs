@@ -64,7 +64,7 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
             Copies::Disabled
         });
         let comparison = objects
-            .diff_with_renames_with(
+            .diff_trees_with(
                 Some(old),
                 Some(new),
                 options,
