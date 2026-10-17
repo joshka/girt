@@ -12,6 +12,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `girt::object::ObjectKind` is the canonical path for object kinds, beside `ObjectId` and
   `ObjectFormat`. `girt::ObjectKind` and `girt::tag::ObjectKind` remain as re-exports.
 
+### Breaking changes
+
+- Builder setters on `InitOptions`, `workflow::FetchOptions` and `workflow::PushOptions` take the
+  `with_` prefix used by every other girt options type: `with_object_format`,
+  `with_reference_backend`, `with_initial_branch`, `with_depth`, `with_prune`,
+  `with_tag_namespace`, `with_reflog`, `with_compression`, `with_identity` and `with_push_option`.
+  Behavior is unchanged; rename the calls. `with_tag_namespace` and `with_push_option` still add
+  one value per call.
+
 ## [0.10.3](https://github.com/joshka/girt/compare/v0.10.2...v0.10.3) - 2026-10-17
 
 ### Other

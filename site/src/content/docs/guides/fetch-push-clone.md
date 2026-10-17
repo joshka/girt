@@ -97,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // A `Repository` holds a configuration snapshot, so reopen it to see the new remote.
     let repo = Repository::open(&path)?;
-    let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).prune(true);
+    let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).with_prune(true);
     let outcome = workflow::fetch(
         &repo,
         "origin",
@@ -134,7 +134,7 @@ A fetch goes through these steps:
    reported after pruning has happened.
 
 Some behavior differs from `git fetch`. Destinations must be remote-tracking references, tags, or a
-namespace you allow with `FetchOptions::tag_namespace`, so a fetch can never move a checked-out
+namespace you allow with `FetchOptions::with_tag_namespace`, so a fetch can never move a checked-out
 branch. No `FETCH_HEAD` is written. Tags are not followed automatically: fetch the tags you want
 with a refspec such as `refs/tags/*:refs/tags/*`. A missing exact source is reported in
 `FetchOutcome::missing_sources` instead of failing the fetch.

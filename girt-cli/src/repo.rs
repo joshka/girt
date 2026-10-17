@@ -170,14 +170,14 @@ pub fn init(args: InitArgs, context: &Context) -> Result<ExitCode> {
     };
     let mut options = InitOptions::new(kind);
     if args.sha256 {
-        options = options.object_format(ObjectFormat::Sha256);
+        options = options.with_object_format(ObjectFormat::Sha256);
     }
     if args.reftable {
-        options = options.reference_backend(Backend::Reftable);
+        options = options.with_reference_backend(Backend::Reftable);
     }
     if let Some(name) = &args.initial_branch {
         options = options
-            .initial_branch(name)
+            .with_initial_branch(name)
             .wrap_err_with(|| format!("invalid branch name `{name}`"))?;
     }
     let target = match &args.directory {

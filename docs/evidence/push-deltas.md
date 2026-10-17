@@ -29,10 +29,11 @@ entries and verified receiver candidates; explicit ordinary compression remains 
 works with or without an OFS advertisement. External bases have output depth zero; internal/output
 chains obey the read bound and enabled compression depth bound. Packs offering receiver candidates
 cap depth at one, so internal bases resolve as ordinary entries before external lookup.
-`PushOptions::compression` exposes ordinary encoding through the configured workflow as well as the
-existing low-level policy. Receiver import reconstructs and repairs thin packs, checks connectivity,
-then installs before conditional ref publication. Source CRC, typed edges, source identity reads,
-budgets, cancellation, native knowledge retry, no-clobber installation and CAS remain.
+`PushOptions::with_compression` exposes ordinary encoding through the configured workflow as well as
+the existing low-level policy. Receiver import reconstructs and repairs thin packs, checks
+connectivity, then installs before conditional ref publication. Source CRC, typed edges, source
+identity reads, budgets, cancellation, native knowledge retry, no-clobber installation and CAS
+remain.
 
 Candidate values count against `max_input_bytes` and the per-object read/write bounds. Inadequate
 candidate budget falls back to whole objects. Internal and external searches share each target's

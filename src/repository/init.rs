@@ -58,8 +58,8 @@ pub enum InitKind {
 /// use girt::{InitKind, InitOptions, ObjectFormat, Repository};
 /// let directory = tempfile::tempdir()?;
 /// let options = InitOptions::new(InitKind::Bare)
-///     .object_format(ObjectFormat::Sha256)
-///     .initial_branch("trunk")?;
+///     .with_object_format(ObjectFormat::Sha256)
+///     .with_initial_branch("trunk")?;
 /// let repo = Repository::init_with_options(directory.path().join("new.git"), &options)?;
 /// let head = repo.head()?;
 /// assert_eq!(head.name.as_bytes(), b"refs/heads/trunk");
@@ -98,13 +98,15 @@ impl InitOptions {
     }
 
     /// Selects the object format (hash function).
-    pub fn object_format(mut self, format: crate::ObjectFormat) -> Self {
+    #[must_use]
+    pub fn with_object_format(mut self, format: crate::ObjectFormat) -> Self {
         self.format = format;
         self
     }
 
     /// Selects the reference storage backend.
-    pub fn reference_backend(mut self, backend: crate::refs::Backend) -> Self {
+    #[must_use]
+    pub fn with_reference_backend(mut self, backend: crate::refs::Backend) -> Self {
         self.backend = backend;
         self
     }
@@ -120,16 +122,16 @@ impl InitOptions {
     /// use girt::{InitKind, InitOptions};
     /// assert!(
     ///     InitOptions::new(InitKind::Bare)
-    ///         .initial_branch("../invalid")
+    ///         .with_initial_branch("../invalid")
     ///         .is_err()
     /// );
     /// assert!(
     ///     InitOptions::new(InitKind::Bare)
-    ///         .initial_branch("topic/nested")
+    ///         .with_initial_branch("topic/nested")
     ///         .is_ok()
     /// );
     /// ```
-    pub fn initial_branch(mut self, name: &str) -> Result<Self, InitError> {
+    pub fn with_initial_branch(mut self, name: &str) -> Result<Self, InitError> {
         self.initial_branch = RefName::new(format!("refs/heads/{name}"))
             .map_err(|_| InitError::InvalidBranch(name.to_owned()))?;
         Ok(self)
@@ -164,7 +166,7 @@ impl InitOptions {
         if name.is_empty() {
             return Err(invalid());
         }
-        self.initial_branch(name)
+        self.with_initial_branch(name)
     }
 }
 
@@ -285,7 +287,7 @@ impl Repository {
     /// ```
     /// use girt::{InitKind, InitOptions, Repository};
     /// let directory = tempfile::tempdir()?;
-    /// let options = InitOptions::new(InitKind::Bare).initial_branch("main")?;
+    /// let options = InitOptions::new(InitKind::Bare).with_initial_branch("main")?;
     /// let path = directory.path().join("new.git");
     /// Repository::init_with_options(&path, &options)?;
     /// // Opening is separate from creation; initialization never repairs existing metadata.
@@ -334,8 +336,8 @@ impl Repository {
         backend: crate::refs::Backend,
     ) -> Result<Self, InitError> {
         let mut options = InitOptions::new(kind)
-            .object_format(format)
-            .reference_backend(backend);
+            .with_object_format(format)
+            .with_reference_backend(backend);
         options.initial_branch = initial_branch();
         Self::init_inner(path.as_ref(), &options)
     }

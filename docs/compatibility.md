@@ -1232,20 +1232,20 @@ Git fsck equivalence.
 Both writer policies reuse stored zlib streams, including deltas whose same-pack base has already
 been written within the output depth limit. Other deltas are reconstructed. Push defaults to bounded
 delta search for fresh and reconstructed objects, with whole-object compression explicitly
-selectable through `PushLimits::compression` or the configured `PushOptions::compression` builder.
-Earlier output objects can be internal bases; identity-checked blobs and trees marked reachable from
-an advertised receiver root can be external bases. Only roots supplying an emitted external base
-join the existing live advertisement recheck. External candidate reads count against the writer's
-aggregate input budget; insufficient remaining budget falls back to whole objects. Search tries
-nearest-size blobs and trees within the bounded candidate, size and work policy, skips payloads
-under 64 bytes, and stops after a completed delta below 1% of target size. It does not reproduce
-Git's matching heuristics. Transfer deltas use REF_DELTA framing, requiring no optional OFS
-capability. A thin pack must be independently imported and repaired against receiver objects before
-installation. Packs offering receiver candidates cap output depth at one so every internal base is
-an ordinary entry resolved before external lookup; complete packs without receiver candidates retain
-their configured depth. Its companion index is generated into a sink, not sent or installed.
-Repeated and incremental pushes using `new` with empty receiver roots retransmit full selected
-histories; explicit receiver roots can reduce them as described below.
+selectable through `PushLimits::compression` or the configured `PushOptions::with_compression`
+builder. Earlier output objects can be internal bases; identity-checked blobs and trees marked
+reachable from an advertised receiver root can be external bases. Only roots supplying an emitted
+external base join the existing live advertisement recheck. External candidate reads count against
+the writer's aggregate input budget; insufficient remaining budget falls back to whole objects.
+Search tries nearest-size blobs and trees within the bounded candidate, size and work policy, skips
+payloads under 64 bytes, and stops after a completed delta below 1% of target size. It does not
+reproduce Git's matching heuristics. Transfer deltas use REF_DELTA framing, requiring no optional
+OFS capability. A thin pack must be independently imported and repaired against receiver objects
+before installation. Packs offering receiver candidates cap output depth at one so every internal
+base is an ordinary entry resolved before external lookup; complete packs without receiver
+candidates retain their configured depth. Its companion index is generated into a sink, not sent or
+installed. Repeated and incremental pushes using `new` with empty receiver roots retransmit full
+selected histories; explicit receiver roots can reduce them as described below.
 `PreparedPush::new_with_progress` reports unique source reads and successfully encoded pack entries
 through `PreparationProgress`. Reads include receiver history later excluded from the pack; packing
 totals describe only selected outgoing objects. Its terminal `Complete` event follows pack
