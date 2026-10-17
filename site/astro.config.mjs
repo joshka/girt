@@ -65,6 +65,8 @@ export default defineConfig({
             { label: 'Read and update refs', slug: 'guides/refs' },
             { label: 'The index and working tree', slug: 'guides/index-and-working-tree' },
             { label: 'Fetch, push and clone', slug: 'guides/fetch-push-clone' },
+            { label: 'Credentials and transports', slug: 'guides/credentials-and-transports' },
+            { label: 'Limits and trust', slug: 'guides/limits-and-trust' },
             { label: 'Maintenance and GC', slug: 'guides/maintenance' },
           ],
         },
