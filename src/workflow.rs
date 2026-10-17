@@ -111,8 +111,9 @@
 //! 4. **Negotiate.** Local reference tips are offered as history the repository already has, so the
 //!    server can leave those objects out. HTTP and SSH ask for the upload-pack protocol named by
 //!    `protocol.version` (v2 when unset, as Git does) and accept a v0 or v1 answer.
-//! 5. **Validate and install.** The received pack is checked in full (framing, object identities,
-//!    delta chains and the connectivity of every selected tip) before it is installed.
+//! 5. **Validate and install.** Every received object's framing, delta chain and identity are
+//!    checked, and the history of every selected tip is walked to check that it is complete and
+//!    well-formed, before the pack is installed.
 //! 6. **Publish.** First every planned change is checked against its refspec's rules, such as
 //!    fast-forwarding; if any check fails, no reference changes. Then stale references are pruned
 //!    in one transaction and the remaining references updated in a second, each conditional on the
