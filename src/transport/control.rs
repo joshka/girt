@@ -4,6 +4,54 @@ use std::time::Instant;
 
 /// Cancellation and an optional absolute deadline for an owned transport.
 ///
+/// Every core transfer takes one. Create it from an [`AtomicBool`] that another thread (a signal
+/// handler, a UI's cancel button, a supervisor) can set, and optionally add a deadline. See
+/// [Cancellation and deadlines](crate::transport#cancellation-and-deadlines) for what an
+/// interruption leaves behind.
+///
+/// # Examples
+///
+/// A cancelled fetch stops before installing anything:
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::sync::atomic::{AtomicBool, Ordering};
+/// use std::time::{Duration, Instant};
+///
+/// use girt::fetch::{FetchError, FetchLimits, FetchRequest, FetchWorkflowError, KnownHistory};
+/// use girt::refs::Reflog;
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, _, _) = include!("../doctest/remote.rs");
+///
+/// let cancel = AtomicBool::new(false);
+/// let control = TransportControl::new(&cancel)
+///     .with_deadline(Some(Instant::now() + Duration::from_secs(60)));
+///
+/// // Normally another thread sets the flag while the transfer runs.
+/// cancel.store(true, Ordering::Relaxed);
+///
+/// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+/// let request = FetchRequest::prepare(
+///     repo.clone(),
+///     origin.fetch_refspecs().clone(),
+///     BTreeSet::new(),
+///     Reflog::Preserve,
+/// )?;
+/// let result = request.receive_local(
+///     upstream.git_dir(),
+///     &KnownHistory::default(),
+///     FetchLimits::default(),
+///     control,
+///     girt::fetch::LocalFetchObserver::default(),
+/// );
+/// assert!(matches!(
+///     result,
+///     Err(FetchWorkflowError::Transfer(FetchError::Cancelled))
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
 /// Native local adapters check this control between repository, graph, pack and publication steps.
 /// The HTTP adapter polls it during async network waits; SSH uses it for async OpenSSH pipe and
 /// exit waits. Each adapter documents its own scope and runtime requirements.

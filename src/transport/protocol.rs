@@ -2,6 +2,8 @@
 
 /// Upload-pack protocol version requested from an HTTP or SSH server.
 ///
+/// See [Protocol versions](crate::transport#protocol-versions) for what each version changes.
+///
 /// A request is a preference, not a guarantee: the server chooses, and girt parses whatever its
 /// first response line announces. Requesting v2 from a server that only knows v0/v1 therefore
 /// falls back to v0/v1. Requesting v0 or v1 from a server that answers `version 2` fails. Only
@@ -23,6 +25,24 @@ impl RequestedProtocol {
     /// Parses a Git `protocol.version` value: `0`, `1` or `2`.
     ///
     /// Returns `None` for any other value, including surrounding whitespace.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::transport::RequestedProtocol;
+    ///
+    /// let config = Config::parse(b"[protocol]\nversion = 1\n")?;
+    /// let requested = match config.value("protocol", None, "version") {
+    ///     // Unset: Git requests version 2.
+    ///     None => RequestedProtocol::V2,
+    ///     Some(value) => value
+    ///         .and_then(RequestedProtocol::from_config)
+    ///         .ok_or("invalid protocol.version")?,
+    /// };
+    /// assert_eq!(requested, RequestedProtocol::V1);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn from_config(value: &[u8]) -> Option<Self> {
         match value {
             b"0" => Some(Self::V0),

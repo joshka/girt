@@ -81,6 +81,22 @@ impl PushCommand {
 
 /// Input, work and output bounds for preparation and a single receive-pack session.
 ///
+/// Push limits protect the pusher from its own repository as much as from the receiver: preparing
+/// a push reads and verifies every object it sends, and parses the receiver's advertisement and
+/// status. Use `default()` when either side is untrusted and `trusted()` otherwise, as
+/// [`crate::workflow::push`] does. See [Limits and trust](crate::transport#limits-and-trust).
+///
+/// # Examples
+///
+/// ```
+/// use girt::PackCompression;
+/// use girt::push::PushLimits;
+///
+/// // Accept larger pushes than the default, without delta search for faster preparation.
+/// let limits = PushLimits::trusted().with_compression(PackCompression::Ordinary);
+/// assert_eq!(limits.max_commands, PushLimits::trusted().max_commands);
+/// ```
+///
 /// Packs are spooled to temporary files. Retained memory includes selected structured payloads,
 /// object/edge metadata, protocol bytes and the caller's object snapshot. Packed blob payloads
 /// are not retained by selection; writing holds one reconstructed object and, for fresh delta

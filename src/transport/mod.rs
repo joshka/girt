@@ -1,16 +1,120 @@
-//! Caller control for owned transports; protocol streams remain caller-owned and cooperative.
+//! Transports, protocol versions, resource limits, and cancellation and deadlines.
 //!
-//! [`TransportControl`] carries a cancellation flag and optional deadline into native local,
-//! HTTP, and SSH adapters. It checks between work steps; it cannot interrupt a synchronous hash,
-//! filesystem call, or caller-owned blocking stream. The `http` feature adds owned HTTP transfers;
-//! `ssh` adds an OpenSSH adapter on macOS/Linux. Those adapters document their runtime, process,
-//! authentication, and cleanup contracts at the endpoint.
+//! A transfer reaches another repository through one of three transports. This module holds the
+//! network transports' endpoint types, the [`TransportControl`] that cancels a transfer or imposes
+//! a deadline, and the [`RequestedProtocol`] for fetches. The transfer operations themselves live
+//! in [`crate::fetch`], [`crate::push`] and [`crate::clone`]; [`crate::workflow`] picks a transport
+//! from configuration automatically.
 //!
-//! For a full fetch lifecycle start with [`crate::fetch::FetchRequest`]; for push, prepare
-//! [`crate::push::PreparedPush`] before choosing a transport. Applications own worker scheduling
-//! and must inspect partial outcomes before retrying publication.
+//! # Choosing a transport
 //!
-//! # Example
+//! | Remote | Transport | Feature | Endpoint |
+//! | --- | --- | --- | --- |
+//! | Local path or `file://` URL | Native local | none | a path |
+//! | `http://`, `https://` | Smart HTTP | `http` | [`http::HttpRemote`] |
+//! | `ssh://`, `user@host:path` | System OpenSSH, macOS and Linux | `ssh` | [`ssh::SshRemote`] |
+//!
+//! **Native local** transfers read the other repository's object storage directly. They never
+//! start `git upload-pack` or `git receive-pack`, need no Git installation and no async runtime,
+//! and are synchronous. A local push runs the destination's receive hooks and follows its
+//! `receive.*` settings.
+//!
+//! **Smart HTTP** uses reqwest with rustls. [`http::HttpRemote::configured`] applies Git's `http.*`
+//! configuration: TLS verification and CA bundles, proxies and same-origin redirects.
+//! [`http::HttpRemote::new`] instead takes explicit headers, for applications that supply their
+//! own `Authorization` header.
+//!
+//! **SSH** runs the system `ssh` executable, so keys, agents, `known_hosts` and `~/.ssh/config`
+//! work as they do for the `ssh` command. [`ssh::SshRemote::openssh`] keeps the user's ordinary
+//! OpenSSH configuration, which is what an interactive client such as jj wants.
+//! [`ssh::SshRemote::configured`] and [`ssh::SshRemote::new`] instead pin an explicit
+//! configuration file and force restrictive options (no password prompts, forwarding or
+//! connection sharing, and agents or askpass only when the application supplies them), for
+//! services that must not depend on a user's settings.
+//!
+//! `git://` and remote helpers (`<transport>::<address>`) are not supported.
+//!
+//! # Async network, synchronous validation
+//!
+//! The HTTP and SSH adapters are `async` and run on a Tokio runtime the caller owns, with I/O and
+//! time enabled. girt creates no runtime and spawns no tasks. A network fetch returns an owned
+//! download, such as [`crate::fetch::FetchDownload`], rather than validated objects. Validation
+//! inflates, hashes and parses every object, which can take seconds of CPU time, so it is a
+//! separate synchronous call. Run it on a blocking worker (`tokio::task::spawn_blocking` or your
+//! own pool), not on an executor thread. The caller bounds how many downloads wait and how many
+//! validations run at once, and joins each worker even after cancelling it.
+//!
+//! [`crate::workflow`] hides this split by creating a private single-threaded runtime per call;
+//! do not call it from inside another Tokio runtime.
+//!
+//! # Protocol versions
+//!
+//! Git has three versions of the fetch (upload-pack) protocol. Version 2 sends capabilities first
+//! and lets the client run separate `ls-refs` and `fetch` commands; versions 0 and 1 begin with the
+//! full reference advertisement. [`RequestedProtocol`] selects which version an HTTP or SSH fetch
+//! asks for. The server decides: girt accepts whichever version it answers with, so requesting
+//! v2 from an older server falls back safely. The core adapters request v0 by default;
+//! [`crate::workflow`] follows `protocol.version`, which defaults to v2 as in Git. Push uses the
+//! v0 receive-pack protocol in every case, and native local transfers use no wire protocol.
+//!
+//! # Limits and trust
+//!
+//! Every transfer validates everything it receives, whatever its limits: pack framing and
+//! checksums, each object's identity and syntax, delta chains, and that the history of every
+//! fetched tip is complete. Malformed input is always rejected, and nothing is installed until
+//! validation succeeds.
+//!
+//! Resource limits answer a different question: how much *well-formed* work may the other side
+//! ask for? A valid pack can be 50 GB, hold ten million objects or chain deltas thousands deep.
+//! `git fetch` accepts all of that from the remotes its user configured. A service that fetches
+//! URLs supplied by its users must not, or one user can exhaust its disk, memory or CPU.
+//!
+//! Each phase of a transfer therefore takes explicit limits, and each limits type has two
+//! constructors:
+//!
+//! | Limits | Bounds | Untrusted input | Trusted input |
+//! | --- | --- | --- | --- |
+//! | [`FetchLimits`](crate::fetch::FetchLimits) | advertisement, wire bytes, pack size, objects, decoding, connectivity | `default()` | `trusted()` |
+//! | [`FetchUpdateLimits`](crate::fetch::FetchUpdateLimits) | checking installed objects and fast-forwards before publishing | `default()` | `trusted()` |
+//! | [`PushLimits`](crate::push::PushLimits) | advertisement, commands, selected history, pack writing, status | `default()` | `trusted()` |
+//! | [`PackLimits`](crate::PackLimits) | opening an object store: index bytes, packs, files | `default()` | `trusted()` |
+//!
+//! `default()` suits a peer you don't control: for example, a fetch may receive at most 512 MiB
+//! on the wire and a 256 MiB pack of at most one million objects, with each object at most 64 MiB
+//! and deltas at most 64 deep. `trusted()` raises every bound until only available memory and disk
+//! limit the work, matching Git; [`crate::workflow`] uses it for the remotes a user configured.
+//! The defaults also refuse large *trusted* repositories. The default
+//! [`PackLimits`](crate::PackLimits) admits 64 MiB of pack index, while a Linux kernel clone has
+//! about 300 MB, so use `trusted()` when opening big repositories you control, as in
+//! [`FetchLimits::source_packs`].
+//!
+//! Exceeding a limit fails the transfer before anything is installed, with an error that names the
+//! bound, such as [`FetchError::Limit`](crate::fetch::FetchError::Limit). Nothing needs cleaning
+//! up. Limits bound input and work, not wall-clock time or total process memory: pair them with a
+//! deadline, and bound how many transfers run at once.
+//!
+//! [`FetchLimits::source_packs`]: crate::fetch::FetchLimits::source_packs
+//!
+//! # Cancellation and deadlines
+//!
+//! [`TransportControl`] carries a cancellation flag and an optional absolute deadline into every
+//! core transfer. Set the [`AtomicBool`](std::sync::atomic::AtomicBool) from another thread to stop
+//! a transfer; the deadline is never extended by traffic. Both are checked between units of work
+//! and, for the network adapters, every 20 ms while waiting for the peer. A single hash, inflate or
+//! filesystem call is not interrupted.
+//!
+//! What an interruption means depends on how far the transfer got. A fetch interrupted before
+//! installation leaves the repository unchanged; one interrupted after installation leaves the
+//! new objects in place but publishes no references, and reports what was done in
+//! [`FetchFinishError`](crate::fetch::FetchFinishError). A push interrupted before any command was
+//! sent returns [`PushError::NotSent`](crate::push::PushError::NotSent); one interrupted after
+//! sending began returns [`PushError::Uncertain`](crate::push::PushError::Uncertain), because the
+//! remote may already have applied some updates. Read the remote's references before retrying it.
+//!
+//! [`crate::workflow`] takes no control: its transfers can be neither cancelled nor bounded in
+//! time.
+//!
+//! ## Example: a deadline before sending
 //!
 //! A deadline that has already passed stops a native local push (setup hidden) before any command
 //! is sent, so `NotSent` guarantees the destination references are unchanged. An interruption

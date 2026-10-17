@@ -1,9 +1,11 @@
 # Smart HTTP Fetch and Push
 
-Enable `girt`'s `http` feature for smart HTTP/HTTPS protocol v0. The adapter performs a service
-advertisement GET and, when needed, one upload-pack or receive-pack POST. It does not model HTTP as
-a duplex stream. Each upload-pack request contains the complete wants, bounded have batch and
-`done`; known-only fetches and empty pushes stop after discovery.
+Enable `girt`'s `http` feature for smart HTTP/HTTPS. Fetch and discovery speak upload-pack protocol
+v0, v1 or v2, as requested with `HttpRemote::with_protocol` (v0 by default; `workflow` follows
+`protocol.version`, v2 when unset) and as answered by the server. Push speaks receive-pack v0. The
+adapter performs a service advertisement GET and, when needed, one upload-pack or receive-pack POST.
+It does not model HTTP as a duplex stream. Each upload-pack request contains the complete wants,
+bounded have batch and `done`; known-only fetches and empty pushes stop after discovery.
 
 ## Runtime and Processing
 
@@ -160,9 +162,9 @@ text remain server-controlled bytes for callers to handle.
 
 ## Limits and Interruption
 
-Discovery requires the exact service prelude and flush followed by a valid v0 advertisement. Media
-types must match the requested smart Git service without parameters or duplicates. HTTP content
-encoding is rejected, avoiding a second decompression budget. Dumb HTTP and protocol v1/v2 are
+Discovery requires the exact service prelude and flush followed by a valid v0/v1 advertisement or v2
+capability list. Media types must match the requested smart Git service without parameters or
+duplicates. HTTP content encoding is rejected, avoiding a second decompression budget. Dumb HTTP is
 explicitly unsupported; existing object-format and push preparation constraints apply;
 advertised-history deltas may produce thin packs.
 
@@ -261,6 +263,7 @@ notices. The dependency graph contains no mandatory copyleft license; licenses o
 alternative are evaluated under that alternative.
 
 SSH is provided by a separate optional [adapter](ssh.md). Credential discovery, remote/refspec
-policy, protocol v2, shallow/partial repositories, automatic tags/pruning and thin packs remain
-outside this adapter. See [Git compatibility evidence](compatibility.md#smart-http-and-https) and
+policy, partial clone filters, and automatic tags/pruning remain outside this adapter; the
+`workflow` module and `FetchRequest` provide remote policy, depth-limited fetches and pruning. See
+[Git compatibility evidence](compatibility.md#smart-http-and-https) and
 [loopback benchmarks](benchmarks.md#smart-http-loopback-baseline).
