@@ -33,7 +33,7 @@ fn unsupported_platform_does_not_lock_or_parse_index() {
     .unwrap();
     std::fs::write(repo.git_dir().join("index"), b"invalid").unwrap();
     let failure = repo
-        .checkout_tree(None, None, Limits::default(), &AtomicBool::new(false))
+        .checkout_tree_with(None, None, Limits::default(), &AtomicBool::new(false))
         .unwrap_err();
     assert!(matches!(*failure.cause, Error::Refused { .. }));
     assert!(!repo.git_dir().join("index.lock").exists());

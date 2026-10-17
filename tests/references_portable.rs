@@ -329,7 +329,7 @@ fn packing_keeps_loose_copies_without_a_durable_rename() {
         .unwrap();
     let report = refs
         .pack(
-            &repo.objects(girt::PackLimits::default()).unwrap(),
+            &repo.objects_with(girt::PackLimits::default()).unwrap(),
             girt::refs::PackRefsOptions::ALL,
         )
         .unwrap();

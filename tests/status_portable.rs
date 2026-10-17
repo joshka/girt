@@ -34,7 +34,7 @@ fn unsupported_platform_fails_before_index_read() {
     )
     .unwrap();
     std::fs::write(repo.git_dir().join("index"), b"not an index").unwrap();
-    let result = repo.raw_status(
+    let result = repo.raw_status_with(
         Baseline::Tree(None),
         Untracked::Omit,
         Limits::default(),

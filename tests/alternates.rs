@@ -346,7 +346,7 @@ fn follows_symlink_aliases_and_non_utf8_paths(#[case] format: ObjectFormat) {
         .unwrap();
     assert_eq!(
         objects
-            .read(id, ReadLimits::default())
+            .read_with(id, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
