@@ -131,10 +131,10 @@ fn reads_git_loose_packed_and_symbolic_then_shadows_packed(#[case] format: girt:
     let packed_before = fs::read(root.path().join("packed-refs")).unwrap();
     assert!(packed_before.contains(&b'^'));
     assert_eq!(
-        refs.resolve(&name("refs/tags/v1"), 0).unwrap().id,
+        refs.resolve_with(&name("refs/tags/v1"), 0).unwrap().id,
         Some(tag)
     );
-    assert_eq!(refs.resolve(&name("HEAD"), 8).unwrap().id, Some(first));
+    assert_eq!(refs.resolve_with(&name("HEAD"), 8).unwrap().id, Some(first));
     let second = second_commit(root.path(), first);
     refs.update_without_reflog(
         &branch,
@@ -144,7 +144,7 @@ fn reads_git_loose_packed_and_symbolic_then_shadows_packed(#[case] format: girt:
     .unwrap();
     assert_eq!(oid(&git(root.path(), &["rev-parse", "HEAD"], b"")), second);
     assert_eq!(
-        refs.resolve(&name("refs/heads/alias"), 8).unwrap().id,
+        refs.resolve_with(&name("refs/heads/alias"), 8).unwrap().id,
         Some(second)
     );
     assert_eq!(
@@ -185,7 +185,7 @@ fn publishes_unborn_branch_and_distinguishes_symbolic_replacement(
 ) {
     let (root, repo, first) = fixture(format);
     let refs = repo.references().unwrap();
-    assert_eq!(refs.resolve(&name("HEAD"), 8).unwrap().id, None);
+    assert_eq!(refs.resolve_with(&name("HEAD"), 8).unwrap().id, None);
     assert_eq!(
         refs.update_resolved_without_reflog(&name("HEAD"), first, Expected::Absent)
             .unwrap(),
@@ -428,7 +428,7 @@ fn linked_worktree_routes_shared_and_private_refs(
     assert_eq!(
         repo.references()
             .unwrap()
-            .resolve(&name("HEAD"), 8)
+            .resolve_with(&name("HEAD"), 8)
             .unwrap()
             .id,
         Some(first)
@@ -597,7 +597,7 @@ fn git_dangling_symbolic_ref_resolves_to_missing_name(#[case] format: girt::Obje
     let resolved = repo
         .references()
         .unwrap()
-        .resolve(&name("refs/heads/dangling"), 8)
+        .resolve_with(&name("refs/heads/dangling"), 8)
         .unwrap();
     assert_eq!(resolved.name, name("refs/heads/missing"));
     assert_eq!(resolved.id, None);
@@ -621,7 +621,7 @@ fn dangling_object_id_is_not_object_lookup(#[case] format: girt::ObjectFormat) {
     )
     .unwrap();
     assert_eq!(
-        refs.resolve(&name("refs/tags/missing"), 0).unwrap().id,
+        refs.resolve_with(&name("refs/tags/missing"), 0).unwrap().id,
         Some(missing)
     );
     assert!(repo.loose_objects().read_blob(missing, 100).is_err());

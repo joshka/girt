@@ -378,7 +378,7 @@ fn stored_symbolic_edit_logs_unborn_target(#[case] format: crate::ObjectFormat) 
     assert_eq!(
         repo.references()
             .unwrap()
-            .resolve(&name("refs/heads/alias"), 1)
+            .resolve_with(&name("refs/heads/alias"), 1)
             .unwrap()
             .id,
         None
@@ -936,7 +936,7 @@ fn symbolic_head_logs_old_and_new_terminal_ids(#[case] format: crate::ObjectForm
     assert_eq!(logs[0].old, id(format, 1));
     assert_eq!(logs[0].new, id(format, 2));
     assert_eq!(
-        refs.resolve(&name("HEAD"), 32).unwrap().id,
+        refs.resolve_with(&name("HEAD"), 32).unwrap().id,
         Some(id(format, 2))
     );
     assert_eq!(refs.reflog(&name("refs/heads/next")).unwrap(), None);

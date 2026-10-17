@@ -26,7 +26,7 @@
     "empty_vectors": 0
   },
   "Log first N in date order with exclusions": {
-    "lines": 14,
+    "lines": 10,
     "imported_names": 1,
     "defaults": 0,
     "never_cancel": 0,
@@ -78,7 +78,7 @@
     "empty_vectors": 0
   },
   "Create, move and delete a branch": {
-    "lines": 16,
+    "lines": 12,
     "imported_names": 4,
     "defaults": 0,
     "never_cancel": 0,
@@ -86,12 +86,12 @@
     "object_formats": 0,
     "identity_literals": 0,
     "commit_fields": 0,
-    "branch_names": 1,
+    "branch_names": 0,
     "boxed_errors": 1,
     "empty_vectors": 0
   },
   "Lightweight and annotated tags": {
-    "lines": 29,
+    "lines": 22,
     "imported_names": 9,
     "defaults": 0,
     "never_cancel": 0,
@@ -117,15 +117,15 @@
     "empty_vectors": 0
   },
   "Push the current branch": {
-    "lines": 25,
-    "imported_names": 7,
+    "lines": 24,
+    "imported_names": 6,
     "defaults": 1,
     "never_cancel": 0,
     "byte_vectors": 0,
     "object_formats": 0,
     "identity_literals": 0,
     "commit_fields": 0,
-    "branch_names": 1,
+    "branch_names": 0,
     "boxed_errors": 1,
     "empty_vectors": 0
   },

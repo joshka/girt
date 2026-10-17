@@ -98,11 +98,7 @@ use girt::Repository;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repository::open("repo")?;
     let objects = repo.objects()?;
-    let root = repo
-        .references()?
-        .resolve(&girt::refs::RefName::HEAD, 5)?
-        .id
-        .ok_or("unborn HEAD")?;
+    let root = repo.head()?.id.ok_or("unborn HEAD")?;
     for id in objects.walk(&[root])?.into_iter().take(20) {
         println!("{id}");
     }
@@ -212,7 +208,7 @@ fn commit_tree(
 ) -> girt::Result<()> {
     let tree = index.write_tree(repo)?;
     let refs = repo.references()?;
-    let parent = refs.resolve(&RefName::HEAD, 5)?.id;
+    let parent = refs.resolve(&RefName::HEAD)?.id;
     let expected = parent.map_or(Expected::Absent, |id| Expected::Value(Target::Direct(id)));
     let commit = Commit::builder(tree, identity, b"Snapshot\n").parents(parent).build()?;
     let id = repo.loose_objects().write_commit(&commit)?;
@@ -235,45 +231,42 @@ index-to-tree operation supplies `tree`. Gap closure:
 
 <!-- ergonomics-status: supported -->
 
-Supported for explicit no-reflog policy. Move uses a conditional update (here to the same tip);
-replace the new target with the desired commit. Deletion refuses a concurrent tip change. Verbose:
-full reference names, symbolic depth and repeated target/expected values.
+Supported with an explicit reflog policy; this snippet keeps none. `Repository::reflog_for` picks
+Git's `core.logAllRefUpdates` policy for a supplied identity. Move is a compare-and-swap (here to
+the same tip); replace the new target with the desired commit. Deletion refuses a concurrent tip
+change. Verbose: one transaction per step and the reflog choice.
 
 ```rust,no_run
 use girt::Repository;
-use girt::refs::{Expected, RefName, Target};
+use girt::refs::{RefEdit, RefName, Reflog};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repository::open("repo")?;
     let refs = repo.references()?;
-    let tip = refs.resolve(&RefName::HEAD, 5)?.id.ok_or("unborn HEAD")?;
-    let branch = RefName::new("refs/heads/topic")?;
-    refs.update_without_reflog(&branch, Target::Direct(tip), Expected::Absent)?;
-    refs.update_without_reflog(
-        &branch,
-        Target::Direct(tip),
-        Expected::Value(Target::Direct(tip)),
-    )?;
-    refs.delete_without_reflog(&branch, Expected::Value(Target::Direct(tip)))?;
+    let tip = repo.head()?.id.ok_or("unborn HEAD")?;
+    let branch = RefName::branch("topic")?;
+    refs.transaction(&[RefEdit::create(branch.clone(), tip, Reflog::Preserve)])?;
+    refs.transaction(&[RefEdit::update(branch.clone(), tip, tip, Reflog::Preserve)])?;
+    refs.transaction(&[RefEdit::delete(branch, tip, Reflog::Preserve)])?;
     Ok(())
 }
 ```
 
-Desired sketch: `RefEdit::update(RefName::branch("topic")?, tip, new_tip)`. Gap closure:
-[405](https://github.com/joshka/girt/issues/405) and
+Desired sketch: `git.branch("topic").create(tip)?`. Gap closure: the reference helpers in
+[405](https://github.com/joshka/girt/issues/405) are delivered; the remaining shared setup is
 [408](https://github.com/joshka/girt/issues/408).
 
 ### Lightweight and annotated tags
 
 <!-- ergonomics-status: supported -->
 
-Supported: the snippet creates both lightweight and annotated tag references with explicit no-reflog
-policy. The linked reference transaction example also demonstrates reflogs; loose_tag shows the
-annotated object separately. Verbose: TagFields, supplied Signature, byte vectors and Expected; no
-new tag capability is required for this composition.
+Supported: the snippet creates both lightweight and annotated tag references in one transaction with
+explicit no-reflog policy. The linked reference transaction example also demonstrates reflogs;
+loose_tag shows the annotated object separately. Verbose: TagFields, supplied Signature and byte
+vectors; no new tag capability is required for this composition.
 
 ```rust,no_run
-use girt::refs::{Expected, RefName, Target};
+use girt::refs::{RefEdit, RefName, Reflog};
 use girt::{ObjectId, ObjectKind, Repository, Signature, Tag, TagFields};
 
 fn tags(
@@ -282,12 +275,6 @@ fn tags(
     identity: Signature,
 ) -> girt::Result<()> {
     // Caller supplies an existing commit tip and deliberately chooses no reflogs.
-    let refs = repo.references()?;
-    refs.update_without_reflog(
-        &RefName::new("refs/tags/light")?,
-        Target::Direct(tip),
-        Expected::Absent,
-    )?;
     let tag = Tag::new(TagFields {
         target: tip,
         target_kind: ObjectKind::Commit,
@@ -297,11 +284,10 @@ fn tags(
         message: b"Release\n".to_vec(),
     })?;
     let id = repo.loose_objects().write_tag(&tag)?;
-    refs.update_without_reflog(
-        &RefName::new("refs/tags/v1")?,
-        Target::Direct(id),
-        Expected::Absent,
-    )?;
+    repo.references()?.transaction(&[
+        RefEdit::create(RefName::tag("light")?, tip, Reflog::Preserve),
+        RefEdit::create(RefName::tag("v1")?, id, Reflog::Preserve),
+    ])?;
     Ok(())
 }
 ```
@@ -309,10 +295,10 @@ fn tags(
 Disposable end-to-end evidence: [reference_transaction](../examples/reference_transaction.rs),
 [loose_tag](../examples/loose_tag.rs).
 
-Desired sketch: `RefName::tag("v1")?; Signature::now(name, email)?`. Gap closure:
-[403](https://github.com/joshka/girt/issues/403), [405](https://github.com/joshka/girt/issues/405)
-and [408](https://github.com/joshka/girt/issues/408) (shared repository setup; TagFields stays
-explicit).
+Desired sketch: `Signature::now(name, email)?`. Gap closure:
+[403](https://github.com/joshka/girt/issues/403) and
+[408](https://github.com/joshka/girt/issues/408) (shared repository setup; TagFields stays
+explicit). `RefName::tag` came from [405](https://github.com/joshka/girt/issues/405).
 
 ### Fetch by remote name
 
@@ -355,13 +341,12 @@ Inspect the report for rejected commands; errors retain partial effects.
 ```rust,no_run
 use girt::Repository;
 use girt::push::PushCommand;
-use girt::refs::RefName;
 use girt::workflow::{self, Environment, NoCallbacks, PushOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repository::open("repo")?;
-    let head = repo.references()?.resolve(&RefName::HEAD, 5)?;
-    if !head.name.as_bytes().starts_with(b"refs/heads/") {
+    let head = repo.head()?;
+    if !head.name.is_branch() {
         return Err("current HEAD is not a branch".into());
     }
     let tip = head.id.ok_or("unborn branch")?;

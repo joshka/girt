@@ -23,7 +23,7 @@ fn references(c: &mut Criterion) {
         b.iter(|| refs.read(black_box(&main)).unwrap())
     });
     c.bench_function("references/resolve-head-warm", |b| {
-        b.iter(|| refs.resolve(black_box(&head), 8).unwrap())
+        b.iter(|| refs.resolve_with(black_box(&head), 8).unwrap())
     });
     c.bench_function("references/update-existing-no-reflog", |b| {
         b.iter(|| {

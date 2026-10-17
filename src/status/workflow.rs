@@ -246,7 +246,7 @@ mod supported {
                 reason: "missing HEAD",
             });
         }
-        Ok(refs.resolve(&name, 32)?)
+        Ok(refs.resolve_with(&name, 32)?)
     }
 
     fn read_object(

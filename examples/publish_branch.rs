@@ -25,14 +25,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let second = objects.write_commit(&second_commit)?;
     refs.update_resolved_without_reflog(&head, second, Expected::Value(Target::Direct(first)))?;
-    assert_eq!(refs.resolve(&head, 8)?.id, Some(second));
+    assert_eq!(refs.resolve_with(&head, 8)?.id, Some(second));
     assert_eq!(refs.read(&head)?, Some(Target::Symbolic(branch.clone())));
     let branches = refs.list_namespace(&RefName::new(b"refs/heads")?)?;
     assert_eq!(branches[0].name, branch);
     // Delete the observed terminal branch, keeping HEAD symbolic and now unborn.
     refs.delete_resolved_without_reflog(&head, Expected::Value(branches[0].target.clone()))?;
     assert_eq!(refs.read(&head)?, Some(Target::Symbolic(branch)));
-    assert_eq!(refs.resolve(&head, 8)?.id, None);
+    assert_eq!(refs.resolve_with(&head, 8)?.id, None);
     assert!(refs.list()?.is_empty());
     println!("Published {first}, advanced to {second}, then deleted main without reflogs");
     Ok(())

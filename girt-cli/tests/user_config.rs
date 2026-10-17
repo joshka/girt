@@ -130,6 +130,32 @@ fn committer_identity_uses_global_and_environment_config() {
     );
 }
 
+// Git logs the branch an unlogged alias names; repeating the same value logs nothing.
+#[test]
+fn ref_set_through_alias_logs_the_branch_once() {
+    let scratch = Scratch::new("[user]\n\tname = Global Person\n\temail = global@example.com\n");
+    commit(&scratch);
+    success(scratch.git(&["commit", "--quiet", "--allow-empty", "-m", "second"], &[]));
+    success(scratch.git(
+        &["symbolic-ref", "refs/custom/alias", "refs/heads/main"],
+        &[],
+    ));
+    let log = || fs::read_to_string(scratch.repo.join(".git/logs/refs/heads/main")).unwrap();
+    let before = log().lines().count();
+
+    success(scratch.girt(
+        &["ref", "set", "refs/custom/alias", "HEAD~1", "-m", "back"],
+        &[],
+    ));
+    assert_eq!(log().lines().count(), before + 1);
+    assert!(log().ends_with("\tback\n"), "{}", log());
+    success(scratch.girt(
+        &["ref", "set", "refs/custom/alias", "HEAD~0", "-m", "again"],
+        &[],
+    ));
+    assert_eq!(log().lines().count(), before + 1);
+}
+
 #[test]
 fn init_uses_global_default_branch() {
     let scratch = Scratch::new("[init]\n\tdefaultBranch = trunk\n");

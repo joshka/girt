@@ -314,6 +314,103 @@ impl References<'_> {
         self.enumerate_observations(Some(namespace), None)
     }
 
+    /// Lists references whose full names start with the bytes of `prefix`.
+    ///
+    /// Unlike [`Self::list_namespace`], the prefix need not end at a `/`: `refs/heads/fe` selects
+    /// `refs/heads/feature` and `refs/heads/fe/x`, and `refs/heads/` selects every branch. Loose
+    /// reads are confined to the namespace up to the last `/` in `prefix`; a prefix without one
+    /// below `refs/` enumerates every reference before filtering. HEAD is never listed. Ordering,
+    /// symbolic behavior and live-read guarantees match [`Self::list`].
+    ///
+    /// # Errors
+    ///
+    /// Reports the errors of [`Self::list_namespace`] for the enumerated namespace.
+    ///
+    /// ```
+    /// use girt::refs::{RefEdit, RefName, Reflog};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"tip")?;
+    /// let refs = repo.references()?;
+    /// let edits = ["feature", "fe/x", "main"].map(|branch| {
+    ///     Ok(RefEdit::create(
+    ///         RefName::branch(branch)?,
+    ///         id,
+    ///         Reflog::Preserve,
+    ///     ))
+    /// });
+    /// refs.transaction(
+    ///     &edits
+    ///         .into_iter()
+    ///         .collect::<Result<Vec<_>, girt::refs::InvalidRefName>>()?,
+    /// )?;
+    /// let names: Vec<_> = refs
+    ///     .list_prefix("refs/heads/fe")?
+    ///     .into_iter()
+    ///     .map(|r| r.name)
+    ///     .collect();
+    /// assert_eq!(
+    ///     names,
+    ///     [RefName::branch("fe/x")?, RefName::branch("feature")?]
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn list_prefix(&self, prefix: impl AsRef<[u8]>) -> Result<Vec<Reference>, ReferenceError> {
+        Ok(self
+            .list_prefix_observations(prefix)?
+            .into_iter()
+            .map(|observation| Reference {
+                name: observation.name,
+                target: observation.target,
+            })
+            .collect())
+    }
+
+    /// Lists references by byte prefix like [`Self::list_prefix`], keeping packed peeled hints.
+    ///
+    /// Hints follow [`Self::list_namespace_observations`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::list_prefix`].
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// assert!(
+    ///     repo.references()?
+    ///         .list_prefix_observations("refs/tags/v")?
+    ///         .is_empty()
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn list_prefix_observations(
+        &self,
+        prefix: impl AsRef<[u8]>,
+    ) -> Result<Vec<ReferenceObservation>, ReferenceError> {
+        let prefix = prefix.as_ref();
+        // The directory part of the prefix bounds the loose scan; the rest is a byte filter.
+        let namespace = prefix
+            .iter()
+            .rposition(|byte| *byte == b'/')
+            .and_then(|end| prefix.get(..end))
+            .and_then(|directory| RefName::new(directory).ok())
+            .filter(|namespace| *namespace != RefName::HEAD);
+        let mut observations = self.enumerate_observations(namespace.as_ref(), None)?;
+        observations.retain(|observation| observation.name.as_bytes().starts_with(prefix));
+        Ok(observations)
+    }
+
     fn enumerate(&self, namespace: Option<&RefName>) -> Result<Vec<Reference>, ReferenceError> {
         self.enumerate_with_budget(namespace, None)
     }

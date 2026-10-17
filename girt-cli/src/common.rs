@@ -10,9 +10,6 @@ use girt::revision::{Range, Resolver, Revision, Selection};
 use girt::workflow::Environment;
 use girt::{Config, ObjectId, ObjectKind, Objects, Repository};
 
-/// Maximum symbolic-ref hops followed while resolving a reference.
-const MAX_SYMREF_DEPTH: usize = 5;
-
 /// Global options shared by every command.
 #[derive(Debug)]
 pub struct Context {
@@ -95,7 +92,7 @@ pub fn resolve(repository: &Repository, revision: &str) -> Result<ObjectId> {
 /// Resolves a full ref name through symbolic refs; `None` when absent or unborn.
 pub fn resolve_ref(references: &References<'_>, name: &RefName) -> Result<Option<ObjectId>> {
     let resolution = references
-        .resolve(name, MAX_SYMREF_DEPTH)
+        .resolve(name)
         .wrap_err_with(|| format!("resolving {}", display_bytes(name.as_bytes())))?;
     Ok(resolution.id)
 }

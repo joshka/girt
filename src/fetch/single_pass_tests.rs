@@ -193,7 +193,7 @@ fn clone_publication_does_not_rewalk_received_objects(#[case] format: ObjectForm
     assert_eq!(inflations, 0);
     let refs = repository.references().unwrap();
     let main = refs
-        .resolve(&RefName::new(b"refs/remotes/origin/main").unwrap(), 8)
+        .resolve_with(&RefName::new(b"refs/remotes/origin/main").unwrap(), 8)
         .unwrap()
         .id;
     assert_eq!(main, history.commits.last().copied());

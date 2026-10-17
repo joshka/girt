@@ -174,7 +174,7 @@ fn conditional_keep_race_has_one_value_and_git_observes_it(#[case] format: Objec
     let stored = repo
         .references()
         .unwrap()
-        .resolve(&name("refs/jj/keep"), 0)
+        .resolve_with(&name("refs/jj/keep"), 0)
         .unwrap()
         .id
         .unwrap();

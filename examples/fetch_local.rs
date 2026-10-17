@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: vec![],
         message: b"Local fetch fixture\n".to_vec(),
     })?)?;
-    let branch = RefName::new("refs/heads/main")?;
+    let branch = RefName::branch("main")?;
     source.references()?.update_without_reflog(
         &branch,
         Target::Direct(commit),

@@ -220,7 +220,7 @@ fn http_workflow_publishes_depth_and_tracking_ref(
 fn tip(repo: &Repository, name: &str) -> ObjectId {
     repo.references()
         .unwrap()
-        .resolve(&RefName::new(name).unwrap(), 8)
+        .resolve_with(&RefName::new(name).unwrap(), 8)
         .unwrap()
         .id
         .unwrap()

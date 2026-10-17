@@ -75,7 +75,7 @@ fn reads_nonempty_repository_and_publishes_conditional_refs(
     assert_eq!(repo.reference_backend(), Backend::Reftable);
     let refs = repo.references().unwrap();
     let id = tip(root.path(), format);
-    assert_eq!(refs.resolve(&name(b"HEAD"), 32).unwrap().id, Some(id));
+    assert_eq!(refs.resolve_with(&name(b"HEAD"), 32).unwrap().id, Some(id));
     assert_eq!(refs.list().unwrap().len(), 1);
     refs.transaction(&[RefEdit::new(
         name(b"refs/tags/published"),
@@ -206,7 +206,7 @@ fn initializes_git_usable_reftable_repository(#[case] format: ObjectFormat) {
     assert_eq!(
         repo.references()
             .unwrap()
-            .resolve(&name(b"HEAD"), 32)
+            .resolve_with(&name(b"HEAD"), 32)
             .unwrap()
             .id,
         Some(tip(repo.worktree().unwrap(), format))
@@ -256,7 +256,7 @@ fn linked_worktree_routes_head_and_branch_logs(
         )
         .starts_with(b"original publication\n")
     );
-    assert_eq!(refs.resolve(&name(b"HEAD"), 32).unwrap().id, Some(id));
+    assert_eq!(refs.resolve_with(&name(b"HEAD"), 32).unwrap().id, Some(id));
     girt::refs::reftable::compact(
         &repo.git_dir().join("reftable"),
         format,
@@ -355,7 +355,10 @@ fn refuses_stale_expected_value_after_git_publication(
         ),
         Err(girt::refs::ReferenceError::Mismatch { .. })
     ));
-    assert_eq!(refs.resolve(&name(b"HEAD"), 32).unwrap().id, Some(current));
+    assert_eq!(
+        refs.resolve_with(&name(b"HEAD"), 32).unwrap().id,
+        Some(current)
+    );
 }
 
 #[rstest]

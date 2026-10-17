@@ -9,9 +9,6 @@ use crate::{
     ReadLimits, Repository, ResolvePrefixError, Tree,
 };
 
-/// Maximum symbolic-reference hops, matching Git's limit.
-const MAX_SYMREF_DEPTH: usize = 5;
-
 /// Resolves [`Revision`]s and [`Range`]s in one repository.
 ///
 /// A resolver borrows the repository and an open [`Objects`] store, and opens the reference
@@ -149,7 +146,7 @@ impl<'r> Resolver<'r> {
     /// Reports reference storage failures.
     pub fn expand_ref(&self, name: &str) -> Result<Option<(RefName, ObjectId)>, RevisionError> {
         for candidate in ref_candidates(name) {
-            let resolution = self.references.resolve(&candidate, MAX_SYMREF_DEPTH)?;
+            let resolution = self.references.resolve(&candidate)?;
             if let Some(id) = resolution.id {
                 return Ok(Some((candidate, id)));
             }
@@ -402,7 +399,7 @@ impl<'r> Resolver<'r> {
 
     pub(super) fn resolve_ref(&self, name: &RefName) -> Result<ObjectId, RevisionError> {
         self.references
-            .resolve(name, MAX_SYMREF_DEPTH)?
+            .resolve(name)?
             .id
             .ok_or_else(|| RevisionError::NotFound(String::from_utf8_lossy(name.as_bytes()).into()))
     }

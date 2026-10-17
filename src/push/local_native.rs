@@ -707,7 +707,7 @@ fn head_names(repository: &Repository, name: &RefName) -> Result<bool, PushFailu
         return Ok(false);
     }
     Ok(refs
-        .resolve(&head, 32)
+        .resolve_with(&head, 32)
         .map_err(PushFailure::reference)?
         .name
         == *name)

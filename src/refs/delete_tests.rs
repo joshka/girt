@@ -127,7 +127,7 @@ fn deleting_resolved_branch_preserves_symbolic_head_and_reflogs() {
     assert_eq!(
         repo.references()
             .unwrap()
-            .resolve(&name(b"HEAD"), 1)
+            .resolve_with(&name(b"HEAD"), 1)
             .unwrap()
             .id,
         None
