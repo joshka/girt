@@ -3,7 +3,7 @@ default:
     @just --list
 
 # Run the common checks for Rust implementation changes.
-check: fmt-check test clippy docs-rs guide-examples
+check: fmt-check test clippy rustdoc docs-rs guide-examples
 
 # Run unit, integration, and documentation tests.
 test:
@@ -16,6 +16,11 @@ bench:
 # Reject Clippy warnings across all targets.
 clippy:
     cargo clippy --all-features --all-targets -- -D warnings
+
+# Check stable Rustdoc with all features and with optional transports absent.
+rustdoc:
+    RUSTDOCFLAGS="-D warnings" cargo +stable doc --locked --all-features --no-deps --document-private-items
+    RUSTDOCFLAGS="-D warnings" cargo +stable doc --locked --no-default-features --no-deps
 
 # Check documentation with docs.rs options and reject Rustdoc warnings.
 docs-rs:

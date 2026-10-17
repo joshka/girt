@@ -70,8 +70,7 @@ When moving an existing branch, first read its stored target and choose
 `Expected::Value(observed_target)` for the edit. For a complete compare-and-swap update example, see
 [References::transaction](https://docs.rs/girt/latest/girt/refs/struct.References.html#method.transaction).
 The transaction compares that value under its locks, so if the branch moved after your read, the
-update fails instead of overwriting the newer value.
-The other preconditions:
+update fails instead of overwriting the newer value. The other preconditions:
 
 - `Expected::Absent` requires that the name doesn't exist yet. Use it to create a reference.
 - `Expected::Exists` requires some stored value.
@@ -98,13 +97,13 @@ references excludes pseudorefs such as `HEAD`.
 ## Choose and interpret logging
 
 Low-level transactions take explicit `Reflog` policy. They don't read Git config or take an identity
-from the environment. `Append` records even an unchanged ID; `AppendIfChanged`
-records stored-target changes. `Preserve` leaves existing logs untouched. The example supplies a
-fixed identity and timestamp for reproducibility; an application supplies its actual actor and time.
+from the environment. `Append` records even an unchanged ID; `AppendIfChanged` records stored-target
+changes. `Preserve` leaves existing logs untouched. The example supplies a fixed identity and
+timestamp for reproducibility; an application supplies its actual actor and time.
 
 A reflog records the values a name has held, oldest first. It says nothing about commit ancestry.
-Zero IDs represent creation or deletion. Old objects may already be unavailable. For bounded inspection of
-imported logs, use
+Zero IDs represent creation or deletion. Old objects may already be unavailable. For bounded
+inspection of imported logs, use
 [imported_reflog](https://docs.rs/girt/latest/girt/refs/struct.References.html#method.imported_reflog)
 and inspect completeness before treating recovered records as a full inventory.
 
@@ -112,16 +111,16 @@ and inspect completeness before treating recovered records as a full inventory.
 
 A preparation failure leaves reference and log contents unchanged. A publication failure includes
 completed outcomes and has no rollback: a branch may advance while its log append fails. Preserve
-those outcomes, inspect current state, and decide which effects still need to happen. Repeating
-the whole batch can duplicate log entries or overwrite newer work.
+those outcomes, inspect current state, and decide which effects still need to happen. Repeating the
+whole batch can duplicate log entries or overwrite newer work.
 
 A lock conflict means the attempt did not obtain exclusive access. The ordinary files transaction
 already retries reference and packed-ref locks for Git's default waits before returning a conflict;
 reflog locks fail immediately. Select `transaction_files_with_options` for explicit waits and
 cancellation. Whether to try again is up to the application; don't delete another writer's lock.
-Files-backed batches publish sequentially and readers may see intermediate states.
-Reftable publishes references and logs together within one stack, with partial effects possible
-across linked-worktree stacks. See
+Files-backed batches publish sequentially and readers may see intermediate states. Reftable
+publishes references and logs together within one stack, with partial effects possible across
+linked-worktree stacks. See
 [transaction contracts](https://docs.rs/girt/latest/girt/refs/struct.References.html#method.transaction)
 and [errors](https://docs.rs/girt/latest/girt/refs/enum.TransactionError.html) for the full
 guarantees.

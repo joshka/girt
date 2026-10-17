@@ -46,7 +46,7 @@ If discovery reports `NotFound`, check that the start directory exists and the c
 repository you meant. If it reports malformed metadata, inspect the reported path instead of
 searching past it. If it reports an unsupported repository, girt can't work with that repository;
 don't retry as if it used default settings. See
-[opening errors](https://docs.rs/girt/latest/girt/enum.OpenError.html).
+[opening errors](https://docs.rs/girt/latest/girt/repository/enum.OpenError.html).
 
 ## Keep metadata and storage separate
 
@@ -60,8 +60,9 @@ Opening does not read process-global Git configuration or environment. Applicati
 sources supply them through
 [ConfigInputs](https://docs.rs/girt/latest/girt/config/struct.ConfigInputs.html). Applications that
 must decide whether to trust a repository before reading its configuration can first select an exact
-[RepositoryLocation](https://docs.rs/girt/latest/girt/struct.RepositoryLocation.html).
+[RepositoryLocation](https://docs.rs/girt/latest/girt/repository/struct.RepositoryLocation.html).
 
 Continue with the [objects and history guide](/girt/guides/objects-and-history/) to build and
-inspect a snapshot. The [Repository API](https://docs.rs/girt/latest/girt/struct.Repository.html)
-documents layout, resource, and filesystem contracts.
+inspect a snapshot. The
+[Repository API](https://docs.rs/girt/latest/girt/repository/struct.Repository.html) documents
+layout, resource, and filesystem contracts.

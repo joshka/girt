@@ -208,11 +208,7 @@ impl LeafSnapshot {
 ///     InitKind::Worktree,
 /// )?;
 /// let edit = repository.edit_index(Default::default())?;
-/// edit.commit_with_options(
-///     IndexCommitOptions::default()
-///         .with_shared_permissions(girt::SharedPermissions::Group)
-///         .with_sync(true),
-/// )?;
+/// edit.commit_with_options(IndexCommitOptions::default().with_sync(true))?;
 /// assert!(repository.read_index(Default::default())?.is_some());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

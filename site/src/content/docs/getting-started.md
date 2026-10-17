@@ -92,9 +92,9 @@ The example shows four habits that run through girt's API:
 - **Missing isn't an error.** A missing object is `None`, and an unborn `HEAD` has no ID. Errors
   report I/O failures and corrupt, unsupported or over-budget data.
 
-[`Objects::read`]: https://docs.rs/girt/latest/girt/struct.Objects.html#method.read
-[`Commit::parse`]: https://docs.rs/girt/latest/girt/struct.Commit.html#method.parse
-[`Objects`]: https://docs.rs/girt/latest/girt/struct.Objects.html
+[`Objects::read`]: https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.read
+[`Commit::parse`]: https://docs.rs/girt/latest/girt/commit/struct.Commit.html#method.parse
+[`Objects`]: https://docs.rs/girt/latest/girt/objects/struct.Objects.html
 
 ## Run the examples
 

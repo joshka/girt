@@ -108,7 +108,7 @@ pub struct RefspecsError {
 /// such as `src:`. If the refspec is valid Git, rewrite it with full names
 /// (`refs/heads/main:refs/remotes/origin/main`) where that means the same thing, or describe it
 /// with [`ConfiguredRefspec`](super::ConfiguredRefspec), which also catches values Git would
-/// reject. [`Refspec`](super::Refspec) has examples.
+/// reject. [`Refspec`] has examples.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum RefspecError {

@@ -701,10 +701,10 @@ impl FetchLimits {
 /// destination, so read the nested cause and note which operation returned the error before
 /// choosing a remedy. As a guide:
 ///
-/// - **The connection or the caller interrupted the operation.** [`Io`](Self::Io),
-///   [`Http`](Self::Http), [`Ssh`](Self::Ssh), [`Process`](Self::Process),
-///   [`Deadline`](Self::Deadline) and [`Cancelled`](Self::Cancelled). Retrying may succeed; for
-///   SSH, show the diagnostics OpenSSH wrote to standard error.
+/// - **The connection or the caller interrupted the operation.** [`Io`](Self::Io), `Http`, `Ssh`,
+///   [`Process`](Self::Process), [`Deadline`](Self::Deadline) and [`Cancelled`](Self::Cancelled).
+///   Retrying may succeed; for SSH, show the diagnostics OpenSSH wrote to standard error. `Http`
+///   requires the `http` feature; `Ssh` requires the `ssh` feature on macOS or Linux.
 /// - **The peer refused or sent something girt cannot accept.** [`Protocol`](Self::Protocol),
 ///   [`Remote`](Self::Remote) (an error message from the server), [`Pack`](Self::Pack) and the
 ///   object checks [`Missing`](Self::Missing), [`Kind`](Self::Kind), [`Commit`](Self::Commit),

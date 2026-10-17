@@ -71,9 +71,9 @@ must approve any configured command by giving its executable and arguments expli
 for services that must not depend on a user's settings.
 
 The SSH process runs in its own process group without the terminal, unless the application attaches
-one. Passphrase prompts therefore need an agent or `SSH_ASKPASS`. SSH's standard error,
-which explains host-key and authentication failures, is passed to
-`TransferCallbacks::transport_message`; show it to the user when a transfer fails.
+one. Passphrase prompts therefore need an agent or `SSH_ASKPASS`. SSH's standard error, which
+explains host-key and authentication failures, is passed to `TransferCallbacks::transport_message`;
+show it to the user when a transfer fails.
 
 See [SSH setup](https://github.com/joshka/girt/blob/main/docs/ssh.md).
 

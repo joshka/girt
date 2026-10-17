@@ -5,8 +5,8 @@ description: Construct a snapshot and inspect a branch point with verified objec
 
 A commit connects a directory snapshot to its parents. To build one, store file bytes as blobs,
 store the root tree with entries pointing to those blobs, then store a commit pointing to that tree.
-Objects are immutable, so a branch name lives in a separate reference that can move between
-commits. The program below builds a small snapshot and traces its ancestry.
+Objects are immutable, so a branch name lives in a separate reference that can move between commits.
+The program below builds a small snapshot and traces its ancestry.
 
 ## Construct a branch point
 
@@ -98,11 +98,11 @@ Parsing a commit gives its tree and parent IDs. Read its tree separately to get 
 and child IDs. Read a blob to obtain file bytes; your application decides whether to decode them as
 text. Preserve raw names when displaying or exporting non-UTF-8 repositories.
 
-[Objects::read](https://docs.rs/girt/latest/girt/struct.Objects.html#method.read) verifies framing
-and identity. Tree and commit parsing decodes payloads while retaining accepted original bytes.
-Validation can impose additional rules. Rebuilding an object from its parsed fields may normalize
-its spelling and so change its ID, which is why a tool that inspects objects should report malformed
-data instead of rewriting it.
+[Objects::read](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.read) verifies
+framing and identity. Tree and commit parsing decodes payloads while retaining accepted original
+bytes. Validation can impose additional rules. Rebuilding an object from its parsed fields may
+normalize its spelling and so change its ID, which is why a tool that inspects objects should report
+malformed data instead of rewriting it.
 
 ## Choose the history query
 
@@ -115,8 +115,8 @@ These queries collect and validate the complete ancestry within their limits, ev
 test whose two endpoints are the same commit. They don't read trees or blobs. Because the whole
 ancestry is walked, size graph budgets for the repository, not for the expected distance between
 tips. See the
-[history query contracts](https://docs.rs/girt/latest/girt/struct.Objects.html#method.walk) for
-ordering, complexity, shallow-boundary, and error contracts.
+[history query contracts](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.walk)
+for ordering, complexity, shallow-boundary, and error contracts.
 
 ## Diagnose missing history and refresh storage
 
@@ -131,5 +131,6 @@ doesn't supply missing parents. Investigate a corrupt object or replace it from 
 don't treat the history that stops at it as a successful partial result.
 
 Continue with the [references guide](/girt/guides/refs/) to give stored commits a durable name. The
-[object reader](https://docs.rs/girt/latest/girt/struct.Objects.html) covers reader snapshots and
-budgets; [pack APIs](https://docs.rs/girt/latest/girt/pack/index.html) cover artifact production.
+[object reader](https://docs.rs/girt/latest/girt/objects/struct.Objects.html) covers reader
+snapshots and budgets; [pack APIs](https://docs.rs/girt/latest/girt/pack/index.html) cover artifact
+production.

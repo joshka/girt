@@ -627,9 +627,9 @@ pub enum PushError {
 ///   advertisement, as [`crate::workflow::push`] does automatically once.
 /// - **Limits, interruption and transport.** [`Limit`](Self::Limit) (raise that [`PushLimits`]
 ///   field for a trusted receiver), [`Cancelled`](Self::Cancelled), [`Deadline`](Self::Deadline),
-///   [`Io`](Self::Io), [`Http`](Self::Http), [`Ssh`](Self::Ssh) and [`Process`](Self::Process).
-///   Retrying may succeed, but only after checking the receiver if the error is
-///   [`PushError::Uncertain`].
+///   [`Io`](Self::Io), `Http`, `Ssh` and [`Process`](Self::Process). Retrying may succeed, but only
+///   after checking the receiver if the error is [`PushError::Uncertain`]. `Http` requires the
+///   `http` feature; `Ssh` requires the `ssh` feature on macOS or Linux.
 /// - **The receiver refused or misbehaved.** [`Remote`](Self::Remote) (an error message from the
 ///   receiver) and [`Protocol`](Self::Protocol).
 /// - **Something isn't supported.** [`Unsupported`](Self::Unsupported) covers a receiver missing a

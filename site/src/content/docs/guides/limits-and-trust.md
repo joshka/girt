@@ -11,9 +11,9 @@ Every transfer API in girt takes explicit resource limits: `FetchLimits`, `Fetch
 
 girt validates what it receives, whatever the limits. It checks every received object's pack
 framing, checksum, delta chain and identity, then walks the history of every fetched tip down to any
-shallow boundary: each object reached must be present and well-formed. Malformed objects
-outside that history, such as extras a server included, are not parsed further and do not fail the
-fetch. Nothing is installed until validation finishes.
+shallow boundary: each object reached must be present and well-formed. Malformed objects outside
+that history, such as extras a server included, are not parsed further and do not fail the fetch.
+Nothing is installed until validation finishes.
 
 Limits bound how much well-formed work the other side may ask for. A pack can be valid and still be
 50 GB, contain ten million objects, or chain deltas thousands deep. A Git client accepts all of that
@@ -94,8 +94,8 @@ several transfers at once must also bound how many run concurrently.
 Limits bound work, not time. The core transfer calls take a `TransportControl`, which carries a
 cancellation flag (`AtomicBool`) and an optional absolute deadline. girt checks them between units
 of work, so a single hash, inflate or filesystem call is not interrupted; network adapters also poll
-them while waiting for the peer. Without a deadline, a stalled peer can hold a transfer until it
-is cancelled.
+them while waiting for the peer. Without a deadline, a stalled peer can hold a transfer until it is
+cancelled.
 
 The deadline covers only the call it is passed to. Validating a network download and `finish` take
 just the cancellation flag. To bound a whole fetch, including validation and publication, set the
@@ -114,7 +114,7 @@ which is another reason to use the core APIs for untrusted remotes.
 - [`FetchLimits`](https://docs.rs/girt/latest/girt/fetch/struct.FetchLimits.html),
   [`FetchUpdateLimits`](https://docs.rs/girt/latest/girt/fetch/struct.FetchUpdateLimits.html),
   [`PushLimits`](https://docs.rs/girt/latest/girt/push/struct.PushLimits.html),
-  [`PackLimits`](https://docs.rs/girt/latest/girt/struct.PackLimits.html) and
+  [`PackLimits`](https://docs.rs/girt/latest/girt/objects/struct.PackLimits.html) and
   [`TransportControl`](https://docs.rs/girt/latest/girt/transport/struct.TransportControl.html) on
   docs.rs.
 - [Fetch, push and clone](/girt/guides/fetch-push-clone/) and the
