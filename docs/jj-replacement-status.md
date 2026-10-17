@@ -10,8 +10,9 @@ tracked as [GitHub issues](https://github.com/joshka/girt/issues?q=is%3Aissue+la
   the `joshka/jj` fork. It's one commit on jj `main` at `35dbc362`, depending on girt 0.3.1 from
   crates.io. It's experimental and not proposed upstream. The commit message lists behavior changes
   and limitations.
-- **girt:** 0.8.0 is published from `main`. The acceptance evidence below uses girt 0.3.1; it does
-  not establish compatibility with 0.8.0. Updating the jj dependency needs a new acceptance run.
+- **girt:** releases are published from `main`. The acceptance evidence below uses girt 0.3.1; it
+  does not establish compatibility with later releases. Updating the jj dependency needs a new
+  acceptance run.
 - **Contract:** met (see below). jj passes its full workspace suite (3386 tests), Clippy, the
   end-to-end script (196 checks) and the no-`git` tripwire against published girt.
 - **Performance:** behind stock jj on large repositories. That's the main remaining work; see

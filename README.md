@@ -18,8 +18,8 @@ worktree/HEAD changes through publication. Inspect partial publication before re
 
 ## First use
 
-Add `girt = "0.8"` to your dependencies (Rust 1.97.1 or newer). This small example computes a Git
-blob identity without opening a repository:
+Add girt to a Rust project with `cargo add girt` (Rust 1.97.1 or newer). This small example computes
+a Git blob identity without opening a repository:
 
 ```rust
 use girt::{ObjectFormat, ObjectKind};

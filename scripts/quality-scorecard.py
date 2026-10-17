@@ -466,17 +466,11 @@ def docs_rs_builds():
 
 
 def stale_versions():
-    """Places that must name the current release: dependency snippets and the jj status summary."""
-    version = re.search(r'^version = "([^"]+)"', read("Cargo.toml"), re.M).group(1)
-    major_minor = ".".join(version.split(".")[:2])
+    """Pinned girt versions in dependency snippets, which go stale; docs say `cargo add girt` instead."""
     stale = []
     for path in ["README.md", "src/lib.rs"]:
         for found in re.findall(r'girt = "([^"]+)"', read(path)):
-            if found != major_minor:
-                stale.append(f'{path}: girt = "{found}"')
-    for found in re.findall(r"\*\*girt:\*\* (\S+) is published", read("docs/jj-replacement-status.md")):
-        if found != version:
-            stale.append(f"docs/jj-replacement-status.md: girt {found} is published")
+            stale.append(f'{path}: girt = "{found}" (say `cargo add girt` instead)')
     return stale
 
 
@@ -615,7 +609,7 @@ def documentation(doc, items, docs_rs):
         metric("public types, traits and functions with an example", percent(len(with_example), len(top_level)),
                40, unit="%"),
         metric("docs.rs build with warnings denied", docs_rs, True),
-        metric("stale release references", len(stale), 0, higher=False, detail=stale),
+        metric("pinned girt versions in dependency snippets", len(stale), 0, higher=False, detail=stale),
     ]
     return axis("docs", 90, metrics)
 
