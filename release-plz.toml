@@ -1,8 +1,3 @@
 [workspace]
 # Retry unpublished versions on later CI-qualified main pushes, including recovery releases.
 release_always = true
-
-# The CLI is unpublished while its command set settles.
-[[package]]
-name = "girt-cli"
-release = false
