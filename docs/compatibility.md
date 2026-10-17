@@ -2546,11 +2546,12 @@ inside a girt lock callback returns `WouldBlock`; it cannot wait on its own oper
 synchronous filesystem operations can delay cleanup without a deadline.
 
 Cleanup and active acquisition/publication/drop are mutually exclusive. Surviving Unix guards are
-invalidated before their identity-matched paths are unlinked; they cannot publish through a new
-writer's replacement lock. Completed ref/index/config/worktree effects remain completed. Worktree
-repair retains its administration lock across both link replacements, and colocation retains its
-index/HEAD operation gate across both publications. New work after cleanup can acquire locks, so
-shutdown admission control remains the caller's responsibility.
+invalidated before their identity-matched paths are unlinked, and Windows guards once their file is
+deleted; they cannot publish through a new writer's replacement lock. Completed
+ref/index/config/worktree effects remain completed. Worktree repair retains its administration lock
+across both link replacements, and colocation retains its index/HEAD operation gate across both
+publications. New work after cleanup can acquire locks, so shutdown admission control remains the
+caller's responsibility.
 
 Report entries identify removed/absent, replaced/preserved and failed paths. Unix invalidated
 failures are not retried by later cleanup calls; preserve the first report for manual recovery.
@@ -2561,8 +2562,25 @@ files and crash durability are outside this lock-only API.
 
 Unix registrations pin the file inode and compare device/inode before unlinking. Identity checks
 cannot protect a check/unlink pair against non-cooperating lock-path or parent-directory
-replacement; callers must exclude those races. Other platforms report `Unsupported` for existing
-registered paths, preserving both the lock and its guard's validity for normal Drop/abort. Already
-absent paths do not require removal. Windows identity-safe removal is tracked in
-[issue 136](https://github.com/joshka/girt/issues/136). No library signal handlers or new variants
-in existing public error enums are introduced.
+replacement; callers must exclude those races.
+
+Windows lock handles carry delete access without changing their sharing, and registrations record
+the volume and 128-bit file ID. Cleanup opens the path for attributes only, which conflicts with no
+sharing mode, and acts only when it names the registered regular file. Every change then goes
+through a handle to that file. A deletion through an open handle completes only when the handle
+closes, so while the writer is open cleanup renames the file through the writer's handle to a unique
+`<name>.girt-released-*.lock` name beside it and marks it for deletion. The registered name is free
+at once, so Git can take the lock while a retained edit still holds its handle. The renamed file
+disappears when that handle closes, including at process exit, and Git ignores `.lock` names in the
+meantime. Once the writer has closed, cleanup opens the path with delete access, checks the identity
+again and deletes it. Ref, reflog, reftable and shallow locks deny delete sharing, so their path
+cannot change between check and rename. Index, config, clone-config, credential and worktree-admin
+locks share delete for rename publication and have the same non-cooperating-writer limit as Unix. A
+failed Windows rename or delete is reported with its path and keeps the guard valid for normal
+Drop/abort. If the deletion mark fails after the rename, the name is already free, so the guard is
+invalidated and the failure names the moved file for manual removal. Git for Windows terminated
+while holding `index.lock` leaves it in place, and cleanup never touches unregistered locks.
+
+Other platforms report `Unsupported` for existing registered paths, preserving both the lock and its
+guard's validity for normal Drop/abort. Already absent paths do not require removal. No library
+signal handlers or new variants in existing public error enums are introduced.
