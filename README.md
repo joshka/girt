@@ -7,7 +7,8 @@ dual-licensed under MIT and Apache-2.0.
 
 girt can open SHA-1 and SHA-256 repositories and work with their objects, references, and indexes.
 It also provides history queries and explicit local, HTTP, and SSH transfer workflows. The API may
-change; there is no CLI.
+change. The [`girt` command-line tool](girt-cli/README.md) exposes the library for inspection and
+comparison with Git.
 
 Raw status and checkout run on macOS/Linux and do not apply Git's attribute, filter, or EOL
 transformations. Native local transfer requires callers to exclude external GC/pruning and

@@ -114,6 +114,7 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
+      - run: cargo +stable clippy --locked -p girt-cli --all-targets -- -D warnings
       - name: Rust formatting
         if: runner.os == 'Linux'
         run: |
@@ -121,6 +122,7 @@ jobs:
           cargo +nightly fmt --all -- --check
       # Tracing fixture dispatchers share tracing-core's global callsite cache.
       - run: cargo +stable test --locked --all-features -- --test-threads=1
+      - run: cargo +stable test --locked -p girt-cli
       - name: Developer guide examples
         env:
           RUSTUP_TOOLCHAIN: stable

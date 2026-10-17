@@ -10,7 +10,10 @@ documentation = "https://docs.rs/girt"
 rust-version = "1.97.1"
 keywords = ["git", "version-control", "repository"]
 categories = ["development-tools"]
-exclude = ["/AGENTS.md", "/fuzz", "/site", "/docs/benchmarks/**", "/docs/evidence/*.sha256"]
+exclude = ["/AGENTS.md", "/fuzz", "/girt-cli", "/site", "/docs/benchmarks/**", "/docs/evidence/*.sha256"]
+
+[workspace]
+members = [".", "girt-cli"]
 
 [features]
 tracing = ["dep:tracing"]
