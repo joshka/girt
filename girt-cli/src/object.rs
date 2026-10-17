@@ -4,7 +4,7 @@ use std::io::{self, BufRead, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::{Commit, Object, ObjectId, ObjectKind, Objects, Repository, Tag, Tree};
 
 use crate::Context;
@@ -102,12 +102,14 @@ fn parse_kind(value: &str) -> Result<ObjectKind, String> {
 
 fn hash(args: HashArgs, context: &Context) -> Result<ExitCode> {
     let bytes = match &args.file {
-        Some(path) => std::fs::read(path).with_context(|| format!("reading {}", path.display()))?,
+        Some(path) => {
+            std::fs::read(path).wrap_err_with(|| format!("reading {}", path.display()))?
+        }
         None => {
             let mut bytes = Vec::new();
             io::stdin()
                 .read_to_end(&mut bytes)
-                .context("reading stdin")?;
+                .wrap_err("reading stdin")?;
             bytes
         }
     };
@@ -128,22 +130,22 @@ fn hash(args: HashArgs, context: &Context) -> Result<ExitCode> {
             }
         }
         ObjectKind::Tree => {
-            let tree = Tree::parse(format, &bytes).context("parsing tree")?;
-            tree.validate().context("validating tree")?;
+            let tree = Tree::parse(format, &bytes).wrap_err("parsing tree")?;
+            tree.validate().wrap_err("validating tree")?;
             match repository.as_ref().filter(|_| args.write) {
                 Some(repository) => repository.loose_objects().write_tree(&tree)?,
                 None => tree.id(),
             }
         }
         ObjectKind::Commit => {
-            let commit = Commit::parse(format, &bytes).context("parsing commit")?;
+            let commit = Commit::parse(format, &bytes).wrap_err("parsing commit")?;
             match repository.as_ref().filter(|_| args.write) {
                 Some(repository) => repository.loose_objects().write_commit(&commit)?,
                 None => commit.id(),
             }
         }
         ObjectKind::Tag => {
-            let tag = Tag::parse(format, &bytes).context("parsing tag")?;
+            let tag = Tag::parse(format, &bytes).wrap_err("parsing tag")?;
             match repository.as_ref().filter(|_| args.write) {
                 Some(repository) => repository.loose_objects().write_tag(&tag)?,
                 None => tag.id(),
@@ -161,20 +163,20 @@ fn read(context: &Context, rev: &str) -> Result<Object> {
     let repository = context.repository()?;
     let objects = objects(&repository)?;
     let id = resolve(&repository, rev)?;
-    read_id(&objects, id)?.ok_or_else(|| anyhow!("missing object {id}"))
+    read_id(&objects, id)?.ok_or_else(|| eyre!("missing object {id}"))
 }
 
 fn read_id(objects: &Objects, id: ObjectId) -> Result<Option<Object>> {
     objects
         .read(id, read_limits())
-        .with_context(|| format!("reading {id}"))
+        .wrap_err_with(|| format!("reading {id}"))
 }
 
 fn show(args: RevArgs, context: &Context) -> Result<ExitCode> {
     let object = read(context, &args.rev)?;
     let mut out = stdout();
     if object.kind() == ObjectKind::Tree {
-        let tree = Tree::parse(object.object_format(), object.data()).context("parsing tree")?;
+        let tree = Tree::parse(object.object_format(), object.data()).wrap_err("parsing tree")?;
         for entry in tree.entries() {
             write_entry(&mut out, entry, &entry.name, context.git)?;
         }
@@ -229,7 +231,7 @@ fn batch(args: BatchArgs, context: &Context) -> Result<ExitCode> {
     let mut line = String::new();
     loop {
         line.clear();
-        if input.read_line(&mut line).context("reading stdin")? == 0 {
+        if input.read_line(&mut line).wrap_err("reading stdin")? == 0 {
             break;
         }
         let rev = line.trim_end_matches(['\n', '\r']);

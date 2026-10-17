@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
 use girt::refs::{Dereference, Expected, RefEdit, RefName, References, Reflog, Target};
 use girt::{Config, ObjectId, ObjectKind, Repository, Signature};
@@ -81,7 +81,7 @@ pub enum Command {
 
 pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let references = repository.references().context("opening references")?;
+    let references = repository.references().wrap_err("opening references")?;
     match command {
         Command::List { prefixes, symbolic } => {
             list(&repository, &references, &prefixes, symbolic, context)
@@ -126,7 +126,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
 
 fn parse_id(hex: &str) -> Result<ObjectId> {
     hex.parse()
-        .map_err(|_| anyhow!("`{hex}` is not a full object ID"))
+        .map_err(|_| eyre!("`{hex}` is not a full object ID"))
 }
 
 /// Refuses missing objects, and non-commits for branches (following a symbolic `name`), as Git
@@ -140,8 +140,8 @@ fn check_target(
     let objects = common::objects(repository)?;
     let object = objects
         .read(id, common::read_limits())
-        .with_context(|| format!("reading {id}"))?
-        .ok_or_else(|| anyhow!("object {id} does not exist"))?;
+        .wrap_err_with(|| format!("reading {id}"))?
+        .ok_or_else(|| eyre!("object {id} does not exist"))?;
     let destination = references.resolve(&ref_name(name)?, 5).map_or_else(
         |_| name.as_bytes().to_vec(),
         |resolution| resolution.name.as_bytes().to_vec(),
@@ -157,7 +157,7 @@ fn check_target(
 }
 
 fn ref_name(name: &str) -> Result<RefName> {
-    RefName::new(name).map_err(|_| anyhow!("invalid reference name `{name}`"))
+    RefName::new(name).map_err(|_| eyre!("invalid reference name `{name}`"))
 }
 
 /// Finds the first existing full name for a possibly short name.
@@ -168,7 +168,7 @@ fn find(references: &References<'_>, name: &str) -> Result<(RefName, Target)> {
         };
         if let Some(target) = references
             .read(&full)
-            .with_context(|| format!("reading {candidate}"))?
+            .wrap_err_with(|| format!("reading {candidate}"))?
         {
             return Ok((full, target));
         }
@@ -184,7 +184,7 @@ fn list(
     context: &Context,
 ) -> Result<ExitCode> {
     let objects = common::objects(repository)?;
-    let mut all = references.list().context("listing references")?;
+    let mut all = references.list().wrap_err("listing references")?;
     all.sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()));
     let mut out = common::stdout();
     for reference in all {
@@ -211,8 +211,8 @@ fn list(
         if context.git {
             let object = objects
                 .read(id, common::read_limits())
-                .with_context(|| format!("reading {id}"))?
-                .ok_or_else(|| anyhow!("missing object {id} for {name}"))?;
+                .wrap_err_with(|| format!("reading {id}"))?
+                .ok_or_else(|| eyre!("missing object {id} for {name}"))?;
             writeln!(out, "{id} {}\t{name}", object.kind().as_str())?;
         } else if let Target::Symbolic(target) = &reference.target {
             writeln!(out, "{id} {name} -> {}", display_bytes(target.as_bytes()))?;
@@ -248,8 +248,8 @@ fn show(references: &References<'_>, name: &str, context: &Context) -> Result<Ex
                 }
                 target = references
                     .read(&next)
-                    .with_context(|| format!("reading {}", display_bytes(next.as_bytes())))?
-                    .ok_or_else(|| anyhow!("{} does not exist", display_bytes(next.as_bytes())))?;
+                    .wrap_err_with(|| format!("reading {}", display_bytes(next.as_bytes())))?
+                    .ok_or_else(|| eyre!("{} does not exist", display_bytes(next.as_bytes())))?;
                 current = next;
             }
             _ => bail!("girt does not support this reference target yet"),
@@ -269,7 +269,7 @@ fn edit(
         .with_dereference(Dereference::Follow);
     references
         .transaction(&[edit])
-        .with_context(|| format!("updating {name}"))?;
+        .wrap_err_with(|| format!("updating {name}"))?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -282,7 +282,7 @@ fn log(
     let (full, _) = find(references, name)?;
     let entries = references
         .reflog(&full)
-        .with_context(|| format!("reading reflog of {name}"))?
+        .wrap_err_with(|| format!("reading reflog of {name}"))?
         .unwrap_or_default();
     let width = abbrev(repository);
     let mut out = common::stdout();
@@ -322,7 +322,7 @@ fn committer(repository: &Repository) -> Result<Signature> {
     };
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .context("system clock is before 1970")?
+        .wrap_err("system clock is before 1970")?
         .as_secs();
     Ok(Signature {
         name,

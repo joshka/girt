@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::Repository;
 use girt::config::{ConfigInputs, Origin};
 use girt::fetch::{AdvertisementKind, FetchLimits, RemoteDiscovery};
@@ -59,11 +59,11 @@ pub enum Command {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RemoteCommand {
-    /// List configured remotes, one name per line (≈ `git remote [-v]`).
+    /// List configured remotes, one name per line (≈ `git remote [-v]`; `--urls` is `-v`).
     List {
         /// Also print fetch and push URLs (`<name>\t<url> (fetch|push)`).
         #[arg(short, long)]
-        verbose: bool,
+        urls: bool,
     },
     /// Add a remote that fetches every branch into `refs/remotes/<name>/`.
     Add {
@@ -99,7 +99,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
 
 pub fn remote(command: RemoteCommand, context: &Context) -> Result<ExitCode> {
     match command {
-        RemoteCommand::List { verbose } => remote_list(verbose, context),
+        RemoteCommand::List { urls } => remote_list(urls, context),
         RemoteCommand::Add { name, url } => remote_add(&name, &url, context),
         RemoteCommand::Show { name } => remote_show(&name, context),
         RemoteCommand::Heads { remote } => remote_heads(&remote, context),
@@ -115,9 +115,9 @@ pub fn configured_repository(context: &Context) -> Result<Repository> {
         .map(PathBuf::from)
         .find(|path| path.exists());
     let inputs = ConfigInputs::from_environment(system, |name| std::env::var_os(name), 1024)
-        .context("reading config environment")?;
+        .wrap_err("reading config environment")?;
     let path = discovered.worktree().unwrap_or(discovered.git_dir());
-    Repository::open_with_config(path, &inputs).context("opening repository with config")
+    Repository::open_with_config(path, &inputs).wrap_err("opening repository with config")
 }
 
 /// Splits `section[.subsection].name` the way Git does: subsection is everything between the
@@ -125,7 +125,7 @@ pub fn configured_repository(context: &Context) -> Result<Repository> {
 fn split_key(key: &str) -> Result<(&str, Option<&str>, &str)> {
     let (section, rest) = key
         .split_once('.')
-        .ok_or_else(|| anyhow!("key `{key}` does not contain a section"))?;
+        .ok_or_else(|| eyre!("key `{key}` does not contain a section"))?;
     let (subsection, name) = match rest.rsplit_once('.') {
         Some((subsection, name)) => (Some(subsection), name),
         None => (None, rest),
@@ -199,15 +199,15 @@ fn set(key: &str, value: &str, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let mut edit = repository
         .edit_config(MAX_CONFIG_BYTES)
-        .context("opening local config")?;
+        .wrap_err("opening local config")?;
     let document = edit.document_mut();
     let last = last_occurrence(document.config(), section, subsection, name);
     match last {
         Some(index) => document.set_value(index, value.as_bytes()),
         None => document.append(section, subsection, name, value.as_bytes()),
     }
-    .with_context(|| format!("setting {key}"))?;
-    edit.commit().context("writing local config")?;
+    .wrap_err_with(|| format!("setting {key}"))?;
+    edit.commit().wrap_err("writing local config")?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -217,22 +217,22 @@ fn unset(key: &str, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let mut edit = repository
         .edit_config(MAX_CONFIG_BYTES)
-        .context("opening local config")?;
+        .wrap_err("opening local config")?;
     let document = edit.document_mut();
     let mut removed = false;
     // Remove from the end so earlier occurrence indexes stay valid.
     while let Some(index) = last_occurrence(document.config(), section, subsection, name) {
         document
             .remove(index)
-            .with_context(|| format!("unsetting {key}"))?;
+            .wrap_err_with(|| format!("unsetting {key}"))?;
         removed = true;
     }
     if !removed {
-        edit.abort().context("releasing local config")?;
+        edit.abort().wrap_err("releasing local config")?;
         // Git exits 5 when there is nothing to unset.
         return Ok(ExitCode::from(5));
     }
-    edit.commit().context("writing local config")?;
+    edit.commit().wrap_err("writing local config")?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -253,8 +253,8 @@ fn last_occurrence(
 /// Finds a configured remote by name.
 pub fn find_remote(repository: &Repository, name: &str) -> Result<Remote> {
     Remote::find(repository.config(), name.as_bytes())
-        .with_context(|| format!("reading remote {name}"))?
-        .ok_or_else(|| anyhow!("no such remote `{name}`"))
+        .wrap_err_with(|| format!("reading remote {name}"))?
+        .ok_or_else(|| eyre!("no such remote `{name}`"))
 }
 
 /// Push URLs as Git reports them: explicit `pushurl`s, else the fetch URLs.
@@ -265,18 +265,18 @@ fn push_urls(remote: &Remote) -> &[Vec<u8>] {
     }
 }
 
-fn remote_list(verbose: bool, context: &Context) -> Result<ExitCode> {
+fn remote_list(urls: bool, context: &Context) -> Result<ExitCode> {
     let repository = configured_repository(context)?;
     let mut out = stdout();
     let mut names = Remote::names(repository.config());
     names.sort_unstable();
     for name in names {
-        if !verbose {
+        if !urls {
             write_line(&mut out, name)?;
             continue;
         }
         let remote = Remote::find(repository.config(), name)?
-            .ok_or_else(|| anyhow!("remote {} vanished", display_bytes(name)))?;
+            .ok_or_else(|| eyre!("remote {} vanished", display_bytes(name)))?;
         for url in remote.fetch_url().into_iter() {
             write_url(&mut out, name, url, "fetch")?;
         }
@@ -300,12 +300,12 @@ fn remote_add(name: &str, url: &str, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let mut edit = repository
         .edit_config(MAX_CONFIG_BYTES)
-        .context("opening local config")?;
+        .wrap_err("opening local config")?;
     let fetch = format!("+refs/heads/*:refs/remotes/{name}/*");
     RemoteConfig::new(edit.document_mut())
         .add(name.as_bytes(), url.as_bytes(), &[fetch.as_bytes()])
-        .with_context(|| format!("adding remote {name}"))?;
-    edit.commit().context("writing local config")?;
+        .wrap_err_with(|| format!("adding remote {name}"))?;
+    edit.commit().wrap_err("writing local config")?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -388,7 +388,7 @@ pub fn endpoint(url: &str, base: &Path) -> Result<Endpoint> {
 
 /// Builds an anonymous HTTP endpoint.
 pub fn http_remote(url: &str) -> Result<girt::transport::http::HttpRemote> {
-    girt::transport::http::HttpRemote::new(url, &[], &[]).context("configuring HTTP remote")
+    girt::transport::http::HttpRemote::new(url, &[], &[]).wrap_err("configuring HTTP remote")
 }
 
 /// Runs a future to completion on a fresh multi-threaded runtime.
@@ -396,7 +396,7 @@ pub fn block_on<F: Future>(future: F) -> Result<F::Output> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .context("starting async runtime")?;
+        .wrap_err("starting async runtime")?;
     Ok(runtime.block_on(future))
 }
 
@@ -406,11 +406,11 @@ fn discover(url: &str, base: &Path) -> Result<RemoteDiscovery> {
     let limits = FetchLimits::trusted();
     match endpoint(url, base)? {
         Endpoint::Local(path) => girt::fetch::discover_local(&path, limits, control)
-            .with_context(|| format!("listing {}", path.display())),
+            .wrap_err_with(|| format!("listing {}", path.display())),
         Endpoint::Http(url) => {
             let remote = http_remote(&url)?;
             block_on(girt::fetch::discover_http(&remote, limits, control))?
-                .with_context(|| format!("listing {url}"))
+                .wrap_err_with(|| format!("listing {url}"))
         }
     }
 }
