@@ -1,0 +1,288 @@
+{
+  "date": "2026-10-17",
+  "code_revision": "1ecc6fff",
+  "catalogue_sha256": "332f3dfa2a276f542e23eea581e489eab821791efa506af8511be1d6998f2d56",
+  "totals": {
+    "lines": 249,
+    "imported_names": 76,
+    "defaults": 14,
+    "never_cancel": 4,
+    "byte_vectors": 3,
+    "object_formats": 0,
+    "identity_literals": 0,
+    "commit_fields": 1,
+    "branch_names": 3,
+    "boxed_errors": 14,
+    "empty_vectors": 2
+  },
+  "tasks": [
+    {
+      "task": "Open or discover",
+      "capability_gap": false,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 6,
+      "imported_names": 1,
+      "defaults": 0,
+      "never_cancel": 0,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Read a file at a revision",
+      "capability_gap": false,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 13,
+      "imported_names": 5,
+      "defaults": 2,
+      "never_cancel": 0,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Log first N in date order with exclusions",
+      "capability_gap": true,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 18,
+      "imported_names": 3,
+      "defaults": 2,
+      "never_cancel": 0,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Diff two commits: tree and content",
+      "capability_gap": true,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 32,
+      "imported_names": 11,
+      "defaults": 4,
+      "never_cancel": 1,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Status",
+      "capability_gap": true,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 13,
+      "imported_names": 5,
+      "defaults": 1,
+      "never_cancel": 1,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Stage and commit",
+      "capability_gap": true,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 22,
+      "imported_names": 8,
+      "defaults": 0,
+      "never_cancel": 0,
+      "byte_vectors": 1,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 1,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 1
+    },
+    {
+      "task": "Create, move and delete a branch",
+      "capability_gap": false,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 16,
+      "imported_names": 4,
+      "defaults": 0,
+      "never_cancel": 0,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 1,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Lightweight and annotated tags",
+      "capability_gap": false,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 29,
+      "imported_names": 9,
+      "defaults": 0,
+      "never_cancel": 0,
+      "byte_vectors": 2,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 1
+    },
+    {
+      "task": "Fetch by remote name",
+      "capability_gap": false,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 14,
+      "imported_names": 5,
+      "defaults": 0,
+      "never_cancel": 0,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 1,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Push the current branch",
+      "capability_gap": true,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 25,
+      "imported_names": 7,
+      "defaults": 1,
+      "never_cancel": 0,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 1,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Clone with checkout",
+      "capability_gap": true,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 30,
+      "imported_names": 9,
+      "defaults": 2,
+      "never_cancel": 1,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Read effective config values",
+      "capability_gap": false,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 10,
+      "imported_names": 3,
+      "defaults": 0,
+      "never_cancel": 0,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Rev-parse",
+      "capability_gap": false,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 10,
+      "imported_names": 3,
+      "defaults": 1,
+      "never_cancel": 0,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Checkout or switch branch",
+      "capability_gap": true,
+      "sources": [
+        "docs/ergonomics.md"
+      ],
+      "lines": 11,
+      "imported_names": 3,
+      "defaults": 1,
+      "never_cancel": 1,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 1,
+      "empty_vectors": 0
+    },
+    {
+      "task": "Blame-style queries",
+      "capability_gap": true,
+      "sources": [],
+      "lines": 0,
+      "imported_names": 0,
+      "defaults": 0,
+      "never_cancel": 0,
+      "byte_vectors": 0,
+      "object_formats": 0,
+      "identity_literals": 0,
+      "commit_fields": 0,
+      "branch_names": 0,
+      "boxed_errors": 0,
+      "empty_vectors": 0
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure girt's quality scorecard; see docs/quality.md for the metrics and targets.
 
-Usage: scripts/quality-scorecard.py [--coverage] [--mutants] [--full] [--output PATH]
+Usage: scripts/quality-scorecard.py [--coverage] [--mutants] [--full] [--ergonomics-only] [--output PATH]
 
 The default run measures static, Clippy and Rustdoc metrics in a few minutes. `--coverage` and
 `--mutants` add the slow measurements; their last results are cached under target/quality/ and
@@ -584,6 +584,81 @@ def idiomatic(doc, items, types, style):
     return axis("idiomatic", 90, metrics)
 
 
+def ergonomics_counts(source):
+    """Lexical caller-cost measures, deliberately independent of Rust type inference."""
+    lines = [line for line in source.splitlines() if line.strip() and not line.lstrip().startswith("//")]
+    source = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("//"))
+    imports = re.findall(r"^\s*use\s+([^;]+);", source, re.MULTILINE)
+    names = []
+    for statement in imports:
+        # Count imported leaves, not module path components.
+        names.extend(re.findall(r"\b([A-Za-z_]\w*)\s*(?=[,}]|$)", statement))
+    return {
+        "lines": len(lines),
+        "imported_names": len(names),
+        "defaults": len(re.findall(r"(?:::|\bDefault::)(?:default|trusted)\(\)", source)),
+        "never_cancel": source.count("AtomicBool::new(false)"),
+        "byte_vectors": len(re.findall(r"\.to_vec\(\)", source)),
+        "object_formats": len(re.findall(r"ObjectFormat::", source)),
+        "identity_literals": len(re.findall(r"\bSignature\s*\{", source)),
+        "commit_fields": len(re.findall(r"\bCommitFields\s*\{", source)),
+        "branch_names": source.count("refs/heads/"),
+        "boxed_errors": source.count("Box<dyn std::error::Error>"),
+        "empty_vectors": len(re.findall(r"vec!\[\]|Vec::new\(\)", source)),
+    }
+
+
+def ergonomics_tasks():
+    tasks = []
+    for section in read("docs/ergonomics.md").split("\n### ")[1:]:
+        name, body = section.split("\n", 1)
+        status = re.search(r"<!-- ergonomics-status: (supported|partial|missing) -->", body)
+        if not status:
+            raise ValueError(f"task {name!r} needs an explicit classification marker")
+        fences = re.findall(r"^```(rust[^\n]*)$", body, re.MULTILINE)
+        if any(fence != "rust,no_run" for fence in fences):
+            raise ValueError(f"task {name!r} has an unmeasured Rust fence")
+        snippets = re.findall(r"```rust,no_run\n(.*?)```", body, re.DOTALL)
+        if not snippets and status[1] != "missing":
+            raise ValueError(f"task {name!r} needs a compiled current-code snippet")
+        sources = snippets
+        tasks.append({"task": name, "capability_gap": status[1] != "supported",
+                      "sources": ["docs/ergonomics.md"] if snippets else [],
+                      **ergonomics_counts("\n".join(sources))})
+    if len(tasks) != 15:
+        raise ValueError("ergonomics catalogue must retain its 15 workloads")
+    return tasks
+
+
+def ergonomics():
+    tasks = ergonomics_tasks()
+    baseline = json.loads(read("docs/ergonomics-baseline.json"))
+    budget = json.loads(read("docs/ergonomics-budget.json"))
+    names = [t["task"] for t in tasks]
+    if names != [t["task"] for t in baseline["tasks"]] or names != list(budget):
+        raise ValueError("catalogue, baseline and budget workloads must match in order")
+    baseline_tasks = {t["task"]: t for t in baseline["tasks"]}
+    regressions = []
+    for task in tasks:
+        for key, maximum in budget[task["task"]].items():
+            if maximum > baseline_tasks[task["task"]][key]:
+                raise ValueError(f"budget for {task['task']}: {key} exceeds dated baseline")
+            if task[key] > maximum:
+                regressions.append(f"{task['task']}: {key} {task[key]} exceeds {maximum}")
+    metrics = [metric("tasks with missing capability", sum(t["capability_gap"] for t in tasks),
+                      0, higher=False, detail=[t["task"] for t in tasks if t["capability_gap"]]),
+               metric("per-task caller-cost regressions", len(regressions), 0, higher=False,
+                      detail=regressions)]
+    for key in baseline["totals"]:
+        total = sum(t[key] for t in tasks)
+        metrics.append(metric("catalogue " + key.replace("_", " "), total,
+                              sum(limits[key] for limits in budget.values()), higher=False,
+                              note=f"baseline {baseline['totals'][key]}; reduction {baseline['totals'][key] - total}",
+                              detail=[{"task": t["task"], "value": t[key], "sources": t["sources"]}
+                                      for t in tasks]))
+    return axis("ergonomics", 90, metrics)
+
+
 def documentation(doc, items, docs_rs):
     undocumented = [v["name"] or "?" for v in items.values() if not (v.get("docs") or "").strip()]
     modules = [v for v in items.values() if "module" in v["inner"]]
@@ -643,7 +718,15 @@ def main():
     parser.add_argument("--mutants", action="store_true", help="run sampled mutation testing")
     parser.add_argument("--full", action="store_true", help="both --coverage and --mutants")
     parser.add_argument("--output", default=str(Path.home() / "tmp" / "girt-quality.json"))
+    parser.add_argument("--ergonomics-only", action="store_true", help="measure only catalogue caller costs")
     args = parser.parse_args()
+    if args.ergonomics_only:
+        report = {"axes": [ergonomics()]}
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2) + "\n")
+        print(table(report))
+        return
     os.chdir(ROOT)
     if args.coverage or args.full:
         measure_coverage()
@@ -662,6 +745,7 @@ def main():
             robustness(caps, panics),
             idiomatic(doc, items, types, style),
             documentation(doc, items, docs_rs_builds()),
+            ergonomics(),
         ],
     }
     output = Path(args.output)
