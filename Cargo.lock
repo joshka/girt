@@ -590,6 +590,7 @@ dependencies = [
  "anyhow",
  "clap",
  "girt",
+ "tempfile",
  "tokio",
 ]
 
