@@ -199,31 +199,34 @@ that tile the pack from byte 12, and the index's pack checksum against the pack 
 any of those fails the open.
 
 Overlapping readers in one process share fully structurally validated index bytes and entry tables
-for an unchanged pair of pinned index/pack generations. The process-local LRU indexes at most eight
-pairs of any size: its records are weak, so the bound limits lookup work, not memory. Each key
-includes object format and both handles' native file identity, size, modification time and metadata
-change time (Unix ctime or Windows ChangeTime). Change time discriminates cache generations without
-changing the pinned-reader freshness contract: rename/unlink can change it while the original
-artifact remains readable. Platforms without native file identity or change time bypass the cache.
-Concurrent misses can validate independently.
+for an unchanged pair of pinned index/pack generations. The process-local cache keys one weak record
+per index/pack pair by both files' native identity, so the number of open packs never evicts a live
+record, and a lookup is one ordered-map search. A newer generation of the same pair replaces the
+older record: existing readers keep their shared validation, while later opens of the older
+generation validate again. A match also requires the same object format and both handles' size,
+modification time and metadata change time (Unix ctime or Windows ChangeTime). Change time
+discriminates cache generations without changing the pinned-reader freshness contract: rename/unlink
+can change it while the original artifact remains readable. Platforms without native file identity
+or change time bypass the cache. Concurrent misses can validate independently.
 
 The cache holds only weak references. Readers own the shared validation and independent artifact
 pins that prevent file-ID reuse, including during an in-flight cache lookup, without extending
 reader-local damage evidence. Dropping the last reader of a generation releases its shared pins and
-buffers; an in-flight open can retain them until that open finishes. Dead weak LRU records remain
-until the next cache access but retain neither handles nor buffers. Deleted pack/index storage can
-then be reclaimed, and Windows delete-pending names cease to be held by shared validation. Other
-readers or external processes can still pin an artifact. Sequential opens after all readers drop
-perform complete validation again.
+buffers; an in-flight open can retain them until that open finishes. Dead weak records retain
+neither handles nor buffers, only a map slot and a weak allocation; they are pruned once the map has
+doubled since the last prune, so it holds at most 16 records or twice those live at the last prune.
+Deleted pack/index storage can then be reclaimed, and Windows delete-pending names cease to be held
+by shared validation. Other readers or external processes can still pin an artifact. Sequential
+opens after all readers drop perform complete validation again.
 
 Every open still charges the full input budgets, pins its own artifacts, checks the pack header,
 object count and trailer agreement, and rechecks both handles' metadata before returning. A cache
-hit allocates no per-entry tables or index-byte copy. Cold opens and evicted generations retain the
-complete eager structural validation. Lookup and verification retain live truncation checks;
-mutation boundaries retain freshness checks and explicit checksum gates. Atomic replacement leaves
-an existing reader on its original handles and gives new readers a different cache key. The cache
-adds no mapping and cannot fault on a truncated mapped page. Windows data writers remain excluded
-while readers pin a generation; immutable publication and caller-owned exclusion remain required.
+hit allocates no per-entry tables or index-byte copy. Cold opens retain the complete eager
+structural validation. Lookup and verification retain live truncation checks; mutation boundaries
+retain freshness checks and explicit checksum gates. Atomic replacement leaves an existing reader on
+its original handles and gives new readers a different cache key. The cache adds no mapping and
+cannot fault on a truncated mapped page. Windows data writers remain excluded while readers pin a
+generation; immutable publication and caller-owned exclusion remain required.
 
 Damage the structure cannot see stays harmless because content reads are identity-checked (see
 [Identity checks in walks](#identity-checks-in-walks)). Swapped offsets fail the entry CRC, or the
