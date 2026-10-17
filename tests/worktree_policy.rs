@@ -492,7 +492,9 @@ fn exact_permissions_touch_only_selected_metadata(
     assert_eq!(mode(root.path().join("linked/.git")), ordinary_mode);
     if backend == Backend::Reftable {
         assert_eq!(mode(linked.git_dir().join("reftable")), 0o770);
-        assert_eq!(mode(linked.git_dir().join("reftable/initial.ref")), 0o660);
+        let tables = fs::read_to_string(linked.git_dir().join("reftable/tables.list")).unwrap();
+        let initial = linked.git_dir().join("reftable").join(tables.trim_end());
+        assert_eq!(mode(initial), 0o660);
         assert_eq!(mode(linked.git_dir().join("reftable/tables.list")), 0o660);
     }
 }

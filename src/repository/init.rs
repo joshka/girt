@@ -510,7 +510,7 @@ fn populate_reftable(
     initial_branch: &RefName,
 ) -> Result<(), InitError> {
     use crate::refs::Target;
-    use crate::refs::reftable::{Limits, RefRecord, Table};
+    use crate::refs::reftable::{Limits, RefRecord, Table, table_name};
     for name in [
         "objects",
         "objects/info",
@@ -542,11 +542,15 @@ fn populate_reftable(
         }],
         logs: Vec::new(),
     };
+    let name = table_name(1, 1);
     create_file(
-        &git_dir.join("reftable/initial.ref"),
+        &git_dir.join("reftable").join(&name),
         &table.encode(Limits::default())?,
     )?;
-    create_file(&git_dir.join("reftable/tables.list"), b"initial.ref\n")?;
+    create_file(
+        &git_dir.join("reftable/tables.list"),
+        format!("{name}\n").as_bytes(),
+    )?;
     create_file(
         &git_dir.join("refs/heads"),
         b"this repository uses the reftable format\n",
