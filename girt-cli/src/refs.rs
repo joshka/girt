@@ -5,13 +5,14 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use clap_complete::{ArgValueCandidates, ArgValueCompleter};
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
 use girt::refs::{Dereference, Expected, RefEdit, RefName, References, Reflog, Target};
 use girt::{Config, ObjectId, ObjectKind, Repository, Signature};
 
-use crate::Context;
 use crate::common::{self, display_bytes};
+use crate::{Context, complete};
 
 /// Maximum symbolic-ref hops shown by `girt ref show`.
 const MAX_DEPTH: usize = 5;
@@ -36,6 +37,7 @@ pub enum Command {
     /// final ID, one per line; with `--git`, prints only the ID.
     Show {
         /// Reference name, e.g. `HEAD`, `main` or `refs/tags/v1`.
+        #[arg(add = ArgValueCandidates::new(complete::references))]
         name: String,
     },
     /// Point a reference at an object (like `git update-ref`).
@@ -45,8 +47,10 @@ pub enum Command {
     /// the current time in UTC (`+0000`): girt does not read the local time zone.
     Set {
         /// Full reference name, e.g. `refs/heads/main`.
+        #[arg(add = ArgValueCandidates::new(complete::references))]
         name: String,
         /// Object ID or revision to store.
+        #[arg(add = ArgValueCompleter::new(complete::revisions))]
         value: String,
         /// Only update if the reference currently has this ID.
         #[arg(long, value_name = "OLD_ID", conflicts_with = "create_only")]
@@ -61,6 +65,7 @@ pub enum Command {
     /// Delete a reference and its reflog (like `git update-ref -d`).
     Delete {
         /// Full reference name.
+        #[arg(add = ArgValueCandidates::new(complete::references))]
         name: String,
         /// Only delete if the reference currently has this ID.
         #[arg(long, value_name = "OLD_ID")]
@@ -73,6 +78,7 @@ pub enum Command {
     /// scaling, and uniqueness across all stored object kinds.
     Log {
         /// Reference name, e.g. `HEAD` or `main`.
+        #[arg(add = ArgValueCandidates::new(complete::references))]
         name: String,
     },
 }

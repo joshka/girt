@@ -79,6 +79,37 @@ girt --quiet fetch
 girt checkout HEAD 2>checkout.log
 ```
 
+## Shell completion
+
+Add one line to your shell's startup file. Tab then completes commands, options and values read from
+the current repository: revisions and ref names, remote names, linked worktree names and config
+keys.
+
+```sh
+source <(girt completions zsh)     # ~/.zshrc
+source <(girt completions bash)    # ~/.bashrc
+girt completions fish | source     # ~/.config/fish/config.fish
+```
+
+The script is a small hook that calls back into `girt` on each Tab, so completions stay in step with
+the installed version. Completing a value reads only refs, config and worktree registrations, never
+objects; outside a repository it offers no values. `-C <path>` is not applied while completing.
+`girt completions` also supports `elvish` and `powershell`, and `COMPLETE=<shell> girt` prints the
+same script.
+
+Packagers who need a fixed file can use `girt completions --static <shell>`, which completes
+commands and options but not repository values.
+
+## Man pages
+
+`girt man` prints `girt.1`. `girt man --out <dir>` writes `girt.1` and one page per subcommand
+(`girt-object.1`, `girt-object-show.1`, ...) for installing into a `man1` directory:
+
+```sh
+girt man --out ~/.local/share/man/man1
+man girt-diff
+```
+
 ## Errors and logging
 
 Errors print as [color-eyre](https://docs.rs/color-eyre) reports. `-v`, `-vv` and `-vvv` log girt's

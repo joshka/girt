@@ -4,12 +4,13 @@ use std::io::{self, BufRead, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::{Commit, Object, ObjectId, ObjectKind, Objects, Repository, Tag, Tree};
 
-use crate::Context;
 use crate::common::{objects, read_limits, resolve, stdout, write_line};
 use crate::tree::write_entry;
+use crate::{Context, complete};
 
 /// Object commands.
 #[derive(Debug, clap::Subcommand)]
@@ -56,6 +57,7 @@ pub struct HashArgs {
 #[derive(Debug, clap::Args)]
 pub struct RevArgs {
     /// Revision, e.g. `main`, `v1^{}`, `HEAD~2` or `HEAD:path`.
+    #[arg(add = ArgValueCompleter::new(complete::revisions))]
     rev: String,
 }
 
@@ -63,6 +65,7 @@ pub struct RevArgs {
 #[derive(Debug, clap::Args)]
 pub struct InfoArgs {
     /// Revision, e.g. `main`, `v1^{}`, `HEAD~2` or `HEAD:path`.
+    #[arg(add = ArgValueCompleter::new(complete::revisions))]
     rev: String,
     /// Print only the kind (`git cat-file -t`).
     #[arg(long, conflicts_with = "size")]

@@ -15,6 +15,7 @@ use tracing_subscriber::prelude::*;
 
 mod color;
 mod common;
+mod complete;
 mod config;
 mod diff;
 mod history;
@@ -132,6 +133,17 @@ enum Command {
     /// Plan retention, repack and run maintenance.
     #[command(subcommand)]
     Maintenance(maintenance::Command),
+
+    /// Print a shell completion script; add `source <(girt completions zsh)` to `~/.zshrc`.
+    ///
+    /// The script calls back into `girt` on each Tab, so it completes revisions, remotes, worktrees
+    /// and config keys from the current repository as well as commands and options (the same script
+    /// `COMPLETE=<shell> girt` prints). Bash: `source <(girt completions bash)` in `~/.bashrc`.
+    /// Fish: `girt completions fish | source` in `~/.config/fish/config.fish`. `--static` prints a
+    /// self-contained script without repository values, for packagers.
+    Completions(complete::CompletionsArgs),
+    /// Print the `girt.1` man page, or write every page with `--out`.
+    Man(complete::ManArgs),
 }
 
 /// Help colors in the style of Cargo.
@@ -145,6 +157,7 @@ const STYLES: Styles = Styles::styled()
     .invalid(AnsiColor::Yellow.on_default().bold());
 
 fn main() -> ExitCode {
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     let args: Vec<_> = std::env::args_os().collect();
     let early_color = color::Color::early(&args);
     // Help uses stdout; parse errors use stderr. Resolve each before clap prints and exits.
@@ -266,6 +279,8 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Push(args) => transfer::push(args, context),
         Command::Pack(command) => maintenance::pack(command, context),
         Command::Maintenance(command) => maintenance::run(command, context),
+        Command::Completions(args) => complete::completions(args),
+        Command::Man(args) => complete::man(args),
     }
 }
 

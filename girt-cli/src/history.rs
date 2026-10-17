@@ -4,12 +4,13 @@ use std::collections::{BinaryHeap, HashSet};
 use std::io::Write;
 use std::process::ExitCode;
 
+use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, eyre};
 use girt::revision::Selection;
 use girt::{Commit, HistoryLimits, IdentityRef, ObjectId, Objects};
 
-use crate::Context;
 use crate::common::{self, display_bytes};
+use crate::{Context, complete};
 
 /// History queries.
 #[derive(Debug, clap::Subcommand)]
@@ -17,7 +18,7 @@ pub enum Command {
     /// Count commits reachable from revisions (like `git rev-list --count`).
     Count {
         /// Revisions and ranges: `A`, `^A`, `A..B` or `A...B`.
-        #[arg(required = true)]
+        #[arg(required = true, add = ArgValueCompleter::new(complete::revisions))]
         revs: Vec<String>,
     },
     /// Print the best common ancestor of two commits (like `git merge-base`).
@@ -25,8 +26,10 @@ pub enum Command {
     /// Exits with status 1 when the commits share no history.
     MergeBase {
         /// First commit.
+        #[arg(add = ArgValueCompleter::new(complete::revisions))]
         a: String,
         /// Second commit.
+        #[arg(add = ArgValueCompleter::new(complete::revisions))]
         b: String,
         /// Print every merge base, not just the first.
         #[arg(long)]
@@ -37,8 +40,10 @@ pub enum Command {
     /// Exits 0 when it is and 1 when not; prints `yes` or `no` unless `--git` is set.
     Contains {
         /// Possible ancestor.
+        #[arg(add = ArgValueCompleter::new(complete::revisions))]
         ancestor: String,
         /// Possible descendant.
+        #[arg(add = ArgValueCompleter::new(complete::revisions))]
         descendant: String,
     },
 }
@@ -52,6 +57,7 @@ pub enum Command {
 #[derive(Debug, clap::Args)]
 pub struct LogArgs {
     /// Revisions and ranges: `A`, `^A`, `A..B` or `A...B`; `HEAD` when omitted.
+    #[arg(add = ArgValueCompleter::new(complete::revisions))]
     revs: Vec<String>,
     /// Show at most this many commits.
     #[arg(short = 'n', long, value_name = "N")]

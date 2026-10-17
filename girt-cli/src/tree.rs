@@ -3,11 +3,12 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::{EntryMode, ObjectId, ObjectKind, Objects, Tree, TreeEntry};
 
-use crate::Context;
 use crate::common::{objects, read_limits, resolve_tree, stdout, write_line};
+use crate::{Context, complete};
 
 /// Tree commands.
 #[derive(Debug, clap::Subcommand)]
@@ -23,6 +24,7 @@ pub enum Command {
 #[derive(Debug, clap::Args)]
 pub struct ListArgs {
     /// Tree, commit or tag ID or ref name.
+    #[arg(add = ArgValueCompleter::new(complete::revisions))]
     rev: String,
     /// Recurse into subtrees, listing only non-tree entries with full paths.
     #[arg(long, short)]
