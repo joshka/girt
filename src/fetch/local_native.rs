@@ -84,8 +84,13 @@ pub(super) fn receive_depth_observed(
         .objects(limits.source_packs)
         .map_err(FetchError::SourceObjects)?;
     let advertisement = advertise_store(source, &store, limits, control)?;
-    let wants = select(&advertisement);
-    if depth.is_some() && wants.iter().copied().collect::<IdSet>().len() != 1 {
+    let mut wants = select(&advertisement);
+    if wants.len() > limits.max_wants {
+        return Err(FetchError::Limit("wants"));
+    }
+    let mut seen = IdSet::default();
+    wants.retain(|id| seen.insert(*id));
+    if depth.is_some() && wants.len() != 1 {
         return Err(FetchError::Unsupported("native local depth selection"));
     }
     let empty = KnownHistory::default();
@@ -94,9 +99,6 @@ pub(super) fn receive_depth_observed(
     } else {
         &empty
     };
-    if wants.len() > limits.max_wants {
-        return Err(FetchError::Limit("wants"));
-    }
     let offered: IdSet = advertisement
         .refs
         .iter()
