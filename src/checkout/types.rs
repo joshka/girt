@@ -185,6 +185,61 @@ pub enum Stage {
 }
 
 /// A namespace operation completed by this call.
+///
+/// One path can participate in several operations during a file-to-directory replacement. Use the
+/// ordered operations for progress or recovery diagnostics, rather than treating them as one final
+/// change per path.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::checkout::{Action, Limits};
+/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+/// let loose = repo.loose_objects();
+/// let id = loose.write_blob(b"data")?;
+/// let entry = |name: &[u8], mode, id| TreeEntry {
+///     name: name.to_vec(),
+///     mode,
+///     id,
+/// };
+/// let old = loose.write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![entry(b"path", EntryMode::Blob, id)],
+/// )?)?;
+/// let subtree = loose.write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![entry(b"child", EntryMode::Blob, id)],
+/// )?)?;
+/// let new = loose.write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![entry(b"path", EntryMode::Tree, subtree)],
+/// )?)?;
+/// let cancel = AtomicBool::new(false);
+/// repo.checkout_tree(None, Some(old), Limits::default(), &cancel)?;
+/// let report = repo.checkout_tree(Some(old), Some(new), Limits::default(), &cancel)?;
+/// let at_path: Vec<_> = report
+///     .applied
+///     .iter()
+///     .filter(|op| op.path == b"path")
+///     .map(|op| op.action)
+///     .collect();
+/// assert_eq!(at_path, [Action::Remove, Action::CreateDirectory]);
+/// assert!(
+///     report
+///         .applied
+///         .iter()
+///         .any(|op| op.path == b"path/child" && op.action == Action::Install)
+/// );
+/// assert!(report.index_published);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Action {
