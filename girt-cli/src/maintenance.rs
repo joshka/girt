@@ -145,6 +145,7 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
                     writeln!(stdout(), "ok")?;
                 }
                 Err(error) => {
+                    progress.clear();
                     eprintln!("error: {:#}", color_eyre::eyre::Report::new(error));
                     return Ok(ExitCode::FAILURE);
                 }

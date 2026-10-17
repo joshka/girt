@@ -83,7 +83,7 @@ impl Repository {
         target: Option<ObjectId>,
         limits: Limits,
         cancel: &AtomicBool,
-        mut progress: impl FnMut(u64, u64),
+        progress: impl FnMut(u64, u64),
     ) -> Result<Report, Failure> {
         let _lock_operation = crate::locks::operation();
         for id in baseline.into_iter().chain(target) {
@@ -95,15 +95,18 @@ impl Repository {
                 })?;
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        return super::worktree::run_observed(
-            self,
-            baseline,
-            target,
-            limits,
-            cancel,
-            &mut |_, _| Ok(()),
-            &mut progress,
-        );
+        {
+            let mut progress = progress;
+            return super::worktree::run_observed(
+                self,
+                baseline,
+                target,
+                limits,
+                cancel,
+                &mut |_, _| Ok(()),
+                &mut progress,
+            );
+        }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (baseline, target, limits, progress);

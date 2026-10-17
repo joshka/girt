@@ -37,7 +37,7 @@ impl Progress {
     }
 
     pub fn update(&mut self, phase: &'static str, count: u64, total: Option<u64>) {
-        if !self.enabled {
+        if !self.enabled || total == Some(0) {
             return;
         }
         if self.phase != phase {
@@ -188,7 +188,7 @@ impl TransferCallbacks for Progress {
 impl Drop for Progress {
     fn drop(&mut self) {
         if let Some(bar) = self.bar.take() {
-            bar.abandon_with_message(format!("{} (interrupted)", self.latest));
+            bar.abandon_with_message(format!("{} (stopped)", self.latest));
         }
     }
 }
@@ -221,6 +221,12 @@ impl Activity {
         Self { bar, label }
     }
 
+    pub fn clear(mut self) {
+        if let Some(bar) = self.bar.take() {
+            bar.finish_and_clear();
+        }
+    }
+
     pub fn finish(mut self, details: impl std::fmt::Display) {
         if let Some(bar) = self.bar.take() {
             bar.set_style(ProgressStyle::with_template("{msg}").expect("valid progress template"));
@@ -233,7 +239,7 @@ impl Drop for Activity {
     fn drop(&mut self) {
         if let Some(bar) = self.bar.take() {
             bar.set_style(ProgressStyle::with_template("{msg}").expect("valid progress template"));
-            bar.abandon_with_message(format!("{}: interrupted", self.label));
+            bar.abandon_with_message(format!("{}: stopped", self.label));
         }
     }
 }
@@ -251,6 +257,15 @@ fn count_line(phase: &str, count: u64, total: Option<u64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_phases_do_not_draw() {
+        let mut progress = Progress::new(false);
+        progress.enabled = true;
+        progress.update("Updating files", 0, Some(0));
+        assert!(progress.phase.is_empty());
+        assert!(progress.bar.is_none());
+    }
 
     #[test]
     fn counts_distinguish_unknown_and_known_totals() {
