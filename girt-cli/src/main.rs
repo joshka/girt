@@ -54,7 +54,7 @@ enum Command {
     Repo(repo::Command),
     /// Create a new repository.
     Init(repo::InitArgs),
-    /// Copy a repository from another location (without checkout).
+    /// Copy a repository from another location and check out HEAD.
     Clone(transfer::CloneArgs),
 
     /// Hash, read and inspect objects.

@@ -80,7 +80,8 @@ pub enum IgnoreCommand {
 pub struct CheckoutArgs {
     /// Revision whose tree to check out.
     revision: String,
-    /// Revision whose tree the current index represents; an unborn HEAD means empty.
+    /// Revision whose tree the current index represents; an unborn HEAD or a missing index (as in
+    /// a fresh `clone --no-checkout`) means empty.
     #[arg(long, default_value = "HEAD")]
     from: String,
 }
@@ -352,7 +353,15 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
         }
         resolve_tree(&repository, &objects, revision).map(Some)
     };
-    let baseline = tree(&args.from)?;
+    let index_exists = repository
+        .read_index(Default::default())
+        .wrap_err("reading the index")?
+        .is_some();
+    let baseline = if index_exists {
+        tree(&args.from)?
+    } else {
+        None
+    };
     let target = tree(&args.revision)?;
     let report =
         match repository.checkout_tree(baseline, target, Default::default(), not_cancelled()) {

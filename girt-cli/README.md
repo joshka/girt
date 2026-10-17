@@ -63,7 +63,6 @@ These come from the library and are listed in each command's `--help`:
   including fsmonitor and untracked caches, for Git to rebuild. Split/sparse indexes, resolve-undo
   data and unknown extensions are refused.
 - `diff --patch` uses a plain Myers diff, so ambiguous hunks can align differently from Git.
-- `clone` does not check out files; run `girt checkout HEAD` afterwards. SSH is supported by `fetch`
-  and `push` but not yet by `clone` or `remote heads`.
+- SSH is supported by `fetch` and `push` but not yet by `clone` or `remote heads`.
 - `maintenance run` deletes data. It requires `--yes`, and no other process may use the repository
   while it runs.
