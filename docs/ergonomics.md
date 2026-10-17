@@ -167,26 +167,31 @@ Desired sketch: `objects.diff_trees(old_tree, new_tree)?`. Gap closure:
 
 <!-- ergonomics-status: partial -->
 
-Partial: raw status compares HEAD, index and literal working-tree bytes. It deliberately uses
-`RawFilesWithoutIgnores`; ignored files and normalization need application policy. Ignore-aware
-status is a capability gap.
+Partial: status lists untracked files through the ignore rules Git reads, but compares HEAD, index
+and working-tree content as literal bytes. Attributes, filters, EOL conversion and `core.filemode`
+need application policy; `raw_status` remains for consumers that own all of it.
 
 ```rust,no_run
 use girt::Repository;
-use girt::status::{Baseline, Untracked};
+use girt::status::{Baseline, UntrackedFiles};
+use girt::workflow::Environment;
 
-fn status(repo: &Repository) -> girt::Result<()> {
-    let report = repo.raw_status(Baseline::Head, Untracked::RawFilesWithoutIgnores)?;
+fn status(repo: &Repository, environment: &Environment) -> girt::Result<()> {
+    let rules = repo.ignore_rules(environment)?;
+    let report = repo.status(Baseline::Head, UntrackedFiles::Collapsed, &rules)?;
     println!("{report:#?}");
     Ok(())
 }
 ```
 
+Open `repo` with Git's configuration sources (see
+[Read effective config values](#read-effective-config-values)) so a global `core.excludesFile`
+applies.
+
 Disposable end-to-end evidence: [status](../examples/status.rs).
 
-Desired sketch: `git.status()?`. Gap closure: [404](https://github.com/joshka/girt/issues/404) and
-[408](https://github.com/joshka/girt/issues/408) (status facade) and
-[414](https://github.com/joshka/girt/issues/414) (ignore integration).
+Desired sketch: `git.status()?`. Gap closure: [408](https://github.com/joshka/girt/issues/408)
+(status facade).
 
 ### Stage and commit
 

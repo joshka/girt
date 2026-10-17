@@ -12,6 +12,11 @@
 //! POSIX executable/symlink modes. It does not apply attributes, filters, EOL conversion, ignore
 //! rules, `core.filemode`, `core.symlinks`, or ambient configuration. This is useful for consumers
 //! that own normalization policy, and is **not Git-default status**.
+//!
+//! [`Repository::status`](crate::Repository::status) compares tracked content the same way but
+//! lists untracked paths as `git status` does: pass it the rules from
+//! [`Repository::ignore_rules`](crate::Repository::ignore_rules) and an [`UntrackedFiles`] listing,
+//! and read [`Report::untracked`].
 //! Cached index stat words and assume-valid never bypass content verification. No index refresh,
 //! locks, hooks, writes, rename detection, staging or checkout occur.
 //!

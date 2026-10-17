@@ -2,7 +2,8 @@
 
 Use these operations when the application owns literal byte and POSIX-mode policy. They run on
 macOS/Linux; Windows status traversal and tree materialization are unsupported. Neither operation
-applies Git attributes, filters, EOL conversion, ignore rules, or configuration normalization.
+applies Git attributes, filters, EOL conversion, or configuration normalization. Only
+`Repository::status` applies ignore rules, and only to untracked paths.
 
 ## Inspect Raw Status
 
@@ -10,8 +11,9 @@ Run `cargo run --example status` for a disposable repository, or add a repositor
 existing one. `Repository::raw_status` compares the selected tree, index, and working files. It
 separates staged changes, working-file changes, conflicts, untracked files, and unchecked gitlinks.
 It verifies content instead of trusting cached index stat data and does not refresh the index or
-write files. Choose a baseline and untracked-file policy explicitly; the example uses `Head` and
-`RawFilesWithoutIgnores`.
+write files. Choose a baseline and untracked-file policy explicitly. The example uses `Head` and
+`Repository::status` with `UntrackedFiles::Collapsed`, which lists untracked paths as `git status`
+does after loading ignore rules with `Repository::ignore_rules`.
 
 A status report is an observation, not an atomic snapshot or permission to overwrite a working tree.
 The [status module contract](../src/status.rs) describes supported paths and modes. The

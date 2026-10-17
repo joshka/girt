@@ -185,8 +185,8 @@ verification. Status never refreshes or writes the index, runs hooks, stages fil
 renames.
 
 `Untracked::Omit` avoids unrelated traversal. `RawFilesWithoutIgnores` lists raw leaves without
-reading their contents, including ignored names; empty directories are omitted. If the UI should
-hide ignored files, apply ignore rules yourself. Use the executable
+reading their contents, including ignored names; empty directories are omitted. To hide ignored
+files as Git does, call `Repository::status` instead (see below). Use the executable
 [raw status example](https://docs.rs/girt/latest/girt/status/) for a staged file that is modified in
 the working tree.
 
@@ -222,12 +222,55 @@ of small files. `Untracked::Omit` reduces unrelated traversal, but tracked-path 
 reads content. A limit failure returns no partial report. Preserve the last successful display with
 a visible failure state instead of replacing it with a clean result.
 
+## List untracked files as Git does
+
+`Repository::ignore_rules` loads the ignore files Git reads: the `core.excludesFile` file (or its
+`$XDG_CONFIG_HOME/git/ignore` default) and `info/exclude`, with `core.ignoreCase` choosing the
+comparison. Open the repository with `ConfigInputs::git_default` so the user's global configuration
+is visible. `Repository::status` then compares tracked content exactly as `raw_status` does and
+fills `Report::untracked` with the untracked paths that no rule excludes, reading each visited
+directory's `.gitignore` as it goes.
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use girt::status::{Baseline, UntrackedFiles, UntrackedKind};
+    use girt::workflow::Environment;
+    use girt::{InitKind, ObjectFormat, Repository};
+
+    let directory = tempfile::tempdir()?;
+    let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("w"), InitKind::Worktree)?;
+    let worktree = repo.worktree().unwrap();
+    std::fs::create_dir_all(worktree.join("target/debug"))?;
+    std::fs::write(worktree.join("target/debug/app"), b"binary")?;
+    std::fs::create_dir(worktree.join("notes"))?;
+    std::fs::write(worktree.join("notes/todo.md"), b"todo")?;
+    std::fs::write(worktree.join(".gitignore"), b"/target/\n")?;
+
+    // An isolated environment, so no personal excludes file applies.
+    let rules = repo.ignore_rules(&Environment::default())?;
+    let report = repo.status(Baseline::Head, UntrackedFiles::Collapsed, &rules)?;
+    let listed: Vec<_> = report.untracked.iter().map(|entry| (&entry.path[..], entry.kind)).collect();
+    assert_eq!(
+        listed,
+        [(&b".gitignore"[..], UntrackedKind::File), (b"notes", UntrackedKind::Directory)]
+    );
+    Ok(())
+}
+```
+
+`UntrackedFiles::Collapsed` lists a directory without tracked paths once, as `git status` does by
+default; `All` lists every file, like `--untracked-files=all`. Tracked paths are never ignored, and
+an ignored directory such as `target/` is not entered at all, so build output costs nothing.
+`WorktreeRules::check` answers single-path questions the way `git check-ignore -v` does, and
+`WorktreeRules::source` names the file and line behind a decision.
+
 ## Apply ignore rules with provenance
 
-`Ignore` is a pure byte-path matcher. The caller loads the configured global excludes file,
-common-directory `info/exclude` and encountered `.gitignore` files; it must not follow `.gitignore`
-symlinks. The matcher reads no filesystem, configuration, environment or index. The caller decides
-how ignore results affect untracked files; they don't apply to tracked paths automatically.
+`Ignore` is a pure byte-path matcher; `WorktreeRules` is built on it. The caller loads the
+configured global excludes file, common-directory `info/exclude` and encountered `.gitignore` files;
+it must not follow `.gitignore` symlinks. The matcher reads no filesystem, configuration,
+environment or index. The caller decides how ignore results affect untracked files; they don't apply
+to tracked paths automatically.
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
