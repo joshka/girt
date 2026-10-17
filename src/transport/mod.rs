@@ -52,10 +52,11 @@
 //! Git has three versions of the fetch (upload-pack) protocol. Version 2 sends capabilities first
 //! and lets the client run separate `ls-refs` and `fetch` commands; versions 0 and 1 begin with the
 //! full reference advertisement. [`RequestedProtocol`] selects which version an HTTP or SSH fetch
-//! asks for. The server decides: girt accepts whichever version it answers with, so requesting
-//! v2 from an older server falls back safely. The core adapters request v0 by default;
-//! [`crate::workflow`] follows `protocol.version`, which defaults to v2 as in Git. Push uses the
-//! v0 receive-pack protocol in every case, and native local transfers use no wire protocol.
+//! asks for. A server asked for v2 may answer with v0 or v1, and girt accepts that, so requesting
+//! v2 from an older server is safe. A v2 answer to a v0 or v1 request is refused. The core
+//! adapters request v0 by default; [`crate::workflow`] follows `protocol.version`, which defaults
+//! to v2 as in Git. Push uses the v0 or v1 receive-pack protocol, which has no v2, and native local
+//! transfers use no wire protocol.
 //!
 //! # Limits and trust
 //!
@@ -81,17 +82,25 @@
 //!
 //! `default()` suits a peer you don't control: for example, a fetch may receive at most 512 MiB
 //! on the wire and a 256 MiB pack of at most one million objects, with each object at most 64 MiB
-//! and deltas at most 64 deep. `trusted()` raises every bound until only available memory and disk
-//! limit the work, matching Git; [`crate::workflow`] uses it for the remotes a user configured.
+//! and deltas at most 64 deep. `trusted()` raises the size and count limits until available memory
+//! and disk are what bound the work, matching Git; [`crate::workflow`] uses it for the remotes a
+//! user configured. It keeps a few limits that shape how girt works rather than how much it
+//! accepts, such as the number of commits offered during negotiation, worker threads and open
+//! files; each type's `trusted()` documents its values.
 //! The defaults also refuse large *trusted* repositories. The default
 //! [`PackLimits`](crate::PackLimits) admits 64 MiB of pack index, while a Linux kernel clone has
 //! about 300 MB, so use `trusted()` when opening big repositories you control, as in
 //! [`FetchLimits::source_packs`].
 //!
-//! Exceeding a limit fails the transfer before anything is installed, with an error that names the
-//! bound, such as [`FetchError::Limit`](crate::fetch::FetchError::Limit). Nothing needs cleaning
-//! up. Limits bound input and work, not wall-clock time or total process memory: pair them with a
-//! deadline, and bound how many transfers run at once.
+//! Exceeding a [`FetchLimits`](crate::fetch::FetchLimits) bound while receiving or validating
+//! fails the transfer before anything is installed, with an error that names the bound, such as
+//! [`FetchError::Limit`](crate::fetch::FetchError::Limit); the repository is unchanged.
+//! [`FetchUpdateLimits`](crate::fetch::FetchUpdateLimits) apply later, in
+//! [`FetchReady::finish`](crate::fetch::FetchReady::finish), after the pack is installed: exceeding
+//! one there publishes no references, but leaves the installed objects, and reports them in
+//! [`FetchFinishError`](crate::fetch::FetchFinishError). Limits bound input and work, not
+//! wall-clock time or total process memory: pair them with a deadline, and bound how many
+//! transfers run at once.
 //!
 //! [`FetchLimits::source_packs`]: crate::fetch::FetchLimits::source_packs
 //!
@@ -107,9 +116,15 @@
 //! installation leaves the repository unchanged; one interrupted after installation leaves the
 //! new objects in place but publishes no references, and reports what was done in
 //! [`FetchFinishError`](crate::fetch::FetchFinishError). A push interrupted before any command was
-//! sent returns [`PushError::NotSent`](crate::push::PushError::NotSent); one interrupted after
-//! sending began returns [`PushError::Uncertain`](crate::push::PushError::Uncertain), because the
-//! remote may already have applied some updates. Read the remote's references before retrying it.
+//! sent returns [`PushError::NotSent`](crate::push::PushError::NotSent): it attempted no reference
+//! updates, though a push to a local path may already have stored objects or run receive hooks
+//! there. One interrupted after sending began returns
+//! [`PushError::Uncertain`](crate::push::PushError::Uncertain), because the remote may already have
+//! applied some updates. Read the remote's references before retrying it.
+//!
+//! A deadline covers only the call it is passed to. Validating a network download and
+//! [`FetchReady::finish`](crate::fetch::FetchReady::finish) take just the cancellation flag; to
+//! bound a whole fetch, set the flag from a timer and wait for the call to return.
 //!
 //! [`crate::workflow`] takes no control: its transfers can be neither cancelled nor bounded in
 //! time.

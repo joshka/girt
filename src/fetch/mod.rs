@@ -254,7 +254,8 @@ impl FetchOptions {
 /// Use [`FetchLimits::default`] when the remote is not under the user's control, and
 /// [`FetchLimits::trusted`] for remotes trusted as Git trusts a user's own. Limits never relax
 /// validation; see [Limits and trust](crate::transport#limits-and-trust) for the model. A
-/// transfer that exceeds a bound fails with [`FetchError::Limit`] before anything is installed.
+/// transfer that exceeds a bound while receiving or validating fails with [`FetchError::Limit`]
+/// before anything is installed.
 ///
 /// # Examples
 ///
