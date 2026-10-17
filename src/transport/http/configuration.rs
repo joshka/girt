@@ -107,7 +107,12 @@ impl std::fmt::Debug for HttpEnvironment {
 ///
 /// # Examples
 ///
-/// Configuration that weakens TLS needs the application's explicit approval:
+/// Configuration that weakens TLS needs the application's explicit approval. Approving it disables
+/// certificate and hostname checks, so anyone on the network path can impersonate the server and
+/// read credentials. It is an exceptional trust decision, not a fix for certificate errors: to
+/// trust a private certificate authority while keeping verification, pass its certificates in
+/// [`HttpEnvironment::ssl_ca_info`] (see [`HttpSettings::configured_ca_info`]). The approved call
+/// below only demonstrates the gate:
 ///
 /// ```
 /// use girt::Config;

@@ -575,7 +575,9 @@ impl CredentialSession {
     /// # Examples
     ///
     /// Save a credential the user typed once the server has accepted it, so the next lookup finds
-    /// it:
+    /// it. This example uses a disposable [`CredentialStore`], which keeps the token as plain text;
+    /// see its documentation for file permissions, and prefer an application-approved helper
+    /// backed by an operating-system keychain for real credentials:
     ///
     /// ```
     /// use std::sync::atomic::AtomicBool;

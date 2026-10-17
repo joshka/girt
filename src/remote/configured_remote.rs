@@ -41,7 +41,7 @@ use crate::Config;
 ///     origin.fetch_url(),
 ///     Some(&b"https://github.com/joshka/girt"[..])
 /// );
-/// // Without a `pushurl`, pushes use the fetch URL.
+/// // With no `pushurl` or matching `pushInsteadOf`, pushes use the fetch URL.
 /// assert_eq!(origin.push_url(), origin.fetch_url());
 ///
 /// let parts = origin.fetch_url_parts().expect("has a URL");
