@@ -8,6 +8,19 @@
 //! The comparison does not apply attributes, textconv, whitespace normalization, rename
 //! detection, or patch encoding. It performs no merge, index, or worktree operation.
 //!
+//! # Choose a comparison layer
+//!
+//! A file-list viewer starts with [`crate::Objects::compare_trees`]. A patch viewer loads a
+//! change with [`BlobContent::read`], then calls [`diff`] and renders the returned byte ranges.
+//! Keep the original structural change alongside the content result: a mode-only change or an
+//! added empty file can have unchanged content. Gitlinks need a submodule view instead of blob
+//! loading. Use [`crate::rewrites`] separately to infer relationships between different paths.
+//!
+//! Text is split only at LF. CRLF, invalid UTF-8 and a missing final LF remain exact bytes, so
+//! rendering and escaping are caller decisions. [`TextDiff`] demonstrates reconstruction from
+//! the original coordinates. Similarity scoring in `rewrites` has different line/CR rules and
+//! must not be used as a content equality test.
+//!
 //! # Example
 //!
 //! Load both sides of a changed tree entry, then diff their lines:

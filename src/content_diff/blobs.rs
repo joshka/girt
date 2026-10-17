@@ -37,6 +37,28 @@ impl BlobContent {
     /// Returns [`ContentReadError`] for unsupported modes, missing/wrong-kind objects, storage or
     /// decoding failures, or cancellation. Errors retain the offending side's ID or mode; the
     /// caller retains path and side context in `change`. No partial pair or writes are produced.
+    ///
+    /// ```
+    /// 
+    /// use std::sync::atomic::AtomicBool;
+    /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    /// use girt::content_diff::BlobContent;
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Bare)?;
+    /// let loose = repo.loose_objects();
+    /// let id = loose.write_blob(b"added\n")?;
+    /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1,
+    ///     vec![TreeEntry { name: b"file".to_vec(), mode: EntryMode::Blob, id }])?)?;
+    /// let objects = repo.objects(Default::default())?;
+    /// let cancel = AtomicBool::new(false);
+    /// let changes = objects.compare_trees(None, Some(tree), Default::default(), &cancel)?;
+    ///
+    /// let content = BlobContent::read(&objects, &changes[0], Default::default(), 1024, &cancel)?;
+    /// assert!(content.old.is_empty());
+    /// assert_eq!(content.new, b"added\n");
+    /// assert!(changes[0].old.is_none()); // Keep existence independently from the empty content buffer.
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read(
         objects: &Objects,
         change: &TreeChange,
@@ -98,6 +120,11 @@ fn read_side(
 }
 
 /// Loading blob sides failed without returning a partial pair or modifying storage.
+///
+/// Keep the original [`TreeChange`] when displaying this error: the error preserves the failing
+/// identity/mode and storage cause, while the change supplies the byte path and old/new sides.
+/// An unsupported gitlink requires submodule presentation rather than a text diff; a missing or
+/// corrupt blob needs recovery, not an empty buffer substituted for the failed read.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ContentReadError {

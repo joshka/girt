@@ -1,4 +1,16 @@
-//! Recursive structural comparison of SHA-1 trees.
+//! Structural differences between Git trees, before content or rename inference.
+//!
+//! [`Objects::compare_trees`] answers which leaf paths changed identity or mode. Use this for
+//! changed-file lists, staged comparisons or inputs to a patch viewer. Trees store snapshots;
+//! renames are inferred separately by [`crate::rewrites`], and line edits come from
+//! [`crate::content_diff`]. Both SHA-1 and SHA-256 trees are supported.
+//!
+//! Paths remain slash-separated bytes. Equal subtree identities skip entire subtrees, so the
+//! comparison can be cheap for a small edit in a large tree. That skip does not validate object
+//! existence; use content reads or verification when that is required. Changed tree payloads are
+//! verified, but leaf targets are not read. Gitlinks remain leaves.
+//!
+//! See the runnable [`Objects::compare_trees`] example for repository setup.
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -11,6 +23,20 @@ use crate::{
 /// Regular files, executable files, symlinks and gitlinks are leaves. IDs describe content
 /// identity independently of mode: an executable-bit or symlink transition can retain an ID.
 /// Gitlinks name commits in another repository, not trees to traverse locally.
+///
+/// ```
+/// use girt::{EntryMode, ObjectFormat, ObjectId, TreeValue};
+/// let id = ObjectId::for_blob(ObjectFormat::Sha256, b"#!/bin/sh\n");
+/// let regular = TreeValue {
+///     id,
+///     mode: EntryMode::Blob,
+/// };
+/// let executable = TreeValue {
+///     id,
+///     mode: EntryMode::Executable,
+/// };
+/// assert_ne!(regular, executable); // Same content can still be a structural change.
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TreeValue {
     /// Referenced object identity; comparison does not read or verify leaf targets.
@@ -25,6 +51,37 @@ pub struct TreeValue {
 /// `old == None` means addition; `new == None` means removal; two present sides mean change.
 /// Compare IDs to distinguish content identity changes from mode/type changes. A mode change
 /// alone still produces a record. Trees themselves are omitted, including empty directories.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+/// let loose = repo.loose_objects();
+/// let blob = loose.write_blob(b"new file\n")?;
+/// let tree = loose.write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![TreeEntry {
+///         name: b"new.txt".to_vec(),
+///         mode: EntryMode::Blob,
+///         id: blob,
+///     }],
+/// )?)?;
+/// let changes = repo.objects(Default::default())?.compare_trees(
+///     None,
+///     Some(tree),
+///     Default::default(),
+///     &AtomicBool::new(false),
+/// )?;
+/// assert!(changes[0].old.is_none());
+/// assert_eq!(changes[0].new.unwrap().id, blob);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct TreeChange {
@@ -138,7 +195,7 @@ impl Objects {
     /// path and additions/removals below the directory. Empty directories yield no leaf records.
     /// No rename/copy detection, text diff, path filtering, index or worktree access occurs.
     ///
-    /// Equal SHA-1 subtree IDs, including equal roots, are trusted and skipped without any read.
+    /// Equal subtree IDs, including equal roots, are trusted and skipped without any read.
     /// This establishes structural identity, **not validity or existence**. Other encountered
     /// trees are identity-verified by storage, parsed and structurally validated. Blob, symlink
     /// and gitlink targets are never read, even when changed; dangling or wrong-kind leaf
@@ -399,10 +456,32 @@ fn charge(remaining: &mut usize, count: usize, name: &'static str) -> Result<(),
 }
 
 /// A structural comparison failed; no partial result is returned.
+///
+/// A missing or invalid tree needs storage recovery; raising a traversal bound does not repair
+/// it. Preserve the ID/path and source chain when reporting [`TreeCompareError::Read`] or
+/// [`TreeCompareError::Invalid`]. Cancellation and limits discard the whole result.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository, TreeCompareError};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+/// let objects = repo.objects(Default::default())?;
+/// assert!(matches!(
+///     objects.compare_trees(None, None, Default::default(), &AtomicBool::new(true)),
+///     Err(TreeCompareError::Cancelled)
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TreeCompareError {
-    /// A root uses a format unsupported by the SHA-1 tree reader.
+    /// A root uses a different object format from the reader.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// A tree to be traversed is absent.

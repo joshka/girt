@@ -1,6 +1,24 @@
 use std::ops::Range;
 
 /// Classification policy for [`super::diff`], independent of paths and Git attributes.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+/// let cancel = AtomicBool::new(false);
+/// let old = b"key\0old\n";
+/// let new = b"key\0new\n";
+/// assert!(matches!(
+///     diff(old, new, BinaryMode::Auto, DiffLimits::default(), &cancel)?,
+///     ContentDiff::Binary { .. }
+/// ));
+/// assert!(matches!(
+///     diff(old, new, BinaryMode::Text, DiffLimits::default(), &cancel)?,
+///     ContentDiff::Text(_)
+/// ));
+/// # Ok::<(), girt::content_diff::DiffError>(())
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum BinaryMode {
@@ -14,6 +32,24 @@ pub enum BinaryMode {
 }
 
 /// Exact comparison outcome borrowing the caller's unchanged input buffers.
+///
+/// An empty-file addition can have unchanged content. Retain the structural [`crate::TreeChange`]
+/// so a file's existence and mode are not lost when rendering the content outcome.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+/// let result = diff(
+///     b"same\0bytes",
+///     b"same\0bytes",
+///     BinaryMode::Binary,
+///     DiffLimits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+/// assert_eq!(result, ContentDiff::Unchanged);
+/// # Ok::<(), girt::content_diff::DiffError>(())
+/// ```
 #[derive(Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ContentDiff<'a> {
@@ -36,6 +72,37 @@ pub enum ContentDiff<'a> {
 /// original byte range by its corresponding new byte range to reconstruct the destination exactly.
 /// Coordinates always refer to the original buffers, not progressively edited text. The retained
 /// borrows prevent mutation or destruction of either input while these slices remain in use.
+///
+/// # Reconstruct the destination
+///
+/// Apply edits using the original coordinates. Copy unchanged gaps from the old buffer and
+/// replacement ranges from the new buffer; do not adjust later offsets as you go.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+/// let ContentDiff::Text(text) = diff(
+///     b"one\ntwo\nthree\n",
+///     b"ONE\ntwo\nTHREE",
+///     BinaryMode::Text,
+///     DiffLimits::default(),
+///     &AtomicBool::new(false),
+/// )?
+/// else {
+///     panic!("expected text edits");
+/// };
+/// let mut result = Vec::new();
+/// let mut cursor = 0;
+/// for edit in text.edits() {
+///     result.extend_from_slice(&text.old_bytes()[cursor..edit.old_bytes.start]);
+///     result.extend_from_slice(&text.new_bytes()[edit.new_bytes.clone()]);
+///     cursor = edit.old_bytes.end;
+/// }
+/// result.extend_from_slice(&text.old_bytes()[cursor..]);
+/// assert_eq!(result, text.new_bytes());
+/// # Ok::<(), girt::content_diff::DiffError>(())
+/// ```
 #[derive(Debug, Eq, PartialEq)]
 pub struct TextDiff<'a> {
     pub(super) old: &'a [u8],
@@ -65,6 +132,27 @@ impl<'a> TextDiff<'a> {
 /// All ranges are zero-based and half-open. An empty old range denotes insertion; an empty new
 /// range denotes deletion. In results from [`super::diff`], at least one range is nonempty and
 /// byte endpoints coincide with LF-delimited line boundaries (including end of input).
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+/// let ContentDiff::Text(text) = diff(
+///     b"keep\n",
+///     b"keep\ninserted",
+///     BinaryMode::Auto,
+///     DiffLimits::default(),
+///     &AtomicBool::new(false),
+/// )?
+/// else {
+///     panic!("expected text");
+/// };
+/// let edit = &text.edits()[0];
+/// assert!(edit.old_bytes.is_empty());
+/// assert_eq!(edit.old_lines, 1..1);
+/// assert_eq!(&text.new_bytes()[edit.new_bytes.clone()], b"inserted");
+/// # Ok::<(), girt::content_diff::DiffError>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContentEdit {
     /// Lines removed from the original input.
@@ -84,6 +172,23 @@ pub struct ContentEdit {
 /// line count of edits. Bounds are checked before line/trace growth; allocation failure follows
 /// Rust's allocator behavior. Raising bounds can admit quadratic search/trace growth on unrelated
 /// text. The default rejects that work rather than returning an approximate answer.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::content_diff::{BinaryMode, DiffError, DiffLimits, diff};
+/// let limits = DiffLimits::default().with_max_input_bytes(3);
+/// assert!(matches!(
+///     diff(
+///         b"ab",
+///         b"ab",
+///         BinaryMode::Auto,
+///         limits,
+///         &AtomicBool::new(false)
+///     ),
+///     Err(DiffError::Limit("input bytes"))
+/// ));
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct DiffLimits {
@@ -144,6 +249,26 @@ impl Default for DiffLimits {
 }
 
 /// Content comparison failed without returning partial edits or changing external state.
+///
+/// A limit failure supplies no approximate edits. Choose a larger budget, offer a binary/raw
+/// view, or let the user explicitly request more work. Cancellation requires a fresh call after
+/// the application clears or replaces its flag.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::content_diff::{BinaryMode, DiffError, DiffLimits, diff};
+/// assert!(matches!(
+///     diff(
+///         b"a",
+///         b"b",
+///         BinaryMode::Auto,
+///         DiffLimits::default(),
+///         &AtomicBool::new(true)
+///     ),
+///     Err(DiffError::Cancelled)
+/// ));
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DiffError {

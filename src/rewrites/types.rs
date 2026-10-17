@@ -3,6 +3,16 @@ use crate::{
 };
 
 /// Source selection for inferred copies, in addition to deleted rename sources.
+///
+/// Use `Modified` when an added file may derive from a changed file's previous contents.
+/// `ModifiedPostimage` serves consumers comparing against its new contents, but the result's
+/// `source_id` still names the old content. Neither option searches unchanged source files.
+///
+/// ```
+/// use girt::rewrites::{Copies, Options};
+/// let options = Options::default().with_copies(Copies::Modified);
+/// assert_eq!(options.copies, Copies::Modified);
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Copies {
@@ -18,6 +28,17 @@ pub enum Copies {
 }
 
 /// Caller choices for inference, independent of repository configuration.
+///
+/// ```
+/// use girt::rewrites::{Copies, Options};
+/// let exact_copies = Options::default()
+///     .with_similarity(100)
+///     .with_copies(Copies::Modified)
+///     .with_track_empty(true);
+/// assert_eq!(exact_copies.similarity, 100); // Identity-only; no approximate scoring.
+/// let bounded = Options::default().with_candidate_limit(0);
+/// assert_eq!(bounded.candidate_limit, 0); // Skip edited matching if any counted pair remains.
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Options {
@@ -223,6 +244,11 @@ pub struct Rewrite {
 /// Inferred rewrites, with an explicit report when edited-content detection was skipped.
 ///
 /// Returned by [`Objects::detect_rewrites_or_exact`](crate::Objects::detect_rewrites_or_exact).
+///
+/// Always inspect `inexact_skipped` before presenting the result as complete. A UI can retain
+/// exact pairs, leave all other additions/deletions unpaired, and offer a retry using
+/// [`InexactSkipped::suggested_limit`]. The [fallback
+/// example](crate::Objects::detect_rewrites_or_exact) shows the full lifecycle.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Detection {
@@ -256,6 +282,9 @@ impl InexactSkipped {
     ///
     /// This is the larger of the two counts, the value Git suggests for `diff.renameLimit`. It is
     /// sufficient but not always minimal: one source against three destinations needs only 2.
+    ///
+    /// The suggestion addresses candidate selection only. Independent byte, pair and work budgets
+    /// in [`Limits`] can still refuse the retry.
     #[must_use]
     pub fn suggested_limit(&self) -> usize {
         self.sources.max(self.targets)
@@ -266,6 +295,34 @@ impl InexactSkipped {
 ///
 /// Callers may raise an exhausted bound or retry cancellation with a cleared flag. Missing/corrupt
 /// storage needs repair or a refreshed object view; retrying unchanged inputs does not repair it.
+///
+/// [`Error::Candidates`] is a policy refusal from the strict API; retry with a chosen larger
+/// candidate limit or use [`crate::Objects::detect_rewrites_or_exact`] and report the skip.
+/// [`Error::Limit`] instead means a resource budget failed, including during exact matching, and
+/// neither API returns partial records. Invalid similarity is a caller error, not corrupt storage.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::rewrites::{Error, Limits, Options};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+/// let result = repo.objects(Default::default())?.detect_rewrites(
+///     None,
+///     None,
+///     Options::default().with_similarity(0),
+///     Limits::default(),
+///     None,
+///     &AtomicBool::new(false),
+/// );
+/// assert!(matches!(result, Err(Error::Similarity(0))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
