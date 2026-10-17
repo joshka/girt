@@ -21,6 +21,25 @@ impl Repository {
     /// [`OpenError::Malformed`] for a non-directory start. Candidate errors are propagated without
     /// falling back to an outer repository. No files are changed. Reads are synchronous and have
     /// the same unbounded metadata allocation and trusted-path assumptions as [`Self::open`].
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, OpenError, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("project");
+    /// Repository::init(ObjectFormat::Sha1, &path, InitKind::Worktree)?;
+    /// let nested = path.join("src");
+    /// std::fs::create_dir(&nested)?;
+    /// assert!(matches!(
+    ///     Repository::open(&nested),
+    ///     Err(OpenError::NotFound(_))
+    /// ));
+    /// // Explicit opening stays at the supplied location; discovery can select an ancestor.
+    /// assert_eq!(
+    ///     Repository::discover(&nested)?.worktree(),
+    ///     Some(path.canonicalize()?.as_path())
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn discover(start: impl AsRef<Path>) -> Result<Self, OpenError> {
         discover(start.as_ref(), None)
     }
@@ -37,6 +56,20 @@ impl Repository {
     /// ceiling is not an ancestor of the start (or the same directory), and I/O errors for
     /// inaccessible paths. An absent ceiling returns [`OpenError::NotFound`]. No files are
     /// changed.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, OpenError, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// Repository::init(ObjectFormat::Sha1, directory.path(), InitKind::Worktree)?;
+    /// let child = directory.path().join("unrelated");
+    /// std::fs::create_dir(&child)?;
+    /// // A ceiling at the child deliberately excludes the enclosing repository.
+    /// assert!(matches!(
+    ///     Repository::discover_with_ceiling(&child, &child),
+    ///     Err(OpenError::NotFound(_)),
+    /// ));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn discover_with_ceiling(
         start: impl AsRef<Path>,
         ceiling: impl AsRef<Path>,

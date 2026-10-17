@@ -1,3 +1,5 @@
+//! Annotated tag objects and their target metadata.
+
 #![warn(
     clippy::unwrap_used,
     clippy::expect_used,

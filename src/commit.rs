@@ -1,3 +1,5 @@
+//! Byte-preserving commit metadata and graph records.
+
 #![warn(
     clippy::unwrap_used,
     clippy::expect_used,

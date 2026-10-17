@@ -1,3 +1,5 @@
+//! Individual loose-object reads and writes.
+
 #![warn(
     clippy::unwrap_used,
     clippy::expect_used,
