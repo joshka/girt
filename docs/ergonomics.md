@@ -11,9 +11,9 @@ with the library.
 Each task uses the shortest direct composition identified here, with inputs supplied by the
 application. Rust blocks are compile-only because they open caller-owned repositories or publish
 changes. They include imports and error propagation; callers must inspect partial mutation reports
-before retrying. `Box<dyn Error>` preserves those reports through downcasting but supplies no
-recovery policy. No example starts a Git process. Disposable end-to-end examples are linked where
-setup and cleanup matter.
+before retrying. `girt::Result` and `Box<dyn Error>` preserve those reports through downcasting but
+supply no recovery policy; snippets box only when they add their own string errors. No example
+starts a Git process. Disposable end-to-end examples are linked where setup and cleanup matter.
 
 For incomplete tasks, the snippet implements only the supported portion described below. Linked
 runnable examples provide disposable setup and cleanup; their fixtures are excluded from caller-cost
@@ -47,7 +47,7 @@ choice; see the config task.
 ```rust,no_run
 use girt::Repository;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> girt::Result<()> {
     let repo = Repository::discover(".")?;
     println!("{}", repo.git_dir().display());
     Ok(())
@@ -136,7 +136,7 @@ use girt::content_diff::{BinaryMode, BlobContent, DiffLimits, diff};
 use girt::revision::Resolver;
 use girt::{ObjectKind, PackLimits, ReadLimits, Repository, TreeCompareLimits};
 
-fn compare(repo: &Repository) -> Result<(), Box<dyn std::error::Error>> {
+fn compare(repo: &Repository) -> girt::Result<()> {
     let objects = repo.objects(PackLimits::default())?;
     let resolver = Resolver::new(repo, &objects)?;
     let old = resolver.resolve_to(&"HEAD~1".parse()?, ObjectKind::Tree)?;
@@ -170,8 +170,9 @@ Disposable end-to-end evidence: [content_diff](../examples/content_diff.rs).
 
 Desired sketch: `objects.diff_with_renames(old_tree, new_tree)?`. Gap closure:
 [404](https://github.com/joshka/girt/issues/404), [406](https://github.com/joshka/girt/issues/406)
-(combined rename result), [407](https://github.com/joshka/girt/issues/407) (path quoting); patch
-rendering in [411](https://github.com/joshka/girt/issues/411).
+(combined rename result); patch rendering in [411](https://github.com/joshka/girt/issues/411).
+`--name-status` output can already use `girt::display::quote_path` and `TreeChange::status`
+([407](https://github.com/joshka/girt/issues/407)).
 
 ### Status
 
@@ -187,7 +188,7 @@ use std::sync::atomic::AtomicBool;
 use girt::Repository;
 use girt::status::{Baseline, Limits, Untracked};
 
-fn status(repo: &Repository) -> Result<(), Box<dyn std::error::Error>> {
+fn status(repo: &Repository) -> girt::Result<()> {
     let report = repo.raw_status(
         Baseline::Head,
         Untracked::RawFilesWithoutIgnores,
@@ -223,7 +224,7 @@ fn commit_tree(
     repo: &Repository,
     tree: ObjectId,
     identity: Signature,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> girt::Result<()> {
     // Caller supplies a fully built tree; this does not consume the index or stage paths.
     let refs = repo.references()?;
     let parent = refs.resolve(&RefName::HEAD, 5)?.id;
@@ -301,7 +302,7 @@ fn tags(
     repo: &Repository,
     tip: ObjectId,
     identity: Signature,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> girt::Result<()> {
     // Caller supplies an existing commit tip and deliberately chooses no reflogs.
     let refs = repo.references()?;
     refs.update_without_reflog(
@@ -347,7 +348,7 @@ repository, options, environment and callbacks.
 use girt::Repository;
 use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> girt::Result<()> {
     let repo = Repository::open("repo")?;
     let outcome = workflow::fetch(
         &repo,
@@ -429,7 +430,7 @@ fn clone_without_checkout(
     source: &Path,
     destination: &Path,
     url: &[u8],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> girt::Result<()> {
     // URL is credential-free metadata; source is the caller-selected native local endpoint.
     let request = CloneRequest::prepare_tracking(
         destination,
@@ -471,7 +472,7 @@ use girt::Repository;
 use girt::config::ConfigInputs;
 use girt::workflow::Environment;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> girt::Result<()> {
     let inputs = ConfigInputs::git_default(&Environment::from_process())?;
     let repo = Repository::open_with_config("repo", &inputs)?;
     let email = repo.config().string("user", None, "email");
@@ -494,7 +495,7 @@ objects and resolver handles and PackLimits.
 use girt::revision::Resolver;
 use girt::{PackLimits, Repository};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> girt::Result<()> {
     let repo = Repository::open("repo")?;
     let objects = repo.objects(PackLimits::default())?;
     let resolver = Resolver::new(&repo, &objects)?;
@@ -526,7 +527,7 @@ fn checkout(
     repo: &Repository,
     old: Option<ObjectId>,
     new: ObjectId,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> girt::Result<()> {
     // Caller holds exclusive ownership and supplies the actual baseline tree.
     let report = repo.checkout_tree(old, Some(new), Default::default(), &AtomicBool::new(false))?;
     println!("{report:?}");

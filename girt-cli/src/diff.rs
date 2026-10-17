@@ -7,8 +7,9 @@ use std::process::ExitCode;
 use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _};
 use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+use girt::display::quote_path;
 use girt::rewrites::{Copies, Kind, Limits, Options};
-use girt::{EntryMode, ObjectId, Objects, TreeChange, TreeCompareLimits, TreeValue};
+use girt::{ChangeStatus, EntryMode, ObjectId, Objects, TreeChange, TreeCompareLimits, TreeValue};
 
 use crate::common::{not_cancelled, objects, read_limits, resolve_tree, stdout};
 use crate::{Context, complete};
@@ -186,10 +187,21 @@ fn compare(
 /// Writes one `--name-status` style record; tab-separated and quoted like Git under `--git`.
 fn write_status(out: &mut impl Write, entry: &Entry, git: bool) -> Result<()> {
     let separator = if git { "\t" } else { " " };
-    let path = |bytes: &[u8]| if git { quote(bytes) } else { plain(bytes) };
+    let path = |bytes: &[u8]| {
+        if git {
+            quote_path(bytes).to_string()
+        } else {
+            plain(bytes)
+        }
+    };
     match entry {
         Entry::Change(change) => {
-            writeln!(out, "{}{separator}{}", status(change), path(&change.path))?;
+            writeln!(
+                out,
+                "{}{separator}{}",
+                change.status().letter(),
+                path(&change.path)
+            )?;
         }
         Entry::Rewrite {
             kind,
@@ -198,10 +210,10 @@ fn write_status(out: &mut impl Write, entry: &Entry, git: bool) -> Result<()> {
             target,
             ..
         } => {
-            let letter = if *kind == Kind::Rename { 'R' } else { 'C' };
             writeln!(
                 out,
-                "{letter}{similarity:03}{separator}{}{separator}{}",
+                "{}{similarity:03}{separator}{}{separator}{}",
+                kind.letter(),
                 path(source),
                 path(target)
             )?;
@@ -210,40 +222,11 @@ fn write_status(out: &mut impl Write, entry: &Entry, git: bool) -> Result<()> {
     Ok(())
 }
 
-fn status(change: &TreeChange) -> char {
-    match (change.old, change.new) {
-        (None, _) => 'A',
-        (_, None) => 'D',
-        (Some(old), Some(new)) if kind_of(old.mode) != kind_of(new.mode) => 'T',
-        _ => 'M',
-    }
-}
-
-/// Groups modes that Git treats as the same file type.
-fn kind_of(mode: EntryMode) -> u8 {
-    match mode {
-        EntryMode::Blob | EntryMode::Executable => 0,
-        EntryMode::Symlink => 1,
-        EntryMode::Gitlink => 2,
-        _ => 3,
-    }
-}
-
-fn octal(mode: EntryMode) -> &'static str {
-    match mode {
-        EntryMode::Blob => "100644",
-        EntryMode::Executable => "100755",
-        EntryMode::Symlink => "120000",
-        EntryMode::Gitlink => "160000",
-        _ => "040000",
-    }
-}
-
 /// Writes the patch for one entry, splitting type changes into a deletion and an addition.
 fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry, width: usize) -> Result<()> {
     match entry {
         Entry::Change(change) => match (change.old, change.new) {
-            (Some(old), Some(new)) if kind_of(old.mode) != kind_of(new.mode) => {
+            (Some(old), Some(new)) if change.status() == ChangeStatus::TypeChanged => {
                 let path = &change.path;
                 write_file_patch(out, objects, (path, path), Some(old), None, None, width)?;
                 write_file_patch(out, objects, (path, path), None, Some(new), None, width)
@@ -286,18 +269,18 @@ fn write_file_patch(
     rewrite: Option<(Kind, u8)>,
     width: usize,
 ) -> Result<()> {
-    let a = quote(&[b"a/", old_path].concat());
-    let b = quote(&[b"b/", new_path].concat());
+    let a = quote_path(&[b"a/", old_path].concat()).to_string();
+    let b = quote_path(&[b"b/", new_path].concat()).to_string();
     writeln!(out, "diff --git {a} {b}")?;
     match (old, new) {
-        (None, Some(new)) => writeln!(out, "new file mode {}", octal(new.mode))?,
-        (Some(old), None) => writeln!(out, "deleted file mode {}", octal(old.mode))?,
+        (None, Some(new)) => writeln!(out, "new file mode {}", new.mode.octal())?,
+        (Some(old), None) => writeln!(out, "deleted file mode {}", old.mode.octal())?,
         (Some(old), Some(new)) if old.mode != new.mode => {
             writeln!(
                 out,
                 "old mode {}\nnew mode {}",
-                octal(old.mode),
-                octal(new.mode)
+                old.mode.octal(),
+                new.mode.octal()
             )?;
         }
         _ => {}
@@ -309,8 +292,8 @@ fn write_file_patch(
             "copy"
         };
         writeln!(out, "similarity index {similarity}%")?;
-        writeln!(out, "{verb} from {}", quote(old_path))?;
-        writeln!(out, "{verb} to {}", quote(new_path))?;
+        writeln!(out, "{verb} from {}", quote_path(old_path))?;
+        writeln!(out, "{verb} to {}", quote_path(new_path))?;
     }
     let zero = |value: Option<TreeValue>| value.map(|value| value.id);
     let (old_id, new_id) = (zero(old), zero(new));
@@ -318,7 +301,7 @@ fn write_file_patch(
         return Ok(());
     }
     let mode = match (old, new) {
-        (Some(old), Some(new)) if old.mode == new.mode => format!(" {}", octal(new.mode)),
+        (Some(old), Some(new)) if old.mode == new.mode => format!(" {}", new.mode.octal()),
         _ => String::new(),
     };
     let abbrev = |id: Option<ObjectId>| match id {
@@ -487,33 +470,6 @@ fn write_line(out: &mut impl Write, prefix: u8, line: &[u8]) -> Result<()> {
 /// A path with control bytes escaped, for default output.
 fn plain(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).escape_debug().to_string()
-}
-
-/// Quotes a path the way Git does with `core.quotePath=true`: wrapped in double quotes with C
-/// escapes and octal non-ASCII bytes when it contains any byte needing escapes.
-fn quote(bytes: &[u8]) -> String {
-    let needs = |byte: u8| !(0x20..0x7f).contains(&byte) || byte == b'"' || byte == b'\\';
-    if !bytes.iter().any(|byte| needs(*byte)) {
-        return String::from_utf8_lossy(bytes).into_owned();
-    }
-    let mut quoted = String::from("\"");
-    for &byte in bytes {
-        match byte {
-            b'"' => quoted.push_str("\\\""),
-            b'\\' => quoted.push_str("\\\\"),
-            b'\x07' => quoted.push_str("\\a"),
-            b'\x08' => quoted.push_str("\\b"),
-            b'\t' => quoted.push_str("\\t"),
-            b'\n' => quoted.push_str("\\n"),
-            b'\x0b' => quoted.push_str("\\v"),
-            b'\x0c' => quoted.push_str("\\f"),
-            b'\r' => quoted.push_str("\\r"),
-            byte if needs(byte) => quoted.push_str(&format!("\\{byte:03o}")),
-            byte => quoted.push(char::from(byte)),
-        }
-    }
-    quoted.push('"');
-    quoted
 }
 
 /// Only the colored path buffers patch lines; plain patches retain their original writer.

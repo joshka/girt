@@ -1,4 +1,5 @@
 use super::{CommitError, Signature};
+use crate::display::{DateFormat, FormattedDate};
 
 /// Borrowed identity components and uninterpreted date bytes from an imported object.
 ///
@@ -50,6 +51,50 @@ pub struct IdentityDate {
     pub seconds: i64,
     /// Signed offset in minutes. Noncanonical hours and minutes are interpreted arithmetically.
     pub offset_minutes: i16,
+}
+
+impl IdentityDate {
+    /// Renders this date as Git prints it with `--date=default` or `--date=iso`.
+    ///
+    /// The zone prints as `±HHMM` from [`offset_minutes`](Self::offset_minutes). This replaces
+    /// hand-written calendar arithmetic over [`seconds`](Self::seconds) and
+    /// [`offset_minutes`](Self::offset_minutes), which remain the explicit values.
+    ///
+    /// Two inputs differ from Git 2.56. A recorded zone with 60 or more in its minute digits,
+    /// such as `+0090`, shifts the local time by its arithmetic value in both, but prints
+    /// canonically as `+0130` here while Git echoes the recorded `+0090`. Git refuses local times
+    /// before 1970, which this renders as exact proleptic Gregorian dates. Both are tracked in
+    /// [#422](https://github.com/joshka/girt/issues/422).
+    ///
+    /// ```
+    /// use girt::IdentityRef;
+    /// use girt::display::DateFormat;
+    ///
+    /// let date = IdentityRef::parse(b"A <a@example.com> 1696320000 -0800")?.date()?;
+    /// assert_eq!(
+    ///     date.format(DateFormat::Default).to_string(),
+    ///     "Tue Oct 3 00:00:00 2023 -0800"
+    /// );
+    /// assert_eq!(
+    ///     date.format(DateFormat::Iso).to_string(),
+    ///     "2023-10-03 00:00:00 -0800"
+    /// );
+    /// # Ok::<(), girt::CommitError>(())
+    /// ```
+    #[must_use]
+    pub fn format(self, format: DateFormat) -> FormattedDate {
+        FormattedDate::new(self, format)
+    }
+}
+
+impl From<&Signature> for IdentityDate {
+    /// Copies the signature's seconds and offset, for example to [`format`](Self::format) it.
+    fn from(signature: &Signature) -> Self {
+        Self {
+            seconds: signature.seconds,
+            offset_minutes: signature.offset_minutes,
+        }
+    }
 }
 
 /// Splits an optional sign and at least one decimal digit from the following bytes.

@@ -9,7 +9,7 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Read a file at a revision": {
@@ -48,7 +48,7 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Status": {
@@ -61,7 +61,7 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Stage and commit": {
@@ -74,7 +74,7 @@
     "identity_literals": 0,
     "commit_fields": 1,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 1
   },
   "Create, move and delete a branch": {
@@ -100,7 +100,7 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 1
   },
   "Fetch by remote name": {
@@ -113,7 +113,7 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 1,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Push the current branch": {
@@ -139,7 +139,7 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Read effective config values": {
@@ -152,7 +152,7 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Rev-parse": {
@@ -165,7 +165,7 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Checkout or switch branch": {
@@ -178,7 +178,7 @@
     "identity_literals": 0,
     "commit_fields": 0,
     "branch_names": 0,
-    "boxed_errors": 1,
+    "boxed_errors": 0,
     "empty_vectors": 0
   },
   "Blame-style queries": {

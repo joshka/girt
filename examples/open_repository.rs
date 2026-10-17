@@ -14,7 +14,7 @@ struct Args {
     blob_id: ObjectId,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> girt::Result<()> {
     let args = Args::parse();
     let repository = Repository::open(args.path)?;
     let bytes = repository

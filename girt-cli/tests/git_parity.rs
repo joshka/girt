@@ -518,3 +518,49 @@ fn worktree_columns_align_when_one_id_needs_more_digits() {
         String::from_utf8(expected.stdout).unwrap()
     );
 }
+
+/// Obstructed tracked paths report `M` for a special file at the leaf and `D` for a directory at
+/// the leaf or a file blocking an ancestor, as `git status --porcelain` does.
+#[cfg(unix)]
+#[test]
+fn status_classifies_obstructions_like_git() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path();
+    let repository = home.join("repo");
+    fs::create_dir_all(repository.join("blocked")).unwrap();
+    let git = |args: &[&str]| run(Command::new("git").args(args), home, &repository, None);
+    git(&["init", "--quiet"]);
+    for path in ["fifo", "directory", "blocked/file"] {
+        fs::write(repository.join(path), "tracked\n").unwrap();
+    }
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "-m", "Tracked"]);
+    fs::remove_file(repository.join("fifo")).unwrap();
+    let fifo = Command::new("mkfifo")
+        .arg(repository.join("fifo"))
+        .status()
+        .unwrap();
+    assert!(fifo.success());
+    fs::remove_file(repository.join("directory")).unwrap();
+    fs::create_dir(repository.join("directory")).unwrap();
+    fs::write(repository.join("directory/inner"), "untracked\n").unwrap();
+    fs::remove_dir_all(repository.join("blocked")).unwrap();
+    fs::write(repository.join("blocked"), "file\n").unwrap();
+
+    let expected = git(&["status", "--porcelain", "-uno"]);
+    let girt = run(
+        Command::new(env!("CARGO_BIN_EXE_girt")).args(["--git", "status"]),
+        home,
+        &repository,
+        None,
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&girt.stdout),
+        String::from_utf8_lossy(&expected.stdout)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&expected.stdout),
+        " D blocked/file\n D directory\n M fifo\n"
+    );
+}

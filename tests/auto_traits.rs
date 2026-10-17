@@ -23,3 +23,12 @@ fn retention_diagnostics_remain_thread_safe() {
     assert_traits::<RetentionPlan>();
     assert_traits::<girt::retention::RetentionError>();
 }
+
+#[test]
+fn crate_error_remains_thread_safe() {
+    fn assert_traits<T: Send + Sync + 'static>() {}
+
+    // Applications move `girt::Error` across threads and into other error types. Like retention
+    // diagnostics, it owns arbitrary I/O sources and does not promise unwind safety.
+    assert_traits::<girt::Error>();
+}

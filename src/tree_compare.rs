@@ -139,6 +139,100 @@ pub struct TreeChange {
     pub new: Option<TreeValue>,
 }
 
+impl TreeChange {
+    /// Classifies this change as Git's `--name-status` does: added, deleted, type-changed or
+    /// modified.
+    ///
+    /// This replaces matching on [`old`](Self::old) and [`new`](Self::new) by hand. A change
+    /// between a regular file, a symlink and a gitlink is [`ChangeStatus::TypeChanged`]; an
+    /// executable-bit change alone is [`ChangeStatus::Modified`]. A change with neither side,
+    /// which [`Objects::compare_trees`] never returns, reports [`ChangeStatus::Modified`].
+    ///
+    /// ```
+    /// use girt::{ChangeStatus, EntryMode, ObjectFormat, ObjectId, TreeChange, TreeValue};
+    ///
+    /// let id = ObjectId::for_blob(ObjectFormat::Sha1, b"target");
+    /// let file = TreeValue {
+    ///     id,
+    ///     mode: EntryMode::Blob,
+    /// };
+    /// let link = TreeValue {
+    ///     id,
+    ///     mode: EntryMode::Symlink,
+    /// };
+    /// assert_eq!(ChangeStatus::between(Some(file), Some(link)).letter(), 'T');
+    /// assert_eq!(ChangeStatus::between(None, Some(file)), ChangeStatus::Added);
+    /// ```
+    #[must_use]
+    pub fn status(&self) -> ChangeStatus {
+        ChangeStatus::between(self.old, self.new)
+    }
+}
+
+/// How one path changed, with the letter Git prints for it in `--name-status` and
+/// `status --porcelain` output.
+///
+/// Rename and copy letters come from [`rewrites::Kind::letter`](crate::rewrites::Kind::letter).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ChangeStatus {
+    /// The path is new (`A`).
+    Added,
+    /// The path was removed (`D`).
+    Deleted,
+    /// Content or the executable bit changed (`M`).
+    Modified,
+    /// The path changed between a regular file, a symlink and a gitlink (`T`).
+    TypeChanged,
+}
+
+impl ChangeStatus {
+    /// Classifies a path from its old and new values, as [`TreeChange::status`] does.
+    ///
+    /// Use this for leaves that do not come from a tree comparison, such as an index entry
+    /// against a working-tree observation.
+    #[must_use]
+    pub fn between(old: Option<TreeValue>, new: Option<TreeValue>) -> Self {
+        match (old, new) {
+            (None, Some(_)) => Self::Added,
+            (Some(_), None) => Self::Deleted,
+            (Some(old), Some(new)) if file_type(old.mode) != file_type(new.mode) => {
+                Self::TypeChanged
+            }
+            _ => Self::Modified,
+        }
+    }
+
+    /// Returns Git's status letter: `A`, `D`, `M` or `T`.
+    #[must_use]
+    pub fn letter(self) -> char {
+        match self {
+            Self::Added => 'A',
+            Self::Deleted => 'D',
+            Self::Modified => 'M',
+            Self::TypeChanged => 'T',
+        }
+    }
+}
+
+/// File types Git distinguishes for `T`; the executable bit is not a type.
+#[derive(Eq, PartialEq)]
+enum FileType {
+    Regular,
+    Symlink,
+    Gitlink,
+    Tree,
+}
+
+fn file_type(mode: EntryMode) -> FileType {
+    match mode {
+        EntryMode::Blob | EntryMode::Executable => FileType::Regular,
+        EntryMode::Symlink => FileType::Symlink,
+        EntryMode::Gitlink => FileType::Gitlink,
+        EntryMode::Tree => FileType::Tree,
+    }
+}
+
 /// Input and output bounds for one recursive tree comparison.
 ///
 /// Counters charge occurrences, not distinct identities: the same subtree at two paths may be

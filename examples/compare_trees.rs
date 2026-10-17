@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 
 use clap::Parser;
+use girt::display::quote_path;
 use girt::{
     EntryMode, InitKind, ObjectId, PackLimits, Repository, Tree, TreeCompareLimits, TreeEntry,
     TreeValue,
@@ -38,7 +39,7 @@ struct Args {
     new: Option<Side>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> girt::Result<()> {
     let args = Args::parse();
     let temporary;
     let (repo, old, new) =
@@ -80,15 +81,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &AtomicBool::new(false),
     )?;
     for change in changes {
-        // Escaping keeps non-UTF-8 names and control bytes distinguishable on a text terminal.
-        let path: String = change
-            .path
-            .iter()
-            .flat_map(|byte| std::ascii::escape_default(*byte))
-            .map(char::from)
-            .collect();
+        // Git's quoting keeps non-UTF-8 names and control bytes distinguishable on a terminal.
         println!(
-            "{path}: {} -> {}",
+            "{} {}: {} -> {}",
+            change.status().letter(),
+            quote_path(&change.path),
             describe(change.old),
             describe(change.new)
         );
@@ -98,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn describe(value: Option<TreeValue>) -> String {
     match value {
-        Some(value) => format!("{:?} {}", value.mode, value.id),
+        Some(value) => format!("{} {}", value.mode.octal(), value.id),
         None => "absent".into(),
     }
 }

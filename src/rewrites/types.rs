@@ -389,6 +389,19 @@ pub enum Kind {
     Copy,
 }
 
+impl Kind {
+    /// Returns Git's `--name-status` letter: `R` for a rename and `C` for a copy.
+    ///
+    /// Git prints the letter followed by the three-digit [`Rewrite::similarity`], as in `R100`.
+    #[must_use]
+    pub fn letter(self) -> char {
+        match self {
+            Self::Rename => 'R',
+            Self::Copy => 'C',
+        }
+    }
+}
+
 /// One inferred relationship, ordered by destination raw path bytes in returned results.
 ///
 /// Exact object IDs score 100. Edited content is split at LF or after 64 significant bytes;

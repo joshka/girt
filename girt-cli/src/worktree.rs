@@ -12,11 +12,11 @@ use girt::checkout::Action;
 use girt::ignore::{Case, Ignore, InputKind, Source};
 use girt::index::{Entry, Stage};
 use girt::refs::RefName;
-use girt::status::{Baseline, Change, Untracked};
-use girt::{EntryMode, ObjectId, Repository, TreeValue, WorktreeRetirement, WorktreeState};
+use girt::status::{Baseline, Change, Untracked, WorktreeChange};
+use girt::{ChangeStatus, ObjectId, Repository, WorktreeRetirement, WorktreeState};
 
 use crate::common::{
-    display_bytes, not_cancelled, objects, resolve_ref, resolve_tree, stdout, write_line,
+    display_bytes, not_cancelled, objects, resolve_ref, resolve_tree, stdout, write_path,
 };
 use crate::{Context, complete};
 
@@ -161,21 +161,19 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
         .raw_status(Baseline::Head, policy, Default::default(), not_cancelled())
         .wrap_err("computing status")?;
 
-    let mut lines: BTreeMap<Vec<u8>, [u8; 2]> = BTreeMap::new();
+    let mut lines: BTreeMap<Vec<u8>, [char; 2]> = BTreeMap::new();
     for change in &report.staged {
-        let code = match (&change.old, &change.new) {
-            (None, _) => b'A',
-            (_, None) => b'D',
-            (Some(old), Some(new)) => modified(old, new),
-        };
-        lines.entry(change.path.clone()).or_insert([b' '; 2])[0] = code;
+        let code = change.status().letter();
+        lines.entry(change.path.clone()).or_insert([' '; 2])[0] = code;
     }
+    let worktree = repository
+        .worktree()
+        .ok_or_else(|| eyre!("status needs a worktree"))?;
     for change in &report.unstaged {
-        let code = match &change.change {
-            Change::Modified(new) => modified(&change.index, new),
-            _ => b'D',
-        };
-        lines.entry(change.path.clone()).or_insert([b' '; 2])[1] = code;
+        let code = change
+            .status()
+            .map_or_else(|| obstruction_code(worktree, change), ChangeStatus::letter);
+        lines.entry(change.path.clone()).or_insert([' '; 2])[1] = code;
     }
     let mut stages: BTreeMap<&[u8], BTreeSet<Stage>> = BTreeMap::new();
     for entry in &report.unmerged {
@@ -184,13 +182,13 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
     for (path, stages) in stages {
         let has = |stage| stages.contains(&stage);
         let code = match (has(Stage::Base), has(Stage::Ours), has(Stage::Theirs)) {
-            (true, false, false) => *b"DD",
-            (false, true, false) => *b"AU",
-            (true, true, false) => *b"UD",
-            (false, false, true) => *b"UA",
-            (true, false, true) => *b"DU",
-            (false, true, true) => *b"AA",
-            _ => *b"UU",
+            (true, false, false) => ['D', 'D'],
+            (false, true, false) => ['A', 'U'],
+            (true, true, false) => ['U', 'D'],
+            (false, false, true) => ['U', 'A'],
+            (true, false, true) => ['D', 'U'],
+            (false, true, true) => ['A', 'A'],
+            _ => ['U', 'U'],
         };
         lines.insert(path.to_vec(), code);
     }
@@ -237,11 +235,10 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
             write!(
                 out,
                 "{staged}{}{reset}{unstaged}{}{reset}",
-                char::from(code[0]),
-                char::from(code[1])
+                code[0], code[1]
             )?;
         } else {
-            out.write_all(code)?;
+            write!(out, "{}{}", code[0], code[1])?;
         }
         out.write_all(b" ")?;
         write_path(&mut out, path, context.git)?;
@@ -259,18 +256,20 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
 }
 
 /// Status letter for a changed entry: `T` when the kind changes, otherwise `M`.
-fn modified(old: &TreeValue, new: &TreeValue) -> u8 {
-    let kind = |mode| match mode {
-        EntryMode::Blob | EntryMode::Executable => 0,
-        EntryMode::Symlink => 1,
-        EntryMode::Tree => 2,
-        _ => 3,
+/// Git reports a special file occupying a tracked leaf as modified, and a directory there or a
+/// blocked ancestor as deleted.
+fn obstruction_code(worktree: &Path, change: &WorktreeChange) -> char {
+    let Change::Obstructed { path } = &change.change else {
+        return 'D';
     };
-    if kind(old.mode) == kind(new.mode) {
-        b'M'
-    } else {
-        b'T'
-    }
+    #[cfg(unix)]
+    let relative = Path::new(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(path));
+    #[cfg(not(unix))]
+    let relative = PathBuf::from(String::from_utf8_lossy(path).into_owned());
+    let special = *path == change.path
+        && std::fs::symlink_metadata(worktree.join(relative))
+            .is_ok_and(|metadata| !metadata.is_dir());
+    if special { 'M' } else { 'D' }
 }
 
 /// Collapses untracked leaves to their topmost ancestor directory holding no tracked paths, as
@@ -674,32 +673,4 @@ fn expand_home(path: &str) -> PathBuf {
         (Some(rest), Some(home)) => Path::new(&home).join(rest),
         _ => PathBuf::from(path),
     }
-}
-
-/// Writes a path line, C-quoting it like Git's `core.quotePath` when `quote` is set.
-fn write_path(out: &mut impl Write, path: &[u8], quote: bool) -> std::io::Result<()> {
-    let needs = quote
-        && path
-            .iter()
-            .any(|&b| !(0x20..0x7f).contains(&b) || b == b'"' || b == b'\\');
-    if !needs {
-        return write_line(out, path);
-    }
-    out.write_all(b"\"")?;
-    for &byte in path {
-        match byte {
-            b'"' => out.write_all(b"\\\"")?,
-            b'\\' => out.write_all(b"\\\\")?,
-            b'\t' => out.write_all(b"\\t")?,
-            b'\n' => out.write_all(b"\\n")?,
-            b'\r' => out.write_all(b"\\r")?,
-            0x07 => out.write_all(b"\\a")?,
-            0x08 => out.write_all(b"\\b")?,
-            0x0b => out.write_all(b"\\v")?,
-            0x0c => out.write_all(b"\\f")?,
-            0x20..0x7f => out.write_all(&[byte])?,
-            _ => write!(out, "\\{byte:03o}")?,
-        }
-    }
-    out.write_all(b"\"\n")
 }
