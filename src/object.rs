@@ -401,19 +401,26 @@ impl FromStr for ObjectId {
             64 => ObjectFormat::Sha256,
             _ => return Err(ParseObjectIdError),
         };
-        if !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(ParseObjectIdError);
-        }
         let mut id = Self::null(format);
         let bytes: &mut [u8] = match &mut id {
             Self::Sha1(bytes) => bytes,
             Self::Sha256(bytes) => bytes,
         };
-        for (index, byte) in bytes.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-                .map_err(|_| ParseObjectIdError)?;
+        let (pairs, _) = value.as_bytes().as_chunks::<2>();
+        for (byte, [high, low]) in bytes.iter_mut().zip(pairs) {
+            *byte = hex_digit(*high)? << 4 | hex_digit(*low)?;
         }
         Ok(id)
+    }
+}
+
+/// Value of one ASCII hexadecimal digit, in either case.
+fn hex_digit(digit: u8) -> Result<u8, ParseObjectIdError> {
+    match digit {
+        b'0'..=b'9' => Ok(digit - b'0'),
+        b'a'..=b'f' => Ok(digit - b'a' + 10),
+        b'A'..=b'F' => Ok(digit - b'A' + 10),
+        _ => Err(ParseObjectIdError),
     }
 }
 
@@ -588,6 +595,9 @@ mod format_tests {
     #[case::long_sha256("0".repeat(65))]
     #[case::invalid_sha256("g".repeat(64))]
     #[case::unicode_sha256("é".repeat(32))]
+    #[case::last_digit(format!("{}g", "0".repeat(39)))]
+    #[case::sign(format!("+{}", "0".repeat(39)))]
+    #[case::between_ranges(":@`G".repeat(10))]
     fn rejects_invalid_hex(#[case] value: String) {
         assert_eq!(value.parse::<ObjectId>(), Err(ParseObjectIdError));
     }

@@ -39,10 +39,12 @@ and delete files.
 
 Retention operations share one 256 KiB positioned-read header window across all packs on the calling
 thread. Nested phases share that allocation; the outermost operation drops it. Pack size and pack
-count do not increase window memory. Ordinary content reads outside retention operations have no
-header window. Large read-ahead is restricted to offset-ordered blob locating, raw reuse and
-survivor verification; scattered requests use small positioned reads. Entry prefixes and decoder
-scratch retain their existing bounds.
+count do not increase window memory. Large read-ahead is restricted to offset-ordered blob locating,
+raw reuse and survivor verification; scattered requests use small positioned reads. Ordinary content
+reads outside retention operations use a 16 KiB window per reading thread, filled only when a read
+lands shortly after the previous one in the same pack, as history walks do. Its hits make the same
+immutable-pack assumption as the header window. Entry prefixes and decoder scratch retain their
+existing bounds.
 
 Each pinned artifact records its handle's size, modification time and file identity (device/inode on
 Unix, volume/file index on Windows) at opening. Before pack/index publication, retirement unlinks,
