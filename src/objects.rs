@@ -55,12 +55,14 @@
     reason = "parses untrusted repository or network input (#103)"
 )]
 mod alternates;
+mod prefix;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::{fs, io};
 
 pub use alternates::AlternateLimits;
+pub use prefix::ResolvePrefixError;
 
 use crate::pack::FilePack;
 use crate::pack::reader::check_cancelled;

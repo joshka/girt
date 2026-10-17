@@ -277,6 +277,48 @@ impl Index {
         None
     }
 
+    /// Prefix range inside the first-byte fanout bucket of a validated index.
+    pub(crate) fn prefix_range(
+        &self,
+        bytes: &[u8],
+        prefix: crate::ObjectIdPrefix,
+    ) -> Result<std::ops::Range<usize>, Error> {
+        let first = usize::from(
+            *prefix
+                .lower()
+                .as_bytes()
+                .first()
+                .ok_or(Error::Corrupt("empty prefix"))?,
+        );
+        let fanout = if self.legacy { 0 } else { 8 };
+        let mut low = if first == 0 {
+            0
+        } else {
+            word(bytes, fanout + (first - 1) * 4)? as usize
+        };
+        let mut high = word(bytes, fanout + first * 4)? as usize;
+        let end = high;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.identity(bytes, middle) < prefix.lower() {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        let start = low;
+        high = end;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if prefix.matches(self.identity(bytes, middle)) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        Ok(start..low)
+    }
+
     /// Identity-order position of the entry starting at `offset`.
     pub fn at_offset(&self, bytes: &[u8], offset: usize) -> Result<usize, Error> {
         let rank = self

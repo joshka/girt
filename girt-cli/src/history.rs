@@ -5,7 +5,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 use color_eyre::eyre::{Result, WrapErr as _, eyre};
-use girt::{Commit, HistoryLimits, IdentityRef, ObjectId, Objects, Repository};
+use girt::{Commit, HistoryLimits, IdentityRef, ObjectId, Objects};
 
 use crate::Context;
 use crate::common::{self, display_bytes};
@@ -45,8 +45,8 @@ pub enum Command {
 ///
 /// Commits are shown newest committer date first, as `git log` does by default. Each commit is a
 /// block of `commit`, `parent`, `author` (ISO date) and indented message lines. With `--git`, the
-/// output matches `git log`; abbreviated IDs (`Merge:` and `--oneline`) use `core.abbrev` or 7
-/// digits without Git's uniqueness check or size scaling, so large repositories differ there.
+/// output matches `git log`; abbreviated IDs (`Merge:` and `--oneline`) honor `core.abbrev`
+/// and lengthen collisions across all stored object kinds.
 #[derive(Debug, clap::Args)]
 pub struct LogArgs {
     /// Starting revision.
@@ -117,11 +117,8 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let objects = common::objects(&repository)?;
     let root = common::resolve_commit(&repository, &objects, &args.rev)?;
-    let width = abbrev(&repository);
-    let short = |id: ObjectId| {
-        let hex = id.to_string();
-        hex[..width.min(hex.len())].to_owned()
-    };
+    let width = common::abbrev_len(&repository, &objects)?;
+    let short = |id: ObjectId| objects.abbreviate(id, width).map(|p| p.to_string());
     let mut out = common::stdout();
     let mut walk = DateOrder::new(&objects, root)?;
     let mut first = true;
@@ -132,7 +129,7 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
         let message = commit.message();
         if args.oneline {
             let id = if context.git {
-                short(id)
+                short(id)?
             } else {
                 id.to_string()
             };
@@ -154,7 +151,11 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
         if context.git {
             writeln!(out, "commit {id}")?;
             if commit.parents().len() > 1 {
-                let parents: Vec<_> = commit.parents().iter().map(|p| short(*p)).collect();
+                let parents: Vec<_> = commit
+                    .parents()
+                    .iter()
+                    .map(|p| short(*p))
+                    .collect::<Result<_, _>>()?;
                 writeln!(out, "Merge: {}", parents.join(" "))?;
             }
             writeln!(out, "Author: {}", identity(author))?;
@@ -291,13 +292,4 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
     (year, month, day)
-}
-
-/// Abbreviated ID length: numeric `core.abbrev`, else 7.
-pub fn abbrev(repository: &Repository) -> usize {
-    repository
-        .config()
-        .string("core", None, "abbrev")
-        .and_then(|value| std::str::from_utf8(value).ok()?.parse().ok())
-        .unwrap_or(7)
 }

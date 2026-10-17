@@ -59,10 +59,11 @@ pub fn read_limits() -> ReadLimits {
     ReadLimits::default().with_max_object_bytes(1 << 30)
 }
 
-/// Resolves a revision: a full object ID, `HEAD`, a full ref name, or a short ref name expanded
-/// the way Git does (`refs/<name>`, then tags, branches, remotes and `refs/remotes/<name>/HEAD`).
+/// Resolves a revision: a full or uniquely abbreviated object ID, `HEAD`, a full ref name, or a
+/// short ref name expanded the way Git does (`refs/<name>`, then tags, branches, remotes and
+/// `refs/remotes/<name>/HEAD`).
 pub fn resolve(repository: &Repository, revision: &str) -> Result<ObjectId> {
-    if let Ok(id) = revision.parse::<ObjectId>() {
+    if let Ok(id) = ObjectId::from_hex(repository.object_format(), revision) {
         return Ok(id);
     }
     let references = repository.references().wrap_err("opening references")?;
@@ -73,6 +74,11 @@ pub fn resolve(repository: &Repository, revision: &str) -> Result<ObjectId> {
         if let Some(id) = resolve_ref(&references, &name)? {
             return Ok(id);
         }
+    }
+    if let Ok(prefix) = girt::ObjectIdPrefix::from_hex(repository.object_format(), revision) {
+        return objects(repository)?
+            .resolve_prefix(prefix)
+            .map_err(Into::into);
     }
     bail!("unknown revision `{revision}`")
 }
@@ -162,4 +168,31 @@ pub fn stdout() -> io::BufWriter<io::StdoutLock<'static>> {
 pub fn write_line(out: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
     out.write_all(bytes)?;
     out.write_all(b"\n")
+}
+
+/// Resolves `core.abbrev` once for an output operation; collisions are lengthened per ID.
+pub fn abbrev_len(repository: &Repository, objects: &Objects) -> Result<usize> {
+    let Some(value) = repository.config().value("core", None, "abbrev") else {
+        return Ok(objects.auto_abbrev_len());
+    };
+    let value = value.ok_or_else(|| eyre!("core.abbrev requires a value"))?;
+    if value.eq_ignore_ascii_case(b"auto") {
+        return Ok(objects.auto_abbrev_len());
+    }
+    if [b"false".as_slice(), b"no", b"off", b""]
+        .iter()
+        .any(|v| value.eq_ignore_ascii_case(v))
+    {
+        // Git uses its maximum supported hash width for disabled abbreviation; worktree
+        // columns retain this width even in SHA-1 repositories.
+        return Ok(64);
+    }
+    let length = repository
+        .config()
+        .integer("core", None, "abbrev")?
+        .unwrap_or(0);
+    if length < 4 {
+        bail!("invalid core.abbrev: {}", display_bytes(value));
+    }
+    Ok(usize::try_from(i32::try_from(length)?)?)
 }
