@@ -1,10 +1,12 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
 
 use rustix::fd::OwnedFd;
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat, fstat, openat};
@@ -115,6 +117,13 @@ struct Plan<'a> {
     blobs: BTreeMap<ObjectId, Vec<u8>>,
     operations: Vec<Applied>,
     limits: Limits,
+    // Verified descriptors for the most recently traversed directory, root first. Each entry was
+    // opened without following links and matched its expected identity and guards when pushed.
+    chain: RefCell<Vec<(Vec<u8>, Rc<OwnedFd>)>>,
+    // Directory name checks for the current read-only phase, one enumeration per directory.
+    // `None` while mutating: exclusive creation and exact-name identity checks guard each
+    // operation, and publication enumerates every target directory again.
+    listings: RefCell<Option<BTreeMap<Vec<u8>, Listing>>>,
 }
 
 impl<'a> Plan<'a> {
@@ -245,6 +254,8 @@ impl<'a> Plan<'a> {
             blobs,
             operations: vec![],
             limits,
+            chain: RefCell::default(),
+            listings: RefCell::new(Some(BTreeMap::new())),
         };
         for path in paths {
             check(cancel)?;
@@ -258,7 +269,14 @@ impl<'a> Plan<'a> {
         }
         plan.build_operations(cancel)?;
         plan.check_planned_markers(cancel)?;
+        plan.begin_phase(false);
         Ok(plan)
+    }
+
+    // Each phase reopens the root from `/`, so root substitution between phases is detected.
+    fn begin_phase(&self, enumerate: bool) {
+        self.chain.borrow_mut().clear();
+        *self.listings.borrow_mut() = enumerate.then(BTreeMap::new);
     }
 
     fn inspect_initial(&mut self, path: &[u8], cancel: &AtomicBool) -> Result<Option<Stat>, Error> {
@@ -271,7 +289,7 @@ impl<'a> Plan<'a> {
             }
         }
         let parent = self.parent(path, cancel)?;
-        self.check_names(&parent, path, cancel)?;
+        self.check_name(&parent, path, cancel)?;
         let stat = optional_stat(&parent, name(path), path)?;
         if let Some(stat) = &stat
             && kind(stat) == FileType::Directory
@@ -417,22 +435,50 @@ impl<'a> Plan<'a> {
         Ok(fd)
     }
 
-    fn parent(&self, path: &[u8], cancel: &AtomicBool) -> Result<OwnedFd, Error> {
-        let mut fd = self.root_fd()?;
-        for prefix in prefixes(parent_path(path)) {
-            check(cancel)?;
-            self.check_names(&fd, prefix, cancel)?;
-            let expected = self
-                .expected
-                .get(prefix)
-                .and_then(Option::as_ref)
-                .ok_or_else(|| refused(prefix, "missing expected ancestor"))?;
-            let child = open_directory(&fd, name(prefix), prefix)?;
-            identity(prefix, expected, &fstat(&child).map_err(|e| io(prefix, e))?)?;
-            self.guard_directory(&child, prefix)?;
-            fd = child;
+    // Reuses the verified descriptors shared with the previous path and opens the rest.
+    fn parent(&self, path: &[u8], cancel: &AtomicBool) -> Result<Rc<OwnedFd>, Error> {
+        let directory = parent_path(path);
+        let mut chain = self.chain.borrow_mut();
+        let shared = chain
+            .iter()
+            .take_while(|(prefix, _)| within(directory, prefix))
+            .count();
+        chain.truncate(shared);
+        if chain.is_empty() {
+            chain.push((Vec::new(), Rc::new(self.root_fd()?)));
         }
-        Ok(fd)
+        for prefix in prefixes(directory).skip(chain.len() - 1) {
+            check(cancel)?;
+            let fd = Rc::clone(&chain.last().unwrap().1);
+            self.check_name(&fd, prefix, cancel)?;
+            let child = self.open_expected(&fd, prefix)?;
+            chain.push((prefix.to_vec(), Rc::new(child)));
+        }
+        Ok(Rc::clone(&chain.last().unwrap().1))
+    }
+
+    // Opens `prefix` below `fd` and requires the identity recorded for it, then applies guards.
+    fn open_expected(&self, fd: &OwnedFd, prefix: &[u8]) -> Result<OwnedFd, Error> {
+        let expected = self
+            .expected
+            .get(prefix)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| refused(prefix, "missing expected ancestor"))?;
+        let child = open_directory(fd, name(prefix), prefix)?;
+        identity(prefix, expected, &fstat(&child).map_err(|e| io(prefix, e))?)?;
+        self.guard_directory(&child, prefix)?;
+        Ok(child)
+    }
+
+    // Drops cached descriptors at or below a directory this checkout removed.
+    fn forget_directory(&self, path: &[u8]) {
+        let mut chain = self.chain.borrow_mut();
+        if let Some(n) = chain
+            .iter()
+            .position(|(prefix, _)| !prefix.is_empty() && within(prefix, path))
+        {
+            chain.truncate(n);
+        }
     }
 
     fn guard_directory(&self, fd: &OwnedFd, path: &[u8]) -> Result<(), Error> {
@@ -450,27 +496,19 @@ impl<'a> Plan<'a> {
         Ok(())
     }
 
-    fn check_names(&self, fd: &OwnedFd, path: &[u8], cancel: &AtomicBool) -> Result<(), Error> {
-        let mut budget = self.limits.max_directory_entries;
-        let mut exact = false;
-        for actual in names(fd, parent_path(path), &mut budget, cancel)? {
-            exact |= actual == name(path);
-            if cfg!(target_os = "macos") && !actual.is_ascii() {
-                return Err(refused(path, "non-ASCII directory names on macOS"));
-            }
-            if actual.eq_ignore_ascii_case(name(path)) && actual != name(path) {
-                return Err(refused(path, "filesystem case alias"));
-            }
-            if actual.eq_ignore_ascii_case(b".git")
-                && (actual != b".git" || !parent_path(path).is_empty())
-            {
-                return Err(refused(path, "repository metadata marker"));
-            }
+    // Applies the enumerated-directory name policy when a read-only phase is active.
+    fn check_name(&self, fd: &OwnedFd, path: &[u8], cancel: &AtomicBool) -> Result<(), Error> {
+        let mut listings = self.listings.borrow_mut();
+        let Some(listings) = listings.as_mut() else {
+            return Ok(());
+        };
+        let directory = parent_path(path);
+        if !listings.contains_key(directory) {
+            let mut budget = self.limits.max_directory_entries;
+            let listing = Listing::new(names(fd, directory, &mut budget, cancel)?);
+            listings.insert(directory.to_vec(), listing);
         }
-        if !exact && optional_stat(fd, name(path), path)?.is_some() {
-            return Err(refused(path, "filesystem name alias"));
-        }
-        Ok(())
+        listings[directory].check(fd, path)
     }
 
     fn verify_expected(&self, fd: &OwnedFd, path: &[u8]) -> Result<(), Error> {
@@ -521,7 +559,6 @@ impl<'a> Plan<'a> {
     ) -> Result<(), Error> {
         let path = &operation.path;
         let fd = self.parent(path, cancel)?;
-        self.check_names(&fd, path, cancel)?;
         self.verify_expected(&fd, path)?;
         match operation.action {
             Action::Remove => {
@@ -529,7 +566,7 @@ impl<'a> Plan<'a> {
                 self.verify_leaf(&fd, path, self.old[path], &mut budget, cancel)?;
                 hook("before delete", path)?;
                 self.recheck_boundary(&fd, path, cancel)?;
-                rustix::fs::unlinkat(&fd, OsStr::from_bytes(name(path)), AtFlags::empty())
+                rustix::fs::unlinkat(&*fd, OsStr::from_bytes(name(path)), AtFlags::empty())
                     .map_err(|e| io(path, e))?;
                 report.applied.push(operation.clone());
                 hook("after namespace", path)?;
@@ -550,7 +587,8 @@ impl<'a> Plan<'a> {
                 }
                 hook("before delete", path)?;
                 self.recheck_boundary(&fd, path, cancel)?;
-                rustix::fs::unlinkat(&fd, OsStr::from_bytes(name(path)), AtFlags::REMOVEDIR)
+                self.forget_directory(path);
+                rustix::fs::unlinkat(&*fd, OsStr::from_bytes(name(path)), AtFlags::REMOVEDIR)
                     .map_err(|e| io(path, e))?;
                 report.applied.push(operation.clone());
                 hook("after namespace", path)?;
@@ -560,25 +598,27 @@ impl<'a> Plan<'a> {
                 hook("before mkdir", path)?;
                 self.recheck_boundary(&fd, path, cancel)?;
                 rustix::fs::mkdirat(
-                    &fd,
+                    &*fd,
                     OsStr::from_bytes(name(path)),
                     Mode::from_raw_mode(0o755),
                 )
-                .map_err(|e| io(path, e))?;
+                .map_err(|e| created(path, e))?;
                 report.applied.push(operation.clone());
                 hook("after namespace", path)?;
                 self.expected
                     .insert(path.clone(), optional_stat(&fd, name(path), path)?);
             }
             Action::Install => {
-                self.install(&fd, path, cancel, hook, cleanup, report)?;
-                self.expected
-                    .insert(path.clone(), optional_stat(&fd, name(path), path)?);
+                let stat = self.install(&fd, path, cancel, hook, cleanup, report)?;
+                self.expected.insert(path.clone(), Some(stat));
             }
         }
         Ok(())
     }
 
+    // Reopens the ancestors from the verified root immediately before a namespace mutation,
+    // without enumerating directories: the live guards and identities must still hold, and the
+    // exact name must still match the plan. Exclusive creation covers names that appeared since.
     fn recheck_boundary(
         &self,
         fd: &OwnedFd,
@@ -586,16 +626,29 @@ impl<'a> Plan<'a> {
         cancel: &AtomicBool,
     ) -> Result<(), Error> {
         check(cancel)?;
-        let reopened = self.parent(path, cancel)?;
+        let root = Rc::clone(&self.chain.borrow()[0].1);
+        // The cached root descriptor follows a moved root, so require the root path to still
+        // name it before mutating anything beneath it.
+        let current = rustix::fs::stat(self.root).map_err(|e| io(b"", e))?;
+        identity(b"", &self.root_stat, &current)?;
+        self.guard_directory(&root, b"")?;
+        let mut reopened = None;
+        for prefix in prefixes(parent_path(path)) {
+            check(cancel)?;
+            let child = self.open_expected(reopened.as_ref().unwrap_or(&*root), prefix)?;
+            reopened = Some(child);
+        }
         identity(
             parent_path(path),
             &fstat(fd).map_err(|e| io(path, e))?,
-            &fstat(&reopened).map_err(|e| io(path, e))?,
+            &fstat(reopened.as_ref().unwrap_or(&*root)).map_err(|e| io(path, e))?,
         )?;
-        self.check_names(fd, path, cancel)?;
         self.verify_expected(fd, path)
     }
 
+    // Creates the leaf exclusively at its final name, so it can never replace an entry that
+    // appeared after preparation. Until its content is complete it is not reported as applied;
+    // a failure removes it again only while it is still the entry this call created.
     fn install(
         &self,
         fd: &OwnedFd,
@@ -604,92 +657,50 @@ impl<'a> Plan<'a> {
         hook: &mut Hook<'_>,
         cleanup: &mut Vec<Error>,
         report: &mut Report,
-    ) -> Result<(), Error> {
+    ) -> Result<Stat, Error> {
         let leaf = self.target[path];
         let bytes = &self.blobs[&leaf.id];
-        let (temporary, mut file) = create_temporary(fd, path, leaf.mode, bytes)?;
-        let temporary_path = joined(parent_path(path), temporary.as_bytes());
-        let owned = match optional_stat(fd, temporary.as_bytes(), &temporary_path) {
-            Ok(Some(stat)) => stat,
-            _ => {
-                cleanup.push(refused(
-                    &temporary_path,
-                    "cannot identify created temporary; left in place",
-                ));
-                return Err(refused(path, "cannot identify checkout temporary"));
+        hook("before create", path)?;
+        self.recheck_boundary(fd, path, cancel)?;
+        let (owned, file) = create_leaf(fd, path, leaf.mode, bytes)?;
+        let result: Result<Stat, Error> = (|| {
+            let Some(mut file) = file else {
+                return Ok(owned);
+            };
+            for chunk in bytes.chunks(64 * 1024) {
+                check(cancel)?;
+                hook("before write", path)?;
+                file.write_all(chunk).map_err(|e| io(path, e))?;
             }
-        };
-        let result: Result<(), Error> = (|| {
-            if let Some(file) = file.as_mut() {
-                for chunk in bytes.chunks(64 * 1024) {
-                    check(cancel)?;
-                    hook("before write", path)?;
-                    file.write_all(chunk).map_err(|e| io(path, e))?;
-                }
-                let mode = if leaf.mode == EntryMode::Executable {
-                    0o755
-                } else {
-                    0o644
-                };
-                rustix::fs::fchmod(&*file, Mode::from_raw_mode(mode)).map_err(|e| io(path, e))?;
+            // The umask can narrow the requested permissions; restore them exactly if it did.
+            if owned.st_mode & 0o7777 != permissions(leaf.mode) {
+                rustix::fs::fchmod(&file, Mode::from_raw_mode(permissions(leaf.mode)))
+                    .map_err(|e| io(path, e))?;
             }
-            let ready = optional_stat(fd, temporary.as_bytes(), &temporary_path)?
-                .ok_or_else(|| refused(&temporary_path, "temporary disappeared"))?;
-            hook("before rename", path)?;
-            let current = optional_stat(fd, temporary.as_bytes(), &temporary_path)?
-                .ok_or_else(|| refused(&temporary_path, "temporary disappeared"))?;
-            same(&temporary_path, &ready, &current)?;
-            if owned.st_dev != current.st_dev || owned.st_ino != current.st_ino {
-                return Err(refused(&temporary_path, "temporary identity changed"));
-            }
-            self.recheck_boundary(fd, path, cancel)?;
-            // Destination is absent after the removal phase. A hard link creates it exclusively;
-            // unlike replacing rename, this cannot overwrite a newly appeared obstruction.
-            // linkat with empty flags links the symlink itself rather than its target.
-            rustix::fs::linkat(
-                fd,
-                temporary.as_str(),
-                fd,
-                OsStr::from_bytes(name(path)),
-                AtFlags::empty(),
-            )
-            .map_err(|e| io(path, e))?;
-            report.applied.push(op(path, Action::Install));
-            hook("after namespace", path)?;
-            Ok(())
+            fstat(&file).map_err(|e| io(path, e))
         })();
-        let cleaned = hook("before cleanup", &temporary_path).and_then(|()| {
-            let current = optional_stat(fd, temporary.as_bytes(), &temporary_path)?
-                .ok_or_else(|| refused(&temporary_path, "owned temporary disappeared"))?;
-            if owned.st_dev != current.st_dev
-                || owned.st_ino != current.st_ino
-                || kind(&owned) != kind(&current)
-            {
-                return Err(refused(
-                    &temporary_path,
-                    "temporary was replaced; refusing cleanup",
-                ));
+        match result {
+            Ok(stat) => {
+                report.applied.push(op(path, Action::Install));
+                hook("after namespace", path)?;
+                Ok(stat)
             }
-            rustix::fs::unlinkat(fd, temporary.as_str(), AtFlags::empty())
-                .map_err(|error| io(&temporary_path, error))
-        });
-        if let Err(error) = cleaned {
-            cleanup.push(error);
+            Err(error) => {
+                if let Err(failed) = remove_owned(fd, path, &owned, hook) {
+                    cleanup.push(failed);
+                }
+                Err(error)
+            }
         }
-        result?;
-        if !cleanup.is_empty() {
-            return Err(refused(path, "owned temporary cleanup failed"));
-        }
-        Ok(())
     }
 
     fn verify_target(&self, cancel: &AtomicBool, hook: &mut Hook<'_>) -> Result<(), Error> {
-        self.root_fd()?;
+        self.begin_phase(true);
         let mut budget = self.limits.max_worktree_bytes;
         for (path, leaf) in &self.target {
             check(cancel)?;
             let fd = self.parent(path, cancel)?;
-            self.check_names(&fd, path, cancel)?;
+            self.check_name(&fd, path, cancel)?;
             self.verify_leaf(&fd, path, *leaf, &mut budget, cancel)?;
         }
         // Removed paths not reused as directories/leaves must still be absent.
@@ -709,6 +720,54 @@ impl<'a> Plan<'a> {
                 let fd = self.parent(path, cancel)?;
                 self.verify_expected(&fd, path)?;
             }
+        }
+        Ok(())
+    }
+}
+
+// Name policy for one enumerated directory: exact names grouped by ASCII case folding, plus
+// refusals that apply to every name checked in it.
+struct Listing {
+    folded: BTreeMap<Vec<u8>, Vec<Vec<u8>>>,
+    non_ascii: bool,
+    metadata_marker: bool,
+}
+
+impl Listing {
+    fn new(names: Vec<Vec<u8>>) -> Self {
+        let mut listing = Self {
+            folded: BTreeMap::new(),
+            non_ascii: false,
+            metadata_marker: false,
+        };
+        for actual in names {
+            listing.non_ascii |= !actual.is_ascii();
+            listing.metadata_marker |= actual.eq_ignore_ascii_case(b".git") && actual != b".git";
+            listing
+                .folded
+                .entry(actual.to_ascii_lowercase())
+                .or_default()
+                .push(actual);
+        }
+        listing
+    }
+
+    fn check(&self, fd: &OwnedFd, path: &[u8]) -> Result<(), Error> {
+        if cfg!(target_os = "macos") && self.non_ascii {
+            return Err(refused(path, "non-ASCII directory names on macOS"));
+        }
+        let wanted = name(path);
+        let same_fold = self.folded.get(&wanted.to_ascii_lowercase());
+        if same_fold.is_some_and(|names| names.iter().any(|actual| actual != wanted)) {
+            return Err(refused(path, "filesystem case alias"));
+        }
+        let git = self.folded.get(b".git".as_slice());
+        if self.metadata_marker || (git.is_some() && !parent_path(path).is_empty()) {
+            return Err(refused(path, "repository metadata marker"));
+        }
+        let exact = same_fold.is_some_and(|names| names.iter().any(|actual| actual == wanted));
+        if !exact && optional_stat(fd, wanted, path)?.is_some() {
+            return Err(refused(path, "filesystem name alias"));
         }
         Ok(())
     }
@@ -911,37 +970,68 @@ fn read_leaf(
     same(path, stat, &after)?;
     Ok(bytes)
 }
-fn create_temporary(
+// Exclusive creation fails on any existing entry, including a case or normalization alias.
+fn create_leaf(
     fd: &OwnedFd,
     path: &[u8],
     mode: EntryMode,
     bytes: &[u8],
-) -> Result<(String, Option<File>), Error> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    for _ in 0..128 {
-        let temporary = format!(
-            ".girt-checkout-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        let result = if mode == EntryMode::Symlink {
-            rustix::fs::symlinkat(OsStr::from_bytes(bytes), fd, temporary.as_str()).map(|()| None)
-        } else {
-            openat(
-                fd,
-                temporary.as_str(),
-                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-                Mode::from_raw_mode(0o600),
-            )
-            .map(|fd| Some(File::from(fd)))
-        };
-        match result {
-            Ok(file) => return Ok((temporary, file)),
-            Err(rustix::io::Errno::EXIST) => (),
-            Err(e) => return Err(io(path, e)),
-        }
+) -> Result<(Stat, Option<File>), Error> {
+    let leaf = OsStr::from_bytes(name(path));
+    if mode == EntryMode::Symlink {
+        rustix::fs::symlinkat(OsStr::from_bytes(bytes), fd, leaf).map_err(|e| created(path, e))?;
+        let stat = optional_stat(fd, name(path), path)?
+            .ok_or_else(|| refused(path, "created symlink disappeared"))?;
+        return Ok((stat, None));
     }
-    Err(refused(path, "temporary name attempts exhausted"))
+    let file = openat(
+        fd,
+        leaf,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_raw_mode(permissions(mode)),
+    )
+    .map_err(|e| created(path, e))?;
+    let stat = fstat(&file).map_err(|e| io(path, e))?;
+    Ok((stat, Some(File::from(file))))
+}
+
+fn permissions(mode: EntryMode) -> rustix::fs::RawMode {
+    if mode == EntryMode::Executable {
+        0o755
+    } else {
+        0o644
+    }
+}
+
+// Removes an incomplete leaf only while its name still refers to the entry this checkout created.
+fn remove_owned(fd: &OwnedFd, path: &[u8], owned: &Stat, hook: &mut Hook<'_>) -> Result<(), Error> {
+    hook("before cleanup", path)?;
+    let current = optional_stat(fd, name(path), path)?
+        .ok_or_else(|| refused(path, "created leaf disappeared"))?;
+    if owned.st_dev != current.st_dev
+        || owned.st_ino != current.st_ino
+        || kind(owned) != kind(&current)
+    {
+        return Err(refused(path, "created leaf was replaced; refusing cleanup"));
+    }
+    rustix::fs::unlinkat(fd, OsStr::from_bytes(name(path)), AtFlags::empty())
+        .map_err(|error| io(path, error))
+}
+
+fn created(path: &[u8], error: rustix::io::Errno) -> Error {
+    if error == rustix::io::Errno::EXIST {
+        refused(path, "path appeared since preparation")
+    } else {
+        io(path, error)
+    }
+}
+
+// Whether `ancestor` is `directory` itself or one of its ancestors; the root is empty.
+fn within(directory: &[u8], ancestor: &[u8]) -> bool {
+    ancestor.is_empty()
+        || directory
+            .strip_prefix(ancestor)
+            .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
 }
 
 #[cfg(test)]
