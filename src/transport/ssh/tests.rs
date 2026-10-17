@@ -336,3 +336,57 @@ fn rejects_trailing_bytes_after_bracketed_host() {
     let result = parse_endpoint(b"ssh://[::1]unexpected/repo");
     assert!(matches!(result, Err(SshError::Configuration("SSH host"))));
 }
+
+/// Approved arguments keep the existing size and control-character bounds.
+#[rstest]
+#[case::plain("-i", true)]
+#[case::empty("", false)]
+#[case::newline("a\nb", false)]
+#[case::c1_control("a\u{85}b", false)]
+#[case::at_limit(&"x".repeat(8192), true)]
+#[case::too_long(&"x".repeat(8193), false)]
+fn approved_argument_bounds(#[case] argument: &str, #[case] valid: bool) {
+    assert_eq!(valid_argument(std::ffi::OsStr::new(argument)), valid);
+}
+
+/// Arguments that are not Unicode keep the size bound and reject ASCII control bytes.
+#[cfg(unix)]
+#[rstest]
+#[case::plain(b"/keys/\xff", true)]
+#[case::escape(b"\xff\x1b", false)]
+#[case::nul(b"\xff\0", false)]
+#[case::delete(b"\xff\x7f", false)]
+fn approved_non_unicode_argument_bounds(#[case] argument: &[u8], #[case] valid: bool) {
+    use std::os::unix::ffi::OsStrExt;
+
+    assert_eq!(valid_argument(std::ffi::OsStr::from_bytes(argument)), valid);
+}
+
+/// An approved key path that is not UTF-8 reaches the built command's arguments unchanged.
+#[cfg(unix)]
+#[test]
+fn approved_argument_keeps_non_utf8_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let key = std::ffi::OsStr::from_bytes(b"/keys/\xff-deploy");
+    assert!(valid_argument(key));
+
+    let mut environment = default_environment();
+    environment.git_ssh_command = Some(b"ssh -i key".to_vec());
+    environment.approved_command = Some(ApprovedSshCommand::new(
+        b"ssh -i key".to_vec(),
+        "/usr/bin/ssh".into(),
+        vec!["-i".into(), key.to_owned()],
+    ));
+    let remote = configured(
+        b"[remote \"r\"]\nurl = ssh://example.com/repo.git\n",
+        environment,
+    )
+    .unwrap();
+    let command = remote.command("git-upload-pack");
+    let args: Vec<_> = command.get_args().collect();
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == [std::ffi::OsStr::new("-i"), key])
+    );
+}
