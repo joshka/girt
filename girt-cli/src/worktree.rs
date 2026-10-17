@@ -10,10 +10,10 @@ use std::time::SystemTime;
 use clap_complete::{ArgValueCandidates, ArgValueCompleter};
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::checkout::Action;
-use girt::ignore::{Case, Ignore, InputKind, Source};
-use girt::index::{Entry, Stage};
+use girt::ignore::{InputKind, SourceFile, WorktreeRules};
+use girt::index::Stage;
 use girt::refs::RefName;
-use girt::status::{Baseline, Change, Untracked, WorktreeChange};
+use girt::status::{Baseline, Change, UntrackedFiles, UntrackedKind, WorktreeChange};
 use girt::{ChangeStatus, ObjectId, Repository, WorktreeRetirement, WorktreeState};
 
 use crate::common::{display_bytes, resolve_ref, resolve_tree, stdout, write_path};
@@ -151,13 +151,16 @@ pub fn index(command: IndexCommand, context: &Context) -> Result<ExitCode> {
 
 pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let policy = if args.untracked {
-        Untracked::RawFilesWithoutIgnores
-    } else {
-        Untracked::Omit
+    let listing = match (args.untracked, context.git) {
+        (false, _) => UntrackedFiles::Omit,
+        (true, true) => UntrackedFiles::Collapsed,
+        (true, false) => UntrackedFiles::All,
     };
+    let rules = repository
+        .ignore_rules(&context.environment)
+        .wrap_err("loading ignore rules")?;
     let report = repository
-        .raw_status(Baseline::Head, policy)
+        .status(Baseline::Head, listing, &rules)
         .wrap_err("computing status")?;
 
     let mut lines: BTreeMap<Vec<u8>, [char; 2]> = BTreeMap::new();
@@ -192,38 +195,10 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
         lines.insert(path.to_vec(), code);
     }
 
-    let mut untracked = Vec::new();
-    if args.untracked {
-        let index = repository
-            .read_index(Default::default())
-            .wrap_err("reading index")?;
-        let entries = index.as_ref().map_or(&[][..], |index| index.entries());
-        let mut rules = IgnoreRules::new(&repository)?;
-        let mut leaves = Vec::new();
-        for path in &report.raw_untracked {
-            if !rules
-                .check(path, InputKind::File)?
-                .is_some_and(|m| m.ignored)
-            {
-                leaves.push((path.clone(), false));
-            }
-        }
-        for path in &report.boundaries {
-            if !rules
-                .check(path, InputKind::Directory)?
-                .is_some_and(|m| m.ignored)
-            {
-                leaves.push((path.clone(), true));
-            }
-        }
-        untracked = if context.git {
-            collapse(entries, leaves)
-        } else {
-            leaves.into_iter().map(|(path, _)| path).collect()
-        };
-        untracked.sort();
-        untracked.dedup();
-    }
+    let untracked = report.untracked.iter().map(|entry| match entry.kind {
+        UntrackedKind::File => entry.path.clone(),
+        _ => [entry.path.as_slice(), b"/"].concat(),
+    });
 
     let mut out = stdout();
     let reset = crate::color::style(context.color, crate::color::RESET);
@@ -242,13 +217,13 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
         out.write_all(b" ")?;
         write_path(&mut out, path, context.git)?;
     }
-    for path in &untracked {
+    for path in untracked {
         if context.color {
             write!(out, "{}??{reset} ", crate::color::RED)?;
         } else {
             out.write_all(b"?? ")?;
         }
-        write_path(&mut out, path, context.git)?;
+        write_path(&mut out, &path, context.git)?;
     }
     out.flush()?;
     Ok(ExitCode::SUCCESS)
@@ -271,33 +246,6 @@ fn obstruction_code(worktree: &Path, change: &WorktreeChange) -> char {
     if special { 'M' } else { 'D' }
 }
 
-/// Collapses untracked leaves to their topmost ancestor directory holding no tracked paths, as
-/// `git status` does by default. Boundaries (nested repositories) are shown as directories.
-fn collapse(entries: &[Entry], leaves: Vec<(Vec<u8>, bool)>) -> Vec<Vec<u8>> {
-    let mut tracked_dirs = HashSet::new();
-    for entry in entries {
-        for (position, _) in entry.path.iter().enumerate().filter(|(_, b)| **b == b'/') {
-            tracked_dirs.insert(&entry.path[..position]);
-        }
-    }
-    leaves
-        .into_iter()
-        .map(|(path, directory)| {
-            let collapsed = path
-                .iter()
-                .enumerate()
-                .filter(|(_, b)| **b == b'/')
-                .map(|(position, _)| position)
-                .find(|position| !tracked_dirs.contains(&path[..*position]));
-            match collapsed {
-                Some(position) => path[..=position].to_vec(),
-                None if directory => [path.as_slice(), b"/"].concat(),
-                None => path,
-            }
-        })
-        .collect()
-}
-
 pub fn ignore(command: IgnoreCommand, context: &Context) -> Result<ExitCode> {
     let IgnoreCommand::Check { paths } = command;
     let repository = context.repository()?;
@@ -311,7 +259,9 @@ pub fn ignore(command: IgnoreCommand, context: &Context) -> Result<ExitCode> {
         .iter()
         .map(|entry| entry.path.as_slice())
         .collect();
-    let mut rules = IgnoreRules::new(&repository)?;
+    let mut rules = repository
+        .ignore_rules(&context.environment)
+        .wrap_err("loading ignore rules")?;
     let mut any = false;
     let mut out = stdout();
     for path in &paths {
@@ -324,19 +274,21 @@ pub fn ignore(command: IgnoreCommand, context: &Context) -> Result<ExitCode> {
         let found = if tracked.contains(key) {
             None
         } else {
-            rules.check(key, kind)?
+            rules
+                .check(key, kind)
+                .wrap_err_with(|| format!("checking {path}"))?
         };
         any |= found.is_some_and(|m| m.ignored || context.git);
         match (found, context.git) {
             (Some(found), true) => {
-                let (source, pattern) = rules.describe(found.source, found.line);
+                let (source, pattern) = describe(&rules, &root, found.source, found.line);
                 out.write_all(format!("{source}:{}:", found.line).as_bytes())?;
                 out.write_all(pattern)?;
                 writeln!(out, "\t{path}")?;
             }
             (_, true) => {}
             (Some(found), false) => {
-                let (source, pattern) = rules.describe(found.source, found.line);
+                let (source, pattern) = describe(&rules, &root, found.source, found.line);
                 let verdict = if found.ignored {
                     "ignored"
                 } else {
@@ -568,108 +520,20 @@ fn worktree_root(repository: &Repository) -> Result<&Path> {
         .ok_or_else(|| eyre!("repository has no working tree"))
 }
 
-/// Ignore rules loaded lazily from the sources Git consults.
-struct IgnoreRules {
-    root: PathBuf,
-    ignore: Ignore,
-    /// Display name and content for each added source, by insertion index.
-    sources: Vec<(String, Vec<u8>)>,
-    loaded: HashSet<Vec<u8>>,
-}
-
-impl IgnoreRules {
-    /// Loads `core.excludesFile` (or the XDG default) and `info/exclude`.
-    fn new(repository: &Repository) -> Result<Self> {
-        let root = worktree_root(repository)?.to_owned();
-        let case = match repository.config().string("core", None, "ignorecase") {
-            Some(value) if value.eq_ignore_ascii_case(b"true") => Case::AsciiInsensitive,
-            _ => Case::Sensitive,
-        };
-        let mut rules = Self {
-            root: root.clone(),
-            ignore: Ignore::new(case, Default::default()),
-            sources: Vec::new(),
-            loaded: HashSet::new(),
-        };
-        let global = match repository.config().string("core", None, "excludesfile") {
-            Some(path) => Some(expand_home(&display_bytes(path))),
-            None => std::env::var_os("XDG_CONFIG_HOME")
-                .filter(|dir| !dir.is_empty())
-                .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config")))
-                .map(|dir| dir.join("git/ignore")),
-        };
-        if let Some(global) = global {
-            rules.add(Source::Global, &global, global.display().to_string())?;
-        }
-        let exclude = repository.common_dir().join("info/exclude");
-        let label = exclude
-            .strip_prefix(&root)
-            .unwrap_or(&exclude)
+/// The display label and raw pattern text of a matched rule: worktree-relative where possible.
+fn describe<'a>(
+    rules: &'a WorktreeRules,
+    root: &Path,
+    source: usize,
+    line: usize,
+) -> (String, &'a [u8]) {
+    let file = rules.source(source);
+    let label = file.map(SourceFile::path).map_or_else(String::new, |path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
             .display()
-            .to_string();
-        rules.add(Source::Info, &exclude, label)?;
-        Ok(rules)
-    }
-
-    /// Adds a source file if it exists.
-    fn add(&mut self, source: Source<'_>, file: &Path, label: String) -> Result<()> {
-        let content = match std::fs::read(file) {
-            Ok(content) => content,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error).wrap_err_with(|| format!("reading {label}")),
-        };
-        let index = self
-            .ignore
-            .add(source, &content)
-            .wrap_err_with(|| format!("loading {label}"))?;
-        debug_assert_eq!(index, self.sources.len());
-        self.sources.push((label, content));
-        Ok(())
-    }
-
-    /// Checks a path after loading the `.gitignore` of the root and every ancestor directory.
-    fn check(&mut self, path: &[u8], kind: InputKind) -> Result<Option<girt::ignore::Match>> {
-        let ends = std::iter::once(0).chain(
-            path.iter()
-                .enumerate()
-                .filter(|(_, b)| **b == b'/')
-                .map(|(position, _)| position),
-        );
-        for end in ends {
-            let directory = path[..end].to_vec();
-            if self.loaded.insert(directory.clone()) {
-                let relative = display_bytes(&directory).into_owned();
-                let label = if relative.is_empty() {
-                    ".gitignore".to_owned()
-                } else {
-                    format!("{relative}/.gitignore")
-                };
-                let file = self.root.join(&label);
-                self.add(Source::Directory(&directory), &file, label)?;
-            }
-        }
-        self.ignore
-            .check(path, kind)
-            .wrap_err_with(|| format!("checking {}", display_bytes(path)))
-    }
-
-    /// The source label and raw pattern text at a one-based line.
-    fn describe(&self, source: usize, line: usize) -> (&str, &[u8]) {
-        let (label, content) = &self.sources[source];
-        let pattern = content
-            .split(|b| *b == b'\n')
-            .nth(line - 1)
-            .unwrap_or_default();
-        let pattern = pattern.strip_suffix(b"\r").unwrap_or(pattern);
-        (label, pattern)
-    }
-}
-
-/// Expands a leading `~/` to `$HOME`.
-fn expand_home(path: &str) -> PathBuf {
-    match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
-        (Some(rest), Some(home)) => Path::new(&home).join(rest),
-        _ => PathBuf::from(path),
-    }
+            .to_string()
+    });
+    let pattern = file.and_then(|file| file.line(line)).unwrap_or_default();
+    (label, pattern)
 }

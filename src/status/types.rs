@@ -75,6 +75,79 @@ pub enum Untracked {
     RawFilesWithoutIgnores,
 }
 
+/// Which untracked paths that ignore rules do not exclude [`Repository::status`] lists.
+///
+/// Git never ignores a tracked path, and an ignored directory hides every untracked path below it
+/// even if a rule re-includes one. Only regular files, symlinks and nested repositories are
+/// listed; empty directories, sockets and FIFOs are not, as in `git status`.
+///
+/// ```
+/// use girt::status::{Baseline, UntrackedFiles, UntrackedKind};
+/// use girt::workflow::Environment;
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("w"),
+///     InitKind::Worktree,
+/// )?;
+/// let worktree = repo.worktree().unwrap();
+/// std::fs::create_dir_all(worktree.join("notes/drafts"))?;
+/// std::fs::write(worktree.join("notes/drafts/a.md"), b"a")?;
+/// std::fs::write(worktree.join("notes/b.md"), b"b")?;
+///
+/// let rules = repo.ignore_rules(&Environment::default())?;
+/// let all = repo.status(Baseline::Head, UntrackedFiles::All, &rules)?;
+/// let all: Vec<_> = all.untracked.iter().map(|entry| &entry.path[..]).collect();
+/// assert_eq!(all, [&b"notes/b.md"[..], b"notes/drafts/a.md"]);
+///
+/// let collapsed = repo.status(Baseline::Head, UntrackedFiles::Collapsed, &rules)?;
+/// assert_eq!(collapsed.untracked[0].path, b"notes");
+/// assert_eq!(collapsed.untracked[0].kind, UntrackedKind::Directory);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// [`Repository::status`]: crate::Repository::status
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum UntrackedFiles {
+    /// List nothing and skip ignore matching; only tracked paths are inspected.
+    Omit,
+    /// List every visible untracked file, like `git status --untracked-files=all`.
+    All,
+    /// List a directory holding no tracked paths once, as [`UntrackedKind::Directory`], when it
+    /// contains any visible untracked file. This is `git status`'s default listing. Traversal of
+    /// such a directory stops at the first visible file. As in Git, a directory occupying the path
+    /// of a tracked file is not listed at all; [`Self::All`] lists its contents.
+    Collapsed,
+}
+
+/// What an untracked path in [`Report::untracked`] names.
+///
+/// Git displays directory kinds with a trailing `/`; the path itself never has one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum UntrackedKind {
+    /// A regular file or symlink.
+    File,
+    /// A directory without tracked paths, listed in place of its contents by
+    /// [`UntrackedFiles::Collapsed`].
+    Directory,
+    /// A nested repository, which status never enters.
+    Repository,
+}
+
+/// An untracked path that the ignore rules do not exclude.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct UntrackedPath {
+    /// Repository-relative path bytes, without a trailing slash.
+    pub path: Vec<u8>,
+    /// What the path names.
+    pub kind: UntrackedKind,
+}
+
 /// Bounds for status phases; these are work/allocation ceilings, not exact heap limits.
 ///
 /// Choose file and aggregate budgets separately: many small files can exhaust the total even when
@@ -302,12 +375,22 @@ pub struct Report {
     pub unmerged: Vec<index::Entry>,
     /// All stage-zero gitlinks. Their presence, identity and dirtiness are uninspected.
     pub unchecked_gitlinks: Vec<index::Entry>,
-    /// Policy used; raw untracked paths never claim ignore processing.
+    /// Raw listing policy; [`Untracked::Omit`] for [`Repository::status`], which lists into
+    /// [`Self::untracked`] instead.
+    ///
+    /// [`Repository::status`]: crate::Repository::status
     pub untracked_policy: Untracked,
-    /// Raw untracked regular files, symlinks and special leaves; empty for `Omit`.
+    /// Raw untracked regular files, symlinks and special leaves; empty for `Omit` and for
+    /// ignore-aware status.
     pub raw_untracked: Vec<Vec<u8>>,
+    /// Ignore-aware listing, or `None` for raw status.
+    pub untracked_files: Option<UntrackedFiles>,
+    /// Untracked paths the ignore rules do not exclude, sorted by path bytes. Empty for raw status
+    /// and for [`UntrackedFiles::Omit`].
+    pub untracked: Vec<UntrackedPath>,
     /// Nested repositories or repository metadata directories excluded from traversal.
-    /// The ordinary root `.git` marker is always excluded and omitted from this list.
+    /// The ordinary root `.git` marker is always excluded and omitted from this list. Ignore-aware
+    /// status does not visit ignored directories, so their nested repositories are not listed.
     pub boundaries: Vec<Vec<u8>>,
 }
 
@@ -473,6 +556,15 @@ pub enum Error {
         path: Vec<u8>,
         /// Unsupported condition.
         reason: &'static str,
+    },
+    /// An ignore rule could not be loaded or applied at this path.
+    #[error("status ignore rules at {path:?}")]
+    Ignore {
+        /// The `.gitignore` or queried path.
+        path: Vec<u8>,
+        /// Limit or path cause.
+        #[source]
+        source: crate::ignore::Error,
     },
     /// A configured work or allocation bound was exhausted.
     #[error("status limit exceeded: {0}")]

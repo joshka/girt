@@ -130,6 +130,7 @@ from_domain_errors! {
     crate::fetch::RetainedFetchFinishError,
     crate::HistoryError,
     crate::ignore::Error,
+    crate::ignore::LoadError,
     crate::index::Error,
     crate::index::SparseError,
     crate::index::StorageError,

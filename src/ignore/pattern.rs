@@ -2,7 +2,7 @@ use super::rules::charge;
 use super::{Case, Error};
 
 /// Compiled once so repeated queries do not rescan classes or allocate pattern copies.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct Pattern {
     pub negative: bool,
     directory: bool,
@@ -10,13 +10,13 @@ pub(super) struct Pattern {
     case: Case,
     expression: Expression,
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum Expression {
     Invalid,
     Literal(Vec<u8>),
     Glob(Vec<Token>),
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum Token {
     Byte(u8),
     Any,

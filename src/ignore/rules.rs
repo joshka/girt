@@ -254,7 +254,7 @@ pub struct Match {
 /// assert!(rules.check(b"source.rs", InputKind::File)?.is_none());
 /// # Ok::<(), girt::ignore::Error>(())
 /// ```
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Ignore {
     case: Case,
     limits: Limits,
@@ -262,7 +262,7 @@ pub struct Ignore {
     bytes: usize,
     patterns: usize,
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Rules {
     base: Vec<u8>,
     rank: (u8, usize, usize),
@@ -278,6 +278,23 @@ impl Ignore {
             bytes: 0,
             patterns: 0,
         }
+    }
+
+    /// The comparison policy chosen at construction.
+    #[must_use]
+    pub fn case(&self) -> Case {
+        self.case
+    }
+
+    /// The budgets every addition and query is checked against.
+    #[must_use]
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
+    /// Source bytes that can still be added before [`Limits::bytes`] is reached.
+    pub(crate) fn remaining_bytes(&self) -> usize {
+        self.limits.bytes.saturating_sub(self.bytes)
     }
 
     /// Compiles a source and returns its stable insertion index.

@@ -2326,6 +2326,28 @@ status cases and 35 status integration cases. See the
 [baseline](benchmarks.md#raw-working-tree-status-baseline) for representative warm-storage
 measurements. No publication, merge or checkout is part of this increment.
 
+### Ignore-Aware Status
+
+`Repository::status` keeps raw tracked-content comparison and lists untracked paths through Git's
+ignore sources. `Repository::ignore_rules` reads `core.excludesFile` (with `~/` expanded from the
+supplied `HOME` and a relative path resolved against the worktree, as Git resolves it) or the
+`$XDG_CONFIG_HOME/git/ignore` default, then `info/exclude`; `core.ignoreCase` selects ASCII case
+folding. Status reads each visited directory's `.gitignore` through the traversal's no-follow
+descriptors. As in Git, a `.gitignore` symlink is skipped with no rules applied, tracked paths are
+never ignored, an ignored directory hides every untracked descendant, and only regular files,
+symlinks and nested repositories are listed. `UntrackedFiles::All` matches
+`git status --untracked-files=all`; `UntrackedFiles::Collapsed` matches the default listing,
+including Git's omission of a directory that occupies a tracked file's path.
+
+Ignored directories are not entered unless they hold tracked paths, so their contents consume no
+directory-entry budget. `~user/` excludes paths are refused, where Git expands them.
+
+`tests/status_ignore.rs` compares both listings with `git status --porcelain=v1 -z` on original
+fixtures: negation, excluded parents, nested precedence, anchored and directory-only patterns, `**`,
+tracked ignored paths, obstructions, nested repositories, FIFOs, symlinked `.gitignore`, every
+configuration source and both `core.ignoreCase` values. It also compares `check-ignore -v`
+provenance. Git 2.56.0 on macOS arm64 was the oracle.
+
 ## Raw Tree Checkout
 
 `Repository::checkout_tree_with(baseline, target, limits, cancel)` materializes a selected SHA-1
