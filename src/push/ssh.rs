@@ -41,6 +41,54 @@ pub enum SshPushOutcome {
 /// # Panics
 ///
 /// Panics when polled without a Tokio runtime with I/O and time enabled.
+///
+/// # Examples
+///
+/// Push with the user's own OpenSSH configuration, as `git push` over SSH does. This needs a
+/// server, so it is not run:
+///
+/// ```no_run
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::push::{PreparedPush, PushCommand, PushLimits, send_ssh};
+/// use girt::refs::RefName;
+/// use girt::remote::{ProtocolEnvironment, Remote};
+/// use girt::transport::TransportControl;
+/// use girt::transport::ssh::{OpenSshOptions, SshRemote};
+/// use girt::{ObjectId, PackLimits, Repository};
+///
+/// let repo = Repository::open("project")?;
+/// let origin = Remote::find(repo.config(), b"origin")?.ok_or("no origin")?;
+/// let destination = origin
+///     .push_destinations(repo.config(), &ProtocolEnvironment::default())?
+///     .into_iter()
+///     .next()
+///     .ok_or("no push URL")?;
+/// let environment = ["HOME", "PATH", "SSH_AUTH_SOCK"]
+///     .into_iter()
+///     .filter_map(|name| Some((name.into(), std::env::var_os(name)?)))
+///     .collect();
+/// let options = OpenSshOptions::default()
+///     .with_default_executable("/usr/bin/ssh".into())
+///     .with_environment(environment);
+/// let remote = SshRemote::openssh(repo.config(), &destination, options)?;
+///
+/// let tip = ObjectId::from_hex(
+///     repo.object_format(),
+///     "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0",
+/// )?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// let cancel = AtomicBool::new(false);
+/// let command = PushCommand::new(RefName::new("refs/heads/topic")?, None, tip);
+/// let prepared = PreparedPush::new(&objects, vec![command], &[], PushLimits::default(), &cancel)?;
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let report = runtime.block_on(send_ssh(&remote, &prepared, TransportControl::new(&cancel)))?;
+/// println!("all succeeded: {}", report.all_succeeded());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub async fn send_ssh(
     remote: &SshRemote,
     prepared: &PreparedPush,

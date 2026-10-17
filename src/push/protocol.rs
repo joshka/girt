@@ -36,6 +36,43 @@ use crate::refs::RefName;
 /// retrying unknown outcomes. A complete rejection or partial success is an `Ok` report, not an
 /// error: inspect [`PushReport::all_succeeded`] and per-ref results. Stale advertised values and
 /// racing remote updates are checked by the server using each command's old ID.
+///
+/// # Examples
+///
+/// Push over the streams of a `git receive-pack` process. It needs a Git executable, so it is not
+/// run:
+///
+/// ```no_run
+/// use std::process::{Command, Stdio};
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::push::{PreparedPush, PushCommand, PushLimits, send};
+/// use girt::refs::RefName;
+/// use girt::{ObjectId, PackLimits, Repository};
+///
+/// let repo = Repository::open("project")?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// let tip = ObjectId::from_hex(
+///     repo.object_format(),
+///     "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0",
+/// )?;
+/// let command = PushCommand::new(RefName::new("refs/heads/topic")?, None, tip);
+/// let cancel = AtomicBool::new(false);
+/// let prepared = PreparedPush::new(&objects, vec![command], &[], PushLimits::default(), &cancel)?;
+///
+/// let mut server = Command::new("git")
+///     .args(["receive-pack", "/srv/git/project.git"])
+///     .stdin(Stdio::piped())
+///     .stdout(Stdio::piped())
+///     .spawn()?;
+/// let mut input = server.stdin.take().expect("piped");
+/// let mut output = server.stdout.take().expect("piped");
+/// let report = send(&mut output, &mut input, &prepared, &cancel)?;
+/// drop(input);
+/// server.wait()?;
+/// assert!(report.all_succeeded(), "{report:?}");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn send(
     reader: &mut impl Read,
     writer: &mut impl Write,
@@ -163,6 +200,14 @@ pub(super) struct Capabilities {
 ///
 /// These values describe discovery, not the receiver's state when a later command is applied.
 /// The receiver must still compare each command's expected old value during publication.
+///
+/// # Examples
+///
+/// A [`send_http_checked`](super::send_http_checked) or `send_ssh_checked_with_progress` callback
+/// receives one of these. [`PushAdvertisement::target`] answers "where is this reference now?",
+/// and [`PushAdvertisement::receiver_roots`] lists everything the receiver advertised, which
+/// [`crate::workflow::push`] passes to [`PreparedPush::new`] so the pack leaves that history out.
+/// See [`send_http_checked`](super::send_http_checked) for a complete example.
 #[derive(Debug)]
 pub struct PushAdvertisement {
     refs: HashMap<RefName, ObjectId>,

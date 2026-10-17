@@ -33,6 +33,51 @@ use crate::{InitKind, ObjectKind, Repository};
 /// and needs no Git executable. The optional SSH adapter requires macOS/Linux; HTTP is
 /// feature-gated and uses the caller's runtime. See the [module
 /// example](crate::clone#example-cloning-a-local-repository) for a runnable local clone.
+///
+/// # Examples
+///
+/// Clone a local repository, choosing the branch to check out by name:
+///
+/// ```
+/// use std::ops::ControlFlow;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::InitKind;
+/// use girt::clone::{BranchSelection, CloneRequest};
+/// use girt::fetch::{FetchLimits, FetchUpdateLimits};
+/// use girt::refs::{RefName, Reflog, Target};
+/// use girt::transport::TransportControl;
+/// # let (directory, upstream, _, main, _) = include!("../doctest/remote.rs");
+///
+/// let main_ref = RefName::new("refs/heads/main")?;
+/// let request = CloneRequest::prepare_tracking(
+///     directory.path().join("clone"),
+///     InitKind::Worktree,
+///     b"../upstream.git",
+///     BranchSelection::Branch(main_ref.clone()),
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let ready = request.receive_local(
+///     upstream.git_dir(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     |_| ControlFlow::Continue(()),
+/// )?;
+/// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
+/// let clone = report.repository.expect("finish succeeded");
+/// assert_eq!(
+///     clone.references()?.read(&main_ref)?,
+///     Some(Target::Direct(main))
+/// );
+/// // The recorded origin URL is the one passed to `prepare_tracking`.
+/// assert_eq!(
+///     girt::remote::Remote::find(clone.config(), b"origin")?
+///         .and_then(|origin| origin.fetch_url().map(<[u8]>::to_vec)),
+///     Some(b"../upstream.git".to_vec()),
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct CloneRequest {
     pub(super) destination: PathBuf,
     pub(super) kind: InitKind,
@@ -445,7 +490,42 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), CloneFailure> {
 ///
 /// # Examples
 ///
-/// See [`CloneReady`] for a complete clone, and [`CloneError`] for the failure contract.
+/// ```
+/// use std::ops::ControlFlow;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::InitKind;
+/// use girt::clone::{BranchSelection, CloneRequest};
+/// use girt::fetch::{FetchLimits, FetchUpdateLimits};
+/// use girt::refs::Reflog;
+/// use girt::transport::TransportControl;
+/// # let (directory, upstream, _, _, _) = include!("../doctest/remote.rs");
+///
+/// let request = CloneRequest::prepare_tracking(
+///     directory.path().join("clone"),
+///     InitKind::Bare,
+///     b"../upstream.git",
+///     BranchSelection::Default,
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let ready = request.receive_local(
+///     upstream.git_dir(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     |_| ControlFlow::Continue(()),
+/// )?;
+/// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
+/// assert!(report.reserved && report.initialized && report.configured);
+/// assert!(
+///     report
+///         .fetch
+///         .as_ref()
+///         .is_some_and(|fetch| fetch.installed.is_some())
+/// );
+/// assert!(report.repository.is_some());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct CloneReport {

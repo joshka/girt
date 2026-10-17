@@ -70,6 +70,60 @@ pub async fn send_http(
 /// [`PushError::NotSent`]. Post-send failures retain the valid response prefix in
 /// [`PushError::Uncertain`]. Complete receiver rejections are returned in
 /// [`HttpPushOutcome::Sent`] and must be inspected per reference.
+///
+/// # Examples
+///
+/// Push only if the remote's `main` is still where the application last saw it. The check runs on
+/// the live advertisement, before anything is sent. This needs a server, so it is not run:
+///
+/// ```no_run
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::push::{HttpPushOutcome, PreparedPush, PushCommand, PushLimits, send_http_checked};
+/// use girt::refs::RefName;
+/// use girt::transport::TransportControl;
+/// use girt::transport::http::HttpRemote;
+/// use girt::{ObjectId, PackLimits, Repository};
+///
+/// let repo = Repository::open("project")?;
+/// let format = repo.object_format();
+/// let last_seen = ObjectId::from_hex(format, "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0")?;
+/// let new = ObjectId::from_hex(format, "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")?;
+/// let main = RefName::new("refs/heads/main")?;
+///
+/// let objects = repo.objects(PackLimits::default())?;
+/// let cancel = AtomicBool::new(false);
+/// let command = PushCommand::new(main.clone(), Some(last_seen), new);
+/// let prepared = PreparedPush::new(
+///     &objects,
+///     vec![command],
+///     &[last_seen],
+///     PushLimits::default(),
+///     &cancel,
+/// )?;
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let outcome = runtime.block_on(async {
+///     let remote = HttpRemote::new("https://example.com/project.git", &[], &[])?;
+///     let outcome = send_http_checked(
+///         &remote,
+///         prepared,
+///         TransportControl::new(&cancel),
+///         |advertisement| advertisement.target(&main) == Some(last_seen),
+///     )
+///     .await?;
+///     Ok::<_, Box<dyn std::error::Error>>(outcome)
+/// })?;
+/// match outcome {
+///     HttpPushOutcome::Sent(report) => println!("all succeeded: {}", report.all_succeeded()),
+///     // Nothing was sent: fetch, reconcile, and try again.
+///     HttpPushOutcome::Declined => println!("main moved on the server"),
+///     _ => {}
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub async fn send_http_checked(
     remote: &HttpRemote,
     prepared: PreparedPush,

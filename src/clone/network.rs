@@ -10,6 +10,59 @@ use crate::transport::TransportControl;
 /// This value is `Send + Sync + 'static`. Move it to a caller-managed bounded worker; dropping it
 /// only releases bytes. The caller owns runtime, queue/worker concurrency and cancellation
 /// lifetime.
+///
+/// # Examples
+///
+/// Clone over HTTPS: download on the async runtime, then validate and finish on a blocking
+/// thread. This needs a server, so it is not run:
+///
+/// ```no_run
+/// use std::ops::ControlFlow;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::InitKind;
+/// use girt::clone::{BranchSelection, CloneRequest};
+/// use girt::fetch::{FetchLimits, FetchUpdateLimits};
+/// use girt::refs::Reflog;
+/// use girt::transport::TransportControl;
+/// use girt::transport::http::HttpRemote;
+///
+/// let url = "https://example.com/project.git";
+/// let request = CloneRequest::prepare_tracking(
+///     "project",
+///     InitKind::Worktree,
+///     url.as_bytes(),
+///     BranchSelection::Default,
+///     Reflog::Preserve,
+/// )?;
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// runtime
+///     .block_on(async {
+///         let remote = HttpRemote::new(url, &[], &[])?;
+///         let cancel = AtomicBool::new(false);
+///         let download = request
+///             .receive_http(
+///                 &remote,
+///                 FetchLimits::default(),
+///                 TransportControl::new(&cancel),
+///             )
+///             .await?;
+///         tokio::task::spawn_blocking(
+///             move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///                 let cancel = AtomicBool::new(false);
+///                 let ready = download.validate(&cancel, |_| ControlFlow::Continue(()))?;
+///                 ready.finish(FetchUpdateLimits::default(), &cancel)?;
+///                 Ok(())
+///             },
+///         )
+///         .await??;
+///         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+///     })
+///     .map_err(|error| error as Box<dyn std::error::Error>)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct CloneDownload {
     request: CloneRequest,
