@@ -139,10 +139,11 @@ executable files and added regular or executable files. Git stores no rename rec
 and it isn't grounds for changing merge history. Symlinks, gitlinks and directories are never
 rewrite results.
 
-Default options require 50% similarity, disable copies and exclude empty source blobs.
-`Copies::Modified` also considers modified files' preimages and permits source reuse; unchanged
-files are not searched. `ModifiedPostimage` scores a modified source's new content while reporting
-its old identity. Use it only when your caller wants copies scored against the source's new content.
+Default options require 50% similarity, disable copies and pair empty files as exact renames. Use
+`.with_track_empty(false)` for Git's `--no-rename-empty` behaviour. `Copies::Modified` also
+considers modified files' preimages and permits source reuse; unchanged files are not searched.
+`ModifiedPostimage` scores a modified source's new content while reporting its old identity. Use it
+only when your caller wants copies scored against the source's new content.
 
 Exact identity matches run first. Edited matching compares repeated byte spans split at LF or after
 64 significant bytes; the order of spans doesn't matter. Text scoring drops CR before LF, while

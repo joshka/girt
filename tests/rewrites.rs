@@ -33,7 +33,7 @@ fn git_similarity(
         .detect_rewrites(
             Some(old),
             Some(new),
-            Options::default(),
+            Options::default().with_track_empty(false),
             Limits::default(),
             None,
             &AtomicBool::new(false),
@@ -569,6 +569,46 @@ fn budgets(#[case] limits: Limits, #[case] expected: &str) {
     assert!(
         matches!(f.objects().detect_rewrites(Some(old), Some(new), Options::default(), limits, None, &AtomicBool::new(false)), Err(Error::Limit(name)) if name == expected)
     );
+}
+
+/// Git 2.56.0 pairs a moved empty file as R100 under both `diff -M` and `diff-tree -r -M`.
+#[rstest]
+fn empty_default_matches_git(
+    #[values("sha1", "sha256")] format: &str,
+    #[values("diff", "diff-tree")] command: &str,
+) {
+    let f = Fixture::new(format);
+    let blob = f.blob(b"");
+    let old = f.tree(&[("100644", blob, b"old")]);
+    let new = f.tree(&[("100644", blob, b"new")]);
+    let records = f
+        .objects()
+        .detect_rewrites(
+            Some(old),
+            Some(new),
+            Options::default(),
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].kind, Kind::Rename);
+    assert_eq!(records[0].similarity, 100);
+    let observed = git(
+        f.root.path(),
+        &[
+            command,
+            "-r",
+            "-M",
+            "--name-status",
+            "-z",
+            &old.to_string(),
+            &new.to_string(),
+        ],
+        b"",
+    );
+    assert_eq!(observed, b"R100\0old\0new\0");
 }
 
 #[rstest]

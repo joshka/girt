@@ -291,8 +291,7 @@ impl Repo {
         let old = self.reader.resolve(old, Some(ObjectKind::Tree))?;
         let new = self.reader.resolve(new, Some(ObjectKind::Tree))?;
         let objects = self.reader.snapshot()?;
-        // `git diff` pairs empty files as exact renames; the core default does not.
-        let options = crate::rewrites::Options::default().with_track_empty(true);
+        let options = crate::rewrites::Options::default();
         let comparison = objects.diff_trees_with(
             Some(old),
             Some(new),

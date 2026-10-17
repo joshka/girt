@@ -65,12 +65,15 @@ pub enum Copies {
 
 /// Caller choices for inference, independent of repository configuration.
 ///
+/// Empty files participate by default, matching both `git diff -M` and `git diff-tree -r -M`.
+/// Use [`Self::with_track_empty(false)`](Self::with_track_empty) to leave them unpaired, as with
+/// Git's `--no-rename-empty`.
+///
 /// ```
 /// use girt::rewrites::{Copies, Options};
 /// let exact_copies = Options::default()
 ///     .with_similarity(100)
-///     .with_copies(Copies::Modified)
-///     .with_track_empty(true);
+///     .with_copies(Copies::Modified);
 /// assert_eq!(exact_copies.similarity, 100); // Identity-only; no approximate scoring.
 /// let bounded = Options::default().with_candidate_limit(0);
 /// assert_eq!(bounded.candidate_limit, 0); // Skip edited matching if any counted pair remains.
@@ -84,7 +87,10 @@ pub struct Options {
     pub similarity: u8,
     /// Whether modified files and already-used deleted files can supply copies.
     pub copies: Copies,
-    /// Include empty blobs as exact-match sources (default false).
+    /// Include empty blobs as exact-match sources (default true).
+    ///
+    /// Matches Git's porcelain and plumbing defaults with rename detection enabled. Empty
+    /// content supplies no distinguishing evidence; set false to leave these files unpaired.
     pub track_empty: bool,
     /// Bound on edited-content detection, as in Git's `diff.renameLimit` (default 1000).
     ///
@@ -153,7 +159,7 @@ impl Options {
     ///         .detect_rewrites(
     ///             Some(old),
     ///             Some(new),
-    ///             Options::default(),
+    ///             Options::default().with_track_empty(false),
     ///             Default::default(),
     ///             None,
     ///             &cancel
@@ -163,7 +169,7 @@ impl Options {
     /// let matches = objects.detect_rewrites(
     ///     Some(old),
     ///     Some(new),
-    ///     Options::default().with_track_empty(true),
+    ///     Options::default(),
     ///     Default::default(),
     ///     None,
     ///     &cancel,
@@ -254,7 +260,7 @@ impl Default for Options {
         Self {
             similarity: 50,
             copies: Copies::Disabled,
-            track_empty: false,
+            track_empty: true,
             candidate_limit: 1000,
             approximate_binary: true,
         }

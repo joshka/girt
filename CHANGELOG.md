@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Pair empty files by default in rewrite detection, matching `git diff -M` and `git diff-tree -r -M`.
+  Empty candidates also count toward the edited-content candidate limit. Use
+  `rewrites::Options::default().with_track_empty(false)` to restore the previous policy.
+
 ## [0.12.0](https://github.com/joshka/girt/compare/girt-v0.11.3...girt-v0.12.0) - 2026-10-17
 
 ### Other
