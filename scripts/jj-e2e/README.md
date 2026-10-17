@@ -61,5 +61,5 @@ writes a timing list plus a raw checkpoint; successful rows can omit `status`, a
    `docs/jj-performance-provenance.json`, then run the renderer and `--check`.
 
 The 2026-10 publication retains local merge/normalization scripts and raw checkpoints as evidence;
-those scripts are not a committed end-to-end publication command. Review the normalized data
-before each release. CI checks consistency and rendering only, not measurement validity.
+those scripts are not a committed end-to-end publication command. Review the normalized data before
+each release. CI checks consistency and rendering only, not measurement validity.
