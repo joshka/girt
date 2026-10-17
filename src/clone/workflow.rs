@@ -36,7 +36,8 @@ use crate::{InitKind, ObjectKind, Repository};
 ///
 /// # Examples
 ///
-/// Clone a local repository, choosing the branch to check out by name:
+/// Clone a local repository, choosing the initial local branch by name. Like every clone, this
+/// writes no working files; see [`crate::Repository::checkout_tree`] for that step:
 ///
 /// ```
 /// use std::ops::ControlFlow;

@@ -74,21 +74,28 @@ pub async fn send_http(
 /// # Examples
 ///
 /// Push only if the remote's `main` is still where the application last saw it. The check runs on
-/// the live advertisement, before anything is sent. This needs a server, so it is not run:
+/// the live advertisement, before any update command is sent. This needs a server, so it is not
+/// run:
 ///
 /// ```no_run
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::push::{HttpPushOutcome, PreparedPush, PushCommand, PushLimits, send_http_checked};
-/// use girt::refs::RefName;
+/// use girt::refs::{RefName, Target};
 /// use girt::transport::TransportControl;
 /// use girt::transport::http::HttpRemote;
 /// use girt::{ObjectId, PackLimits, Repository};
 ///
 /// let repo = Repository::open("project")?;
-/// let format = repo.object_format();
-/// let last_seen = ObjectId::from_hex(format, "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0")?;
-/// let new = ObjectId::from_hex(format, "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")?;
+/// let commit = |name: &str| -> Result<ObjectId, Box<dyn std::error::Error>> {
+///     match repo.references()?.read(&RefName::new(name)?)? {
+///         Some(Target::Direct(id)) => Ok(id),
+///         _ => Err(format!("{name} does not point directly at a commit").into()),
+///     }
+/// };
+/// // Where `main` was at the last fetch, and the local commit to publish.
+/// let last_seen = commit("refs/remotes/origin/main")?;
+/// let new = commit("refs/heads/main")?;
 /// let main = RefName::new("refs/heads/main")?;
 ///
 /// let objects = repo.objects(PackLimits::default())?;
@@ -97,7 +104,9 @@ pub async fn send_http(
 /// let prepared = PreparedPush::new(
 ///     &objects,
 ///     vec![command],
-///     &[last_seen],
+///     // A full transfer: a pack that relies on `last_seen` would be refused before the callback
+///     // runs if `main` has moved, as `PushFailure::KnowledgeChanged`.
+///     &[],
 ///     PushLimits::default(),
 ///     &cancel,
 /// )?;
@@ -118,8 +127,8 @@ pub async fn send_http(
 /// })?;
 /// match outcome {
 ///     HttpPushOutcome::Sent(report) => println!("all succeeded: {}", report.all_succeeded()),
-///     // Nothing was sent: fetch, reconcile, and try again.
-///     HttpPushOutcome::Declined => println!("main moved on the server"),
+///     // No update command was sent: fetch, reconcile, and try again.
+///     HttpPushOutcome::Declined => println!("main is not where it was at the last fetch"),
 ///     _ => {}
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())

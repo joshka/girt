@@ -51,11 +51,11 @@ pub enum SshPushOutcome {
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::push::{PreparedPush, PushCommand, PushLimits, send_ssh};
-/// use girt::refs::RefName;
+/// use girt::refs::{RefName, Target};
 /// use girt::remote::{ProtocolEnvironment, Remote};
 /// use girt::transport::TransportControl;
 /// use girt::transport::ssh::{OpenSshOptions, SshRemote};
-/// use girt::{ObjectId, PackLimits, Repository};
+/// use girt::{PackLimits, Repository};
 ///
 /// let repo = Repository::open("project")?;
 /// let origin = Remote::find(repo.config(), b"origin")?.ok_or("no origin")?;
@@ -73,10 +73,13 @@ pub enum SshPushOutcome {
 ///     .with_environment(environment);
 /// let remote = SshRemote::openssh(repo.config(), &destination, options)?;
 ///
-/// let tip = ObjectId::from_hex(
-///     repo.object_format(),
-///     "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0",
-/// )?;
+/// // Publish the commit at the tip of the local `topic` branch.
+/// let Some(Target::Direct(tip)) = repo
+///     .references()?
+///     .read(&RefName::new("refs/heads/topic")?)?
+/// else {
+///     return Err("refs/heads/topic does not point directly at a commit".into());
+/// };
 /// let objects = repo.objects(PackLimits::default())?;
 /// let cancel = AtomicBool::new(false);
 /// let command = PushCommand::new(RefName::new("refs/heads/topic")?, None, tip);

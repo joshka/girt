@@ -47,15 +47,18 @@ use crate::refs::RefName;
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::push::{PreparedPush, PushCommand, PushLimits, send};
-/// use girt::refs::RefName;
-/// use girt::{ObjectId, PackLimits, Repository};
+/// use girt::refs::{RefName, Target};
+/// use girt::{PackLimits, Repository};
 ///
 /// let repo = Repository::open("project")?;
 /// let objects = repo.objects(PackLimits::default())?;
-/// let tip = ObjectId::from_hex(
-///     repo.object_format(),
-///     "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0",
-/// )?;
+/// // Publish the commit at the tip of the local `topic` branch.
+/// let Some(Target::Direct(tip)) = repo
+///     .references()?
+///     .read(&RefName::new("refs/heads/topic")?)?
+/// else {
+///     return Err("refs/heads/topic does not point directly at a commit".into());
+/// };
 /// let command = PushCommand::new(RefName::new("refs/heads/topic")?, None, tip);
 /// let cancel = AtomicBool::new(false);
 /// let prepared = PreparedPush::new(&objects, vec![command], &[], PushLimits::default(), &cancel)?;
@@ -209,11 +212,11 @@ pub(super) struct Capabilities {
 ///
 /// # Examples
 ///
-/// A [`send_http_checked`](super::send_http_checked) or `send_ssh_checked_with_progress` callback
+/// A `send_http_checked` or `send_ssh_checked_with_progress` callback
 /// receives one of these. [`PushAdvertisement::target`] answers "where is this reference now?",
 /// and [`PushAdvertisement::receiver_roots`] lists everything the receiver advertised, which
 /// [`crate::workflow::push`] passes to [`PreparedPush::new`] so the pack leaves that history out.
-/// See [`send_http_checked`](super::send_http_checked) for a complete example.
+/// See `send_http_checked` (with the `http` feature) for a complete example.
 #[derive(Debug)]
 pub struct PushAdvertisement {
     refs: HashMap<RefName, ObjectId>,

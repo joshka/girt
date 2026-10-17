@@ -362,10 +362,9 @@ impl PushLimits {
 ///             match &result.status {
 ///                 Some(Status::Ok) => format!(" * {name}"),
 ///                 Some(Status::Rejected(reason)) => {
-///                     format!(
-///                         " ! [remote rejected] {name} ({})",
-///                         String::from_utf8_lossy(reason)
-///                     )
+///                     // Escape control characters so a reason can't rewrite the terminal.
+///                     let reason = String::from_utf8_lossy(reason);
+///                     format!(" ! [remote rejected] {name} ({})", reason.escape_debug())
 ///                 }
 ///                 // No acknowledgement: the outcome is unknown, not a rejection.
 ///                 _ => format!(" ? {name} (unknown)"),
