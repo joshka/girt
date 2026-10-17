@@ -11,8 +11,8 @@ import PerfSummary from '../../../components/PerfSummary.astro';
 
 This benchmark runs the same jj commands with jj built on girt and with stock jj (which uses gix and
 the `git` executable), and times the closest `git` command alongside. It uses three real
-repositories, described under [Test repositories](#test-repositories): an early 2023 snapshot of
-jj (small), git.git with extra branches (medium) and Linux v6.1 (large).
+repositories, described under [Test repositories](#test-repositories): an early 2023 snapshot of jj
+(small), git.git with extra branches (medium) and Linux v6.1 (large).
 
 jj on girt is not ready for everyday use. Read this page as a dashboard of the gap still to close:
 every rust-tinted cell is work left to do, and the headline numbers are the ones to drive down.
@@ -26,10 +26,10 @@ one that costs an extra minute is dark. Commands girt makes faster are tinted gr
 
 ## Every command
 
-Rows are grouped by how often you run the command, because a delay that is fine for
-`jj git clone` is painful for `jj status`. Each row shows the jj command line it times. Select a row
-for the repository state it runs against, the git command it is compared with, sample ranges and
-tracking issues; hover over a cell for its numbers.
+Rows are grouped by how often you run the command, because a delay that is fine for `jj git clone`
+is painful for `jj status`. Each row shows the jj command line it times. Select a row for the
+repository state it runs against, the git command it is compared with, sample ranges and tracking
+issues; hover over a cell for its numbers.
 
 Unless a row says otherwise, each command runs in a fresh copy of a local clone colocated with
 `jj git init --colocate`, so the working copy is an empty change on top of the main branch.
@@ -57,8 +57,8 @@ one, so their ratios are less precise. jj on girt is stopped once it takes twice
 counterpart to `jj undo`, `jj op restore`, `jj git import` or colocated initialization.
 
 The harness is `scripts/jj-e2e/bench-ops.py` in the girt repository. Results and provenance live in
-`docs/jj-performance.json` and `docs/jj-performance-provenance.json`. The underlying gaps are tracked
-on [girt issue 66](https://github.com/joshka/girt/issues/66) (performance gaps against Git).
+`docs/jj-performance.json` and `docs/jj-performance-provenance.json`. The underlying gaps are
+tracked on [girt issue 66](https://github.com/joshka/girt/issues/66) (performance gaps against Git).
 
 ## Provenance
 

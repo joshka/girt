@@ -13,3 +13,5 @@ style = "aligned"
 [per-file-ignores]
 # Match the generated changelog even when paths include a checkout prefix.
 "**/CHANGELOG.md" = ["MD013"]
+# The benchmark MDX page embeds summary cards and layouts as HTML.
+"**/site/src/content/docs/performance/jj-benchmark.mdx" = ["MD033"]

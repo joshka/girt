@@ -52,8 +52,8 @@ mod sparse;
 mod split;
 mod store;
 mod tree;
-
 pub use codec::{Error, Extension, Index, Limits, Version};
 pub use entries::{Entry, Mode, Stage, Stat, Timestamp};
 pub use sparse::{SparseError, SparseLimits};
 pub use store::{EditOptions, IndexCommitOptions, IndexEdit, StorageError};
+pub use tree::WriteTreeError;

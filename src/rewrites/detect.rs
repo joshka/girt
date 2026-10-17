@@ -198,7 +198,7 @@ impl Objects {
         targets: Option<&[&[u8]]>,
         cancel: &AtomicBool,
     ) -> Result<Detection, Error> {
-        let mut budget = Budget {
+        let budget = Budget {
             remaining: limits,
             cancel,
         };
@@ -207,7 +207,27 @@ impl Objects {
             return Err(Error::Similarity(options.similarity));
         }
         let changes = self.compare_trees_with(old, new, limits.trees, cancel)?;
-        let (sources, destinations) = candidates(&changes, options.copies, &mut budget)?;
+        self.detect_rewrites_from_changes(&changes, options, limits, targets, cancel)
+    }
+
+    /// Reuses an already bounded structural comparison without traversing trees again.
+    pub(crate) fn detect_rewrites_from_changes(
+        &self,
+        changes: &[TreeChange],
+        options: Options,
+        limits: Limits,
+        targets: Option<&[&[u8]]>,
+        cancel: &AtomicBool,
+    ) -> Result<Detection, Error> {
+        let mut budget = Budget {
+            remaining: limits,
+            cancel,
+        };
+        budget.check()?;
+        if !(1..=100).contains(&options.similarity) {
+            return Err(Error::Similarity(options.similarity));
+        }
+        let (sources, destinations) = candidates(changes, options.copies, &mut budget)?;
         let mut blobs = BTreeMap::new();
         for candidate in sources.iter().chain(&destinations) {
             budget.check()?;
