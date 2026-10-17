@@ -24,6 +24,7 @@ http = ["dep:reqwest", "dep:tokio", "dep:futures-util"]
 all-features = true
 
 [dependencies]
+jiff = "0.2"
 tracing = { version = "0.1.40", optional = true, default-features = false, features = ["std"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", optional = true, default-features = false, features = ["rustls", "stream"] }

@@ -51,6 +51,7 @@
 )]
 mod identity;
 mod payload;
+mod signature;
 pub use identity::{IdentityDate, IdentityRef};
 pub use payload::{CommitHeaderRef, CommitPayload};
 
