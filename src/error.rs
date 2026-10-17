@@ -96,6 +96,12 @@ macro_rules! from_domain_errors {
     };
 }
 
+impl<E: StdError + Send + Sync + 'static> From<crate::commit::SignError<E>> for Error {
+    fn from(error: crate::commit::SignError<E>) -> Self {
+        Self(Box::new(error))
+    }
+}
+
 // Keep this list in step with the public error types; `lists_every_public_error_type` checks it.
 from_domain_errors! {
     std::io::Error,
@@ -127,6 +133,9 @@ from_domain_errors! {
     crate::index::Error,
     crate::index::SparseError,
     crate::index::StorageError,
+    crate::index::WriteTreeError,
+    crate::tree::TreeWriteError,
+    crate::tree_diff::Error,
     crate::locks::CleanupFailure,
     crate::loose::Error,
     crate::ObjectFormatError,
@@ -252,6 +261,8 @@ mod tests {
             .lines()
             .map(|line| line.trim().trim_end_matches(',').to_owned())
             .collect();
+        // Generic error conversions are implemented separately from the monomorphic macro.
+        listed.push("crate::commit::SignError".to_owned());
         let mut missing = Vec::new();
         for (path, name) in public_error_types(&root) {
             // Generic names repeat across modules, so each listing matches one top-level module.

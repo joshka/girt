@@ -3,6 +3,91 @@ use super::{Index, Mode, Stage};
 use crate::{EntryMode, ObjectId, Tree, TreeEntry};
 
 impl Index {
+    /// Stores the staged snapshot as nested trees with default pack-opening limits.
+    ///
+    /// Wraps object lookup, `Tree::new` and loose tree writes. Like `git write-tree`, rejects
+    /// missing objects (except gitlinks), omits intent-to-add entries and retains collapsed sparse
+    /// directory IDs. Object presence is checked, not recursive connectivity or object kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns the completeness, lookup and storage errors described by [`Self::write_tree_with`].
+    pub fn write_tree(&self, repo: &crate::Repository) -> Result<ObjectId, WriteTreeError> {
+        self.write_tree_with(
+            repo,
+            crate::PackLimits::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+    }
+
+    /// Stores the staged snapshot with explicit pack-opening limits and cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unmerged entries, non-placeholder null IDs, foreign formats, absent objects or
+    /// cancellation. Lookup errors preserve their causes. All entries are checked before writing
+    /// any trees. A storage failure may leave immutable subtrees; retrying is safe under loose
+    /// storage rules. The index and references remain unchanged. Callers needing a stable object
+    /// set must exclude concurrent object retirement.
+    pub fn write_tree_with(
+        &self,
+        repo: &crate::Repository,
+        limits: crate::PackLimits,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<ObjectId, WriteTreeError> {
+        let check = || {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                Err(WriteTreeError::Cancelled)
+            } else {
+                Ok(())
+            }
+        };
+        check()?;
+        ObjectId::null(self.format).require_format(repo.object_format())?;
+        let objects = repo.objects(limits)?;
+        for entry in &self.entries {
+            check()?;
+            if entry.stage != Stage::Normal {
+                return Err(WriteTreeError::Unmerged {
+                    path: entry.path.clone(),
+                });
+            }
+            if entry.intent_to_add {
+                continue;
+            }
+            if entry.id.is_null() {
+                return Err(WriteTreeError::NullId {
+                    path: entry.path.clone(),
+                });
+            }
+            if entry.mode != Mode::Gitlink && !objects.contains(entry.id)? {
+                return Err(WriteTreeError::MissingObject {
+                    path: entry.path.clone(),
+                    id: entry.id,
+                });
+            }
+        }
+        let loose = repo.loose_objects();
+        let mut editor = crate::tree::TreeEditor::new(&loose);
+        for entry in &self.entries {
+            check()?;
+            if entry.intent_to_add {
+                continue;
+            }
+            let mode = match entry.mode {
+                Mode::Regular => EntryMode::Blob,
+                Mode::Executable => EntryMode::Executable,
+                Mode::Symlink => EntryMode::Symlink,
+                Mode::Gitlink => EntryMode::Gitlink,
+                Mode::SparseDirectory => EntryMode::Tree,
+            };
+            let path = entry.path.strip_suffix(b"/").unwrap_or(&entry.path);
+            editor.set_entry(path, crate::TreeValue { mode, id: entry.id })?;
+        }
+        check()?;
+        Ok(editor.write()?)
+    }
+
     /// Computes the canonical Git tree identity without reading or writing objects.
     ///
     /// Like `git write-tree`, omits intent-to-add entries and uses collapsed sparse directory
@@ -75,6 +160,44 @@ impl Index {
         }
         Some(directories.pop()?.finish(self.format)?.id)
     }
+}
+
+/// An index snapshot is incomplete, its objects are unavailable, or tree publication failed.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum WriteTreeError {
+    /// An index path has conflict stages.
+    #[error("index contains an unmerged path")]
+    Unmerged {
+        /// Conflicted byte path.
+        path: Vec<u8>,
+    },
+    /// A staged entry has no usable object ID.
+    #[error("index contains a null object ID")]
+    NullId {
+        /// Incomplete byte path.
+        path: Vec<u8>,
+    },
+    /// A referenced object is absent from the repository and alternates.
+    #[error("index object {id} is missing")]
+    MissingObject {
+        /// Staged byte path.
+        path: Vec<u8>,
+        /// Absent object identity.
+        id: ObjectId,
+    },
+    /// Object lookup or pack opening failed.
+    #[error(transparent)]
+    Read(#[from] crate::ObjectReadError),
+    /// Canonical tree construction or immutable publication failed.
+    #[error(transparent)]
+    Write(#[from] crate::tree::TreeWriteError),
+    /// Index and destination object formats differ.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
+    /// Cancellation was requested. No index or reference changed.
+    #[error("writing index tree cancelled")]
+    Cancelled,
 }
 
 struct Directory<'a> {

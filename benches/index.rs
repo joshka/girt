@@ -92,5 +92,35 @@ fn stat_reuse(c: &mut Criterion) {
     }
     group.finish();
 }
-criterion_group!(benches, benchmark, tree_identity, stat_reuse);
+fn write_tree(c: &mut Criterion) {
+    let mut group = c.benchmark_group("index_write_tree");
+    for count in [100, 10_000, 100_000] {
+        let root = tempfile::tempdir().unwrap();
+        let repo = girt::Repository::init(
+            girt::ObjectFormat::Sha1,
+            root.path().join("r"),
+            girt::InitKind::Bare,
+        )
+        .unwrap();
+        let blob = repo.loose_objects().write_blob(b"content").unwrap();
+        let entries = (0..count)
+            .map(|n| {
+                Entry::new(
+                    format!("dir-{:04}/nested/file-{n:08}", n / 100).into_bytes(),
+                    Mode::Regular,
+                    blob,
+                )
+            })
+            .collect();
+        let index = Index::new(girt::ObjectFormat::Sha1, entries, Limits::default()).unwrap();
+        index.write_tree(&repo).unwrap();
+        group.throughput(Throughput::Elements(count));
+        group.bench_with_input(BenchmarkId::from_parameter(count), &index, |b, index| {
+            b.iter(|| black_box(index).write_tree(&repo).unwrap());
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, benchmark, tree_identity, stat_reuse, write_tree);
 criterion_main!(benches);

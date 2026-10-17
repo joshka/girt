@@ -49,6 +49,8 @@
     clippy::indexing_slicing,
     reason = "parses untrusted repository or network input (#103)"
 )]
+mod builder;
+pub use builder::{CommitBuilder, SignError};
 mod identity;
 mod payload;
 mod signature;
@@ -114,6 +116,40 @@ pub struct Commit {
 }
 
 impl Commit {
+    /// Starts canonical construction with the author as the default committer.
+    pub fn builder(tree: ObjectId, author: Signature, message: impl AsRef<[u8]>) -> CommitBuilder {
+        CommitBuilder::new(tree, author, message)
+    }
+
+    /// Returns the first matching header, preserving continuation framing in its value.
+    /// Names are byte-exact and case-sensitive. Use `unfolded_value()` to remove framing spaces.
+    pub fn header(&self, name: impl AsRef<[u8]>) -> Option<CommitHeaderRef<'_>> {
+        CommitPayload::from_bytes(&self.payload)
+            .headers()
+            .find(|header| header.name == name.as_ref())
+    }
+
+    /// Returns the first nonblank message paragraph, joining its lines with spaces like Git `%s`.
+    /// Trailing ASCII whitespace on each line is removed. Leading whitespace and non-UTF-8 bytes
+    /// remain unchanged; whitespace-only lines delimit paragraphs. No encoding conversion occurs.
+    pub fn subject(&self) -> Vec<u8> {
+        let lines = self.message().split(|&byte| byte == b'\n');
+        let mut subject = Vec::new();
+        for line in lines
+            .map(<[u8]>::trim_ascii_end)
+            .skip_while(|line| line.is_empty())
+        {
+            if line.is_empty() {
+                break;
+            }
+            if !subject.is_empty() {
+                subject.push(b' ');
+            }
+            subject.extend_from_slice(line);
+        }
+        subject
+    }
+
     /// Validates owned fields and encodes a new commit with lowercase IDs and decimal seconds.
     ///
     /// Parent and extra-header order is preserved. Zero offset encodes as `+0000`. Every newline

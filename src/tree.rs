@@ -50,8 +50,11 @@
     clippy::indexing_slicing,
     reason = "parses untrusted repository or network input (#103)"
 )]
+mod editor;
 use std::cmp::Ordering;
 use std::collections::HashSet;
+
+pub use editor::{TreeEditor, TreeWriteError};
 
 use crate::{ObjectId, ObjectKind};
 

@@ -65,17 +65,17 @@
     "empty_vectors": 0
   },
   "Stage and commit": {
-    "lines": 22,
-    "imported_names": 8,
+    "lines": 17,
+    "imported_names": 7,
     "defaults": 0,
     "never_cancel": 0,
-    "byte_vectors": 1,
+    "byte_vectors": 0,
     "object_formats": 0,
     "identity_literals": 0,
-    "commit_fields": 1,
+    "commit_fields": 0,
     "branch_names": 0,
     "boxed_errors": 0,
-    "empty_vectors": 1
+    "empty_vectors": 0
   },
   "Create, move and delete a branch": {
     "lines": 16,

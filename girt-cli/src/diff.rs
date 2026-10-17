@@ -9,7 +9,8 @@ use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _};
 use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
 use girt::display::quote_path;
-use girt::rewrites::{Copies, Kind, Limits, Options};
+use girt::rewrites::{Copies, Kind, Options};
+use girt::tree_diff::Entry;
 use girt::{ChangeStatus, EntryMode, ObjectId, Objects, ReadLimits, TreeChange, TreeValue};
 
 use crate::common::{resolve_tree, stdout};
@@ -51,35 +52,41 @@ pub struct DiffArgs {
     copies: bool,
 }
 
-/// One line of the comparison: a plain change or an inferred rename/copy.
-enum Entry {
-    Change(TreeChange),
-    Rewrite {
-        kind: Kind,
-        similarity: u8,
-        source: Vec<u8>,
-        target: Vec<u8>,
-        old: TreeValue,
-        new: TreeValue,
-    },
-}
-
-impl Entry {
-    /// The path Git sorts output by: the destination for rewrites.
-    fn sort_path(&self) -> &[u8] {
-        match self {
-            Entry::Change(change) => &change.path,
-            Entry::Rewrite { target, .. } => target,
-        }
-    }
-}
-
 pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let objects = repository.objects()?;
     let old = resolve_tree(&repository, &objects, &args.a)?;
     let new = resolve_tree(&repository, &objects, &args.b)?;
-    let entries = compare(&objects, old, new, args.renames || args.copies, args.copies)?;
+    let entries = if args.renames || args.copies {
+        let options = Options::default().with_copies(if args.copies {
+            Copies::Modified
+        } else {
+            Copies::Disabled
+        });
+        let comparison = objects
+            .diff_with_renames_with(
+                Some(old),
+                Some(new),
+                options,
+                Default::default(),
+                &AtomicBool::new(false),
+            )
+            .wrap_err("comparing trees and detecting renames")?;
+        if let Some(skipped) = comparison.inexact_skipped {
+            eprintln!(
+                "warning: exhaustive rename detection skipped ({} sources, {} targets, limit {})",
+                skipped.sources, skipped.targets, skipped.limit
+            );
+        }
+        comparison.entries
+    } else {
+        objects
+            .compare_trees(Some(old), Some(new))
+            .wrap_err("comparing trees")?
+            .into_iter()
+            .map(Entry::Change)
+            .collect()
+    };
     let mut out = stdout();
     let width = crate::common::abbrev_len(&repository, &objects)?;
     if args.patch {
@@ -116,70 +123,6 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Compares trees, optionally replacing rename sources/targets with rewrite entries.
-fn compare(
-    objects: &Objects,
-    old: ObjectId,
-    new: ObjectId,
-    renames: bool,
-    copies: bool,
-) -> Result<Vec<Entry>> {
-    let changes = objects
-        .compare_trees(Some(old), Some(new))
-        .wrap_err("comparing trees")?;
-    if !renames {
-        return Ok(changes.into_iter().map(Entry::Change).collect());
-    }
-    let options = Options::default().with_copies(if copies {
-        Copies::Modified
-    } else {
-        Copies::Disabled
-    });
-    let rewrites = objects
-        .detect_rewrites(
-            Some(old),
-            Some(new),
-            options,
-            Limits::default(),
-            None,
-            &AtomicBool::new(false),
-        )
-        .wrap_err("detecting renames")?;
-    let find = |path: &[u8]| changes.iter().find(|change| change.path == path);
-    let mut renamed_sources = Vec::new();
-    let mut targets = Vec::new();
-    let mut entries = Vec::new();
-    for rewrite in rewrites {
-        let (Some(old), Some(new)) = (
-            find(&rewrite.source).and_then(|change| change.old),
-            find(&rewrite.target).and_then(|change| change.new),
-        ) else {
-            color_eyre::eyre::bail!("rewrite paths missing from the tree comparison");
-        };
-        if rewrite.kind == Kind::Rename {
-            renamed_sources.push(rewrite.source.clone());
-        }
-        targets.push(rewrite.target.clone());
-        entries.push(Entry::Rewrite {
-            kind: rewrite.kind,
-            similarity: rewrite.similarity,
-            source: rewrite.source,
-            target: rewrite.target,
-            old,
-            new,
-        });
-    }
-    for change in changes {
-        let consumed = (change.new.is_none() && renamed_sources.contains(&change.path))
-            || (change.old.is_none() && targets.contains(&change.path));
-        if !consumed {
-            entries.push(Entry::Change(change));
-        }
-    }
-    entries.sort_by(|a, b| a.sort_path().cmp(b.sort_path()));
-    Ok(entries)
-}
-
 /// Writes one `--name-status` style record; tab-separated and quoted like Git under `--git`.
 fn write_status(out: &mut impl Write, entry: &Entry, git: bool) -> Result<()> {
     let separator = if git { "\t" } else { " " };
@@ -214,6 +157,7 @@ fn write_status(out: &mut impl Write, entry: &Entry, git: bool) -> Result<()> {
                 path(target)
             )?;
         }
+        _ => color_eyre::eyre::bail!("unsupported tree diff entry"),
     }
     Ok(())
 }
@@ -253,6 +197,7 @@ fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry, width: us
             Some((*kind, *similarity)),
             width,
         ),
+        _ => color_eyre::eyre::bail!("unsupported tree diff entry"),
     }
 }
 

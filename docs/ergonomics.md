@@ -120,9 +120,9 @@ Desired sketch: `git.log("main").exclude("release").date_order().take(20)`. Gap 
 
 Partial: the compiled snippet resolves both commits to trees, compares them and reads changed blob
 contents. It emits debug representations of edit ranges, not unified patches. Gitlinks need an
-explicit submodule policy. Verbosity includes the content diff's ReadLimits, DiffLimits and a false
-AtomicBool. Byte vectors and repeated ObjectFormat occur only in the linked fixture and are excluded
-from the cost count.
+explicit submodule policy. Renames are combined with structural changes; `Comparison` reports
+skipped exhaustive inference when the candidate limit is exceeded. This snippet reads detected
+entries. Verbosity includes the content diff's ReadLimits, DiffLimits and false AtomicBool.
 
 ```rust,no_run
 use std::sync::atomic::AtomicBool;
@@ -138,10 +138,10 @@ fn compare(repo: &Repository) -> girt::Result<()> {
     let new = resolver.resolve_to(&"HEAD".parse()?, ObjectKind::Tree)?;
     let cancel = AtomicBool::new(false);
     let limits = DiffLimits::default();
-    for change in objects.compare_trees(Some(old), Some(new))? {
+    for entry in objects.diff_with_renames(Some(old), Some(new))?.entries {
         let content = BlobContent::read(
             &objects,
-            &change,
+            &entry.content_change(),
             ReadLimits::default(),
             limits.max_input_bytes,
             &cancel,
@@ -153,7 +153,7 @@ fn compare(repo: &Repository) -> girt::Result<()> {
             limits,
             &cancel,
         )?;
-        println!("{change:?}: {edits:?}");
+        println!("{entry:?}: {edits:?}");
     }
     Ok(())
 }
@@ -162,9 +162,9 @@ fn compare(repo: &Repository) -> girt::Result<()> {
 Disposable end-to-end evidence: [content_diff](../examples/content_diff.rs).
 
 Desired sketch: `objects.diff_with_renames(old_tree, new_tree)?`. Gap closure:
-[404](https://github.com/joshka/girt/issues/404), [406](https://github.com/joshka/girt/issues/406)
-(combined rename result); patch rendering in [411](https://github.com/joshka/girt/issues/411).
-`--name-status` output can already use `girt::display::quote_path` and `TreeChange::status`
+[404](https://github.com/joshka/girt/issues/404); patch rendering in
+[411](https://github.com/joshka/girt/issues/411). `--name-status` output can already use
+`girt::display::quote_path` and `TreeChange::status`
 ([407](https://github.com/joshka/girt/issues/407)).
 
 ### Status
@@ -196,33 +196,25 @@ Desired sketch: `git.status()?`. Gap closure: [404](https://github.com/joshka/gi
 
 <!-- ergonomics-status: partial -->
 
-Partial: status shows writing an explicit index entry; publish_branch writes a tree and commit and
-conditionally advances HEAD without reflogs. Together these are building blocks, not an
-index-to-tree stage-and-commit operation. Callers must not silently discard existing index entries.
-Missing: index-to-tree and path editing. Verbose: CommitFields, identity bytes/time, repeated format
-and empty vectors; default identity and reflog policy must be deliberate.
+Partial: the index now writes nested trees and the commit builder defaults the committer to the
+supplied author. Reference publication remains an explicit no-reflog choice. Path staging and
+normalization still need application policy; this snippet commits an already staged index.
 
 ```rust,no_run
 use girt::refs::{Expected, RefName, Target};
-use girt::{Commit, CommitFields, ObjectId, Repository, Signature};
+use girt::{Commit, Repository, Signature};
+use girt::index::Index;
 
 fn commit_tree(
     repo: &Repository,
-    tree: ObjectId,
+    index: &Index,
     identity: Signature,
 ) -> girt::Result<()> {
-    // Caller supplies a fully built tree; this does not consume the index or stage paths.
+    let tree = index.write_tree(repo)?;
     let refs = repo.references()?;
     let parent = refs.resolve(&RefName::HEAD, 5)?.id;
     let expected = parent.map_or(Expected::Absent, |id| Expected::Value(Target::Direct(id)));
-    let commit = Commit::new(CommitFields {
-        tree,
-        parents: parent.into_iter().collect(),
-        author: identity.clone(),
-        committer: identity,
-        extra_headers: vec![],
-        message: b"Snapshot\n".to_vec(),
-    })?;
+    let commit = Commit::builder(tree, identity, b"Snapshot\n").parents(parent).build()?;
     let id = repo.loose_objects().write_commit(&commit)?;
     refs.update_resolved_without_reflog(&RefName::HEAD, id, expected)?;
     Ok(())
@@ -233,10 +225,10 @@ Disposable end-to-end evidence: [status](../examples/status.rs),
 [publish_branch](../examples/publish_branch.rs).
 
 Desired sketch: `git.stage([b"src/lib.rs"])?; git.commit(tree, "Explain change")?`. The
-index-to-tree operation in [406](https://github.com/joshka/girt/issues/406) supplies `tree`. Gap
-closure: [403](https://github.com/joshka/girt/issues/403),
-[405](https://github.com/joshka/girt/issues/405), [406](https://github.com/joshka/girt/issues/406),
-[417](https://github.com/joshka/girt/issues/417) (path staging) and
+index-to-tree operation supplies `tree`. Gap closure:
+[403](https://github.com/joshka/girt/issues/403), [405](https://github.com/joshka/girt/issues/405),
+[417](https://github.com/joshka/girt/issues/417)
+(path staging) and
 [408](https://github.com/joshka/girt/issues/408).
 
 ### Create, move and delete a branch

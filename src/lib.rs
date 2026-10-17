@@ -194,6 +194,7 @@ pub mod tree;
 mod tree_compare;
 pub mod workflow;
 
+pub mod tree_diff;
 pub use commit::{
     Commit, CommitError, CommitFields, CommitHeader, CommitHeaderRef, CommitPayload, IdentityDate,
     IdentityRef, Signature,
