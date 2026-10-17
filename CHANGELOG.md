@@ -7,7 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.12.1](https://github.com/joshka/girt/compare/girt-v0.12.0...girt-v0.12.1) - 2026-10-17
+## [0.13.0](https://github.com/joshka/girt/compare/girt-v0.12.0...girt-v0.13.0) - 2026-10-17
 
 ### Other
 
