@@ -7,6 +7,62 @@ use std::sync::atomic::AtomicBool;
 use crate::{ObjectFormat, ObjectId, ShallowRoots};
 
 /// Failure acquiring or publishing the shared shallow boundary file.
+///
+/// A fetch that changes the shallow boundaries takes a `shallow.lock` file before installing its
+/// objects, and replaces `.git/shallow` after verifying them, before publishing references. This
+/// error arrives inside [`FetchFinishFailure::Shallow`](super::FetchFinishFailure::Shallow).
+/// `.git/shallow` and every reference are unchanged; the pack is installed only if the failure
+/// came after taking the lock, which the report's `installed` field shows.
+///
+/// - [`Changed`](Self::Changed): another operation changed the shallow boundaries after
+///   [`FetchRequest::prepare`](super::FetchRequest::prepare). Prepare the fetch again.
+/// - [`Read`](Self::Read): the existing `.git/shallow` file is malformed, unreadable or too large.
+///   Inspect it; girt will not replace a file it cannot interpret.
+/// - [`Io`](Self::Io): the lock could not be taken or the file not replaced. An existing
+///   `shallow.lock` usually means another fetch is running; retry once it finishes, or remove the
+///   lock if it was left behind by a crash.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::num::NonZeroU32;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{
+///     FetchFinishFailure, FetchLimits, FetchRequest, FetchShallowError, FetchUpdateLimits,
+///     KnownHistory, LocalFetchObserver,
+/// };
+/// use girt::refs::Reflog;
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+/// # let commit = include!("../doctest/commit.rs");
+/// # let second = commit(&upstream, &[main], "Second commit")?;
+/// # upstream.references()?.update_without_reflog(&girt::refs::RefName::new("refs/heads/main")?, girt::refs::Target::Direct(second), girt::refs::Expected::Value(girt::refs::Target::Direct(main)))?;
+/// // Upstream's `main` has two commits, so a depth-one fetch must publish a shallow boundary,
+/// // but another process holds the shallow lock.
+/// std::fs::write(repo.git_dir().join("shallow.lock"), b"")?;
+///
+/// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+/// let request =
+///     FetchRequest::prepare(repo.clone(), origin.fetch_refspecs().clone(), BTreeSet::new(), Reflog::Preserve)?
+///         .with_depth(NonZeroU32::MIN);
+/// let cancel = AtomicBool::new(false);
+/// let ready = request.receive_local(
+///     upstream.git_dir(),
+///     &KnownHistory::default(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     LocalFetchObserver::default(),
+/// )?;
+/// let error = ready.finish(FetchUpdateLimits::default(), &cancel).unwrap_err();
+/// assert!(matches!(*error.source, FetchFinishFailure::Shallow(FetchShallowError::Io(_))));
+/// // The lock is taken before installation, so nothing was written.
+/// assert!(error.report.installed.is_none());
+/// assert!(repo.references()?.list()?.is_empty(), "no reference was published");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FetchShallowError {

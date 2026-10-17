@@ -125,6 +125,46 @@ pub struct ClonePlan {
 }
 
 /// Advertisement or branch policy rejected before destination creation.
+///
+/// Nothing was created. Most of these are fixed by choosing the branch explicitly:
+///
+/// - [`MissingBranch`](Self::MissingBranch): the requested branch isn't on the remote. Pick one
+///   that is, or use [`BranchSelection::Default`].
+/// - [`MissingHead`](Self::MissingHead): the remote advertises branches but no `HEAD`, so there is
+///   no default. Pass [`BranchSelection::Branch`].
+/// - [`Branch`](Self::Branch): the requested name, or the branch the remote's `HEAD` names, is not
+///   a full `refs/heads/…` name.
+/// - [`SymbolicHead`](Self::SymbolicHead) and [`Mapping`](Self::Mapping): the advertisement is
+///   inconsistent, for example a `HEAD` hint disagreeing with its branch or two references with the
+///   same name. Retrying the same remote gives the same result.
+///
+/// # Examples
+///
+/// ```
+/// use girt::clone::{BranchSelection, ClonePlanError, CloneRequest};
+/// use girt::fetch::{AdvertisedRef, Advertisement, AdvertisementKind};
+/// use girt::refs::{RefName, Reflog};
+/// use girt::{InitKind, ObjectFormat, ObjectKind};
+///
+/// let directory = tempfile::tempdir()?;
+/// let request = CloneRequest::prepare_tracking(
+///     directory.path().join("clone"),
+///     InitKind::Worktree,
+///     b"https://example.com/project.git",
+///     BranchSelection::Default,
+///     Reflog::Preserve,
+/// )?;
+///
+/// // A remote that lists branches but no HEAD has no default branch.
+/// let id = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"tip");
+/// let branch = AdvertisedRef::new(RefName::new("refs/heads/main")?, id, AdvertisementKind::Tip);
+/// let advertisement = Advertisement::new(vec![branch], Vec::new());
+/// assert!(matches!(
+///     request.plan(&advertisement),
+///     Err(ClonePlanError::MissingHead)
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClonePlanError {

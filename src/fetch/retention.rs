@@ -110,6 +110,50 @@ impl FetchRetention {
 }
 
 /// Retained installation failed, possibly after acquiring a marker or publishing pack bytes.
+///
+/// If `retention` is `None`, nothing was written. If it is `Some`, the marker was acquired and
+/// pack files may be partially published; they stay protected until the marker is released.
+/// Inspect the pack directory, then release the marker when the partial installation is no longer
+/// needed.
+///
+/// # Examples
+///
+/// Retained installation refuses a pack that is already installed, because a collector may
+/// already have chosen the old copy for deletion:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::fetch::{FetchLimits, LocalFetchObserver, LocalFetchRequest, receive_local};
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, _, _) = include!("../doctest/remote.rs");
+///
+/// let cancel = AtomicBool::new(false);
+/// let received = receive_local(
+///     upstream.git_dir(),
+///     |advertisement| {
+///         advertisement
+///             .refs
+///             .iter()
+///             .map(|reference| reference.id)
+///             .collect()
+///     },
+///     LocalFetchRequest::new(FetchLimits::default()),
+///     TransportControl::new(&cancel),
+///     LocalFetchObserver::default(),
+/// )?;
+/// received.install(&repo, PackLimits::default(), &cancel)?;
+///
+/// let error = received
+///     .install_retained(&repo, PackLimits::default(), &cancel)
+///     .unwrap_err();
+/// assert!(
+///     error.retention.is_none(),
+///     "refused before acquiring a marker"
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[error("retained fetch installation")]
 #[non_exhaustive]

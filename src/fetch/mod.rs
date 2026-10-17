@@ -665,6 +665,33 @@ impl FetchLimits {
 /// [`ReceivedFetch::install`], or inside a [`FetchFinishError`], installation may have been
 /// partial; see those types.
 ///
+/// # Causes and remedies
+///
+/// The variants fall into four groups, which decide what to do next:
+///
+/// - **The connection or the caller interrupted the transfer.** [`Io`](Self::Io),
+///   [`Http`](Self::Http), [`Ssh`](Self::Ssh), [`Process`](Self::Process),
+///   [`Deadline`](Self::Deadline) and [`Cancelled`](Self::Cancelled). Retrying may succeed; for
+///   SSH, show the diagnostics OpenSSH wrote to standard error.
+/// - **The source sent something girt cannot accept.** [`Protocol`](Self::Protocol),
+///   [`Remote`](Self::Remote) (an error message from the server),
+///   [`Unsupported`](Self::Unsupported), [`Pack`](Self::Pack), [`Missing`](Self::Missing),
+///   [`Kind`](Self::Kind), [`Commit`](Self::Commit), [`Tree`](Self::Tree) and [`Tag`](Self::Tag).
+///   Retrying the same source gives the same result; the source repository or server needs
+///   attention.
+/// - **The request does not fit the source or the limits.** [`Limit`](Self::Limit) (raise that
+///   limit if the source is trusted), [`FormatMismatch`](Self::FormatMismatch) and
+///   [`ObjectFormat`](Self::ObjectFormat) (SHA-1 and SHA-256 repositories cannot exchange objects),
+///   [`Unadvertised`](Self::Unadvertised) (select wants from the current advertisement),
+///   [`Source`](Self::Source) (the path is not a repository) and
+///   [`SourceObjects`](Self::SourceObjects) (often a large source refused by
+///   [`FetchLimits::source_packs`]; use [`crate::PackLimits::trusted`] for repositories you trust).
+/// - **The destination's own storage failed.** [`Destination`](Self::Destination),
+///   [`LocalRead`](Self::LocalRead), [`Index`](Self::Index), [`PackWrite`](Self::PackWrite),
+///   [`Peel`](Self::Peel) and [`Existing`](Self::Existing). Check the destination repository's
+///   files and permissions; [`Existing`](Self::Existing) means a pack with the same name but
+///   different contents is already installed, which needs inspection rather than overwriting.
+///
 /// # Examples
 ///
 /// A local source path that is not a repository is reported as [`FetchError::Source`], which jj
@@ -713,9 +740,16 @@ pub enum FetchError {
     #[error("upload-pack reported an error: {0:?}")]
     Remote(Vec<u8>),
     /// An explicit want was not a non-peeled advertised reference tip.
+    ///
+    /// Wants must come from the advertisement of the same transfer, which the `select` callback
+    /// receives. An ID from an earlier discovery may no longer be advertised.
     #[error("unadvertised want {0}")]
     Unadvertised(ObjectId),
-    /// A resource budget was exhausted.
+    /// A resource budget was exhausted; the message names the [`FetchLimits`] field.
+    ///
+    /// Nothing was installed. If the source is trusted, raise that limit or use
+    /// [`FetchLimits::trusted`]; otherwise the source is asking for more work than the caller
+    /// allows.
     #[error("fetch limit exceeded: {0}")]
     Limit(&'static str),
     /// The cancellation flag was set or the progress callback requested cancellation.
@@ -800,6 +834,9 @@ pub enum FetchError {
     #[error("local upload-pack exited unsuccessfully: {0}")]
     Process(std::process::ExitStatus),
     /// A live object artifact with the same name contains different bytes.
+    ///
+    /// girt never overwrites an installed pack or index. Holds the path of the existing file;
+    /// inspect it, since another writer or a damaged earlier installation produced it.
     #[error("existing pack artifact differs: {0}")]
     Existing(std::path::PathBuf),
 }
