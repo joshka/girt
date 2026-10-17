@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
 use girt::refs::{Dereference, Expected, RefEdit, RefName, References, Reflog, Target};
-use girt::{Config, ObjectId, Repository, Signature};
+use girt::{Config, ObjectId, ObjectKind, Repository, Signature};
 
 use crate::Context;
 use crate::common::{self, display_bytes};
@@ -95,6 +95,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
             message,
         } => {
             let id = common::resolve(&repository, &value)?;
+            check_target(&repository, &references, &name, id)?;
             let expected = match (expect, create_only) {
                 (Some(old), _) => Expected::Value(Target::Direct(parse_id(&old)?)),
                 (None, true) => Expected::Absent,
@@ -126,6 +127,33 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
 fn parse_id(hex: &str) -> Result<ObjectId> {
     hex.parse()
         .map_err(|_| anyhow!("`{hex}` is not a full object ID"))
+}
+
+/// Refuses missing objects, and non-commits for branches (following a symbolic `name`), as Git
+/// does.
+fn check_target(
+    repository: &Repository,
+    references: &References<'_>,
+    name: &str,
+    id: ObjectId,
+) -> Result<()> {
+    let objects = common::objects(repository)?;
+    let object = objects
+        .read(id, common::read_limits())
+        .with_context(|| format!("reading {id}"))?
+        .ok_or_else(|| anyhow!("object {id} does not exist"))?;
+    let destination = references.resolve(&ref_name(name)?, 5).map_or_else(
+        |_| name.as_bytes().to_vec(),
+        |resolution| resolution.name.as_bytes().to_vec(),
+    );
+    if destination.starts_with(b"refs/heads/") && object.kind() != ObjectKind::Commit {
+        bail!(
+            "{} must point at a commit, not a {:?}",
+            display_bytes(&destination),
+            object.kind()
+        );
+    }
+    Ok(())
 }
 
 fn ref_name(name: &str) -> Result<RefName> {

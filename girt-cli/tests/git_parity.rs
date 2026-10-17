@@ -34,6 +34,10 @@ const CASES: &[Case] = &[
         &["cat-file", "-s", "HEAD"],
     ),
     case(&["object", "hash", "a.txt"], &["hash-object", "a.txt"]),
+    case(
+        &["-C", "dir", "object", "hash", "c.txt"],
+        &["-C", "dir", "hash-object", "c.txt"],
+    ),
     Case {
         girt: &["object", "batch"],
         git: &["cat-file", "--batch"],

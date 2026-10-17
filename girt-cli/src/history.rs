@@ -223,8 +223,10 @@ impl<'a> DateOrder<'a> {
             return Ok(None);
         };
         let commit = common::read_commit(self.objects, id)?;
-        for parent in commit.parents() {
-            self.push(*parent)?;
+        if !self.objects.shallow_roots().contains(id) {
+            for parent in commit.parents() {
+                self.push(*parent)?;
+            }
         }
         self.emitted += 1;
         Ok(Some((id, commit)))

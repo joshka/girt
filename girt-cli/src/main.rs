@@ -104,7 +104,13 @@ enum Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let context = Context::new(cli.chdir, cli.git);
+    if let Some(directory) = &cli.chdir
+        && let Err(error) = std::env::set_current_dir(directory)
+    {
+        eprintln!("error: cannot change to {}: {error}", directory.display());
+        return ExitCode::FAILURE;
+    }
+    let context = Context::new(cli.git);
     match run(cli.command, &context) {
         Ok(code) => code,
         Err(error) if is_broken_pipe(&error) => ExitCode::SUCCESS,

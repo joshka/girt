@@ -363,6 +363,9 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
                     .with_context(|| format!("checkout failed after {applied} operations"));
             }
         };
+    if context.git {
+        return Ok(ExitCode::SUCCESS);
+    }
     let count = |action| report.applied.iter().filter(|a| a.action == action).count();
     let mut out = stdout();
     writeln!(

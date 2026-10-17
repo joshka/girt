@@ -20,14 +20,16 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(directory: Option<PathBuf>, git: bool) -> Self {
+    /// `-C` is applied by changing the process directory, so every relative path, including
+    /// file arguments, resolves the way it does under `git -C`.
+    pub fn new(git: bool) -> Self {
         Self {
-            directory: directory.unwrap_or_else(|| PathBuf::from(".")),
+            directory: PathBuf::from("."),
             git,
         }
     }
 
-    /// The directory the command runs in (`-C`, or the current directory).
+    /// The directory the command runs in.
     pub fn directory(&self) -> &Path {
         &self.directory
     }
