@@ -8,6 +8,8 @@
 //! An index records candidate tree entries and cached filesystem metadata. [`Index`] validates
 //! format structure without resolving objects or touching working files. Paths remain bytes;
 //! format validity does not establish checkout safety on any host filesystem.
+//! [`Index::tree_id`] computes the proposed tree identity without reading objects or trusting
+//! caches.
 //!
 //! Intent-to-add, skip-worktree and assume-valid are retained as data; no staging, sparse-checkout
 //! or stat-skipping policy is implemented. Split indexes resolve their immutable shared file on
@@ -49,6 +51,7 @@ mod entries;
 mod sparse;
 mod split;
 mod store;
+mod tree;
 
 pub use codec::{Error, Extension, Index, Limits, Version};
 pub use entries::{Entry, Mode, Stage, Stat, Timestamp};
