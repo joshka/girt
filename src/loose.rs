@@ -547,37 +547,81 @@ impl LooseObjects {
 }
 
 /// A failure to read or publish a loose object.
+///
+/// A wrong-kind refusal means the object exists but the chosen typed operation is unsuitable.
+/// Inspect its kind through [`crate::Objects::read`] before selecting a parser. A loose
+/// [`Self::Io`] with [`std::io::ErrorKind::NotFound`] can mean the object is packed;
+/// [`crate::Objects`] searches both representations. Preserve corruption and other I/O causes
+/// rather than converting them to absence.
+///
+/// ```
+/// use girt::{Error, InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let loose = repo.loose_objects();
+/// let id = loose.write_blob(b"release notes\n")?;
+/// assert!(matches!(
+///     loose.read_commit(id, 4096),
+///     Err(Error::UnsupportedObjectType)
+/// ));
+/// let object = repo
+///     .objects(PackLimits::default())?
+///     .read(id, ReadLimits::default())?
+///     .ok_or("object absent")?;
+/// assert_eq!(object.kind(), ObjectKind::Blob);
+/// assert_eq!(object.data(), b"release notes\n");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     /// An identity or structured object differs from this store's format.
+    /// Use the store format for both requested IDs and structured payloads.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// A filesystem operation failed. Missing loose objects use [`std::io::ErrorKind::NotFound`].
+    /// Inspect the operating-system source. For NotFound, try the combined Objects reader if the
+    /// object may be packed.
     #[error("loose object I/O")]
     Io(#[from] std::io::Error),
     /// A loose object has a different type from the requested operation.
+    /// Choose the typed read matching the stored kind; do not parse a blob as another object.
     #[error("object type does not match the requested operation")]
     UnsupportedObjectType,
     /// The stored header names an unrecognized Git object kind.
+    /// Report unsupported stored framing; ordinary Git object kinds are blob, tree, commit, and
+    /// tag.
     #[error("unrecognized loose object type")]
     UnknownObjectType,
     /// The zlib stream, header, length, or requested identity is invalid.
+    /// Retain the damaged object for diagnosis and recover verified bytes from a trusted source.
     #[error("corrupt loose object: {0}")]
     Corrupt(&'static str),
     /// Decompressed content exceeds the caller's maximum payload size.
+    /// Choose a larger payload budget only after assessing trust and resource cost.
     #[error("object exceeds the size limit")]
     TooLarge,
     /// The verified tree payload cannot be parsed; preserves the underlying parsing failure.
+    /// Inspect the nested tree parser error; storage identity verification did not validate its
+    /// payload.
     #[error("invalid tree payload")]
     Tree(#[from] TreeError),
     /// The verified commit payload cannot be parsed; preserves the underlying cause.
+    /// Inspect the nested commit parser error; recover graph-readable data without inventing
+    /// fields.
     #[error("invalid commit payload")]
     Commit(#[from] CommitError),
     /// The verified tag payload cannot be parsed; preserves the underlying cause.
+    /// Inspect the nested tag parser error and preserve the original bytes.
     #[error("invalid tag payload")]
     Tag(#[from] TagError),
     /// An existing valid object has the same identity but different content.
+    /// Stop publication and inspect both copies. The writer refuses to overwrite an existing
+    /// conflicting object.
     #[error("existing object has different content")]
     ConflictingObject,
 }

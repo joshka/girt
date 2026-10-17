@@ -12,6 +12,33 @@ use crate::{ObjectId, ObjectKind};
 /// The writer verifies `id` against `kind` and `data`. Payload syntax and referenced object
 /// existence are not checked; callers choose the object set and any graph validation. The kind
 /// enum admits only blobs, trees, commits, and tags, never delta or reserved pack types.
+///
+/// Use this borrowed input when exporting a caller-selected set of objects. The ID is an
+/// expectation checked against kind and bytes; it does not ask the writer to fetch data or validate
+/// graph completeness.
+///
+/// ```
+/// use girt::{
+///     ObjectFormat, ObjectId, ObjectKind, PackObject, PackWriteError, PackWriteLimits, write_pack,
+/// };
+/// let input = PackObject {
+///     id: ObjectId::for_blob(ObjectFormat::Sha1, b"original"),
+///     kind: ObjectKind::Blob,
+///     data: b"changed",
+/// };
+/// let (mut pack, mut index) = (Vec::new(), Vec::new());
+/// assert!(matches!(
+///     write_pack(
+///         ObjectFormat::Sha1,
+///         &[input],
+///         &mut pack,
+///         &mut index,
+///         PackWriteLimits::default()
+///     ),
+///     Err(PackWriteError::Identity { .. })
+/// ));
+/// assert!(pack.is_empty() && index.is_empty());
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct PackObject<'a> {
     /// Expected identity, including the canonical Git kind/length header in the hash.
@@ -28,6 +55,28 @@ pub struct PackObject<'a> {
 /// the writer is proportional to that count, plus fixed compression scratch space; payloads are
 /// borrowed and compressed directly to the sink by the ordinary policy. Delta compression adds
 /// the scratch/work bounds documented on [`DeltaOptions`]. These are not total process heap limits.
+///
+/// Select input and output budgets separately: a small object count does not bound payload bytes,
+/// and compressed output can fail after sinks have been touched. Keep artifacts private and discard
+/// both after failure.
+///
+/// ```
+/// use girt::{
+///     ObjectFormat, ObjectId, ObjectKind, PackObject, PackWriteError, PackWriteLimits, write_pack,
+/// };
+/// let input = PackObject {
+///     id: ObjectId::for_blob(ObjectFormat::Sha1, b"large"),
+///     kind: ObjectKind::Blob,
+///     data: b"large",
+/// };
+/// let (mut pack, mut index) = (Vec::new(), Vec::new());
+/// let limits = PackWriteLimits::default().with_max_object_bytes(2);
+/// assert!(matches!(
+///     write_pack(ObjectFormat::Sha1, &[input], &mut pack, &mut index, limits),
+///     Err(PackWriteError::Limit(_))
+/// ));
+/// assert!(pack.is_empty() && index.is_empty());
+/// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct PackWriteLimits {
@@ -110,6 +159,31 @@ impl PackWriteLimits {
 }
 
 /// Completed artifact lengths and identity; no files have been installed by the library.
+///
+/// Inspect this receipt to name and account for the artifacts you just produced. Success is not
+/// installation or reference publication; retain both outputs until a validated publication path
+/// accepts them.
+///
+/// ```
+/// use girt::{ObjectFormat, ObjectId, ObjectKind, PackObject, PackWriteLimits, write_pack};
+/// let input = PackObject {
+///     id: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
+///     kind: ObjectKind::Blob,
+///     data: b"manifest",
+/// };
+/// let (mut bytes, mut index) = (Vec::new(), Vec::new());
+/// let written = write_pack(
+///     ObjectFormat::Sha1,
+///     &[input],
+///     &mut bytes,
+///     &mut index,
+///     PackWriteLimits::default(),
+/// )?;
+/// assert_eq!(written.objects, 1);
+/// assert!(bytes.ends_with(written.checksum.as_bytes()));
+/// assert!(!index.is_empty());
+/// # Ok::<(), girt::PackWriteError>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct PackWritten {
@@ -131,9 +205,11 @@ pub struct PackWritten {
 #[non_exhaustive]
 pub enum PackWriteError {
     /// A supplied identity differs from the selected pack format.
+    /// Select one repository format for all inputs.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// An expected identity does not match the supplied kind and bytes.
+    /// Correct the caller-supplied ID, kind, or bytes; do not bypass hashing.
     #[error("object identity mismatch: expected {expected}, computed {actual}")]
     Identity {
         /// Caller-supplied identity.
@@ -142,12 +218,16 @@ pub enum PackWriteError {
         actual: ObjectId,
     },
     /// Equal identities had different kinds or payloads; no collision recovery is attempted.
+    /// Inspect the conflicting payloads and stop publication; this API offers no collision
+    /// recovery.
     #[error("conflicting input for object {0}")]
     ConflictingDuplicate(ObjectId),
     /// A configured resource bound or representable format limit was exceeded.
+    /// Choose a justified input/output budget and discard both outputs before a fresh attempt.
     #[error("pack writing limit exceeded: {0}")]
     Limit(&'static str),
     /// A destination or compression operation failed; partial artifacts must be discarded.
+    /// Discard both partial artifacts, inspect the source, and use fresh empty sinks when retrying.
     #[error("pack artifact I/O failed")]
     Io(#[from] io::Error),
 }

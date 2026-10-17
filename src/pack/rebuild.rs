@@ -13,6 +13,19 @@ use crate::{ObjectFormat, ObjectId, ObjectReadError};
 /// Every limit applies to the whole pack. The defaults admit packs Git writes with ordinary
 /// settings up to 256 MiB; raise them for larger packs or deeper delta chains (Git's aggressive
 /// repack uses depth 250).
+///
+/// Choose this budget for a full verification and index reconstruction, not a quick header scan.
+/// Even when replacing a tiny index, decoding can visit every pack object and its delta
+/// dependencies.
+///
+/// ```
+/// use girt::pack::IndexRebuildLimits;
+/// let limits = IndexRebuildLimits::default()
+///     .with_max_pack_bytes(32 * 1024 * 1024)
+///     .with_max_decode_bytes(128 * 1024 * 1024)
+///     .with_max_objects(10_000);
+/// assert!(limits.max_decode_bytes > limits.max_pack_bytes); // Reconstruction has its own budget.
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct IndexRebuildLimits {
@@ -114,6 +127,10 @@ impl IndexRebuildLimits {
 }
 
 /// What [`rebuild_index`] did to the index file.
+///
+/// Use this result for reporting whether derived storage changed. An unchanged index does not
+/// establish that some other process has retained the pack; callers still coordinate pack
+/// retirement. See [`rebuild_index`] for a runnable reconstruction workflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IndexRebuildOutcome {
@@ -126,6 +143,10 @@ pub enum IndexRebuildOutcome {
 }
 
 /// The result of a successful [`rebuild_index`].
+///
+/// Inspect the outcome to distinguish derived-data publication from an unchanged index. The pack is
+/// retained in every case; [`IndexRebuildError::Unsynced`] can also carry this receipt after index
+/// publication. See [`rebuild_index`] for a runnable workflow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct IndexRebuilt {
@@ -147,26 +168,35 @@ pub struct IndexRebuilt {
 #[non_exhaustive]
 pub enum IndexRebuildError {
     /// The path does not name a `*.pack` file.
+    /// Select the actual .pack artifact, not an index or a directory.
     #[error("not a .pack path: {0}")]
     NotPack(PathBuf),
     /// The pack uses a version this library does not index; only version 2 is supported.
+    /// Use a supported pack-v2 artifact or a compatible external indexer; retrying unchanged bytes
+    /// will not add support.
     #[error("unsupported pack version {0}")]
     PackVersion(u32),
     /// The pack failed verification: its trailer, an entry, a delta or an identity.
+    /// Retain the original pack for diagnosis and recover a verified copy from a trusted source.
     #[error("pack verification")]
     Corrupt(#[source] ObjectReadError),
     /// A rebuild limit was exhausted.
+    /// Select a justified decoding budget; the pack and old index remain unchanged.
     #[error("index rebuild limit exceeded: {0}")]
     Limit(&'static str),
     /// The cancellation flag was set.
+    /// Make a new cancellation decision before retrying; no new index was published.
     #[error("index rebuild cancelled")]
     Cancelled,
     /// Reading the pack or writing the index failed before publication.
+    /// Inspect the filesystem source; correct access or capacity before a fresh attempt.
     #[error("index rebuild I/O")]
     Io(#[source] io::Error),
     /// The rebuilt index was renamed into place, but syncing the directory failed, so the
     /// rename may not survive a crash. Either index then describes the same pack; retrying is
     /// safe and reports [`IndexRebuildOutcome::Unchanged`] once the new index is in place.
+    /// Inspect the returned receipt: publication already happened. Coordinate with writers before
+    /// retrying durability or rebuilding.
     #[error("rebuilt index published, but the pack directory sync failed")]
     Unsynced {
         /// The published index, as a successful rebuild would have reported it.
@@ -226,6 +256,59 @@ impl From<FetchError> for IndexRebuildError {
 /// at most a `tmp_pack_*` or `tmp_idx_*` file can remain after a crash, which Git ignores.
 /// [`IndexRebuildError::Unsynced`] reports that the new index was published but its directory
 /// entry may not be durable.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::pack::{IndexRebuildLimits, IndexRebuildOutcome, rebuild_index};
+/// use girt::{ObjectFormat, ObjectId, ObjectKind, PackObject, PackWriteLimits, write_pack};
+/// let input = PackObject {
+///     id: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
+///     kind: ObjectKind::Blob,
+///     data: b"manifest",
+/// };
+/// let (mut bytes, mut index) = (Vec::new(), Vec::new());
+/// let written = write_pack(
+///     ObjectFormat::Sha1,
+///     &[input],
+///     &mut bytes,
+///     &mut index,
+///     PackWriteLimits::default(),
+/// )?;
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("private.pack");
+/// std::fs::write(&path, &bytes)?;
+/// let cancel = AtomicBool::new(false);
+/// let report = rebuild_index(
+///     &path,
+///     ObjectFormat::Sha1,
+///     IndexRebuildLimits::default(),
+///     &cancel,
+/// )?;
+/// assert!(report.index.exists());
+/// assert_eq!(report.checksum, written.checksum);
+/// assert_eq!(report.objects, 1);
+/// assert_eq!(report.outcome, IndexRebuildOutcome::Created);
+/// let again = rebuild_index(
+///     &path,
+///     ObjectFormat::Sha1,
+///     IndexRebuildLimits::default(),
+///     &cancel,
+/// )?;
+/// assert_eq!(again.outcome, IndexRebuildOutcome::Unchanged);
+/// // Damage only this private fixture's derived index, then reconstruct it from the pack.
+/// std::fs::write(&report.index, b"damaged index")?;
+/// let repaired = rebuild_index(
+///     &path,
+///     ObjectFormat::Sha1,
+///     IndexRebuildLimits::default(),
+///     &cancel,
+/// )?;
+/// assert_eq!(repaired.outcome, IndexRebuildOutcome::Replaced);
+/// assert_eq!(std::fs::read(&path)?, bytes); // Only derived index data was written.
+///
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn rebuild_index(
     pack: &Path,
     format: ObjectFormat,

@@ -8,13 +8,12 @@
 //!
 //! # Reading and writing packs
 //!
-//! - [`crate::Objects`] opens a bounded snapshot of loose objects and indexed packs. Refresh or
-//!   reopen it to discover packs published after the snapshot was created.
+//! - [`crate::Objects`] retains a bounded snapshot of indexed packs and reads loose objects live.
+//!   Refresh or reopen it to discover packs published after the snapshot was created.
 //! - [`write_pack`] builds a pack and index from explicit [`PackObject`] values. The caller owns
 //!   installation; writing the artifacts does not update a repository or its references.
 //! - [`write_pack_with_compression`] optionally searches for deltas under [`DeltaOptions`].
 //!   [`PackWriteLimits`] bounds the work and output; [`PackWritten`] describes the result.
-//!
 //! - [`rebuild_index`] regenerates a damaged or missing `.idx` from its `.pack` and replaces it
 //!   atomically.
 //!
