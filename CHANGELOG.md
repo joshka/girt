@@ -7,6 +7,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/joshka/girt/compare/girt-v0.10.3...girt-v0.11.0) - 2026-10-17
+
+### Other
+
+- Honor CLI color settings and style human output ([#379](https://github.com/joshka/girt/pull/379))
+- Support SSH remotes in the CLI ([#361](https://github.com/joshka/girt/pull/361))
+- Parse and resolve Git revisions and ranges ([#369](https://github.com/joshka/girt/pull/369))
+- [**breaking**] pass approved SSH arguments as OsString ([#351](https://github.com/joshka/girt/pull/351))
+- [**breaking**] stop exporting the loose-object error as girt::Error ([#350](https://github.com/joshka/girt/pull/350))
+- [**breaking**] name options setters with the with_ prefix ([#349](https://github.com/joshka/girt/pull/349))
+- Keep every live pack index reusable, however many packs are open ([#370](https://github.com/joshka/girt/pull/370))
+- Show live CLI operation progress ([#373](https://github.com/joshka/girt/pull/373))
+- Support abbreviated object IDs in the library and CLI ([#359](https://github.com/joshka/girt/pull/359))
+- Compute tree identities from Git index entries ([#345](https://github.com/joshka/girt/pull/345))
+- Simplify the first-read docs with RefName::HEAD, Repository::head and Objects::read_commit ([#356](https://github.com/joshka/girt/pull/356))
+- Support disposable index cache extensions ([#358](https://github.com/joshka/girt/pull/358))
+- Polish the girt CLI: color-eyre, tracing, colored help, publishing and a site page ([#362](https://github.com/joshka/girt/pull/362))
+- Give ObjectKind its home in the object module ([#353](https://github.com/joshka/girt/pull/353))
+- Publish SSH fixture PID atomically ([#346](https://github.com/joshka/girt/pull/346))
+- Pair unique basenames before rename limits ([#348](https://github.com/joshka/girt/pull/348))
+- Distinguish status byte limit failures ([#347](https://github.com/joshka/girt/pull/347))
+- Deduplicate native local fetch wants ([#344](https://github.com/joshka/girt/pull/344))
+- Add a girt command-line tool with Git-compatible output ([#355](https://github.com/joshka/girt/pull/355))
+- cancel superseded validation runs ([#340](https://github.com/joshka/girt/pull/340))
+- Fix main validation regressions ([#343](https://github.com/joshka/girt/pull/343))
+
 ### Added
 
 - `girt::object::ObjectKind` is the canonical path for object kinds, beside `ObjectId` and
