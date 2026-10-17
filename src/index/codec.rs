@@ -1058,6 +1058,9 @@ pub(super) fn validate_entries(
             }
         }
     }
+    // Each ancestor directory with the stages recorded at its exact path, as a file would be.
+    let mut ancestors: Vec<(usize, u8)> = Vec::new();
+    let mut previous: &[u8] = &[];
     for (position, entry) in entries.iter().enumerate() {
         if entry.mode == Mode::SparseDirectory
             && entries
@@ -1066,27 +1069,50 @@ pub(super) fn validate_entries(
         {
             return Err(entry_error(position, "sparse directory overlaps entries"));
         }
-        // Search each proper path prefix in the sorted entry set. Only up to four records share
-        // a name, so conflicts remain bounded without building a second path tree.
-        for (slash, _) in entry.path.iter().enumerate().filter(|(_, b)| **b == b'/') {
+        // Paths below one directory are adjacent in sorted order, so search the entry set for
+        // each proper path prefix once, when the first path below it appears. Only up to four
+        // records share a name, so conflicts remain bounded without building a second path tree.
+        let common = previous
+            .iter()
+            .zip(&entry.path)
+            .take_while(|(a, b)| a == b)
+            .count();
+        while ancestors.last().is_some_and(|(slash, _)| *slash >= common) {
+            ancestors.pop();
+        }
+        let from = ancestors.last().map_or(0, |(slash, _)| slash + 1);
+        for (slash, _) in entry
+            .path
+            .iter()
+            .enumerate()
+            .skip(from)
+            .filter(|(_, b)| **b == b'/')
+        {
             let prefix = entry.path.get(..slash).unwrap_or_default();
             let start = entries.partition_point(|candidate| candidate.path.as_slice() < prefix);
-            for ancestor in entries
+            let stages = entries
                 .get(start..)
                 .unwrap_or_default()
                 .iter()
                 .take_while(|candidate| candidate.path == prefix)
+                .fold(0, |stages, candidate| stages | stage_bit(candidate.stage));
+            ancestors.push((slash, stages));
+        }
+        for (_, stages) in &ancestors {
+            if *stages != 0
+                && (stages & (stage_bit(entry.stage) | stage_bit(Stage::Normal)) != 0
+                    || entry.stage == Stage::Normal)
             {
-                if ancestor.stage == entry.stage
-                    || ancestor.stage == Stage::Normal
-                    || entry.stage == Stage::Normal
-                {
-                    return Err(entry_error(position, "file/directory collision in a stage"));
-                }
+                return Err(entry_error(position, "file/directory collision in a stage"));
             }
         }
+        previous = &entry.path;
     }
     Ok(())
+}
+
+fn stage_bit(stage: Stage) -> u8 {
+    1 << stage as u8
 }
 
 #[expect(

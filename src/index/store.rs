@@ -355,6 +355,80 @@ impl Repository {
         self.read_index_path(self.git_dir().join("index"), limits, true)
     }
 
+    /// Reads this worktree's index as [`Self::read_index`] does, plus the modification time, in
+    /// whole seconds, of the very file the bytes came from.
+    ///
+    /// The time comes from the open file, before reading, so a concurrent replacement cannot pair
+    /// one file's bytes with another file's time. It is `None` when the index is absent or the
+    /// file's identity, size or times changed during the read.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn read_index_timed(
+        &self,
+        limits: Limits,
+    ) -> Result<(Option<Index>, Option<i64>), StorageError> {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let path = self.git_dir().join("index");
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() => (),
+            Ok(_) => return Err(StorageError::NotRegular(path)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((None, None)),
+            Err(source) => return Err(io_error("inspect index", &path, source)),
+        }
+        let file = File::open(&path).map_err(|source| io_error("open index", &path, source))?;
+        let before = file
+            .metadata()
+            .map_err(|source| io_error("inspect index", &path, source))?;
+        if !before.is_file() {
+            return Err(StorageError::NotRegular(path));
+        }
+        let mut bytes = Vec::new();
+        let limit = (limits.max_bytes as u64).saturating_add(1);
+        (&file)
+            .take(limit)
+            .read_to_end(&mut bytes)
+            .map_err(|source| io_error("read index", &path, source))?;
+        if bytes.len() > limits.max_bytes {
+            return Err(StorageError::Format {
+                path,
+                source: Error::Limit("bytes"),
+            });
+        }
+        let after = file
+            .metadata()
+            .map_err(|source| io_error("inspect index", &path, source))?;
+        let unchanged = (before.dev(), before.ino(), before.size())
+            == (after.dev(), after.ino(), after.size())
+            && (before.mtime(), before.mtime_nsec()) == (after.mtime(), after.mtime_nsec())
+            && (before.ctime(), before.ctime_nsec()) == (after.ctime(), after.ctime_nsec())
+            && bytes.len() as u64 == after.size();
+        let (index, _) = parse_storage(self.object_format(), &path, &bytes, limits, true)?;
+        Ok((Some(index), unchanged.then_some(before.mtime())))
+    }
+
+    /// Whether this worktree's index is still exactly what `index` was read from.
+    ///
+    /// Compares the file's bytes with the encoding `index` retained, which costs a read rather
+    /// than a parse. An index without a retained encoding, or a split index (whose shared file
+    /// could change separately), is reread and compared entry by entry instead.
+    pub(crate) fn index_unchanged(
+        &self,
+        index: Option<&Index>,
+        limits: Limits,
+    ) -> Result<bool, StorageError> {
+        if let Some(index) = index
+            && let Some(original) = &index.original
+            && !index
+                .extensions
+                .iter()
+                .any(|extension| extension.signature == *b"link")
+        {
+            let current = read_bytes(&self.git_dir().join("index"), limits)?;
+            return Ok(current.is_some_and(|bytes| bytes == *original));
+        }
+        Ok(self.read_index(limits)?.as_ref() == index)
+    }
+
     /// Reads a caller-selected standalone index, returning `None` when absent.
     ///
     /// Relative paths resolve once against the process current directory, not the Git directory.

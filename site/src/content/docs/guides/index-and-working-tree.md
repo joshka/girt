@@ -180,9 +180,9 @@ for an explicit tree; `None` means empty. An unborn HEAD also means an empty bas
 
 `Report` keeps staged changes, unstaged changes, unresolved entries, unchecked gitlinks, raw
 untracked leaves and nested-repository boundaries separate. An empty unstaged list does not
-establish that submodules are clean. Neither stat-cache equality nor assume-valid bypasses content
-verification. Status never refreshes or writes the index, runs hooks, stages files, or detects
-renames.
+establish that submodules are clean. As in Git, a file whose stat data matches the index and was not
+modified around the time the index was written is not read; assume-valid is ignored. Status never
+refreshes or writes the index, runs hooks, stages files, or detects renames.
 
 `Untracked::Omit` avoids unrelated traversal. `RawFilesWithoutIgnores` lists raw leaves without
 reading their contents, including ignored names; empty directories are omitted. To hide ignored

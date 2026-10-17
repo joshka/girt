@@ -7,8 +7,10 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use girt::index::{Entry, Index, Mode, Stage};
-use girt::status::{Baseline, Change, Comparison, Error, Limits, Report, Untracked};
+use girt::index::{Entry, Index, Mode, Stage, Stat, Timestamp};
+use girt::status::{
+    Baseline, Change, Comparison, Error, Limits, Report, Untracked, WorktreeChange,
+};
 use girt::{InitKind, ObjectFormat, ObjectId, Repository};
 use rstest::rstest;
 
@@ -440,32 +442,28 @@ fn invalid_index_is_an_error_without_writes() {
 }
 
 #[test]
-fn missing_index_blob_is_an_error_even_when_working_file_is_missing() {
+fn missing_index_blob_is_not_read_when_working_file_is_missing() {
     let (_temp, repo) = fixture();
-    let index = Index::new(
-        girt::ObjectFormat::Sha1,
-        vec![Entry::new(
-            b"file".to_vec(),
-            Mode::Regular,
-            ObjectId::for_blob(girt::ObjectFormat::Sha1, b"absent"),
-        )],
-        Default::default(),
-    )
-    .unwrap();
-    fs::write(
-        repo.git_dir().join("index"),
-        index.encode(Default::default()).unwrap(),
-    )
-    .unwrap();
-    assert!(matches!(
-        repo.raw_status_with(
-            Baseline::Head,
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"absent");
+    write_index(&repo, vec![Entry::new(b"file".to_vec(), Mode::Regular, id)]);
+    let result = repo
+        .raw_status_with(
+            Baseline::Tree(None),
             Untracked::Omit,
             Limits::default(),
-            &AtomicBool::new(false)
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(matches!(result.unstaged[0].change, Change::Deleted));
+    assert_eq!(result.unstaged[0].index.id, id);
+    // Git does not read index blobs for status either.
+    assert_eq!(
+        git(
+            repo.worktree().unwrap(),
+            &["status", "--porcelain=v1", "-z", "--untracked-files=no"]
         ),
-        Err(Error::InvalidObject { .. })
-    ));
+        b"AD file\0"
+    );
 }
 
 #[test]
@@ -522,52 +520,164 @@ fn separate_gitdir_inside_worktree_is_a_boundary() {
 }
 
 #[test]
-fn wrong_kind_index_object_is_an_error() {
+fn index_identity_is_compared_without_reading_its_object() {
     let (_temp, repo) = fixture();
     let tree = girt::Tree::new(girt::ObjectFormat::Sha1, vec![]).unwrap();
     let id = repo.loose_objects().write_tree(&tree).unwrap();
-    let index = Index::new(
-        girt::ObjectFormat::Sha1,
-        vec![Entry::new(b"file".to_vec(), Mode::Regular, id)],
-        Default::default(),
-    )
-    .unwrap();
-    fs::write(
-        repo.git_dir().join("index"),
-        index.encode(Default::default()).unwrap(),
-    )
-    .unwrap();
-    assert!(matches!(
-        repo.raw_status_with(
+    write_index(&repo, vec![Entry::new(b"file".to_vec(), Mode::Regular, id)]);
+    fs::write(repo.worktree().unwrap().join("file"), b"content").unwrap();
+    let result = repo
+        .raw_status_with(
             Baseline::Tree(None),
             Untracked::Omit,
             Limits::default(),
-            &AtomicBool::new(false)
-        ),
-        Err(Error::InvalidObject {
-            reason: "wrong object kind",
-            ..
-        })
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(matches!(
+        result.unstaged[0].change,
+        Change::Modified(value) if value.id == ObjectId::for_blob(girt::ObjectFormat::Sha1, b"content")
     ));
 }
 
 #[test]
-fn corrupt_object_is_not_hidden_by_equal_working_content() {
+fn corrupt_index_blob_does_not_affect_equal_working_content() {
     let (_temp, repo) = fixture();
     seed(&repo, Some(b"old"), Some(b"old"), Some(b"old"));
     let hex = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"old").to_string();
     let path = repo.object_dir().join(&hex[..2]).join(&hex[2..]);
     fs::remove_file(&path).unwrap();
     fs::write(path, b"corrupt").unwrap();
-    assert!(matches!(
-        repo.raw_status_with(
-            Baseline::Head,
+    let result = status(&repo);
+    assert!(result.unstaged.is_empty());
+    assert!(
+        git(
+            repo.worktree().unwrap(),
+            &["status", "--porcelain=v1", "-z", "--untracked-files=no"]
+        )
+        .is_empty()
+    );
+}
+
+/// Replaces the index with these entries, bypassing girt's racy-entry smudging.
+fn write_index(repo: &Repository, entries: Vec<Entry>) {
+    let index = Index::new(girt::ObjectFormat::Sha1, entries, Default::default()).unwrap();
+    fs::write(
+        repo.git_dir().join("index"),
+        index.encode(Default::default()).unwrap(),
+    )
+    .unwrap();
+}
+
+/// The stat words Git caches for `path`, read with `lstat`.
+fn cached_stat(path: &Path) -> Stat {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = fs::symlink_metadata(path).unwrap();
+    let time = |seconds: i64, nanoseconds: i64| Timestamp {
+        seconds: seconds as u32,
+        nanoseconds: nanoseconds as u32,
+    };
+    Stat {
+        ctime: time(metadata.ctime(), metadata.ctime_nsec()),
+        mtime: time(metadata.mtime(), metadata.mtime_nsec()),
+        device: metadata.dev() as u32,
+        inode: metadata.ino() as u32,
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+        size: metadata.size() as u32,
+    }
+}
+
+fn set_mtime(path: &Path, time: std::time::SystemTime) {
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(time)
+        .unwrap();
+}
+
+/// Makes every cached entry racily clean, so status must read each file.
+fn make_racy(repo: &Repository) {
+    set_mtime(
+        &repo.git_dir().join("index"),
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(1),
+    );
+}
+
+/// When the index was written relative to the file's cached times.
+#[derive(Clone, Copy, Debug)]
+enum Written {
+    /// At the file's mtime: racily clean.
+    SameAsMtime,
+    /// After the mtime but before the ctime: Git trusts the entry, girt reads it.
+    BeforeCtime,
+    /// After both times: the cached words are trusted.
+    Later,
+}
+
+#[rstest]
+#[case::racy_mtime(Written::SameAsMtime, Mode::Regular, false, true)]
+#[case::racy_ctime(Written::BeforeCtime, Mode::Regular, false, true)]
+#[case::trusted(Written::Later, Mode::Regular, false, false)]
+#[case::smudged_size(Written::Later, Mode::Regular, true, true)]
+#[case::mode_differs(Written::Later, Mode::Executable, false, true)]
+fn matching_stat_words_are_trusted_unless_racy(
+    #[case] written: Written,
+    #[case] mode: Mode,
+    #[case] smudged: bool,
+    #[case] read: bool,
+) {
+    let (_temp, repo) = fixture();
+    let file = repo.worktree().unwrap().join("file");
+    fs::write(&file, b"actual").unwrap();
+    let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    set_mtime(&file, old);
+    let mut stat = cached_stat(&file);
+    if smudged {
+        stat.size = 0;
+    }
+    // The cached identity names other content, as an index with a racily clean entry can.
+    let cached = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"cached");
+    write_index(
+        &repo,
+        vec![Entry::new(b"file".to_vec(), mode, cached).with_stat(stat)],
+    );
+    let index_time = match written {
+        Written::SameAsMtime => old,
+        Written::BeforeCtime => old + std::time::Duration::from_secs(10),
+        Written::Later => std::time::SystemTime::now() + std::time::Duration::from_secs(10),
+    };
+    set_mtime(&repo.git_dir().join("index"), index_time);
+    let result = repo
+        .raw_status_with(
+            Baseline::Tree(None),
             Untracked::Omit,
             Limits::default(),
-            &AtomicBool::new(false)
-        ),
-        Err(Error::Object { .. })
-    ));
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    if read {
+        assert!(matches!(
+            result.unstaged[..],
+            [WorktreeChange { change: Change::Modified(value), .. }]
+                if value.id == ObjectId::for_blob(girt::ObjectFormat::Sha1, b"actual")
+        ));
+    } else {
+        assert!(result.unstaged.is_empty());
+    }
+    let git_status = git(
+        repo.worktree().unwrap(),
+        &["status", "--porcelain=v1", "-z", "--untracked-files=no"],
+    );
+    // Git compares only the mtime against the index time, so it trusts the ctime case.
+    let git_reads = read && !matches!(written, Written::BeforeCtime);
+    let expected: &[u8] = if git_reads {
+        b"AM file\0"
+    } else {
+        b"A  file\0"
+    };
+    assert_eq!(git_status, expected);
 }
 
 #[test]
@@ -593,7 +703,8 @@ fn missing_baseline_tree_is_not_an_empty_tree() {
 #[case::index_bytes(Limits::default().with_index(girt::index::Limits::default().with_max_bytes(0)))]
 fn workflow_enforces_composed_resource_bounds(#[case] limits: Limits) {
     let (_temp, repo) = fixture();
-    seed(&repo, Some(b"old"), Some(b"old"), Some(b"old"));
+    // A staged change makes the baseline tree differ from the index, so it must be read.
+    seed(&repo, Some(b"old"), Some(b"new"), Some(b"new"));
     assert!(
         repo.raw_status_with(
             Baseline::Head,
@@ -697,6 +808,7 @@ fn distinguishes_worktree_and_file_byte_limits(
     git(root, &["add", "a", "b"]);
     git(root, &["commit", "-qm", "Original five-byte entries"]);
     assert!(git(root, &["status", "--porcelain=v1", "--untracked-files=no"]).is_empty());
+    make_racy(&repo);
     let result = repo.raw_status_with(
         Baseline::Head,
         Untracked::Omit,

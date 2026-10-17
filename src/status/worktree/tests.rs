@@ -6,6 +6,7 @@ use rstest::rstest;
 
 use super::*;
 use crate::InitKind;
+use crate::status::Change;
 
 fn fixture(path: &[u8], content: &[u8]) -> (tempfile::TempDir, Repository, Vec<index::Entry>) {
     let temp = tempfile::tempdir().unwrap();
@@ -34,6 +35,7 @@ fn observe(
         repo,
         repo.worktree().unwrap(),
         entries,
+        None,
         Listing::Raw(Untracked::Omit),
         limits,
         &AtomicBool::new(false),
@@ -186,10 +188,11 @@ fn reports_change_observed_after_content_read() {
         &repo,
         root,
         &entries,
+        None,
         Listing::Raw(Untracked::Omit),
         Limits::default(),
         &AtomicBool::new(false),
-        &mut |_| fs::write(root.join("file"), b"different").unwrap(),
+        &|_| fs::write(root.join("file"), b"different").unwrap(),
     );
     assert!(matches!(result, Err(Error::Changed(path)) if path == b"file"));
 }
@@ -207,10 +210,11 @@ fn reports_directory_mutation_during_scan() {
         &repo,
         root,
         &entries,
+        None,
         Listing::Raw(Untracked::Omit),
         Limits::default(),
         &AtomicBool::new(false),
-        &mut |_| fs::write(root.join("new-file"), b"new").unwrap(),
+        &|_| fs::write(root.join("new-file"), b"new").unwrap(),
     );
     assert!(matches!(result, Err(Error::Changed(path)) if path.is_empty()));
 }
@@ -223,10 +227,11 @@ fn cancellation_during_read_returns_no_partial_report() {
         &repo,
         repo.worktree().unwrap(),
         &entries,
+        None,
         Listing::Raw(Untracked::Omit),
         Limits::default(),
         &cancel,
-        &mut |_| cancel.store(true, Ordering::Relaxed),
+        &|_| cancel.store(true, Ordering::Relaxed),
     );
     assert!(matches!(result, Err(Error::Cancelled)));
 }
@@ -246,6 +251,7 @@ fn skips_nested_repository_and_bare_metadata() {
         &repo,
         root,
         &entries,
+        None,
         Listing::Raw(Untracked::RawFilesWithoutIgnores),
         Limits::default(),
         &AtomicBool::new(false),
@@ -303,10 +309,11 @@ fn replaced_parent_is_detected_without_following_new_symlink() {
         &repo,
         root,
         &entries,
+        None,
         Listing::Raw(Untracked::Omit),
         Limits::default(),
         &AtomicBool::new(false),
-        &mut |_| {
+        &|_| {
             fs::rename(root.join("dir"), temp.path().join("moved")).unwrap();
             symlink(repo.git_dir(), root.join("dir")).unwrap();
         },
@@ -373,4 +380,47 @@ fn tracked_only_obstruction_does_not_descend_into_directory() {
             path: b"file".to_vec()
         }
     );
+}
+
+#[rstest]
+#[case::at_limit(b"*.log\n".as_slice(), true)]
+#[case::over_limit(b"*.log\n*.tmp\n".as_slice(), false)]
+fn shared_pattern_budget_admits_exactly_the_limit(#[case] gitignore: &[u8], #[case] ok: bool) {
+    let (_temp, repo, entries) = fixture(b"file", b"old");
+    let root = repo.worktree().unwrap();
+    fs::write(root.join(".gitignore"), gitignore).unwrap();
+    let rules = Ignore::new(
+        crate::ignore::Case::Sensitive,
+        crate::ignore::Limits::default().with_patterns(1),
+    );
+    let result = scan(
+        &repo,
+        root,
+        &entries,
+        None,
+        Listing::Ignoring(Box::new(rules), UntrackedFiles::All),
+        Limits::default(),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.is_ok(), ok, "{:?}", result.err());
+}
+
+#[test]
+fn directory_names_are_charged_while_they_are_read() {
+    let (_temp, repo, entries) = fixture(b"file", b"old");
+    let root = repo.worktree().unwrap();
+    for n in 0..64 {
+        fs::write(root.join(format!("untracked-{n:02}")), b"").unwrap();
+    }
+    // Untracked names are never listed here, but reading them still costs the entry budget.
+    let result = scan(
+        &repo,
+        root,
+        &entries,
+        None,
+        Listing::Raw(Untracked::Omit),
+        Limits::default().with_max_directory_entries(8),
+        &AtomicBool::new(false),
+    );
+    assert!(matches!(result, Err(Error::Limit("directory entries"))));
 }
