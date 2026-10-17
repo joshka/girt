@@ -2,8 +2,9 @@
 //!
 //! Git stores paths as bytes and dates as seconds with a zone offset. Its commands print them in
 //! fixed text forms: [`quote_path`] matches path output under the default `core.quotePath=true`,
-//! and [`IdentityDate::format`] matches `--date=default` and `--date=iso`. These are for output
-//! that people or Git-compatible tools read; storage and comparison keep the raw values.
+//! and [`IdentityRef::format_date`](crate::IdentityRef::format_date) matches recorded dates in
+//! `--date=default` and `--date=iso`. [`IdentityDate::format`] formats numeric dates. These are for
+//! output that people or Git-compatible tools read; storage and comparison keep the raw values.
 //!
 //! Related renderings live with their values: [`EntryMode::octal`](crate::EntryMode::octal),
 //! [`EntryMode::object_kind`](crate::EntryMode::object_kind),
@@ -89,16 +90,27 @@ pub enum DateFormat {
     Iso,
 }
 
-/// A date that displays in a Git `--date` format; see [`IdentityDate::format`].
+/// A date in a Git `--date` layout, produced by [`IdentityDate::format`] or
+/// [`IdentityRef::format_date`](crate::IdentityRef::format_date).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FormattedDate {
     date: IdentityDate,
     format: DateFormat,
+    recorded_zone: Option<i32>,
 }
 
 impl FormattedDate {
     pub(crate) fn new(date: IdentityDate, format: DateFormat) -> Self {
-        Self { date, format }
+        Self {
+            date,
+            format,
+            recorded_zone: None,
+        }
+    }
+
+    pub(crate) fn with_recorded_zone(mut self, hhmm: i32) -> Self {
+        self.recorded_zone = Some(hhmm);
+        self
     }
 }
 
@@ -115,18 +127,25 @@ impl fmt::Display for FormattedDate {
         let time = local.rem_euclid(86_400);
         let (year, month, day) = civil_from_days(days);
         let (hour, minute, second) = (time / 3600, time / 60 % 60, time % 60);
-        let sign = if offset < 0 { '-' } else { '+' };
-        let zone = offset.unsigned_abs();
-        let (zone_hours, zone_minutes) = (zone / 60, zone % 60);
+        let hhmm = self
+            .recorded_zone
+            .map_or(offset / 60 * 100 + offset % 60, i128::from);
+        let sign = if hhmm < 0 { '-' } else { '+' };
+        let zone = hhmm.unsigned_abs();
+        let (zone_hours, zone_minutes) = (zone / 100, zone % 100);
         match self.format {
             DateFormat::Default => {
                 let weekday = WEEKDAYS[usize::try_from(days.rem_euclid(7)).unwrap_or(0)];
                 let month = MONTHS[usize::try_from(month - 1).unwrap_or(0)];
                 write!(
                     f,
-                    "{weekday} {month} {day} {hour:02}:{minute:02}:{second:02} {year} \
-                     {sign}{zone_hours:02}{zone_minutes:02}"
-                )
+                    "{weekday} {month} {day} {hour:02}:{minute:02}:{second:02} {year}"
+                )?;
+                // Git's default presentation treats numeric HHMM -1 as an absent zone.
+                if self.recorded_zone == Some(-1) {
+                    return Ok(());
+                }
+                write!(f, " {sign}{zone_hours:02}{zone_minutes:02}")
             }
             DateFormat::Iso => write!(
                 f,
@@ -179,6 +198,12 @@ mod tests {
     // Expected values observed with `git log --date=default` and `--date=iso` (Git 2.56).
     #[rstest]
     #[case::epoch(0, 0, "Thu Jan 1 00:00:00 1970 +0000", "1970-01-01 00:00:00 +0000")]
+    #[case::numeric_ninety_minutes(
+        0,
+        90,
+        "Thu Jan 1 01:30:00 1970 +0130",
+        "1970-01-01 01:30:00 +0130"
+    )]
     #[case::half_hour(
         1_700_000_000,
         330,

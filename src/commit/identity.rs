@@ -54,17 +54,17 @@ pub struct IdentityDate {
 }
 
 impl IdentityDate {
-    /// Renders this date as Git prints it with `--date=default` or `--date=iso`.
+    /// Renders this numeric date in Git's `--date=default` or `--date=iso` layout.
     ///
     /// The zone prints as `±HHMM` from [`offset_minutes`](Self::offset_minutes). This replaces
     /// hand-written calendar arithmetic over [`seconds`](Self::seconds) and
     /// [`offset_minutes`](Self::offset_minutes), which remain the explicit values.
     ///
-    /// Two inputs differ from Git 2.56. A recorded zone with 60 or more in its minute digits,
-    /// such as `+0090`, shifts the local time by its arithmetic value in both, but prints
-    /// canonically as `+0130` here while Git echoes the recorded `+0090`. Git refuses local times
-    /// before 1970, which this renders as exact proleptic Gregorian dates. Both are tracked in
-    /// [#422](https://github.com/joshka/girt/issues/422).
+    /// This is deliberately a numeric formatter: it canonicalizes offsets (`+0090` becomes
+    /// `+0130`) and renders pre-epoch local times as proleptic Gregorian dates. It cannot recover
+    /// recorded zone digits from an interpreted offset. Use [`IdentityRef::format_date`] when
+    /// displaying imported identities with Git's zone and pre-epoch policy. This distinction is
+    /// the resolution of [#422](https://github.com/joshka/girt/issues/422).
     ///
     /// ```
     /// use girt::IdentityRef;
@@ -155,6 +155,10 @@ impl<'a> IdentityRef<'a> {
     /// # Ok::<(), girt::CommitError>(())
     /// ```
     pub fn date(self) -> Result<IdentityDate, CommitError> {
+        self.date_parts().map(|(date, _)| date)
+    }
+
+    fn date_parts(self) -> Result<(IdentityDate, i32), CommitError> {
         let bytes = self.date_bytes.trim_ascii_start();
         let (seconds, zone) = signed_decimal(bytes).ok_or(CommitError::InvalidDate)?;
         let seconds = std::str::from_utf8(seconds)
@@ -175,10 +179,54 @@ impl<'a> IdentityRef<'a> {
             .and_then(|v| v.checked_add(hhmm % 100))
             .and_then(|v| i16::try_from(v).ok())
             .ok_or(CommitError::InvalidDate)?;
-        Ok(IdentityDate {
-            seconds,
-            offset_minutes: minutes,
-        })
+        Ok((
+            IdentityDate {
+                seconds,
+                offset_minutes: minutes,
+            },
+            hhmm,
+        ))
+    }
+
+    /// Formats an imported date with Git's recorded zone and local-epoch policy.
+    ///
+    /// Unlike [`IdentityDate::format`], this preserves the numeric HHMM zone: `+0090` shifts
+    /// the time by 90 minutes and prints `+0090`. Leading zeroes beyond four digits and negative
+    /// zero are normalized, as in `git log --format=%ad --date=default/iso` (Git 2.56).
+    /// Default output omits the zone for recorded `-0001`, as Git does; ISO output includes it.
+    /// Calendar arithmetic remains exact across the supported `i64` seconds range; Git's
+    /// platform-dependent extreme-year wrapping and overflow fallback are not reproduced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommitError::InvalidDate`] for the interpretation failures in [`Self::date`]
+    /// (including offsets outside `i16` minutes), signed seconds spellings, or a local time
+    /// before 1970-01-01. Git prints an empty date for signed seconds; this API explicitly
+    /// refuses them. No formatted value is returned on failure.
+    ///
+    /// ```
+    /// use girt::IdentityRef;
+    /// use girt::display::DateFormat;
+    /// let identity = IdentityRef::parse(b"A <a@example.com> 0 +0090")?;
+    /// assert_eq!(
+    ///     identity.format_date(DateFormat::Iso)?.to_string(),
+    ///     "1970-01-01 01:30:00 +0090"
+    /// );
+    /// # Ok::<(), girt::CommitError>(())
+    /// ```
+    pub fn format_date(self, format: DateFormat) -> Result<FormattedDate, CommitError> {
+        if matches!(
+            self.date_bytes.trim_ascii_start().first(),
+            Some(b'+' | b'-')
+        ) {
+            return Err(CommitError::InvalidDate);
+        }
+        let (date, hhmm) = self.date_parts()?;
+        let local = i128::from(date.seconds) + i128::from(date.offset_minutes) * 60;
+        if local < 0 {
+            return Err(CommitError::InvalidDate);
+        }
+        Ok(FormattedDate::new(date, format).with_recorded_zone(hhmm))
     }
 
     /// Copies identity bytes and interprets the date for explicit construction.
@@ -214,6 +262,31 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::west_of_epoch(b"0 -0001")]
+    #[case::one_second_before(b"59 -0001")]
+    #[case::negative_instant(b"-1 +0000")]
+    #[case::negative_instant_positive_local(b"-60 +0100")]
+    #[case::plus_seconds(b"+5 +0000")]
+    #[case::offset_overflow(b"1 +60000")]
+    #[case::malformed(b"unknown")]
+    fn refuses_unformattable_imported_dates(#[case] bytes: &[u8]) {
+        let identity = IdentityRef {
+            name: b"A",
+            email: b"a",
+            date_bytes: bytes,
+        };
+        assert!(matches!(
+            identity.format_date(DateFormat::Default),
+            Err(CommitError::InvalidDate)
+        ));
+        assert!(matches!(
+            identity.format_date(DateFormat::Iso),
+            Err(CommitError::InvalidDate)
+        ));
+        assert_eq!(identity.date_bytes, bytes);
+    }
 
     #[rstest]
     #[case::pre_epoch(b"-1 +0000", -1, 0)]
