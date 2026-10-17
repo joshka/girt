@@ -52,7 +52,7 @@ impl References<'_> {
     /// )?;
     /// let observation = repo
     ///     .references()?
-    ///     .read_observation_following_leaf_symlinks(&RefName::new("HEAD")?, 32, 64 * 1024)?;
+    ///     .read_observation_following_leaf_symlinks(&RefName::HEAD, 32, 64 * 1024)?;
     /// assert!(observation.is_some());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

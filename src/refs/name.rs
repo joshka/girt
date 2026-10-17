@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 /// An owned, byte-preserving full reference name, or `HEAD`.
 ///
 /// Accepts `refs/…` names following Git's check-ref-format rules, without normalization or
@@ -19,7 +21,7 @@
 /// # Ok::<(), girt::refs::InvalidRefName>(())
 /// ```
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct RefName(Vec<u8>);
+pub struct RefName(Cow<'static, [u8]>);
 
 impl AsRef<[u8]> for RefName {
     fn as_ref(&self) -> &[u8] {
@@ -28,6 +30,15 @@ impl AsRef<[u8]> for RefName {
 }
 
 impl RefName {
+    /// The `HEAD` reference, which names the current branch or a detached commit.
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// assert_eq!(RefName::HEAD, RefName::new("HEAD")?);
+    /// # Ok::<(), girt::refs::InvalidRefName>(())
+    /// ```
+    pub const HEAD: Self = Self(Cow::Borrowed(b"HEAD"));
+
     /// Validates and copies a full name without consulting the filesystem.
     ///
     /// # Errors
@@ -45,7 +56,7 @@ impl RefName {
     pub fn new(bytes: impl AsRef<[u8]>) -> Result<Self, InvalidRefName> {
         let bytes = bytes.as_ref();
         if bytes == b"HEAD" {
-            return Ok(Self(bytes.to_vec()));
+            return Ok(Self::HEAD);
         }
         if !bytes.starts_with(b"refs/")
             || bytes.ends_with(b".")
@@ -59,7 +70,7 @@ impl RefName {
         {
             return Err(InvalidRefName);
         }
-        Ok(Self(bytes.to_vec()))
+        Ok(Self(Cow::Owned(bytes.to_vec())))
     }
 
     /// Borrows the original bytes, without normalization.
@@ -67,13 +78,16 @@ impl RefName {
         &self.0
     }
 
-    /// Returns the exact name bytes, consuming the name without copying its buffer.
+    /// Returns the exact name bytes, consuming the name.
+    ///
+    /// A name built from input reuses its buffer. [`Self::HEAD`] has no buffer of its own, so its
+    /// bytes are copied.
     pub fn into_bytes(self) -> Vec<u8> {
-        self.0
+        self.0.into_owned()
     }
 
     pub(crate) fn per_worktree(&self) -> bool {
-        self.0 == b"HEAD"
+        *self.0 == *b"HEAD"
             || [
                 b"refs/bisect/".as_slice(),
                 b"refs/rewritten/",

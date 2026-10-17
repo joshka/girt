@@ -34,7 +34,7 @@ fn fixture(format: ObjectFormat, backend: &str) -> (tempfile::TempDir, Repositor
     (root, repo, tip)
 }
 fn head() -> RefName {
-    RefName::new("HEAD").unwrap()
+    RefName::HEAD
 }
 fn data(tip: ObjectId, tail: &[u8]) -> Vec<u8> {
     [

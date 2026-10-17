@@ -140,7 +140,7 @@ impl ColocationEdit<'_> {
             }
         };
         let edit = RefEdit {
-            name: RefName::new(b"HEAD").expect("HEAD is valid"),
+            name: RefName::HEAD,
             dereference: crate::refs::Dereference::Stored,
             target: Some(target),
             expected,
@@ -230,10 +230,7 @@ mod tests {
             crate::refs::LogOutcome::Failed { bytes_written: 0 }
         ));
         assert_eq!(
-            repo.references()
-                .unwrap()
-                .read(&RefName::new(b"HEAD").unwrap())
-                .unwrap(),
+            repo.references().unwrap().read(&RefName::HEAD).unwrap(),
             Some(Target::Direct(target))
         );
         assert!(repo.read_index(Limits::default()).unwrap().is_some());

@@ -268,7 +268,7 @@ fn advertisement_uses_named_tips_not_peeling_or_symbolic_target_names() {
     let advertisement = Advertisement {
         refs: vec![
             AdvertisedRef {
-                name: RefName::new(b"HEAD").unwrap(),
+                name: RefName::HEAD,
                 id: tip,
                 kind: crate::fetch::AdvertisementKind::Tip,
             },

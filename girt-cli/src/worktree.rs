@@ -345,7 +345,7 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
     let tree = |revision: &str| -> Result<Option<ObjectId>> {
         if revision == "HEAD" {
             let references = repository.references().wrap_err("opening references")?;
-            let head = RefName::new("HEAD").map_err(|_| eyre!("invalid ref name HEAD"))?;
+            let head = RefName::HEAD;
             if resolve_ref(&references, &head)?.is_none() {
                 return Ok(None);
             }

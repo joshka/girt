@@ -156,7 +156,7 @@ fn store_open(c: &mut Criterion) {
     let head = repository
         .references()
         .unwrap()
-        .resolve(&girt::refs::RefName::new("HEAD").unwrap(), 10)
+        .resolve(&girt::refs::RefName::HEAD, 10)
         .unwrap()
         .id
         .unwrap();

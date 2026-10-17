@@ -70,7 +70,7 @@ use crate::{ObjectFormat, ObjectId, Repository};
 ///     InitKind::Bare,
 /// )?;
 /// let refs = repo.references()?;
-/// let head = RefName::new("HEAD")?;
+/// let head = RefName::HEAD;
 /// assert_eq!(
 ///     refs.read(&head)?,
 ///     Some(Target::Symbolic(RefName::new("refs/heads/main")?))
@@ -168,7 +168,7 @@ pub enum Backend {
 ///     InitKind::Bare,
 /// )?;
 /// let refs = repo.references()?;
-/// let head = RefName::new("HEAD")?;
+/// let head = RefName::HEAD;
 /// let main = RefName::new("refs/heads/main")?;
 /// assert_eq!(refs.read(&head)?, Some(Target::Symbolic(main)));
 /// // resolve follows names; object reads and tag peeling are separate operations.
@@ -280,7 +280,7 @@ impl std::fmt::Display for DisplayTarget<'_> {
 ///     InitKind::Bare,
 /// )?;
 /// let refs = repo.references()?;
-/// let head = RefName::new("HEAD")?;
+/// let head = RefName::HEAD;
 /// let main = RefName::new("refs/heads/main")?;
 /// let terminal = refs.resolve(&head, 5)?;
 /// assert_eq!(terminal.name, main);
@@ -452,7 +452,7 @@ impl<'a> References<'a> {
     ///     InitKind::Bare,
     /// )?;
     /// let refs = repo.references()?;
-    /// let head = RefName::new("HEAD")?;
+    /// let head = RefName::HEAD;
     /// let main = RefName::new("refs/heads/main")?;
     /// assert_eq!(refs.read(&head)?, Some(Target::Symbolic(main.clone())));
     /// assert_eq!(refs.read(&main)?, None); // Unborn branch, not a malformed HEAD.
@@ -488,7 +488,7 @@ impl<'a> References<'a> {
     /// )?;
     /// let refs = repo.references()?;
     /// let observation = refs
-    ///     .read_observation(&RefName::new("HEAD")?)?
+    ///     .read_observation(&RefName::HEAD)?
     ///     .ok_or("HEAD absent")?;
     /// assert_eq!(observation.peeled_hint, None);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -539,7 +539,7 @@ impl<'a> References<'a> {
     ///     InitKind::Bare,
     /// )?;
     /// let refs = repo.references()?;
-    /// let head = RefName::new("HEAD")?;
+    /// let head = RefName::HEAD;
     /// let main = RefName::new("refs/heads/main")?;
     /// let resolution = refs.resolve(&head, 5)?;
     /// assert_eq!(resolution.name, main);
@@ -1481,7 +1481,7 @@ mod chain_tests {
         chain(root.path(), 33);
         let repo = Repository::open(root.path()).unwrap();
         let refs = repo.references().unwrap();
-        let head = RefName::new(b"HEAD").unwrap();
+        let head = RefName::HEAD;
         assert!(matches!(
             refs.update_resolved_without_reflog(&head, ObjectId::Sha1([1; 20]), Expected::Absent),
             Err(ReferenceError::Depth(32))
@@ -1505,7 +1505,7 @@ mod chain_tests {
         assert!(matches!(
             repo.references()
                 .unwrap()
-                .delete_resolved_without_reflog(&RefName::new(b"HEAD").unwrap(), Expected::Any),
+                .delete_resolved_without_reflog(&RefName::HEAD, Expected::Any),
             Err(ReferenceError::Depth(32))
         ));
         assert_eq!(
@@ -1524,7 +1524,7 @@ mod chain_tests {
         chain(root.path(), 1);
         fs::write(root.path().join("refs/heads/1.lock"), b"owner").unwrap();
         let repo = Repository::open(root.path()).unwrap();
-        let head = RefName::new(b"HEAD").unwrap();
+        let head = RefName::HEAD;
         assert!(matches!(
             repo.references().unwrap().update_resolved_without_reflog(
                 &head,

@@ -753,7 +753,7 @@ fn split_colocation_preserves_head_preconditions_and_git_lock(#[case] format: gi
     use girt::refs::{Expected, RefName, Reflog};
     let (_root, repo) = split_fixture(format);
     let refs = repo.references().unwrap();
-    let head = refs.read(&RefName::new(b"HEAD").unwrap()).unwrap().unwrap();
+    let head = refs.read(&RefName::HEAD).unwrap().unwrap();
     let before = fs::read(repo.git_dir().join("index")).unwrap();
     let mut edit = repo.edit_colocation(Limits::default()).unwrap();
     assert!(
@@ -850,7 +850,7 @@ fn sparse_colocation_preserves_directories_after_other_edits(#[case] format: gir
     let mut directory = Entry::new(b"outside/".to_vec(), Mode::SparseDirectory, id);
     directory.skip_worktree = true;
     let refs = repo.references().unwrap();
-    let head = refs.read(&RefName::new(b"HEAD").unwrap()).unwrap().unwrap();
+    let head = refs.read(&RefName::HEAD).unwrap().unwrap();
     let mut edit = repo.edit_colocation(Limits::default()).unwrap();
     edit.index_mut()
         .replace_entries(vec![directory.clone()])

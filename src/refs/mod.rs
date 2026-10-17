@@ -103,7 +103,7 @@
 //! })?)?;
 //!
 //! let references = repository.references()?;
-//! let head = RefName::new("HEAD")?;
+//! let head = RefName::HEAD;
 //! let edit = RefEdit::new(
 //!     head.clone(),
 //!     Some(Target::Direct(commit)),

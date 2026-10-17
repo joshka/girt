@@ -485,7 +485,7 @@ pub fn discover_local(
         let advertisement = local_native::advertise(&source, limits, control)?;
         let mut discovered = RemoteDiscovery::from_advertisement(advertisement)?;
         discovered.version = ProtocolVersion::Native;
-        let head = RefName::new(b"HEAD").expect("valid HEAD");
+        let head = RefName::HEAD;
         if let Some(crate::refs::Target::Direct(id)) = source
             .references()
             .map_err(|_| FetchError::Protocol("local references"))?

@@ -96,10 +96,7 @@ fn clock_relative_values_match_git(#[case] value: &str, #[case] age: i128) {
     let config = Config::parse(format!("[gc]\nreflogExpire={value}\n").as_bytes()).unwrap();
     let expiry = ReflogExpiry::from_config(&config, before).unwrap();
     assert_eq!(
-        expiry
-            .cutoffs(&RefName::new(b"HEAD").unwrap())
-            .unwrap()
-            .general,
+        expiry.cutoffs(&RefName::HEAD).unwrap().general,
         Some(before - age)
     );
     assert!((before - age..=after - age).contains(&observed));

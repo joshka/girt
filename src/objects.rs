@@ -1001,6 +1001,63 @@ impl Objects {
         self.read_controlled(id, limits, &AtomicBool::new(false))
     }
 
+    /// Reads and parses the commit `id`.
+    ///
+    /// Use this when `id` came from a reference or a history walk and must be a commit. Unlike
+    /// [`Self::read`], a missing object is an error, because a commit you were pointed at should
+    /// exist. Use [`Self::read`] to test whether an object exists or to accept any kind.
+    ///
+    /// ```
+    /// use girt::{
+    ///     Commit, CommitFields, InitKind, ObjectFormat, PackLimits, ReadLimits, Repository,
+    ///     Signature, Tree,
+    /// };
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("repo.git");
+    /// let repository = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    /// let loose = repository.loose_objects();
+    /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    /// let person = Signature {
+    ///     name: b"A. Writer".to_vec(),
+    ///     email: b"writer@example.com".to_vec(),
+    ///     seconds: 1_700_000_000,
+    ///     offset_minutes: 0,
+    /// };
+    /// let id = loose.write_commit(&Commit::new(CommitFields {
+    ///     tree,
+    ///     parents: vec![],
+    ///     author: person.clone(),
+    ///     committer: person,
+    ///     extra_headers: vec![],
+    ///     message: b"first\n".to_vec(),
+    /// })?)?;
+    ///
+    /// let objects = repository.objects(PackLimits::default())?;
+    /// let commit = objects.read_commit(id, ReadLimits::default())?;
+    /// assert_eq!(commit.message(), b"first\n");
+    /// assert!(objects.read_commit(tree, ReadLimits::default()).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadCommitError::Missing`] if no store has `id`, [`ReadCommitError::Kind`] if
+    /// `id` names another kind of object, [`ReadCommitError::Parse`] for a malformed commit, and
+    /// [`ReadCommitError::Read`] for the failures of [`Self::read`].
+    pub fn read_commit(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+    ) -> Result<crate::Commit, ReadCommitError> {
+        let object = self.read(id, limits)?.ok_or(ReadCommitError::Missing(id))?;
+        let kind = object.kind();
+        if kind != ObjectKind::Commit {
+            return Err(ReadCommitError::Kind { id, kind });
+        }
+        Ok(crate::Commit::parse(self.format, object.data())?)
+    }
+
     /// Reads with cooperative cancellation between stores, pack lookups and decode chunks.
     ///
     /// Loose reads, index lookups, object hashing and individual delta applications finish before
@@ -1479,6 +1536,29 @@ impl Store {
             pack_paths,
         })
     }
+}
+
+/// [`Objects::read_commit`] failed to produce a commit.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ReadCommitError {
+    /// No store has the object.
+    #[error("commit {0} is missing")]
+    Missing(ObjectId),
+    /// The object exists but is not a commit.
+    #[error("object {id} is a {kind:?}, not a commit")]
+    Kind {
+        /// The requested object.
+        id: ObjectId,
+        /// The kind it has.
+        kind: ObjectKind,
+    },
+    /// The commit bytes are malformed.
+    #[error(transparent)]
+    Parse(#[from] crate::CommitError),
+    /// Reading the object failed.
+    #[error(transparent)]
+    Read(#[from] ObjectReadError),
 }
 
 /// Failures opening or reading a repository object store; absence is `Ok(None)`.

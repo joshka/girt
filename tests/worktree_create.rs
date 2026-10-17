@@ -165,7 +165,7 @@ fn preflight_refusals_leave_destination_absent() {
     )
     .unwrap();
     let destination = root.path().join("topic");
-    let head = RefName::new(b"HEAD").unwrap();
+    let head = RefName::HEAD;
     assert!(matches!(
         repo.create_orphan_worktree(&destination, &head, 2),
         Err(CreateWorktreeError::Branch)

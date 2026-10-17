@@ -191,7 +191,7 @@ fn absolute_external_files_and_filesystem_not_git_relative_links(#[case] format:
     )
     .unwrap();
     assert_eq!(
-        refs.read_observation_following_leaf_symlinks(&RefName::new("HEAD").unwrap(), 1, 1000)
+        refs.read_observation_following_leaf_symlinks(&RefName::HEAD, 1, 1000)
             .unwrap(),
         None
     );

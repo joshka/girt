@@ -132,7 +132,7 @@ fn imports_packed_source_and_all_object_kinds(#[case] ofs: bool) {
     assert_eq!(
         repo.references()
             .unwrap()
-            .resolve(&RefName::new("HEAD").unwrap(), 8)
+            .resolve(&RefName::HEAD, 8)
             .unwrap()
             .id,
         None
@@ -709,7 +709,7 @@ fn installation_rechecks_known_objects_before_publication(#[case] corrupt: bool)
         local
             .references()
             .unwrap()
-            .resolve(&RefName::new("HEAD").unwrap(), 8)
+            .resolve(&RefName::HEAD, 8)
             .unwrap()
             .id,
         None

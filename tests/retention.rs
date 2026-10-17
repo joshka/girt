@@ -1114,7 +1114,7 @@ fn expiry_positions_distinguish_private_heads_and_dedupe_shared_logs(#[case] for
         });
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
-    let head = girt::refs::RefName::new(b"HEAD").unwrap();
+    let head = girt::refs::RefName::HEAD;
     let main = girt::retention::ReflogSource::new(repo.git_dir(), head.clone());
     let private = girt::retention::ReflogSource::new(linked.git_dir(), head);
     let deleted = girt::retention::ReflogSource::new(

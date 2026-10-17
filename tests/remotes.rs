@@ -92,7 +92,7 @@ fn populated_in(format: ObjectFormat) -> (tempfile::TempDir, Vec<RefSource>) {
         });
     }
     sources.push(RefSource {
-        name: RefName::new(b"HEAD").unwrap(),
+        name: RefName::HEAD,
         id: text(&commit).parse().unwrap(),
     });
     (dir, sources)
@@ -416,7 +416,7 @@ fn git_annotated_tag_and_symbolic_head_keep_advertised_identities(
     let advertisement = Advertisement::new(
         vec![
             AdvertisedRef::new(
-                RefName::new("HEAD").unwrap(),
+                RefName::HEAD,
                 text(&head).parse().unwrap(),
                 girt::fetch::AdvertisementKind::Tip,
             ),

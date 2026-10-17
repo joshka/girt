@@ -1038,7 +1038,7 @@ fn collect_roots(
             .head_controlled(policy.max_reference_bytes, cancel)
             .map_err(RetentionError::read)?
         {
-            values.insert(RefName::new(b"HEAD").unwrap(), head);
+            values.insert(RefName::HEAD, head);
         }
         for target in values.values() {
             if let Some(id) = resolve_target(target, &values)? {

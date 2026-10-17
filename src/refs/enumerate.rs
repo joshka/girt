@@ -53,8 +53,7 @@ impl References<'_> {
         max_bytes: usize,
         cancel: &AtomicBool,
     ) -> Result<Option<Target>, ReferenceError> {
-        #[expect(clippy::expect_used, reason = "constant reference name is valid")]
-        let name = RefName::new(b"HEAD").expect("HEAD is a valid name");
+        let name = RefName::HEAD;
         if self.reference_backend == super::Backend::Reftable {
             if cancel.load(Ordering::Relaxed) {
                 return Err(ReferenceError::Cancelled);
@@ -1020,9 +1019,7 @@ mod tests {
     fn head_requires_single_name_read() {
         let (_root, repo) = fixture();
         assert!(matches!(
-            repo.references()
-                .unwrap()
-                .list_namespace(&RefName::new(b"HEAD").unwrap()),
+            repo.references().unwrap().list_namespace(&RefName::HEAD),
             Err(ReferenceError::Unsupported(_))
         ));
     }
