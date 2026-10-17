@@ -12,9 +12,9 @@ import PerfProvenance from '../../../components/PerfProvenance.astro';
 
 This benchmark runs the same jj commands three ways: jj built on girt, stock jj (which uses gix and
 the `git` executable), and the closest `git` command. It uses three real repositories: jj's own
-history (small), git.git (medium) and Linux v6.1 (large). Everything on this page is generated at
-build time from the committed results JSON. The underlying data, issue links and per-cell notes are
-tracked on [girt issue 66](https://github.com/joshka/girt/issues/66) (performance gaps against Git).
+history (small), git.git (medium) and Linux v6.1 (large). The tables are generated at build time
+from the committed results JSON. The underlying data, issue links and per-cell notes are tracked on
+[girt issue 66](https://github.com/joshka/girt/issues/66) (performance gaps against Git).
 
 ## What you would notice
 
@@ -32,8 +32,7 @@ the command runs, then by the time girt adds.
 
 ### Slow in stock jj too
 
-Stock jj is already in one of the two slowest bands for these, so girt can't make them fast on its
-own.
+Stock jj is already in one of the two slowest bands for these, so girt alone can't make them fast.
 
 <PerfPainPoints kind="jj" />
 
@@ -43,8 +42,8 @@ Operations are grouped by how often a jj user typically runs them, because a del
 `jj git clone` is painful for `jj status`. Each group has its own four time bands.
 
 Each cell shows jj with girt's median time, coloured by band. Below it are stock jj's time, the
-ratio (girt ÷ stock, lower is better) and Git's time. Cells outside the fastest band carry tags
-saying who is responsible:
+ratio (girt ÷ stock, lower is better) and Git's time. Cells outside the fastest band are tagged
+with where the time goes:
 
 - **girt:** jj with girt is at least 20% slower than stock jj.
 - **jj:** stock jj is also outside the fastest band, so jj's own work is part of the cost.
@@ -80,5 +79,4 @@ different work: Git has no counterpart to `jj undo`, `jj op restore` or colocate
 those cells have no Git time. Each row's workload note in the tables describes what was measured.
 
 The harness is `scripts/jj-e2e/bench-ops.py` in the girt repository. Results and provenance live in
-`docs/jj-performance.json` and `docs/jj-performance-provenance.json`. This page re-renders from
-those files on every build.
+`docs/jj-performance.json` and `docs/jj-performance-provenance.json`.

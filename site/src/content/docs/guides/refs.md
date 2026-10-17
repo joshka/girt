@@ -69,34 +69,41 @@ branch edit logs only the branch. To update through `HEAD` and log the symbolic 
 When moving an existing branch, first read its stored target and choose
 `Expected::Value(observed_target)` for the edit. For a complete compare-and-swap update example, see
 [References::transaction](https://docs.rs/girt/latest/girt/refs/struct.References.html#method.transaction).
-The transaction compares that value under locks, closing the race between the read and the write.
-`Expected::Absent` protects creation, while `Expected::Any` deliberately permits replacement of any
-valid value. `Expected::Exists` requires some stored value, while `Expected::AbsentOr(value)`
-permits either absence or that exact value. A mismatch means another observation is needed;
-reconsider the update rather than replacing the precondition with `Any`.
+The transaction compares that value under its locks, so if the branch moved after your read, the
+update fails instead of overwriting the newer value.
+The other preconditions:
+
+- `Expected::Absent` requires that the name doesn't exist yet. Use it to create a reference.
+- `Expected::Exists` requires some stored value.
+- `Expected::AbsentOr(value)` accepts either absence or that exact value.
+- `Expected::Any` accepts any valid stored value or absence; it checks nothing.
+
+A mismatch means the stored value doesn't satisfy the precondition. With `Expected::Value`, that
+means the reference changed since you read it. Read it again and decide whether the update still
+makes sense; don't retry with `Any`.
 
 Store and validate the intended object graph before publishing. Reference updates check names,
 formats, and preconditions; they do not establish object existence, object kind, ancestry, or
-permission to discard another branch tip. A tool implementing fast-forward policy must test that
-policy separately before attempting its conditional update.
+permission to discard another branch tip. A tool that only allows fast-forwards must check ancestry
+itself before attempting its conditional update.
 
 ## Resolve names and annotated tags separately
 
 `read` returns the stored direct ID or symbolic name. `resolve` follows symbolic names to a terminal
 name and optional ID. An absent terminal name can be an ordinary unborn branch; it is not an
 object-storage error. `Objects::peel` then follows annotated tag objects if required. A lightweight
-tag directly names its target, while an annotated tag reference names a stored `Tag` object. Listing
+tag names its target directly; an annotated tag reference names a stored `Tag` object. Listing
 references excludes pseudorefs such as `HEAD`.
 
 ## Choose and interpret logging
 
-Low-level transactions take explicit `Reflog` policy. They do not automatically apply Git config or
-choose an identity from the environment. `Append` records even an unchanged ID; `AppendIfChanged`
+Low-level transactions take explicit `Reflog` policy. They don't read Git config or take an identity
+from the environment. `Append` records even an unchanged ID; `AppendIfChanged`
 records stored-target changes. `Preserve` leaves existing logs untouched. The example supplies a
 fixed identity and timestamp for reproducibility; an application supplies its actual actor and time.
 
-A reflog records changes to a name, in oldest-to-newest order, rather than commit ancestry. Zero IDs
-represent creation or deletion. Old objects may already be unavailable. For bounded inspection of
+A reflog records the values a name has held, oldest first. It says nothing about commit ancestry.
+Zero IDs represent creation or deletion. Old objects may already be unavailable. For bounded inspection of
 imported logs, use
 [imported_reflog](https://docs.rs/girt/latest/girt/refs/struct.References.html#method.imported_reflog)
 and inspect completeness before treating recovered records as a full inventory.
@@ -105,14 +112,14 @@ and inspect completeness before treating recovered records as a full inventory.
 
 A preparation failure leaves reference and log contents unchanged. A publication failure includes
 completed outcomes and has no rollback: a branch may advance while its log append fails. Preserve
-those outcomes, inspect current state, and decide which effects still need to happen. Blindly
-repeating the batch can duplicate log entries or overwrite newer work.
+those outcomes, inspect current state, and decide which effects still need to happen. Repeating
+the whole batch can duplicate log entries or overwrite newer work.
 
 A lock conflict means the attempt did not obtain exclusive access. The ordinary files transaction
 already retries reference and packed-ref locks for Git's default waits before returning a conflict;
 reflog locks fail immediately. Select `transaction_files_with_options` for explicit waits and
-cancellation. Any further attempt belongs to application policy; deleting another writer's lock is
-not a remedy. Files-backed batches publish sequentially and readers may see intermediate states.
+cancellation. Whether to try again is up to the application; don't delete another writer's lock.
+Files-backed batches publish sequentially and readers may see intermediate states.
 Reftable publishes references and logs together within one stack, with partial effects possible
 across linked-worktree stacks. See
 [transaction contracts](https://docs.rs/girt/latest/girt/refs/struct.References.html#method.transaction)
