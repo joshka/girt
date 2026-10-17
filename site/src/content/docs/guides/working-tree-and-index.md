@@ -3,6 +3,9 @@ title: Working tree and index
 description: Stage explicit bytes, inspect raw status, apply ignore rules, and check out a tree.
 ---
 
+The [working-tree contract](https://github.com/joshka/girt/blob/main/docs/working-tree.md) records
+the raw status and checkout guarantees.
+
 The index records the file identities and modes proposed for the next tree. The working tree holds
 editable files. HEAD supplies the usual comparison baseline. These are three independent states:
 writing a file does not stage it, and changing the index does not write a working file or commit.
@@ -20,24 +23,26 @@ list, so omitting a path unstages/removes that entry. It does not delete the cor
 file.
 
 ```rust
-use girt::index::{Entry, Mode};
-use girt::{InitKind, ObjectFormat, Repository};
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use girt::index::{Entry, Mode};
+    use girt::{InitKind, ObjectFormat, Repository};
 
-let directory = tempfile::tempdir()?;
-let repository = Repository::init(
-    ObjectFormat::Sha1,
-    directory.path().join("repo"),
-    InitKind::Worktree,
-)?;
-let id = repository.loose_objects().write_blob(b"hello\n")?;
-let mut edit = repository.edit_index(Default::default())?;
-let mut entries = edit.index().entries().to_vec();
-entries.retain(|entry| entry.path != b"hello.txt");
-entries.push(Entry::new(b"hello.txt".to_vec(), Mode::Regular, id));
-edit.replace_entries(entries)?;
-edit.commit()?;
-assert_eq!(repository.read_index(Default::default())?.unwrap().entries()[0].id, id);
-# Ok::<(), Box<dyn std::error::Error>>(())
+    let directory = tempfile::tempdir()?;
+    let repository = Repository::init(
+        ObjectFormat::Sha1,
+        directory.path().join("repo"),
+        InitKind::Worktree,
+    )?;
+    let id = repository.loose_objects().write_blob(b"hello\n")?;
+    let mut edit = repository.edit_index(Default::default())?;
+    let mut entries = edit.index().entries().to_vec();
+    entries.retain(|entry| entry.path != b"hello.txt");
+    entries.push(Entry::new(b"hello.txt".to_vec(), Mode::Regular, id));
+    edit.replace_entries(entries)?;
+    edit.commit()?;
+    assert_eq!(repository.read_index(Default::default())?.unwrap().entries()[0].id, id);
+    Ok(())
+}
 ```
 
 This disposable example needs `girt` and `tempfile`. No working file is created. An absent index is
@@ -56,6 +61,9 @@ Split-index reads resolve their immutable shared file. Edits normally publish a 
 collapsed directory trees into entries without materializing files. It is separate from selecting a
 sparse-checkout policy. Unknown mandatory extensions are refused; unknown optional extensions can
 prevent editing until the caller explicitly chooses to discard them.
+
+Batch paths in one index edit: opening reads the complete index and committing encodes the whole
+file. One edit per path repeatedly pays that cost.
 
 Index edits use `index.lock` and publish by same-directory rename. Existing locks are never stolen.
 Drop abandons an edit with best-effort cleanup; `abort` reports cleanup errors. Optional file
@@ -93,16 +101,18 @@ symlinks. The matcher reads no filesystem, configuration, environment or index. 
 apply to the caller's untracked-file policy, not automatically to tracked paths.
 
 ```rust
-use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
 
-let mut rules = Ignore::new(Case::Sensitive, Limits::default());
-rules.add(Source::Global, b"*.log\n")?;
-let local = rules.add(Source::Directory(b""), b"!keep.log\nbuild/\n!build/keep\n")?;
-assert!(!rules.check(b"keep.log", InputKind::File)?.unwrap().ignored);
-let decision = rules.check(b"build/keep", InputKind::File)?.unwrap();
-assert!(decision.ignored);
-assert_eq!((decision.source, decision.line), (local, 2));
-# Ok::<(), girt::ignore::Error>(())
+    let mut rules = Ignore::new(Case::Sensitive, Limits::default());
+    rules.add(Source::Global, b"*.log\n")?;
+    let local = rules.add(Source::Directory(b""), b"!keep.log\nbuild/\n!build/keep\n")?;
+    assert!(!rules.check(b"keep.log", InputKind::File)?.unwrap().ignored);
+    let decision = rules.check(b"build/keep", InputKind::File)?.unwrap();
+    assert!(decision.ignored);
+    assert_eq!((decision.source, decision.line), (local, 2));
+    Ok(())
+}
 ```
 
 Directory rules override global/info rules; deeper directory sources override shallower ones. At the

@@ -18,6 +18,44 @@ impl Repository {
     /// Returns [`Failure`] on dirty/staged/conflicted state, obstruction, unsupported input,
     /// cancellation, exceeded limits or I/O. Its report records prior mutations and publication;
     /// cleanup failures are separate. Preparation errors leave worktree content unchanged.
+    ///
+    /// # Replace a clean checkout, then remove its tracked content
+    ///
+    /// This example owns the disposable repository exclusively. The second call supplies the tree
+    /// represented by the index as its baseline; supplying `None` again would lose that contract.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Worktree,
+    /// )?;
+    ///
+    /// use girt::{EntryMode, Tree, TreeEntry};
+    /// let loose = repo.loose_objects();
+    /// let blob = loose.write_blob(b"hello\n")?;
+    /// let tree = loose.write_tree(&Tree::new(
+    ///     ObjectFormat::Sha1,
+    ///     vec![TreeEntry {
+    ///         name: b"hello.txt".to_vec(),
+    ///         mode: EntryMode::Blob,
+    ///         id: blob,
+    ///     }],
+    /// )?)?;
+    /// let cancel = AtomicBool::new(false);
+    /// repo.checkout_tree(None, Some(tree), Default::default(), &cancel)?;
+    /// let report = repo.checkout_tree(Some(tree), None, Default::default(), &cancel)?;
+    /// assert!(report.index_published);
+    /// assert!(!repo.worktree().unwrap().join("hello.txt").exists());
+    /// assert!(loose.read_blob(blob, 1024).is_ok()); // Removing a file does not delete its object.
+    ///     
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn checkout_tree(
         &self,
         baseline: Option<ObjectId>,

@@ -20,11 +20,13 @@ use crate::{ObjectFormat, Repository};
 /// Defaults preserve ordinary umask behavior and do not synchronize. Synchronization uses macOS
 /// full file flush or `File::sync_all` elsewhere; directory entries are not synchronized.
 ///
+/// Pass these options to [`IndexEdit::commit_with_options`].
+///
 /// ```
 /// use girt::index::IndexCommitOptions;
 /// let options = IndexCommitOptions::default().with_sync(true);
 /// assert!(options.sync);
-/// // Pass to IndexEdit::commit_with_options; this flushes the file, not its parent directory.
+/// // This flushes the file, not its parent directory.
 /// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -150,10 +152,14 @@ impl LeafSnapshot {
 /// Directory entries are not synchronized; no crash or power-loss durability is promised. No
 /// worktree files or objects are written. Index storage does not depend on the reference backend.
 ///
-/// # Stage known bytes without changing working files
+/// # Synchronize the file before releasing the lock
 ///
+/// Batch path changes into one edit: opening reads the whole index and committing encodes the
+/// complete file. Separate edits for each of many paths repeatedly do that work. The
+/// [`Repository::edit_index`] example stages a blob; this example selects file synchronization.
 ///
 /// ```
+/// use girt::index::IndexCommitOptions;
 /// use girt::{InitKind, ObjectFormat, Repository};
 /// let directory = tempfile::tempdir()?;
 /// let repository = Repository::init(
@@ -161,25 +167,9 @@ impl LeafSnapshot {
 ///     directory.path().join("repo"),
 ///     InitKind::Worktree,
 /// )?;
-///
-/// use girt::index::{Entry, Mode};
-/// let id = repository.loose_objects().write_blob(b"staged content\n")?;
-/// let mut edit = repository.edit_index(Default::default())?;
-/// // Derive the full replacement from the locked snapshot, retaining other paths.
-/// let mut entries = edit.index().entries().to_vec();
-/// entries.retain(|entry| entry.path != b"hello.txt");
-/// entries.push(Entry::new(b"hello.txt".to_vec(), Mode::Regular, id));
-/// edit.replace_entries(entries)?;
-/// edit.commit()?;
-/// assert_eq!(
-///     repository
-///         .read_index(Default::default())?
-///         .unwrap()
-///         .entries()[0]
-///         .id,
-///     id
-/// );
-/// assert!(!repository.worktree().unwrap().join("hello.txt").exists());
+/// let edit = repository.edit_index(Default::default())?;
+/// edit.commit_with_options(IndexCommitOptions::default().with_sync(true))?;
+/// assert!(repository.read_index(Default::default())?.is_some());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug)]
@@ -282,27 +272,6 @@ pub enum StorageError {
     },
 }
 
-///
-/// ```
-/// use girt::{InitKind, ObjectFormat, Repository};
-/// let directory = tempfile::tempdir()?;
-/// let repository = Repository::init(
-///     ObjectFormat::Sha1,
-///     directory.path().join("repo"),
-///     InitKind::Worktree,
-/// )?;
-///
-/// assert!(repository.read_index(Default::default())?.is_none());
-/// repository.edit_index(Default::default())?.commit()?;
-/// assert!(
-///     repository
-///         .read_index(Default::default())?
-///         .unwrap()
-///         .entries()
-///         .is_empty()
-/// );
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
 impl Repository {
     /// Reads this worktree's `git_dir()/index`, returning `None` when missing.
     ///
@@ -319,6 +288,29 @@ impl Repository {
     /// synchronous; nothing is written. Split dependencies share the aggregate byte budget.
     /// Concurrent cooperating writers publish whole files by rename. In-place writes by
     /// noncooperating processes may instead produce a parse error.
+    ///
+    /// An absent index and a published empty index are distinct observations:
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repository = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("repo"),
+    ///     InitKind::Worktree,
+    /// )?;
+    ///
+    /// assert!(repository.read_index(Default::default())?.is_none());
+    /// repository.edit_index(Default::default())?.commit()?;
+    /// assert!(
+    ///     repository
+    ///         .read_index(Default::default())?
+    ///         .unwrap()
+    ///         .entries()
+    ///         .is_empty()
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read_index(&self, limits: Limits) -> Result<Option<Index>, StorageError> {
         self.read_index_path(self.git_dir().join("index"), limits, true)
     }
