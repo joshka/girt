@@ -9,12 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         target,
         target_kind: ObjectKind::Blob,
         name: b"v1".to_vec(),
-        tagger: Some(Signature {
-            name: b"A. Releaser".to_vec(),
-            email: b"release@example.com".to_vec(),
-            seconds: 1_700_000_000,
-            offset_minutes: -420,
-        }),
+        tagger: Some(Signature::now(b"A. Releaser", b"release@example.com")?),
         extra_headers: vec![],
         message: b"First release\n".to_vec(),
     })?;

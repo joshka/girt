@@ -32,12 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: blob,
         }],
     )?)?;
-    let author = Signature {
-        name: b"Push Example".to_vec(),
-        email: b"push@example.com".to_vec(),
-        seconds: 1_700_000_000,
-        offset_minutes: 0,
-    };
+    let author = Signature::now(b"Push Example", b"push@example.com")?;
     let commit = loose.write_commit(&Commit::new(CommitFields {
         tree,
         parents: vec![],

@@ -16,12 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
     )?;
     let tree_id = objects.write_tree(&tree)?;
-    let author = Signature {
-        name: b"A. Writer".to_vec(),
-        email: b"writer@example.com".to_vec(),
-        seconds: 1_700_000_000,
-        offset_minutes: -420,
-    };
+    let author = Signature::now(b"A. Writer", b"writer@example.com")?;
     let commit = Commit::new(CommitFields {
         tree: tree_id,
         parents: vec![],

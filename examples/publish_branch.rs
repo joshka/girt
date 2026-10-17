@@ -12,12 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let objects = repo.loose_objects();
     let tree = objects.write_tree(&Tree::new(girt::ObjectFormat::Sha1, vec![])?)?;
-    let author = Signature {
-        name: b"A. Writer".to_vec(),
-        email: b"writer@example.com".to_vec(),
-        seconds: 1_700_000_000,
-        offset_minutes: 0,
-    };
+    let author = Signature::now(b"A. Writer", b"writer@example.com")?;
     let mut fields = CommitFields {
         tree,
         parents: vec![],

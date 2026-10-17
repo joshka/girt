@@ -2,7 +2,6 @@
 
 use std::io::Write;
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap_complete::{ArgValueCandidates, ArgValueCompleter};
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
@@ -304,32 +303,6 @@ fn log(
 /// `repository` was opened through [`Context::repository`], so its configuration already holds
 /// the system, global and environment sources.
 fn committer(repository: &Repository, context: &Context) -> Result<Signature> {
-    let lookup = |env: &str, key: &str| -> Option<Vec<u8>> {
-        context
-            .environment
-            .get(env)
-            .map(|value| value.as_encoded_bytes().to_vec())
-            .or_else(|| {
-                repository
-                    .config()
-                    .string("user", None, key)
-                    .map(<[u8]>::to_vec)
-            })
-    };
-    let (Some(name), Some(email)) = (
-        lookup("GIT_COMMITTER_NAME", "name"),
-        lookup("GIT_COMMITTER_EMAIL", "email"),
-    ) else {
-        bail!("no committer identity for the reflog: set user.name and user.email in Git config");
-    };
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .wrap_err("system clock is before 1970")?
-        .as_secs();
-    Ok(Signature {
-        name,
-        email,
-        seconds: i64::try_from(seconds)?,
-        offset_minutes: 0,
-    })
+    Signature::committer(repository.config(), &context.environment)
+        .wrap_err("building reflog committer: set user.name/user.email or GIT_COMMITTER_NAME/EMAIL; GIT_COMMITTER_DATE must be raw or RFC 3339")
 }
