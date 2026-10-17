@@ -15,11 +15,14 @@ impl Objects {
     /// results. File/directory replacements use the structural comparison's leaf changes.
     /// Both object formats are supported; candidate blobs are read and verified even for exact IDs.
     ///
-    /// Exact identity matches precede edited-content inference. Exact ties prefer an unused
-    /// deleted source, then equal basename, then source raw path order. Edited ties prefer higher
-    /// rounded percentage, equal basename, source path, then destination path; selected pairs
-    /// greedily consume destinations and (without copies) sources. This explicit deterministic
-    /// policy does not promise Git's every heuristic pairing choice. [`Rewrite`] defines scoring.
+    /// Exact identity matches precede unique-basename pairing and exhaustive edited inference.
+    /// Unique unmatched basenames pair without copies at halfway from the minimum score to 100%.
+    /// This can prefer a basename pair over a more similar differently named destination.
+    /// Exact ties prefer an unused deleted source, then equal basename, then source raw path order.
+    /// Edited ties prefer higher rounded percentage, equal basename, source path, then
+    /// destination path; selected pairs greedily consume destinations and (without copies)
+    /// sources. This explicit deterministic policy does not promise Git's every heuristic
+    /// pairing choice. [`Rewrite`] defines scoring.
     ///
     /// `targets` is an optional set of exact destination byte paths, applied **after** all
     /// inference and classification. It cannot change a tie or convert a copy into a rename.
@@ -32,8 +35,8 @@ impl Objects {
     /// return. No attributes, clean/smudge/textconv drivers, index or worktree are consulted: these
     /// are comparisons of stored blob bytes. Callers own configuration and merge/history policy.
     ///
-    /// [`Self::detect_rewrites_or_exact`] instead returns the exact matches when the
-    /// [`Options::candidate_limit`] skips edited-content detection.
+    /// [`Self::detect_rewrites_or_exact`] instead returns the pairs already found when the
+    /// [`Options::candidate_limit`] skips exhaustive edited-content detection.
     ///
     /// # Errors
     ///
@@ -104,12 +107,12 @@ impl Objects {
         }
     }
 
-    /// Infers rewrites as [`Self::detect_rewrites`] does, keeping exact matches over the limit.
+    /// Infers rewrites as [`Self::detect_rewrites`] does, keeping pre-limit matches.
     ///
     /// When the remaining candidates exceed [`Options::candidate_limit`], edited-content
-    /// detection is skipped and [`Detection::inexact_skipped`] says so; the exact matches are
-    /// still returned, as Git reports exact renames when it skips rename detection for too many
-    /// files. Callers decide whether to warn, retry with a higher limit, or accept exact matches.
+    /// detection is skipped and [`Detection::inexact_skipped`] says so. Exact and unique-basename
+    /// pairs are still returned. Callers decide whether to warn, retry with a higher limit, or
+    /// accept the pairs found before the limit.
     ///
     /// # Errors
     ///
@@ -403,6 +406,7 @@ impl<'a> Selection<'a> {
         blobs: &mut BTreeMap<ObjectId, Blob>,
         budget: &mut Budget<'_>,
     ) -> Result<Option<InexactSkipped>, Error> {
+        self.same_basename(blobs, budget)?;
         // Git counts available sources (reusable ones too, with copies) and unmatched destinations,
         // including binary files, and empty files when empty renames are enabled. Decide the skip
         // before filtering to scorable files, which can leave nothing to score.
@@ -481,6 +485,63 @@ impl<'a> Selection<'a> {
         Ok(None)
     }
 
+    /// Unique unmatched basenames get first refusal at halfway from the requested score to 100%.
+    /// Copy detection skips this pass because its sources remain reusable.
+    fn same_basename(
+        &mut self,
+        blobs: &mut BTreeMap<ObjectId, Blob>,
+        budget: &mut Budget<'_>,
+    ) -> Result<(), Error> {
+        if self.options.copies != Copies::Disabled {
+            return Ok(());
+        }
+        let sources = unique_basenames(
+            self.sources,
+            &self.used_sources,
+            blobs,
+            self.options.track_empty,
+            budget,
+        )?;
+        let targets = unique_basenames(
+            self.targets,
+            &self.used_targets,
+            blobs,
+            self.options.track_empty,
+            budget,
+        )?;
+        for (name, source) in sources {
+            budget.work(
+                name.len()
+                    .saturating_mul((targets.len() + 1).ilog2() as usize + 1),
+            )?;
+            let (Some(source), Some(&Some(target))) = (source, targets.get(name)) else {
+                continue;
+            };
+            budget.pair()?;
+            let source_id = self.sources[source].value.id;
+            let target_id = self.targets[target].value.id;
+            if [source_id, target_id].iter().any(|id| {
+                let blob = &blobs[id];
+                blob.bytes.is_empty() || (!self.options.approximate_binary && blob.binary())
+            }) {
+                continue;
+            }
+            for id in [source_id, target_id] {
+                let blob = blobs.get_mut(&id).expect("candidate blob was loaded");
+                if blob.content.is_none() {
+                    blob.content = Some(Content::new(&blob.bytes, budget)?);
+                }
+            }
+            let old = blobs[&source_id].content.as_ref().unwrap();
+            let new = blobs[&target_id].content.as_ref().unwrap();
+            let minimum = 100 + u16::from(self.options.similarity);
+            if let Some(score) = old.score_half_percent(new, minimum, budget)? {
+                self.select(source, target, score);
+            }
+        }
+        Ok(())
+    }
+
     fn select(&mut self, source: usize, target: usize, similarity: u8) {
         let old = &self.sources[source];
         let new = &self.targets[target];
@@ -500,6 +561,32 @@ impl<'a> Selection<'a> {
         self.used_sources[source] = true;
         self.used_targets[target] = true;
     }
+}
+
+/// Ambiguous basenames remain present as `None`, so a later collision cannot become unique again.
+fn unique_basenames<'a>(
+    candidates: &[Candidate<'a>],
+    used: &[bool],
+    blobs: &BTreeMap<ObjectId, Blob>,
+    track_empty: bool,
+    budget: &mut Budget<'_>,
+) -> Result<BTreeMap<&'a [u8], Option<usize>>, Error> {
+    let mut names = BTreeMap::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        budget.work(
+            candidate
+                .path
+                .len()
+                .saturating_mul((names.len() + 1).ilog2() as usize + 1),
+        )?;
+        if !used[index] && (track_empty || !blobs[&candidate.value.id].bytes.is_empty()) {
+            names
+                .entry(basename(candidate.path))
+                .and_modify(|entry| *entry = None)
+                .or_insert(Some(index));
+        }
+    }
+    Ok(names)
 }
 
 fn basename(path: &[u8]) -> &[u8] {
