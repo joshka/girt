@@ -9,16 +9,16 @@ Every transfer API in girt takes explicit resource limits: `FetchLimits`, `Fetch
 
 ## Validation is not the same as a limit
 
-girt validates what it receives, whatever the limits. Every received object's pack framing,
-checksum, delta chain and identity are checked. Then the history of every fetched tip is walked,
-down to any shallow boundary: each object reached must be present and well-formed. Malformed objects
+girt validates what it receives, whatever the limits. It checks every received object's pack
+framing, checksum, delta chain and identity, then walks the history of every fetched tip down to any
+shallow boundary: each object reached must be present and well-formed. Malformed objects
 outside that history, such as extras a server included, are not parsed further and do not fail the
 fetch. Nothing is installed until validation finishes.
 
-Limits answer a different question: how much well-formed work may the other side ask for? A pack can
-be valid and still be 50 GB, contain ten million objects, or chain deltas thousands deep. A Git
-client accepts all of that from the remotes its user configured. A service that fetches URLs its
-users submit must not, or one user could exhaust its disk, memory or CPU time.
+Limits bound how much well-formed work the other side may ask for. A pack can be valid and still be
+50 GB, contain ten million objects, or chain deltas thousands deep. A Git client accepts all of that
+from the remotes its user configured. A service that fetches URLs its users submit must not, or one
+user could exhaust its disk, memory or CPU time.
 
 ## Trusted: as Git trusts your own remotes
 
@@ -92,9 +92,9 @@ several transfers at once must also bound how many run concurrently.
 ## Cancellation and deadlines
 
 Limits bound work, not time. The core transfer calls take a `TransportControl`, which carries a
-cancellation flag (`AtomicBool`) and an optional absolute deadline. They are checked between units
-of work, and network adapters poll them while waiting for the peer. A single hash, inflate or
-filesystem call is not interrupted. Without a deadline, a stalled peer can hold a transfer until it
+cancellation flag (`AtomicBool`) and an optional absolute deadline. girt checks them between units
+of work, so a single hash, inflate or filesystem call is not interrupted; network adapters also poll
+them while waiting for the peer. Without a deadline, a stalled peer can hold a transfer until it
 is cancelled.
 
 The deadline covers only the call it is passed to. Validating a network download and `finish` take

@@ -14,8 +14,8 @@ rewriting:
 | `git://…`, `<helper>::<address>`                   | —              | unsupported                   |
 
 The `workflow` module reads the settings and environment variables described below for you. The core
-transport APIs read nothing themselves: the application passes each setting in, which lets it decide
-what to honor.
+transport APIs read nothing themselves: the application passes in each setting, so it decides which
+ones to honor.
 
 ## Native local
 
@@ -71,7 +71,7 @@ must approve any configured command by giving its executable and arguments expli
 for services that must not depend on a user's settings.
 
 The SSH process runs in its own process group without the terminal, unless the application attaches
-one explicitly. Passphrase prompts therefore need an agent or `SSH_ASKPASS`. SSH's standard error,
+one. Passphrase prompts therefore need an agent or `SSH_ASKPASS`. SSH's standard error,
 which explains host-key and authentication failures, is passed to
 `TransferCallbacks::transport_message`; show it to the user when a transfer fails.
 
@@ -108,7 +108,7 @@ a credential once and retries:
 Because `workflow` runs the helpers a repository's configuration names, it trusts that configuration
 as Git does. Use it only for repositories whose configuration you trust.
 
-With the core API, the application approves helpers explicitly. It maps each configured
+With the core API, the application decides which helpers may run: it maps each configured
 `credential.helper` value to a program or to the native store, and `CredentialSession::fill` refuses
 any helper without a mapping before running anything. Pass the filled session to
 `HttpRemote::with_credentials`. The HTTP adapter then sends the credential only after a `401`
