@@ -355,11 +355,12 @@ impl LooseObjects {
 
     /// Writes exact blob bytes and returns their selected-format identity.
     ///
-    /// Creates missing directories, compresses to a private temporary file in the destination
-    /// directory, then publishes with a hard link that cannot overwrite an existing path.
-    /// Concurrent writers of identical content can succeed. Existing objects are read and
-    /// compared; corrupt or conflicting objects are left untouched. Temporary files are removed
-    /// on normal error paths.
+    /// An existing object is read and compared first, so rewriting stored content costs one
+    /// decompression and no filesystem writes. Otherwise creates missing directories, compresses
+    /// to a private temporary file in the destination directory, then publishes with a hard link
+    /// that cannot overwrite an existing path. Concurrent writers of identical content can
+    /// succeed. Corrupt or conflicting objects are left untouched. Temporary files are removed on
+    /// normal error paths.
     ///
     /// # Errors
     ///
@@ -509,6 +510,13 @@ impl LooseObjects {
         let operation = || {
             ObjectId::null(format).require_format(self.format)?;
             let id = self.format.hash_object(kind, bytes);
+            // Rewriting content that is already stored is common (jj re-derives merge trees on
+            // every read command), and inflating the existing copy costs far less than deflating
+            // and linking a new one.
+            match self.read_existing(id, kind, bytes) {
+                Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
+                existing => return existing.map(|()| id),
+            }
             let path = self.object_path(id);
             let parent = path
                 .parent()
@@ -522,10 +530,7 @@ impl LooseObjects {
             match fs::hard_link(temporary.path(), &path) {
                 Ok(()) => Ok(id),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if self.read_object(id, bytes.len(), kind.as_str())? != bytes {
-                        return Err(Error::ConflictingObject);
-                    }
-                    Ok(id)
+                    self.read_existing(id, kind, bytes).map(|()| id)
                 }
                 Err(error) => Err(error.into()),
             }
@@ -548,6 +553,14 @@ impl LooseObjects {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error.into()),
         }
+    }
+
+    /// Checks that the stored copy of `id` holds exactly `bytes` of `kind`.
+    fn read_existing(&self, id: ObjectId, kind: ObjectKind, bytes: &[u8]) -> Result<(), Error> {
+        if self.read_object(id, bytes.len(), kind.as_str())? != bytes {
+            return Err(Error::ConflictingObject);
+        }
+        Ok(())
     }
 
     fn object_path(&self, id: ObjectId) -> PathBuf {
@@ -1355,6 +1368,28 @@ mod dual_format_tests {
         assert!(objects.write_blob(b"content").is_err());
         assert_eq!(fs::read(&path).unwrap(), b"corrupt existing object");
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rewriting_a_stored_object_writes_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
+        let id = objects.write_blob(b"content").unwrap();
+        let parent = objects.object_path(id).parent().unwrap().to_owned();
+        // A read-only fan-out directory refuses temporary files and links, so success shows
+        // that a duplicate is compared against the stored copy without publishing again.
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
+        if fs::write(parent.join("probe"), b"").is_ok() {
+            // Privileged processes ignore directory permissions, so this check proves nothing.
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+        let rewritten = objects.write_blob(b"content");
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(rewritten.unwrap(), id);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
     }
 
     #[rstest]
