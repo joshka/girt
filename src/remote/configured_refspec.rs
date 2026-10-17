@@ -51,6 +51,47 @@ pub enum ConfiguredRefspecKind {
 ///
 /// Empty fetch values select `HEAD`; they do not reset a collection. This parser handles one value
 /// at a time and performs no collection sorting or deduplication.
+///
+/// # Examples
+///
+/// Translate configured fetch refspecs into something an application understands, refusing the
+/// forms it doesn't, as jj does when it turns them into bookmark patterns:
+///
+/// ```
+/// use girt::remote::{ConfiguredRefspec, ConfiguredRefspecKind, Direction};
+///
+/// fn describe(value: &[u8]) -> Result<String, &'static str> {
+///     let spec = ConfiguredRefspec::parse(Direction::Fetch, value).map_err(|_| "invalid")?;
+///     let text =
+///         |bytes: Option<&[u8]>| String::from_utf8_lossy(bytes.unwrap_or_default()).into_owned();
+///     match spec.kind() {
+///         ConfiguredRefspecKind::Mapping => Ok(format!(
+///             "{}{} -> {}",
+///             if spec.force() { "+" } else { "" },
+///             text(spec.source()),
+///             text(spec.destination()),
+///         )),
+///         ConfiguredRefspecKind::Exclusion => Ok(format!("not {}", text(spec.source()))),
+///         ConfiguredRefspecKind::Selection => Err("fetches without recording a reference"),
+///         _ => Err("not a fetch mapping"),
+///     }
+/// }
+///
+/// assert_eq!(
+///     describe(b"+refs/heads/*:refs/remotes/origin/*"),
+///     Ok("+refs/heads/* -> refs/remotes/origin/*".to_owned()),
+/// );
+/// assert_eq!(
+///     describe(b"^refs/heads/wip/*"),
+///     Ok("not refs/heads/wip/*".to_owned())
+/// );
+/// // `@` is shorthand for HEAD; the descriptor normalizes it.
+/// assert_eq!(
+///     ConfiguredRefspec::parse(Direction::Fetch, b"@")?.to_bytes(),
+///     b"HEAD"
+/// );
+/// # Ok::<(), girt::remote::ConfiguredRefspecError>(())
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ConfiguredRefspec {
     kind: ConfiguredRefspecKind,

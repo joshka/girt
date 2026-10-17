@@ -152,6 +152,43 @@ impl std::fmt::Debug for ApprovedSshCommand {
 }
 
 /// Explicit application environment and trust inputs for a configured SSH destination.
+///
+/// # Examples
+///
+/// A configured `GIT_SSH_COMMAND` is refused until the application approves it, so a repository's
+/// configuration cannot choose a program to run:
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::{ProtocolEnvironment, Remote};
+/// use girt::transport::ssh::{ApprovedSshCommand, SshEnvironment, SshError, SshRemote};
+///
+/// let config = Config::parse(b"[remote \"origin\"]\nurl = git@example.com:team/project.git\n")?;
+/// let origin = Remote::find(&config, b"origin")?.expect("configured");
+/// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+///
+/// let environment = || {
+///     let mut environment = SshEnvironment::default();
+///     environment.default_executable = "/usr/bin/ssh".into();
+///     environment.config_file = "/etc/girt/ssh_config".into();
+///     environment.default_user = "git".into();
+///     environment.git_ssh_command = Some(b"ssh -i ~/.ssh/deploy".to_vec());
+///     environment
+/// };
+/// assert!(matches!(
+///     SshRemote::configured(&config, &destination, environment()),
+///     Err(SshError::Configuration(_)),
+/// ));
+///
+/// let mut approved = environment();
+/// approved.approved_command = Some(ApprovedSshCommand::new(
+///     b"ssh -i ~/.ssh/deploy".to_vec(),
+///     "/usr/bin/ssh".into(),
+///     vec!["-i".into(), "/home/ci/.ssh/deploy".into()],
+/// ));
+/// assert!(SshRemote::configured(&config, &destination, approved).is_ok());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Default)]
 #[non_exhaustive]
 pub struct SshEnvironment {
@@ -301,6 +338,32 @@ impl std::fmt::Debug for SshEnvironment {
 /// An exit code of 255 indicates an SSH/service failure, not a Git ref rejection. OpenSSH cannot
 /// reliably distinguish authentication, host trust and network failures without parsing stderr.
 /// Debug and errors never include configuration values. Caller concurrency bounds total resources.
+///
+/// # Examples
+///
+/// The explicit constructor takes each part separately, so there is no URL to misparse:
+///
+/// ```
+/// use std::path::Path;
+///
+/// use girt::transport::RequestedProtocol;
+/// use girt::transport::ssh::SshRemote;
+///
+/// let remote = SshRemote::new(
+///     "git.example.com",
+///     "git",
+///     22,
+///     "srv/project.git",
+///     Path::new("/usr/bin/ssh"),
+///     Path::new("/etc/girt/ssh_config"),
+/// )?
+/// .with_protocol(RequestedProtocol::V2);
+/// assert_eq!(remote.protocol(), RequestedProtocol::V2);
+/// assert!(!remote.has_terminal());
+/// // Debug output never shows the host, user or path.
+/// assert!(!format!("{remote:?}").contains("example.com"));
+/// # Ok::<(), girt::transport::ssh::SshError>(())
+/// ```
 pub struct SshRemote {
     host: String,
     user: Option<String>,

@@ -40,6 +40,82 @@ pub(super) static FAIL_FLUSH: AtomicBool = AtomicBool::new(false);
 /// The caller must not concurrently change foreground groups, terminal settings, signal handlers
 /// or masks used for job control. Descendants escaping the owned process group remain outside the
 /// cleanup contract. Abrupt process termination cannot run the restoration guard.
+///
+/// # Examples
+///
+/// Let OpenSSH prompt on the terminal, as `git` does, and support Ctrl-Z during the prompt. When
+/// the user stops SSH, the caller's process group gets the terminal back; the caller then stops
+/// itself with the same signal, and resumes SSH once its shell continues it in the foreground.
+/// This needs a terminal and a server, so it is not run:
+///
+/// ```no_run
+/// use std::fs::OpenOptions;
+/// use std::sync::Arc;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::Config;
+/// use girt::fetch::{FetchLimits, discover_ssh};
+/// use girt::remote::{ProtocolEnvironment, Remote};
+/// use girt::transport::TransportControl;
+/// use girt::transport::ssh::{ForegroundTerminal, OpenSshOptions, SshRemote};
+///
+/// /// Stops this process as a shell job, returning when the shell continues it.
+/// fn suspend(signal: i32) -> std::io::Result<()> {
+///     // SAFETY: `raise` sends a signal to the calling thread and has no memory-safety
+///     // preconditions. A stop signal suspends the process until it is continued.
+///     if unsafe { libc::raise(signal) } == 0 {
+///         Ok(())
+///     } else {
+///         Err(std::io::Error::last_os_error())
+///     }
+/// }
+///
+/// let config = Config::parse(b"[remote \"origin\"]\nurl = git@example.com:team/project.git\n")?;
+/// let origin = Remote::find(&config, b"origin")?.ok_or("no origin")?;
+/// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+/// let options = OpenSshOptions::default()
+///     .with_default_executable("/usr/bin/ssh".into())
+///     // The user's environment, without `GIT_*` variables that would select another command.
+///     .with_environment(
+///         std::env::vars_os()
+///             .filter(|(name, _)| !name.to_string_lossy().starts_with("GIT_"))
+///             .collect(),
+///     );
+///
+/// let tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+/// let (terminal, mut events) = ForegroundTerminal::prepare(tty.into())?;
+/// // Only `SshRemote::openssh` endpoints accept a terminal.
+/// let remote =
+///     SshRemote::openssh(&config, &destination, options)?.with_terminal(Arc::new(terminal))?;
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let cancel = AtomicBool::new(false);
+/// let discovery = runtime.block_on(async {
+///     let session = discover_ssh(
+///         &remote,
+///         FetchLimits::default(),
+///         TransportControl::new(&cancel),
+///     );
+///     tokio::pin!(session);
+///     loop {
+///         tokio::select! {
+///             result = &mut session => break result,
+///             // `try_next_stop` never blocks, so poll it alongside the session.
+///             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+///                 if let Some(stopped) = events.try_next_stop()? {
+///                     suspend(stopped.signal())?;
+///                     // Back in the foreground: let SSH continue.
+///                     stopped.resume()?;
+///                 }
+///             }
+///         }
+///     }
+/// })?;
+/// println!("{:?}", discovery.head);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct ForegroundTerminal {
     shared: Arc<Shared>,
 }

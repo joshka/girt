@@ -92,6 +92,26 @@ impl Destination {
     }
 
     /// Exact custom scheme for a helper destination; never an executable name or authorization.
+    ///
+    /// Git would run a program named `git-remote-<scheme>` for such a URL. girt does not run remote
+    /// helpers; the scheme is reported so an application can decide what to do, and remote helpers
+    /// are refused unless policy allows them.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::{Protocol, ProtocolEnvironment, Remote};
+    ///
+    /// let config = Config::parse(
+    ///     b"[protocol \"hg\"]\nallow = always\n[remote \"origin\"]\nurl = hg::https://example.com/project\n",
+    /// )?;
+    /// let origin = Remote::find(&config, b"origin")?.expect("configured");
+    /// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+    /// assert_eq!(destination.protocol(), Protocol::Helper);
+    /// assert_eq!(destination.helper_scheme(), Some(&b"hg"[..]));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn helper_scheme(&self) -> Option<&[u8]> {
         (self.protocol == Protocol::Helper)
             .then(|| helper_scheme(&self.bytes))
@@ -244,6 +264,37 @@ pub enum EndpointError {
 }
 
 /// Whether protocol use was initiated by the user or by an automatic operation.
+///
+/// Git treats some protocols, by default local paths and `file://`, as safe only when the user asked
+/// for them directly. A tool doing work automatically, such as a submodule update triggered by a
+/// clone, sets `GIT_PROTOCOL_FROM_USER=0`, and those protocols are refused.
+///
+/// # Examples
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::{EndpointError, ProtocolEnvironment, Remote};
+///
+/// let config = Config::parse(b"[remote \"origin\"]\nurl = file:///srv/git/project.git\n")?;
+/// let origin = Remote::find(&config, b"origin")?.expect("configured");
+///
+/// // Started by the user: allowed.
+/// assert!(
+///     origin
+///         .fetch_destination(&config, &ProtocolEnvironment::default())
+///         .is_ok()
+/// );
+///
+/// // Automatic: refused, as Git refuses it.
+/// let automatic = ProtocolEnvironment::from_environment(|name| {
+///     (name == "GIT_PROTOCOL_FROM_USER").then(|| b"0".to_vec())
+/// })?;
+/// assert_eq!(
+///     origin.fetch_destination(&config, &automatic),
+///     Err(EndpointError::Refused)
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum ProtocolOrigin {
@@ -465,6 +516,30 @@ impl RemoteUrls {
     /// # Errors
     ///
     /// Malformed rewrite settings produce [`EndpointError::Configuration`].
+    ///
+    /// # Examples
+    ///
+    /// Show where `git remote -v` would say a remote fetches from and pushes to:
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::RemoteUrls;
+    ///
+    /// let config = Config::parse(
+    ///     b"[url \"git@example.com:\"]\npushInsteadOf = https://example.com/\n\
+    ///       [remote \"origin\"]\nurl = https://example.com/project.git\n",
+    /// )?;
+    /// let urls = RemoteUrls::find(&config, b"origin")?.expect("configured");
+    /// assert_eq!(
+    ///     urls.fetch_display_url(&config)?,
+    ///     Some(b"https://example.com/project.git".to_vec())
+    /// );
+    /// assert_eq!(
+    ///     urls.push_display_url(&config)?,
+    ///     Some(b"git@example.com:project.git".to_vec())
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn push_display_url(&self, config: &Config) -> Result<Option<Vec<u8>>, EndpointError> {
         self.push_urls()
             .first()
