@@ -52,7 +52,6 @@ use crate::{ObjectId, index};
 /// assert_eq!(failure.report.stage, girt::checkout::Stage::Preparation);
 /// assert!(failure.report.applied.is_empty());
 /// assert!(!repo.worktree().unwrap().join("file").exists());
-/// // This preparation failure preceded mutation; inspect every failure's report independently.
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Copy, Debug)]
@@ -403,8 +402,10 @@ pub struct Failure {
 /// let failure = repo
 ///     .checkout_tree(None, Some(tree), Limits::default(), &AtomicBool::new(false))
 ///     .unwrap_err();
-/// assert!(matches!(failure.cause.as_ref(), Error::Refused { path, reason }
-///     if path == b"file" && !reason.is_empty()));
+/// assert!(matches!(
+///     failure.cause.as_ref(),
+///     Error::Refused { path, reason } if path == b"file" && !reason.is_empty()
+/// ));
 /// assert_eq!(failure.report.stage, Stage::Preparation);
 /// assert!(failure.report.applied.is_empty());
 /// assert!(!failure.report.index_published);

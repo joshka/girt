@@ -78,7 +78,10 @@ pub enum Untracked {
 /// Bounds for status phases; these are work/allocation ceilings, not exact heap limits.
 ///
 /// Choose file and aggregate budgets separately: many small files can exhaust the total even when
-/// each file fits. A limit failure supplies no partial report and must not become an empty display.
+/// each file fits. Both can currently return `Error::Limit("file bytes")` because each read is
+/// capped by the remaining aggregate allowance. Inspect the configured budgets before choosing
+/// which one to raise. A limit failure supplies no partial report and must not become an empty
+/// display.
 ///
 /// ```
 /// use std::sync::atomic::AtomicBool;
@@ -111,7 +114,7 @@ pub enum Untracked {
 ///         .with_max_worktree_bytes(8),
 ///     &AtomicBool::new(false),
 /// );
-/// assert!(matches!(result, Err(Error::Limit(_))));
+/// assert!(matches!(result, Err(Error::Limit("file bytes"))));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Copy, Debug)]
