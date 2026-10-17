@@ -29,9 +29,11 @@ use crate::packet::Wire;
 /// # Examples
 ///
 /// Download one branch's objects over HTTPS and validate them on a blocking thread. This needs a
-/// server, so it is not run:
+/// server and the `http` feature, so it is not run:
 ///
 /// ```no_run
+/// # #[cfg(feature = "http")]
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use std::ops::ControlFlow;
 /// use std::sync::atomic::AtomicBool;
 ///
@@ -69,7 +71,10 @@ use crate::packet::Wire;
 ///     })
 ///     .map_err(|error| error as Box<dyn std::error::Error>)?;
 /// println!("validated {} objects", received.object_count());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # Ok(())
+/// # }
+/// # #[cfg(not(feature = "http"))]
+/// # fn main() {}
 /// ```
 pub struct DownloadedFetch {
     #[cfg(feature = "tracing")]

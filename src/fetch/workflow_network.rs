@@ -20,9 +20,11 @@ use crate::transport::TransportControl;
 ///
 /// Download on the async runtime, validate on a blocking thread, then publish. Network I/O is
 /// async; validation hashes every object and belongs off the executor. This example needs a
-/// server, so it is not run:
+/// server and the `http` feature, so it is not run:
 ///
 /// ```no_run
+/// # #[cfg(feature = "http")]
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use std::collections::BTreeSet;
 /// use std::ops::ControlFlow;
 /// use std::sync::atomic::AtomicBool;
@@ -72,7 +74,10 @@ use crate::transport::TransportControl;
 ///         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 ///     })
 ///     .map_err(|error| error as Box<dyn std::error::Error>)?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # Ok(())
+/// # }
+/// # #[cfg(not(feature = "http"))]
+/// # fn main() {}
 /// ```
 #[derive(Debug)]
 pub struct FetchDownload {

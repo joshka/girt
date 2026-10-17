@@ -681,16 +681,25 @@ impl FetchRequest {
     /// let mut input = server.stdin.take().expect("piped");
     /// let mut output = server.stdout.take().expect("piped");
     /// let cancel = AtomicBool::new(false);
-    /// let ready = request.receive_session(
+    /// let result = request.receive_session(
     ///     &mut output,
     ///     &mut input,
     ///     &KnownHistory::default(),
     ///     FetchLimits::default(),
     ///     &cancel,
     ///     |_message| ControlFlow::Continue(()),
-    /// )?;
-    /// drop(input);
-    /// server.wait()?;
+    /// );
+    /// // Close the pipes and reap the process whatever happened; stop it first if the fetch failed.
+    /// drop((input, output));
+    /// if result.is_err() {
+    ///     server.kill().ok();
+    /// }
+    /// let status = server.wait()?;
+    /// let ready = result?;
+    /// // Publish only if the server also reported success.
+    /// if !status.success() {
+    ///     return Err(format!("git upload-pack failed: {status}").into());
+    /// }
     /// ready.finish(FetchUpdateLimits::default(), &cancel)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

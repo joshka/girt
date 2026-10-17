@@ -27,8 +27,10 @@ pub enum AdvertisementKind {
 ///
 /// # Examples
 ///
-/// An annotated tag is advertised twice: once as the tag object, and once as a peeled hint naming
-/// the commit it points to. Only the first can be fetched, and mapping ignores the hint:
+/// In a v0 or v1 advertisement, an annotated tag has an entry for the tag object and a separate
+/// peeled hint naming what it points to, here a commit. (Protocol v2 carries the peeled ID as an
+/// attribute of the one entry instead.) Only the tag object can be selected as a want, and refspec
+/// mapping ignores the hint:
 ///
 /// ```
 /// use girt::fetch::{AdvertisedRef, Advertisement, AdvertisementKind};
@@ -176,7 +178,7 @@ impl Advertisement {
 /// let mut input = server.stdin.take().expect("piped");
 /// let mut output = server.stdout.take().expect("piped");
 ///
-/// let received = receive(
+/// let result = receive(
 ///     &mut output,
 ///     &mut input,
 ///     // Want every branch tip.
@@ -194,9 +196,17 @@ impl Advertisement {
 ///         eprint!("remote: {}", String::from_utf8_lossy(message));
 ///         ControlFlow::Continue(())
 ///     },
-/// )?;
-/// drop(input);
-/// server.wait()?;
+/// );
+/// // Close the pipes and reap the process whatever happened; stop it first if the fetch failed.
+/// drop((input, output));
+/// if result.is_err() {
+///     server.kill().ok();
+/// }
+/// let status = server.wait()?;
+/// let received = result?;
+/// if !status.success() {
+///     return Err(format!("git upload-pack failed: {status}").into());
+/// }
 /// println!("received {} objects", received.object_count());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
