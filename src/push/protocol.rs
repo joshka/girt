@@ -67,9 +67,15 @@ use crate::refs::RefName;
 ///     .spawn()?;
 /// let mut input = server.stdin.take().expect("piped");
 /// let mut output = server.stdout.take().expect("piped");
-/// let report = send(&mut output, &mut input, &prepared, &cancel)?;
-/// drop(input);
-/// server.wait()?;
+/// let result = send(&mut output, &mut input, &prepared, &cancel);
+/// // Close the pipes and reap the process whatever happened.
+/// drop((input, output));
+/// let status = server.wait()?;
+/// // A failed push may still have updated references: `PushError::Uncertain` says so.
+/// let report = result?;
+/// if !status.success() {
+///     return Err(format!("git receive-pack failed: {status}").into());
+/// }
 /// assert!(report.all_succeeded(), "{report:?}");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
