@@ -22,9 +22,7 @@ use girt::workflow::{self, Environment, FetchOptions, PushOptions};
 use girt::{InitKind, ObjectId, Repository};
 
 use crate::common::{display_bytes, resolve, resolve_ref, stdout};
-use crate::config::{
-    Endpoint, block_on, configured_repository, endpoint, find_remote, http_remote,
-};
+use crate::config::{Endpoint, block_on, endpoint, find_remote, http_remote};
 use crate::{Context, complete};
 
 /// Copy a repository into a new directory and check out its `HEAD`.
@@ -128,7 +126,7 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         ),
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         Endpoint::Ssh(url) => {
-            let remote = crate::config::ssh_remote(&url, &crate::config::global_config()?)?;
+            let remote = crate::config::ssh_remote(&url, &context.user_config()?)?;
             block_on(request.receive_ssh(&remote, limits, control))?.and_then(|download| {
                 download.validate_with_progress(
                     &cancel,
@@ -179,7 +177,7 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         CloneHead::Branch { .. } | CloneHead::Detached(_)
     );
     if !args.bare && !args.no_checkout && has_head {
-        check_out_head(&destination, context.progress).wrap_err_with(|| {
+        check_out_head(&destination, context).wrap_err_with(|| {
             format!(
                 "the clone succeeded but checkout failed; retry with `girt -C {} checkout HEAD`",
                 destination.display()
@@ -190,9 +188,10 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
 }
 
 /// Fills the new clone's empty index and working tree from `HEAD`.
-fn check_out_head(destination: &std::path::Path, enabled: bool) -> Result<()> {
-    let mut progress = crate::progress::Progress::new(enabled);
-    let repository = Repository::open(destination).wrap_err("opening the clone")?;
+fn check_out_head(destination: &std::path::Path, context: &Context) -> Result<()> {
+    let mut progress = crate::progress::Progress::new(context.progress);
+    let repository = Repository::open_with_config(destination, &context.config_inputs()?)
+        .wrap_err("opening the clone")?;
     let objects = crate::common::objects(&repository)?;
     let tree = crate::common::resolve_tree(&repository, &objects, "HEAD")?;
     repository
@@ -233,7 +232,7 @@ fn environment(context: &Context) -> Result<Environment> {
 }
 
 pub fn fetch(args: FetchArgs, context: &Context) -> Result<ExitCode> {
-    let repository = configured_repository(context)?;
+    let repository = context.repository()?;
     let remote = find_remote(&repository, &args.remote)?;
     let refspecs: Vec<Vec<u8>> = remote
         .fetch_refspecs()
@@ -271,7 +270,7 @@ pub fn fetch(args: FetchArgs, context: &Context) -> Result<ExitCode> {
 }
 
 pub fn push(args: PushArgs, context: &Context) -> Result<ExitCode> {
-    let repository = configured_repository(context)?;
+    let repository = context.repository()?;
     let remote = find_remote(&repository, &args.remote)?;
     let mut commands = Vec::new();
     for refspec in &args.refspecs {

@@ -8,20 +8,13 @@ use std::sync::atomic::AtomicBool;
 use clap_complete::ArgValueCandidates;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::Repository;
-use girt::config::{ConfigInputs, Origin};
+use girt::config::Origin;
 use girt::fetch::{AdvertisementKind, FetchLimits, RemoteDiscovery};
 use girt::remote::{Remote, RemoteConfig};
 use girt::transport::TransportControl;
 
 use crate::common::{display_bytes, stdout, write_line};
 use crate::{Context, complete};
-
-/// Installation config files probed in order; the first that exists is the system layer.
-const SYSTEM_CONFIG: &[&str] = &[
-    "/opt/homebrew/etc/gitconfig",
-    "/usr/local/etc/gitconfig",
-    "/etc/gitconfig",
-];
 
 /// Largest local config file `set`/`unset` will edit.
 const MAX_CONFIG_BYTES: usize = 16 << 20;
@@ -114,20 +107,6 @@ pub fn remote(command: RemoteCommand, context: &Context) -> Result<ExitCode> {
     }
 }
 
-/// Discovers the repository and reopens it with system, global and environment config layers, as
-/// Git resolves them.
-pub fn configured_repository(context: &Context) -> Result<Repository> {
-    let discovered = context.repository()?;
-    let system = SYSTEM_CONFIG
-        .iter()
-        .map(PathBuf::from)
-        .find(|path| path.exists());
-    let inputs = ConfigInputs::from_environment(system, |name| std::env::var_os(name), 1024)
-        .wrap_err("reading config environment")?;
-    let path = discovered.worktree().unwrap_or(discovered.git_dir());
-    Repository::open_with_config(path, &inputs).wrap_err("opening repository with config")
-}
-
 /// Splits `section[.subsection].name` the way Git does: subsection is everything between the
 /// first and last dots.
 fn split_key(key: &str) -> Result<(&str, Option<&str>, &str)> {
@@ -146,7 +125,7 @@ fn split_key(key: &str) -> Result<(&str, Option<&str>, &str)> {
 
 fn get(key: &str, context: &Context) -> Result<ExitCode> {
     let (section, subsection, name) = split_key(key)?;
-    let repository = configured_repository(context)?;
+    let repository = context.repository()?;
     let value = repository
         .config()
         .value(section, subsection.map(str::as_bytes), name);
@@ -161,7 +140,7 @@ fn get(key: &str, context: &Context) -> Result<ExitCode> {
 }
 
 fn list(show_origin: bool, context: &Context) -> Result<ExitCode> {
-    let repository = configured_repository(context)?;
+    let repository = context.repository()?;
     let base = repository.worktree().unwrap_or(repository.git_dir());
     let mut out = stdout();
     for entry in repository.config().entries() {
@@ -274,7 +253,7 @@ fn push_urls(remote: &Remote) -> &[Vec<u8>] {
 }
 
 fn remote_list(urls: bool, context: &Context) -> Result<ExitCode> {
-    let repository = configured_repository(context)?;
+    let repository = context.repository()?;
     let mut out = stdout();
     let mut names = Remote::names(repository.config());
     names.sort_unstable();
@@ -321,7 +300,7 @@ fn remote_show(name: &str, context: &Context) -> Result<ExitCode> {
     if context.git {
         bail!("--git is not supported for `remote show` (git contacts the remote)");
     }
-    let repository = configured_repository(context)?;
+    let repository = context.repository()?;
     let remote = find_remote(&repository, name)?;
     let mut out = stdout();
     writeln!(out, "name\t{name}")?;
@@ -346,7 +325,6 @@ fn remote_heads(target: &str, context: &Context) -> Result<ExitCode> {
     let url = context
         .repository()
         .ok()
-        .and_then(|_| configured_repository(context).ok())
         .and_then(|repository| {
             Remote::find(repository.config(), target.as_bytes())
                 .ok()
@@ -426,10 +404,9 @@ fn discover(url: &str, context: &Context) -> Result<RemoteDiscovery> {
             .wrap_err_with(|| format!("listing {}", path.display())),
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         Endpoint::Ssh(url) => {
-            let config = if context.repository().is_ok() {
-                configured_repository(context)?.config().clone()
-            } else {
-                global_config()?
+            let config = match context.repository() {
+                Ok(repository) => repository.config().clone(),
+                Err(_) => context.user_config()?,
             };
             let remote = ssh_remote(&url, &config)?;
             block_on(girt::fetch::discover_ssh(&remote, limits, control))?
@@ -505,15 +482,4 @@ pub fn ssh_remote(url: &str, config: &girt::Config) -> Result<girt::transport::s
             .with_environment(environment),
     )
     .wrap_err("configuring SSH remote")
-}
-
-/// Resolve system/global/environment configuration without discovering an enclosing repository.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn global_config() -> Result<girt::Config> {
-    let system = SYSTEM_CONFIG
-        .iter()
-        .map(PathBuf::from)
-        .find(|path| path.exists());
-    let inputs = ConfigInputs::from_environment(system, |name| std::env::var_os(name), 1024)?;
-    girt::Config::resolve(&inputs).wrap_err("reading global config")
 }

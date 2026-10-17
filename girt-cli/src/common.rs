@@ -5,9 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
+use girt::config::ConfigInputs;
 use girt::refs::{RefName, References};
 use girt::revision::{Range, Resolver, Revision, Selection};
-use girt::{Commit, ObjectId, ObjectKind, Objects, PackLimits, ReadLimits, Repository};
+use girt::workflow::Environment;
+use girt::{Commit, Config, ObjectId, ObjectKind, Objects, PackLimits, ReadLimits, Repository};
 
 /// Maximum symbolic-ref hops followed while resolving a reference.
 const MAX_SYMREF_DEPTH: usize = 5;
@@ -22,6 +24,8 @@ pub struct Context {
     pub color: bool,
     /// Allow progress when stderr is a terminal.
     pub progress: bool,
+    /// The process environment, captured once; every configuration lookup reads this.
+    pub environment: Environment,
 }
 
 impl Context {
@@ -33,6 +37,7 @@ impl Context {
             git,
             color: false,
             progress: !git,
+            environment: Environment::from_process(),
         }
     }
 
@@ -41,10 +46,43 @@ impl Context {
         &self.directory
     }
 
-    /// Discovers the repository containing the working directory.
+    /// Git's system, global and environment configuration sources for this environment.
+    pub fn config_inputs(&self) -> Result<ConfigInputs> {
+        ConfigInputs::git_default(&self.environment).wrap_err("reading config environment")
+    }
+
+    /// Discovers the repository containing the working directory, with Git's configuration.
+    ///
+    /// Every command opens its repository here, so system and global settings such as
+    /// `core.excludesFile` and `user.name` apply everywhere.
     pub fn repository(&self) -> Result<Repository> {
-        Repository::discover(&self.directory)
-            .wrap_err_with(|| format!("no repository at {}", self.directory.display()))
+        let no_repository = || format!("no repository at {}", self.directory.display());
+        let relative_selector = ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"]
+            .iter()
+            .any(|name| {
+                self.environment
+                    .get(name)
+                    .is_some_and(|path| !path.is_empty() && Path::new(path).is_relative())
+            });
+        if !relative_selector {
+            return Repository::discover_with_config(&self.directory, &self.config_inputs()?)
+                .wrap_err_with(no_repository);
+        }
+        // Inside a working tree, Git resolves a relative selector from the top of the tree.
+        let discovered = Repository::discover(&self.directory).wrap_err_with(no_repository)?;
+        let Some(top) = discovered.worktree() else {
+            return Repository::open_with_config(discovered.git_dir(), &self.config_inputs()?)
+                .wrap_err_with(no_repository);
+        };
+        let environment = self.environment.clone().with_current_dir(top);
+        let inputs =
+            ConfigInputs::git_default(&environment).wrap_err("reading config environment")?;
+        Repository::open_with_config(top, &inputs).wrap_err_with(no_repository)
+    }
+
+    /// System, global and environment configuration, for commands that run outside a repository.
+    pub fn user_config(&self) -> Result<Config> {
+        Config::resolve(&self.config_inputs()?).wrap_err("reading global config")
     }
 }
 

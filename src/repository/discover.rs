@@ -2,6 +2,7 @@
 use std::path::Path;
 
 use super::{OpenError, Repository, canonical, io_error, malformed};
+use crate::config::ConfigInputs;
 
 impl Repository {
     /// Finds the nearest repository at or above an existing directory.
@@ -41,7 +42,49 @@ impl Repository {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn discover(start: impl AsRef<Path>) -> Result<Self, OpenError> {
-        discover(start.as_ref(), None)
+        discover(start.as_ref(), None, &ConfigInputs::default())
+    }
+
+    /// Finds the nearest repository like [`Self::discover`] and opens it with `inputs`.
+    ///
+    /// Discovery follows [`Self::discover`]'s rules; opening adds the repository's own
+    /// configuration to `inputs` as [`Self::open_with_config`] does. Pass
+    /// [`ConfigInputs::git_default`] to see the configuration `git` would see from `start`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::discover`]'s errors and [`Self::open_with_config`]'s configuration
+    /// failures. No files are changed.
+    ///
+    /// ```
+    /// use girt::config::ConfigInputs;
+    /// use girt::workflow::Environment;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let project = directory.path().join("project");
+    /// Repository::init(ObjectFormat::Sha1, &project, InitKind::Worktree)?;
+    /// std::fs::write(
+    ///     directory.path().join(".gitconfig"),
+    ///     b"[core]\n\texcludesFile = ~/ignore\n",
+    /// )?;
+    /// let environment = Environment::default()
+    ///     .with("HOME", directory.path())
+    ///     .with("GIT_CONFIG_NOSYSTEM", "1");
+    /// let inputs = ConfigInputs::git_default(&environment)?;
+    /// let nested = project.join("src");
+    /// std::fs::create_dir(&nested)?;
+    /// let repository = Repository::discover_with_config(&nested, &inputs)?;
+    /// assert_eq!(
+    ///     repository.config().string("core", None, "excludesfile"),
+    ///     Some(&b"~/ignore"[..])
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn discover_with_config(
+        start: impl AsRef<Path>,
+        inputs: &ConfigInputs,
+    ) -> Result<Self, OpenError> {
+        discover(start.as_ref(), None, inputs)
     }
 
     /// Finds a repository between an existing directory and an inclusive ancestor ceiling.
@@ -74,11 +117,19 @@ impl Repository {
         start: impl AsRef<Path>,
         ceiling: impl AsRef<Path>,
     ) -> Result<Self, OpenError> {
-        discover(start.as_ref(), Some(ceiling.as_ref()))
+        discover(
+            start.as_ref(),
+            Some(ceiling.as_ref()),
+            &ConfigInputs::default(),
+        )
     }
 }
 
-fn discover(start: &Path, ceiling: Option<&Path>) -> Result<Repository, OpenError> {
+fn discover(
+    start: &Path,
+    ceiling: Option<&Path>,
+    inputs: &ConfigInputs,
+) -> Result<Repository, OpenError> {
     let start = directory(start)?;
     let ceiling = ceiling.map(directory).transpose()?;
     if ceiling
@@ -92,7 +143,7 @@ fn discover(start: &Path, ceiling: Option<&Path>) -> Result<Repository, OpenErro
     }
     for candidate in start.ancestors() {
         if is_candidate(candidate)? {
-            return Repository::open(candidate);
+            return Repository::open_with_config(candidate, inputs);
         }
         if ceiling.as_deref() == Some(candidate) {
             break;

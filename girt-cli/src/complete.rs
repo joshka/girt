@@ -201,7 +201,7 @@ fn short_name(name: &str) -> (String, &'static str) {
 
 /// Remote names from every config layer, as the remote commands see them.
 pub fn remotes() -> Vec<CompletionCandidate> {
-    let Ok(repository) = crate::config::configured_repository(&Context::new(false)) else {
+    let Ok(repository) = Context::new(false).repository() else {
         return Vec::new();
     };
     let names: BTreeSet<String> = Remote::names(repository.config())
@@ -235,7 +235,7 @@ pub fn worktrees() -> Vec<CompletionCandidate> {
 
 /// Keys set in the repository's local, global and system config, as `git config --list` names them.
 pub fn config_keys() -> Vec<CompletionCandidate> {
-    let Ok(repository) = crate::config::configured_repository(&Context::new(false)) else {
+    let Ok(repository) = Context::new(false).repository() else {
         return Vec::new();
     };
     let keys: BTreeSet<String> = repository

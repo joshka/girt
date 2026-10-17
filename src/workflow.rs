@@ -646,6 +646,11 @@ impl Environment {
         self
     }
 
+    /// The directory relative paths resolve against, if known.
+    pub(crate) fn current_dir(&self) -> Option<&std::path::Path> {
+        self.current_dir.as_deref()
+    }
+
     fn bytes(&self, name: &str) -> Option<Vec<u8>> {
         self.get(name)
             .map(|value| value.as_encoded_bytes().to_vec())

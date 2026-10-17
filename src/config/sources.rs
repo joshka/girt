@@ -47,6 +47,9 @@ pub struct ConfigFile {
     pub scope: ConfigScope,
     /// Ignore NotFound only; permission and parse failures always propagate.
     pub optional: bool,
+    /// Also skip this file when opening it is denied, as Git skips an unreadable global file.
+    /// Applies to this root only: an unreadable include and parse failures still propagate.
+    pub skip_unreadable: bool,
 }
 
 impl ConfigFile {
@@ -56,6 +59,7 @@ impl ConfigFile {
             path,
             scope,
             optional: false,
+            skip_unreadable: false,
         }
     }
 
@@ -77,6 +81,13 @@ impl ConfigFile {
     #[must_use]
     pub fn with_optional(mut self, optional: bool) -> Self {
         self.optional = optional;
+        self
+    }
+
+    /// Sets [`Self::skip_unreadable`].
+    #[must_use]
+    pub fn with_skip_unreadable(mut self, skip_unreadable: bool) -> Self {
+        self.skip_unreadable = skip_unreadable;
         self
     }
 }
@@ -448,6 +459,7 @@ impl ConfigInputs {
                 path,
                 scope: ConfigScope::System,
                 optional: true,
+                skip_unreadable: false,
             });
         }
         if let Some(path) = get("GIT_CONFIG_GLOBAL") {
@@ -455,6 +467,7 @@ impl ConfigInputs {
                 path: path.into(),
                 scope: ConfigScope::Global,
                 optional: true,
+                skip_unreadable: false,
             });
         } else {
             let xdg = get("XDG_CONFIG_HOME")
@@ -466,6 +479,7 @@ impl ConfigInputs {
                     path: xdg.join("git/config"),
                     scope: ConfigScope::Global,
                     optional: true,
+                    skip_unreadable: false,
                 });
             }
             if let Some(home) = home {
@@ -473,6 +487,7 @@ impl ConfigInputs {
                     path: home.join(".gitconfig"),
                     scope: ConfigScope::Global,
                     optional: true,
+                    skip_unreadable: false,
                 });
             }
         }
@@ -508,5 +523,148 @@ impl ConfigInputs {
             });
         }
         Ok(inputs)
+    }
+}
+
+impl ConfigInputs {
+    /// Selects the configuration sources `git` reads, from an explicit environment snapshot.
+    ///
+    /// Use this to behave like Git: pass the result to [`crate::Repository::open_with_config`] or
+    /// [`crate::Repository::discover_with_config`], which add the repository's own files, or to
+    /// [`Config::resolve`] for settings outside a repository (identity, `init.defaultBranch`).
+    /// Sources, lowest precedence first:
+    ///
+    /// 1. **System**: `GIT_CONFIG_SYSTEM` if set, otherwise the installation file below. A true
+    ///    `GIT_CONFIG_NOSYSTEM` removes it.
+    /// 2. **Global**: `GIT_CONFIG_GLOBAL` if set. Otherwise `$XDG_CONFIG_HOME/git/config` (or
+    ///    `$HOME/.config/git/config` when `XDG_CONFIG_HOME` is unset or empty), then
+    ///    `$HOME/.gitconfig`.
+    /// 3. **Local and worktree**: added by repository opening, not by this constructor.
+    /// 4. **Environment**: `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>`,
+    ///    then the `GIT_CONFIG_PARAMETERS` that `git -c` passes to child processes.
+    ///
+    /// Missing files are skipped, as Git skips them, and an empty `GIT_CONFIG_GLOBAL` or
+    /// `GIT_CONFIG_SYSTEM` selects no file. Global files that cannot be opened for lack of
+    /// permission are skipped too ([`ConfigFile::skip_unreadable`]); an unreadable system file is
+    /// an error, as in Git.
+    ///
+    /// A relative `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_SYSTEM` resolves against the environment's
+    /// current directory ([`Environment::with_current_dir`]). That matches Git outside a
+    /// repository and in a bare one. Inside a repository with a working tree, Git resolves it
+    /// against the top of the working tree instead: to match, discover the repository first and
+    /// set the current directory to [`crate::Repository::worktree`].
+    /// `HOME` also sets [`IncludeContext::home`] for `~/` include paths. Runtime pairs use the
+    /// default [`ResolveLimits`] entry and byte budgets; call [`Self::from_environment`] to choose
+    /// the system file or pair budget yourself.
+    ///
+    /// The installation file depends on how Git was built, so it is a platform convention:
+    ///
+    /// - macOS: the first existing of `/opt/homebrew/etc/gitconfig`, `/usr/local/etc/gitconfig`
+    ///   (Homebrew) and `/etc/gitconfig`. This checks the files' existence.
+    /// - Other Unix: `/etc/gitconfig`.
+    /// - Windows: none; supply it with `GIT_CONFIG_SYSTEM` or [`Self::from_environment`].
+    ///
+    /// Apple's Xcode Git also reads a file inside the Xcode bundle, which is not selected here.
+    /// The process environment is never read; the caller supplies `environment`, usually
+    /// [`Environment::from_process`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ConfigError`](super::ConfigError) for a `GIT_CONFIG_NOSYSTEM` that is not a
+    /// boolean, malformed or over-budget runtime pairs, or invalid `GIT_CONFIG_PARAMETERS`
+    /// quoting. On non-Unix platforms runtime pairs must be Unicode. Files are not read until
+    /// resolution.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::config::ConfigInputs;
+    /// use girt::workflow::Environment;
+    ///
+    /// let home = tempfile::tempdir()?;
+    /// std::fs::write(home.path().join(".gitconfig"), b"[user]\n\tname = Home\n")?;
+    /// let environment = Environment::default()
+    ///     .with("HOME", home.path())
+    ///     .with("GIT_CONFIG_NOSYSTEM", "1")
+    ///     .with("GIT_CONFIG_COUNT", "1")
+    ///     .with("GIT_CONFIG_KEY_0", "user.email")
+    ///     .with("GIT_CONFIG_VALUE_0", "home@example.com");
+    /// let config = Config::resolve(&ConfigInputs::git_default(&environment)?)?;
+    /// assert_eq!(config.string("user", None, "name"), Some(&b"Home"[..]));
+    /// assert_eq!(
+    ///     config.string("user", None, "email"),
+    ///     Some(&b"home@example.com"[..])
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// [`Environment::with_current_dir`]: crate::workflow::Environment::with_current_dir
+    /// [`Environment::from_process`]: crate::workflow::Environment::from_process
+    pub fn git_default(
+        environment: &crate::workflow::Environment,
+    ) -> Result<Self, super::ConfigError> {
+        let limits = ResolveLimits::default();
+        let get = |name: &str| environment.get(name).map(std::ffi::OsStr::to_owned);
+        let mut inputs = Self::from_environment(default_system_file(), get, limits.entries)?;
+        // An empty selection names no file.
+        inputs
+            .files
+            .retain(|file| !file.path.as_os_str().is_empty());
+        for file in &mut inputs.files {
+            file.skip_unreadable = file.scope == ConfigScope::Global;
+            if let Some(directory) = environment.current_dir()
+                && file.path.is_relative()
+            {
+                file.path = directory.join(&file.path);
+            }
+        }
+        #[cfg(not(unix))]
+        let mut invalid_encoding = false;
+        let environment_config = Config::from_command_environment(
+            |name| {
+                let value = environment.get(name)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::ffi::OsStrExt;
+                    Some(value.as_bytes().to_vec())
+                }
+                #[cfg(not(unix))]
+                {
+                    let value = value.to_str();
+                    invalid_encoding |= value.is_none();
+                    Some(value.unwrap_or_default().as_bytes().to_vec())
+                }
+            },
+            limits.entries,
+            limits.bytes,
+        )?;
+        #[cfg(not(unix))]
+        if invalid_encoding {
+            return Err(super::ConfigError {
+                line: 1,
+                reason: "environment pair is not Unicode",
+            });
+        }
+        inputs.environment = Some(environment_config);
+        Ok(inputs)
+    }
+}
+
+/// The installation configuration file Git's usual builds for this platform read.
+fn default_system_file() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        [
+            "/opt/homebrew/etc/gitconfig",
+            "/usr/local/etc/gitconfig",
+            "/etc/gitconfig",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.exists())
+    } else if cfg!(unix) {
+        Some(PathBuf::from("/etc/gitconfig"))
+    } else {
+        None
     }
 }

@@ -343,6 +343,7 @@ pub fn config_includes(data: &[u8]) {
             path: home.join("config"),
             scope: crate::config::ConfigScope::Local,
             optional: false,
+            skip_unreadable: false,
         }],
         context: crate::config::IncludeContext {
             home: Some(home.to_path_buf()),

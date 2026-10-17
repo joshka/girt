@@ -23,6 +23,7 @@ fn inputs(root: &std::path::Path, body: &str) -> ConfigInputs {
             path: root.join("root"),
             scope: ConfigScope::Global,
             optional: false,
+            skip_unreadable: false,
         }],
         ..ConfigInputs::default()
     }
@@ -116,6 +117,7 @@ fn roots_are_isolated_and_default_still_scans_all_inputs() {
         path: root.path().join("later"),
         scope: ConfigScope::Global,
         optional: false,
+        skip_unreadable: false,
     });
     assert!(!has_marker(
         &Config::resolve_with_options(&input, options()).unwrap()

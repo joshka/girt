@@ -340,6 +340,7 @@ fn command_layout_rejects_relative_config_sources_before_reading() {
             path: "relative-config".into(),
             scope: ConfigScope::Global,
             optional: true,
+            skip_unreadable: false,
         }],
         ..Default::default()
     };

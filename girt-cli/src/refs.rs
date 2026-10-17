@@ -1,15 +1,13 @@
 //! `girt ref`: list, inspect, update, delete and log references.
 
 use std::io::Write;
-use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap_complete::{ArgValueCandidates, ArgValueCompleter};
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
-use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
 use girt::refs::{Dereference, Expected, RefEdit, RefName, References, Reflog, Target};
-use girt::{Config, ObjectId, ObjectKind, Repository, Signature};
+use girt::{ObjectId, ObjectKind, Repository, Signature};
 
 use crate::common::{self, display_bytes};
 use crate::{Context, complete};
@@ -106,7 +104,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
                 (None, false) => Expected::Any,
             };
             let reflog = Reflog::Append {
-                committer: committer(&repository)?,
+                committer: committer(&repository, context)?,
                 message: message.into_bytes(),
             };
             edit(
@@ -301,16 +299,22 @@ fn log(
     Ok(ExitCode::SUCCESS)
 }
 
-/// Builds the reflog committer from the environment or `user.name`/`user.email` config.
-fn committer(repository: &Repository) -> Result<Signature> {
-    let global = global_config();
+/// Builds the reflog committer from `GIT_COMMITTER_*` or the effective `user.name`/`user.email`.
+///
+/// `repository` was opened through [`Context::repository`], so its configuration already holds
+/// the system, global and environment sources.
+fn committer(repository: &Repository, context: &Context) -> Result<Signature> {
     let lookup = |env: &str, key: &str| -> Option<Vec<u8>> {
-        std::env::var(env).ok().map(String::into_bytes).or_else(|| {
-            [Some(repository.config()), global.as_ref()]
-                .into_iter()
-                .flatten()
-                .find_map(|config| config.string("user", None, key).map(<[u8]>::to_vec))
-        })
+        context
+            .environment
+            .get(env)
+            .map(|value| value.as_encoded_bytes().to_vec())
+            .or_else(|| {
+                repository
+                    .config()
+                    .string("user", None, key)
+                    .map(<[u8]>::to_vec)
+            })
     };
     let (Some(name), Some(email)) = (
         lookup("GIT_COMMITTER_NAME", "name"),
@@ -328,20 +332,4 @@ fn committer(repository: &Repository) -> Result<Signature> {
         seconds: i64::try_from(seconds)?,
         offset_minutes: 0,
     })
-}
-
-/// Reads the user's global Git config (`$XDG_CONFIG_HOME/git/config`, then `~/.gitconfig`).
-fn global_config() -> Option<Config> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let xdg = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| home.as_ref().map(|home| home.join(".config")));
-    let files = xdg
-        .map(|xdg| xdg.join("git/config"))
-        .into_iter()
-        .chain(home.map(|home| home.join(".gitconfig")))
-        .filter(|path| path.exists())
-        .map(|path| ConfigFile::new(path, ConfigScope::Global))
-        .collect();
-    Config::resolve(&ConfigInputs::default().with_files(files)).ok()
 }

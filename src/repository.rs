@@ -5,6 +5,8 @@
 //! Use [`RepositoryLocation::at_git_dir`] when a caller has selected the exact metadata directory
 //! and needs to apply trust policy before opening it. None of these reads ambient Git environment
 //! variables; supply inherited configuration explicitly through [`ConfigInputs`].
+//! [`Repository::discover_with_config`] with [`ConfigInputs::git_default`] sees the configuration
+//! `git` would.
 //!
 //! # Layout and lifetime
 //!
@@ -620,6 +622,7 @@ impl RepositoryMetadata {
             path: config_path.clone(),
             scope: ConfigScope::Local,
             optional: true,
+            skip_unreadable: false,
         });
         let worktree_config_enabled = extension_boolean(&config, &config_path, "worktreeconfig")?;
         let ignore_common_layout = if command.is_some() {
@@ -648,6 +651,7 @@ impl RepositoryMetadata {
                 path: worktree_path,
                 scope: ConfigScope::Worktree,
                 optional: true,
+                skip_unreadable: false,
             });
         }
         let (worktree, bare, worktree_config_conflict) = if let Some(command) = command {

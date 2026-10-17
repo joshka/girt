@@ -769,3 +769,162 @@ fn environment_count_spellings_match_git(#[case] count: &str, #[case] expected: 
         expected
     );
 }
+
+/// `ConfigInputs::git_default` selects the same sources as `git config`, given the same
+/// environment. `{root}` in a value is replaced by the scratch directory.
+#[rstest]
+#[case::xdg_default_then_home(&[], b"xdg-default\0home\0")]
+#[case::xdg_home_replaces_default(&[("XDG_CONFIG_HOME", "{root}/xdg")], b"xdg\0home\0")]
+#[case::empty_xdg_home_is_unset(&[("XDG_CONFIG_HOME", "")], b"xdg-default\0home\0")]
+#[case::global_replaces_user_files(&[("GIT_CONFIG_GLOBAL", "{root}/selected")], b"selected\0")]
+#[case::relative_global_uses_current_dir(&[("GIT_CONFIG_GLOBAL", "selected")], b"selected\0")]
+#[case::empty_global_disables_user_files(&[("GIT_CONFIG_GLOBAL", "")], b"")]
+#[case::empty_system_disables_system(&[("GIT_CONFIG_NOSYSTEM", "0"), ("GIT_CONFIG_SYSTEM", "")], b"xdg-default\0home\0")]
+#[case::missing_global_is_skipped(&[("GIT_CONFIG_GLOBAL", "{root}/absent")], b"")]
+#[case::system_precedes_global(
+    &[("GIT_CONFIG_NOSYSTEM", "0"), ("GIT_CONFIG_SYSTEM", "{root}/selected")],
+    b"selected\0xdg-default\0home\0"
+)]
+#[case::nosystem_wins_over_system(
+    &[("GIT_CONFIG_NOSYSTEM", "yes"), ("GIT_CONFIG_SYSTEM", "{root}/selected")],
+    b"xdg-default\0home\0"
+)]
+#[case::counted_pairs_follow_files(
+    &[("GIT_CONFIG_COUNT", "1"), ("GIT_CONFIG_KEY_0", "demo.value"), ("GIT_CONFIG_VALUE_0", "pair")],
+    b"xdg-default\0home\0pair\0"
+)]
+#[case::command_parameters_follow_files(
+    &[("GIT_CONFIG_PARAMETERS", "'demo.value'='parameter'")],
+    b"xdg-default\0home\0parameter\0"
+)]
+fn git_default_sources_match_git(#[case] variables: &[(&str, &str)], #[case] expected: &[u8]) {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir_all(home.join(".config/git")).unwrap();
+    std::fs::create_dir_all(root.path().join("xdg/git")).unwrap();
+    std::fs::write(
+        home.join(".config/git/config"),
+        b"[demo]\nvalue=xdg-default\n",
+    )
+    .unwrap();
+    std::fs::write(home.join(".gitconfig"), b"[demo]\nvalue=home\n").unwrap();
+    std::fs::write(root.path().join("xdg/git/config"), b"[demo]\nvalue=xdg\n").unwrap();
+    std::fs::write(root.path().join("selected"), b"[demo]\nvalue=selected\n").unwrap();
+    let root_text = root.path().to_str().unwrap();
+    let mut variables: Vec<(&str, String)> = variables
+        .iter()
+        .map(|(name, value)| (*name, value.replace("{root}", root_text)))
+        .collect();
+    if !variables
+        .iter()
+        .any(|(name, _)| *name == "GIT_CONFIG_NOSYSTEM")
+    {
+        variables.push(("GIT_CONFIG_NOSYSTEM", "1".to_owned()));
+    }
+    variables.push(("HOME", home.to_str().unwrap().to_owned()));
+
+    let environment: girt::workflow::Environment = variables
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect::<girt::workflow::Environment>()
+        .with_current_dir(root.path());
+    let inputs = ConfigInputs::git_default(&environment).unwrap();
+    assert_eq!(values(&Config::resolve(&inputs).unwrap()), expected);
+
+    let mut command = Command::new("git");
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
+    if let Some(system) = std::env::var_os("SYSTEMROOT") {
+        command.env("SYSTEMROOT", system);
+    }
+    let output = command
+        .current_dir(root.path())
+        .envs(variables.iter().map(|(name, value)| (name, value)))
+        .args(["config", "--null", "--get-all", "demo.value"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.stdout,
+        expected,
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn git_default_rejects_non_boolean_nosystem_like_git() {
+    let environment: girt::workflow::Environment =
+        [("GIT_CONFIG_NOSYSTEM", "bogus")].into_iter().collect();
+    assert!(ConfigInputs::git_default(&environment).is_err());
+    let root = tempfile::tempdir().unwrap();
+    let output = git(
+        root.path(),
+        &["config", "--get-all", "demo.value"],
+        &[("GIT_CONFIG_NOSYSTEM", "bogus")],
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("bad boolean"));
+}
+
+/// Git skips a global file it may not read but fails on an unreadable system file.
+#[cfg(unix)]
+#[test]
+fn git_default_skips_unreadable_global_but_not_system() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let global = root.path().join("global");
+    let system = root.path().join("system");
+    for path in [&global, &system] {
+        std::fs::write(path, b"[demo]\nvalue=unreadable\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    if std::fs::read(&global).is_ok() {
+        return; // Running as a user that bypasses permissions, such as root.
+    }
+    let root_text = root.path().to_str().unwrap();
+    let global_text = global.to_str().unwrap();
+    let system_text = system.to_str().unwrap();
+
+    let environment: girt::workflow::Environment = [
+        ("HOME", root_text),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_CONFIG_GLOBAL", global_text),
+    ]
+    .into_iter()
+    .collect();
+    let config = Config::resolve(&ConfigInputs::git_default(&environment).unwrap()).unwrap();
+    assert_eq!(values(&config), b"");
+    let output = git(
+        root.path(),
+        &["config", "--null", "--get-all", "demo.value"],
+        &[("GIT_CONFIG_GLOBAL", global_text)],
+    );
+    assert_eq!(output.stdout, b"");
+    assert!(output.stderr.is_empty());
+
+    let environment = environment
+        .with("GIT_CONFIG_NOSYSTEM", "0")
+        .with("GIT_CONFIG_SYSTEM", system_text);
+    assert!(Config::resolve(&ConfigInputs::git_default(&environment).unwrap()).is_err());
+    let output = git(
+        root.path(),
+        &["config", "--get-all", "demo.value"],
+        &[
+            ("GIT_CONFIG_NOSYSTEM", "0"),
+            ("GIT_CONFIG_SYSTEM", system_text),
+        ],
+    );
+    assert!(!output.status.success());
+
+    // An unreadable include of a readable global file is still an error.
+    std::fs::write(
+        root.path().join("readable"),
+        format!("[include]\npath = {system_text}\n"),
+    )
+    .unwrap();
+    let environment = environment
+        .with("GIT_CONFIG_NOSYSTEM", "1")
+        .with("GIT_CONFIG_GLOBAL", root.path().join("readable"));
+    assert!(Config::resolve(&ConfigInputs::git_default(&environment).unwrap()).is_err());
+}

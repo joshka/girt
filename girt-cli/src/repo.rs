@@ -28,8 +28,8 @@ pub enum Command {
 
 /// Create an empty repository, like `git init`.
 ///
-/// Unlike Git, configuration (`init.defaultBranch`) and templates are never read: the default
-/// branch is `master` unless `--initial-branch` is given. With `--git`, prints Git's
+/// The initial branch is `--initial-branch`, else the system or global `init.defaultBranch`, else
+/// `master`. Unlike Git, templates are never read. With `--git`, prints Git's
 /// `Initialized empty Git repository in <git-dir>/` line.
 #[derive(Debug, clap::Args)]
 pub struct InitArgs {
@@ -168,7 +168,14 @@ pub fn init(args: InitArgs, context: &Context) -> Result<ExitCode> {
     } else {
         InitKind::Worktree
     };
+    let config = context.user_config()?;
     let mut options = InitOptions::new(kind);
+    if args.initial_branch.is_none() {
+        // As in Git, an explicit branch makes `init.defaultBranch` irrelevant, even if invalid.
+        options = options
+            .defaults_from(&config)
+            .wrap_err("invalid init.defaultBranch")?;
+    }
     if args.sha256 {
         options = options.with_object_format(ObjectFormat::Sha256);
     }
