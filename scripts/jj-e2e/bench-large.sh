@@ -13,6 +13,9 @@ LABEL=$1
 JJ=$2
 WORK=$3/$LABEL
 URL=${4:-https://github.com/jj-vcs/jj}
+BENCH_HOME=${GIRT_BENCH_HOME:-$HOME/tmp/girt-bench}
+mkdir -p "$BENCH_HOME/tmp"
+export TMPDIR="$BENCH_HOME/tmp"
 rm -rf "$WORK"
 mkdir -p "$WORK"
 cd "$WORK"
@@ -32,6 +35,7 @@ measure() {
 
 measure clone "$JJ" git clone "$URL" repo
 cd repo
+"$JJ" git fetch >"$WORK/fetch-warm.out" 2>"$WORK/fetch-warm.err" || exit 1
 measure fetch-noop "$JJ" git fetch
 measure gc "$JJ" util gc
 git fsck --connectivity-only >/dev/null 2>&1 && echo "$LABEL fsck ok" || echo "$LABEL fsck FAILED"
