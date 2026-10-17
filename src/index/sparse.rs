@@ -83,6 +83,48 @@ impl Default for SparseLimits {
 }
 
 /// Sparse expansion failure; the original index remains unchanged.
+///
+/// A failed expansion leaves the draft intact, including its collapsed directories. Resolve a
+/// missing or wrong-kind tree before retrying; increasing a budget cannot repair missing data.
+/// Traversal and output accounting use `SparseError::Index(Error::Limit(label))`. Tree decoding
+/// is also capped by the remaining tree-byte budget and per-object read limits; these failures
+/// arrive through `SparseError::Read` with an `ObjectReadError::Limit` source. Inspect the label
+/// and source chain before selecting a larger budget.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::index::{Entry, Error, Index, Limits, Mode, SparseError, SparseLimits};
+/// use girt::{InitKind, ObjectFormat, Repository, Tree};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Worktree,
+/// )?;
+/// let tree = repo
+///     .loose_objects()
+///     .write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+/// let collapsed =
+///     Entry::new(b"vendor/".to_vec(), Mode::SparseDirectory, tree).with_skip_worktree(true);
+/// let mut index = Index::new(ObjectFormat::Sha1, vec![collapsed], Limits::default())?;
+/// let original = index.clone();
+/// let objects = repo.objects(Default::default())?;
+/// let error = index
+///     .expand_sparse(
+///         &objects,
+///         Limits::default(),
+///         SparseLimits::default().with_max_trees(0),
+///         &AtomicBool::new(false),
+///     )
+///     .unwrap_err();
+/// assert!(matches!(
+///     error,
+///     SparseError::Index(Error::Limit("sparse tree reads"))
+/// ));
+/// assert_eq!(index, original);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SparseError {
@@ -138,6 +180,52 @@ impl Index {
     ///
     /// Missing, corrupt, wrong-kind or invalid trees, cancellation, extension-policy errors and
     /// exhausted aggregate bounds leave the original index untouched.
+    ///
+    /// # Expand an index without checking out files
+    ///
+    /// Expansion makes paths available to an index consumer. It preserves skip-worktree, so raw
+    /// status and checkout still require a caller policy for those entries; expansion does not
+    /// grant that policy.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::index::{Entry, Index, Limits, Mode, SparseLimits};
+    /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repo.loose_objects();
+    /// let id = loose.write_blob(b"pub fn library() {}\n")?;
+    /// let tree = loose.write_tree(&Tree::new(
+    ///     ObjectFormat::Sha1,
+    ///     vec![TreeEntry {
+    ///         name: b"lib.rs".to_vec(),
+    ///         mode: EntryMode::Blob,
+    ///         id,
+    ///     }],
+    /// )?)?;
+    /// let collapsed =
+    ///     Entry::new(b"vendor/".to_vec(), Mode::SparseDirectory, tree).with_skip_worktree(true);
+    /// let mut index = Index::new(ObjectFormat::Sha1, vec![collapsed], Limits::default())?;
+    /// let objects = repo.objects(Default::default())?;
+    ///
+    /// index.expand_sparse(
+    ///     &objects,
+    ///     Limits::default(),
+    ///     SparseLimits::default(),
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// assert_eq!(index.entries()[0].path, b"vendor/lib.rs");
+    /// assert!(index.entries()[0].skip_worktree);
+    /// assert_eq!(index.entries()[0].id, id);
+    /// assert!(!repo.git_dir().join("index").exists()); // This was an in-memory edit only.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn expand_sparse(
         &mut self,
         objects: &Objects,

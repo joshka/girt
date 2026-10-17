@@ -56,6 +56,29 @@ pub struct Index {
 }
 
 /// On-disk entry framing. V3 adds extended flags; V4 also compresses adjacent paths.
+///
+/// Choose v4 to compress repeated path prefixes, or v2 for consumers that need the older framing.
+/// Intent-to-add and skip-worktree need v3 or v4; changing framing does not clear those flags.
+///
+/// ```
+/// use girt::index::{Entry, Error, Index, Limits, Mode, Version};
+/// use girt::{ObjectFormat, ObjectId};
+/// let entry = Entry::new(
+///     b"future".to_vec(),
+///     Mode::Regular,
+///     ObjectId::null(ObjectFormat::Sha1),
+/// )
+/// .with_intent_to_add(true);
+/// let mut index = Index::new(ObjectFormat::Sha1, vec![entry], Limits::default())?;
+/// assert_eq!(index.version(), Version::V3);
+/// assert!(matches!(
+///     index.set_version(Version::V2, Limits::default()),
+///     Err(Error::Entry { .. })
+/// ));
+/// assert_eq!(index.version(), Version::V3); // Rejected conversion leaves the index intact.
+///
+/// # Ok::<(), girt::index::Error>(())
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u32)]
 #[non_exhaustive]
@@ -291,6 +314,29 @@ impl Index {
     /// Rejects foreign-format identities, invalid paths, duplicates, normal/conflict mixtures,
     /// file/directory collisions in the same stage, or exhausted limits. Caller-owned input is
     /// consumed even on failure.
+    ///
+    /// Construction sorts drafts, which is useful when accumulating paths from multiple sources.
+    /// Null object identities are retained as index data. Non-null identities are not checked
+    /// against object storage; write or verify their objects separately.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::index::{Entry, Index, Limits, Mode};
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let format = ObjectFormat::Sha256;
+    /// let entry = |path: &[u8]| {
+    ///     Entry::new(
+    ///         path.to_vec(),
+    ///         Mode::Regular,
+    ///         ObjectId::for_blob(format, path),
+    ///     )
+    /// };
+    /// let index = Index::new(format, vec![entry(b"z"), entry(b"a")], Limits::default())?;
+    /// assert_eq!(index.entries()[0].path, b"a");
+    /// assert_eq!(index.entries()[1].path, b"z");
+    /// # Ok::<(), girt::index::Error>(())
+    /// ```
     pub fn new(
         format: crate::ObjectFormat,
         mut entries: Vec<Entry>,
@@ -630,6 +676,23 @@ impl Index {
     ///
     /// Rejects malformed/truncated input, bad checksums, unsupported versions/modes or unknown
     /// extended flags, mandatory extensions, invalid paths/order/stages, and exhausted limits.
+    ///
+    /// Parsing never repairs damaged input. In particular, a checksum error must not
+    /// become an empty index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::ObjectFormat;
+    /// use girt::index::{Error, Index, Limits};
+    /// let mut bytes = Index::empty(ObjectFormat::Sha1).encode(Limits::default())?;
+    /// *bytes.last_mut().unwrap() ^= 1;
+    /// assert!(matches!(
+    ///     Index::parse(ObjectFormat::Sha1, &bytes, Limits::default()),
+    ///     Err(Error::Checksum)
+    /// ));
+    /// # Ok::<(), girt::index::Error>(())
+    /// ```
     pub fn parse(format: crate::ObjectFormat, bytes: &[u8], limits: Limits) -> Result<Self, Error> {
         Self::parse_with_shared(format, bytes, None, limits)
     }
@@ -747,6 +810,25 @@ impl Index {
     /// # Errors
     ///
     /// Fails before output allocation when an encoded size/count/path exceeds the supplied limits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::index::{Entry, Index, Limits, Mode};
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let format = ObjectFormat::Sha256;
+    /// let entry = Entry::new(
+    ///     b"raw-\xff".to_vec(),
+    ///     Mode::Regular,
+    ///     ObjectId::for_blob(format, b"data"),
+    /// );
+    /// let index = Index::new(format, vec![entry], Limits::default())?;
+    /// let bytes = index.encode(Limits::default())?;
+    /// let decoded = Index::parse(format, &bytes, Limits::default())?;
+    /// assert_eq!(decoded.entries()[0].path, b"raw-\xff");
+    /// assert_eq!(decoded.encode(Limits::default())?, bytes);
+    /// # Ok::<(), girt::index::Error>(())
+    /// ```
     pub fn encode(&self, limits: Limits) -> Result<Vec<u8>, Error> {
         let length = self.encoded_len(limits)?;
         if let Some(original) = &self.original {

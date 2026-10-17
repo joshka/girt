@@ -76,6 +76,99 @@ Index edits use `index.lock` and publish by same-directory rename. Existing lock
 Drop abandons an edit with best-effort cleanup; `abort` reports cleanup errors. Optional file
 syncing does not sync the parent directory and does not establish power-loss durability.
 
+## Preserve index information when editing
+
+A split index stores most entries in an immutable `sharedindex.<id>` file beside the primary index.
+`Repository::read_index` resolves the pair into logical entries; the primary bytes alone are
+insufficient. Keep both files when diagnosing a failed read. A missing shared file is an error, even
+if the primary index is present and has a valid checksum.
+
+`Repository::edit_index` reads that same logical snapshot and normally publishes a standalone
+replacement when entries change. `IndexEdit::make_standalone` also allows conversion without
+changing entries. It removes derived caches but retains resolve-undo information. Conversion never
+deletes the shared file: another index may still depend on it. Publication checks that both original
+files still match the snapshot, so a changed shared file can reject a commit even though the
+replacement no longer needs it.
+
+Choose an explicit path for an alternate index, such as a temporary staging view. These methods do
+not consult `GIT_INDEX_FILE`:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use girt::index::{Entry, Mode, Version};
+    use girt::{InitKind, ObjectFormat, Repository};
+
+    let directory = tempfile::tempdir()?;
+    let repository = Repository::init(
+        ObjectFormat::Sha1,
+        directory.path().join("repo"),
+        InitKind::Bare,
+    )?;
+    let path = directory.path().join("preview.index");
+    let blob = repository.loose_objects().write_blob(b"preview\n")?;
+    let mut edit = repository.edit_index_at(&path, Default::default())?;
+    edit.replace_entries(vec![Entry::new(b"preview.txt".to_vec(), Mode::Regular, blob)])?;
+    edit.set_version(Version::V4)?;
+    edit.commit()?;
+    let preview = repository.read_index_at(&path, Default::default())?.unwrap();
+    assert_eq!(preview.entries()[0].id, blob);
+    assert!(repository.read_index(Default::default())?.is_none());
+    Ok(())
+}
+```
+
+The basic alternate-index methods refuse split dependencies and leaf symlinks. Use
+`edit_index_at_with_options` only when you deliberately need those layouts. Split dependencies
+resolve beside the selected lexical path. Following a leaf symlink reads its referent, but commit
+replaces the symlink itself; it does not write through it. This distinction matters for an index
+selected by a caller-provided path.
+
+### Sparse entries are a representation, not a checkout policy
+
+A sparse index collapses a skipped directory into a tree entry. `Index::expand_sparse` reads that
+tree and produces its leaf entries in memory. It does not create files, publish an index, or clear
+skip-worktree flags. Raw status and checkout still refuse unsupported flags after expansion. An
+application needs an explicit policy for which paths participate before using those operations. See
+the runnable
+[sparse expansion example](https://docs.rs/girt/latest/girt/index/struct.Index.html#method.expand_sparse).
+
+Expansion has independent traversal and output budgets. Cancellation, a missing object, a wrong
+object kind, or a limit failure leaves the original collapsed draft intact. Diagnose an object read
+failure through its source chain; raising a budget cannot restore a missing tree.
+
+### Decide which extension information may be lost
+
+Optional extensions can carry information an edit would invalidate. Their optional format status
+does not make discarding them harmless. A rejected edit leaves the guard and its draft available;
+choose a supported operation or abort rather than silently retrying with an empty index.
+
+- Entry-offset accelerators (`EOIE`, `IEOT`) can be removed together with `invalidate_entry_offsets`
+  before `discard_resolve_undo` or `invalidate_tree_cache`, which refuse those caches. Entry
+  replacement and framing changes already remove them.
+- Resolve-undo (`REUC`) remembers prior conflict stages. `discard_resolve_undo` intentionally
+  forgets that information; call it only when that matches the application operation.
+- The cached tree (`TREE`) can be invalidated without changing staged entries.
+- Unknown optional extensions require an explicit discard decision. Unknown mandatory extensions
+  cannot be admitted by that decision.
+
+These operations have different extension admission rules. Consult each method's errors before
+combining them; one successful cache removal does not authorize every subsequent rewrite.
+
+### Reuse stat caches without trusting them as content
+
+`replace_entries_reusing_stat` preserves old stat words only for entries with the same path, stage,
+mode, identity and flags. It helps applications that reconstruct a whole entry list avoid throwing
+away useful cache data. Changed entries retain the supplied stat words. The operation never checks
+the working file, and cached equality is not proof that its content is unchanged. Commit clears
+cached size for entries modified at or after the earlier of the previous index modification time and
+the current write time. Stat-cache consumers must then verify content, even when rewriting the index
+would otherwise hide a racily clean entry.
+
+Framing is independent of content selection: v4 compresses repeated path prefixes, while v2 is
+useful for older consumers. Extended flags require v3 or v4; requesting v2 does not remove them.
+Paths remain bytes, including non-UTF-8 names, across supported codec round trips. The repository's
+object format selects the checksum width; it must be known before parsing an index.
+
 ## Read the two status comparisons
 
 `Repository::raw_status` compares baseline-to-index for staged changes and index-to-working-files
