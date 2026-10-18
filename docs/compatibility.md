@@ -55,28 +55,56 @@ shallow boundaries are covered by `tests/bitmaps.rs`. Packed file handles remain
 Checksums and structure establish association with an inventory, not the truth of graph reachability
 claims. Forced walking provides an independent graph result. Reusing verified bindings across
 queries is tracked in [the bitmap cache issue](https://github.com/joshka/girt/issues/717).
-Incremental MIDX and alternate-store bitmap acceleration, pseudo-merges and bitmap writing remain
-tracked in [the bitmap issue](https://github.com/joshka/girt/issues/518). See
+Incremental MIDX and alternate-store bitmap acceleration and pseudo-merges remain tracked in
+[the bitmap issue](https://github.com/joshka/girt/issues/518). See
 [the reader guide](bitmaps.md).
 
 The bitmap encoders produce pack and MIDX artifacts in both hash formats. Isolated
 `git rev-list --test-bitmap` validates the selected commit graph and prints `OK!` for each generated
 fixture, and `--use-bitmap-index --objects` agrees with decoded girt output. `git verify-pack` and
-`git multi-pack-index verify` also accept their associated inventories. Output uses independent
-EWAH records, lookup tables and reverse indexes; MIDX output includes RIDX/BTMP and unknown (zero)
+`git multi-pack-index verify` also accept their associated inventories. Output uses independent EWAH
+records, lookup tables and reverse indexes; MIDX output includes RIDX/BTMP and unknown (zero)
 pathname-hash hints. This establishes format and graph compatibility, not identical compression or
 selection to Git.
 
 Bitmap publication is covered by idempotent pack/MIDX writes, shared writer-lock exclusion,
-pre-publication failure preservation and cancellation. The CLI accepts `multi-pack-index write
---bitmap`. Repack configuration matches Git's bare/nonbare defaults and last-assignment precedence
-across `repack.writeBitmaps` and deprecated `pack.writeBitmaps`, including both source orders.
-Bare-repository replacement repacks/gc now write bitmaps by default, adding time and disk cost;
-explicit false disables writing. Configured/default resource exhaustion skips optional output
-without blocking old-pack retirement; explicit strict caller/standalone writes still return limits.
-Other errors after complete pack publication retain that pair's report,
-and retirement stops before deletion. Exact replacement sidecars are allowed in both retirement
-input-generation comparisons. No-op gc and automatic MIDX writing remain separate policy.
+pre-publication failure preservation and cancellation. The CLI accepts
+`multi-pack-index write --bitmap`. Repack configuration matches Git's last-assignment precedence
+across `repack.writeBitmaps` and deprecated `pack.writeBitmaps`, including both source orders. Girt
+requires explicit true in both bare and nonbare repositories; unset disables writing. This is a
+deliberate, temporary difference from Git's bare default, pending a writer cost within about 1.5
+times a plain repack. Explicit caller settings override configuration. Configured/default resource
+exhaustion skips optional output without blocking old-pack retirement; explicit strict
+caller/standalone writes still return limits. Other errors after complete pack publication retain
+that pair's report, and retirement stops before deletion. Exact replacement sidecars are allowed in
+both retirement input-generation comparisons. No-op gc and automatic MIDX writing remain separate
+policy.
+
+On a git.git-sized bare fixture (431,452 packed input objects; 410,316 retained objects), four
+alternating release repacks under load 29–33 measured median 14.06 seconds without bitmaps and 81.77
+seconds with bitmaps: 5.82 times the plain repack cost. Bitmap/reverse-index sidecars added
+2,036,560 bytes beside a 374,336,640-byte pack. Runs used trusted limits to measure completed
+output, not the default optional-limit skip path. See
+[raw evidence](evidence/bitmap-repack-under-load.json) and
+[writer performance work](https://github.com/joshka/girt/issues/731). These are loaded-machine
+measurements, not quiet throughput claims.
+
+On equivalent fresh copies, Git 2.56.0 took median 6.42 seconds for
+`git -c repack.writeBitmaps=false repack -ad` and 9.36 seconds for `git repack -adb` (1.46 times
+plain). Bare-default `git gc` took 11.12 seconds. These are wall times under load 24–30; options and
+selected commits/compression differ from girt, so this is a practical comparison rather than
+identical work. The explicit false is necessary because bare Git otherwise writes bitmaps even with
+`-ad`.
+
+One instrumented girt run took 70.40 seconds: verified payload reads and graph validation used 51.52
+seconds, selected-commit closure traversal 9.36 seconds, inventory preparation 0.013 seconds,
+selected EWAH encoding 0.00048 seconds and other artifact work 0.0087 seconds. Timers surround
+`Graph::read`, each `Graph::reachable`, selected EWAH calls, inventory preparation and remaining
+artifact construction/validation respectively. Pack output accounts for most remaining time. Pack
+bitmap writing has no pathname-hash computation; ordering/selection is included in the inventory and
+other-artifact stages. Validation dominates and traversal is secondary; encoding is negligible. This
+single instrumented run is diagnostic, not another alternating ratio sample. See
+[comparison and stage evidence](evidence/bitmap-repack-comparison-under-load.json).
 
 ## Multi-pack indexes
 

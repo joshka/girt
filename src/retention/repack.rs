@@ -29,7 +29,9 @@ pub struct RepackLimits {
     pub compression: PackCompression,
     /// Whether to write a pack bitmap. `None` uses the last resolved assignment of
     /// `repack.writeBitmaps` or its deprecated `pack.writeBitmaps` synonym, defaulting to
-    /// true for bare repositories and false otherwise. Configured/default limit exhaustion skips
+    /// false for both bare and nonbare repositories. Unlike Git, bare repositories require an
+    /// explicit opt-in until bitmap writing costs at most about 1.5 times a plain repack.
+    /// Configured/default limit exhaustion skips
     /// optional output; `Some(true)` requests strict writing and returns bitmap limit errors.
     pub write_bitmaps: Option<bool>,
     /// Independent graph, traversal and artifact bounds for optional bitmap output.
@@ -218,9 +220,9 @@ impl Repository {
     /// handles; new readers discover the indexed pair and existing readers can refresh
     /// explicitly.
     ///
-    /// Bitmap output follows complete pair publication. By default, bare repositories write it
-    /// and nonbare repositories do not; the last resolved `repack.writeBitmaps`/`pack.writeBitmaps`
-    /// assignment or [`RepackLimits::write_bitmaps`] overrides that choice. This adds verified
+    /// Bitmap output follows complete pair publication and requires explicit opt-in in both bare
+    /// and nonbare repositories. The last resolved `repack.writeBitmaps`/`pack.writeBitmaps`
+    /// assignment or [`RepackLimits::write_bitmaps`] controls that choice. This adds verified
     /// graph reads, traversal work and sidecar disk space. Shallow graphs and replacements omitting
     /// protected copies report a skip. Bitmap failure retains the published pair in
     /// [`RepackError::Bitmap`] and never removes old storage.
@@ -517,7 +519,7 @@ fn configured_bitmaps(
     Ok(repository
         .config()
         .boolean(section, None, "writeBitmaps")?
-        .unwrap_or(repository.is_bare()))
+        .unwrap_or(false))
 }
 
 fn charge_input(len: u64, bytes: &mut u64, limits: PackWriteLimits) -> Result<(), PackWriteError> {

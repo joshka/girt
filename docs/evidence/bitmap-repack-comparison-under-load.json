@@ -1,0 +1,156 @@
+{
+  "taken_under_load": true,
+  "rows": [
+    {
+      "block": 0,
+      "command": [
+        "git",
+        "repack",
+        "-ad"
+      ],
+      "load_before": [
+        27.9970703125,
+        29.0947265625,
+        30.68798828125
+      ],
+      "wall_seconds": 6.40422050000052,
+      "exit": 0,
+      "load_after": [
+        29.5185546875,
+        29.3916015625,
+        30.783203125
+      ],
+      "stderr": "",
+      "stdout": "",
+      "sidecar_bytes": 1639932
+    },
+    {
+      "block": 1,
+      "command": [
+        "git",
+        "repack",
+        "-adb"
+      ],
+      "load_before": [
+        29.5185546875,
+        29.3916015625,
+        30.783203125
+      ],
+      "wall_seconds": 9.47042916600185,
+      "exit": 0,
+      "load_after": [
+        27.77880859375,
+        29.01708984375,
+        30.63330078125
+      ],
+      "stderr": "",
+      "stdout": "",
+      "sidecar_bytes": 4062960
+    },
+    {
+      "block": 2,
+      "command": [
+        "git",
+        "repack",
+        "-ad"
+      ],
+      "load_before": [
+        27.77880859375,
+        29.01708984375,
+        30.63330078125
+      ],
+      "wall_seconds": 6.4432894159981515,
+      "exit": 0,
+      "load_after": [
+        27.23583984375,
+        28.8837890625,
+        30.57666015625
+      ],
+      "stderr": "",
+      "stdout": "",
+      "sidecar_bytes": 1639932
+    },
+    {
+      "block": 3,
+      "command": [
+        "git",
+        "repack",
+        "-adb"
+      ],
+      "load_before": [
+        27.23583984375,
+        28.8837890625,
+        30.57666015625
+      ],
+      "wall_seconds": 9.258494374997099,
+      "exit": 0,
+      "load_after": [
+        26.04931640625,
+        28.57421875,
+        30.44677734375
+      ],
+      "stderr": "",
+      "stdout": "",
+      "sidecar_bytes": 4062960
+    },
+    {
+      "block": 4,
+      "command": [
+        "git",
+        "gc"
+      ],
+      "load_before": [
+        26.04931640625,
+        28.57421875,
+        30.44677734375
+      ],
+      "wall_seconds": 11.11869945799117,
+      "exit": 0,
+      "load_after": [
+        24.404296875,
+        28.14208984375,
+        30.271484375
+      ],
+      "stderr": "",
+      "stdout": "",
+      "sidecar_bytes": 4140052
+    },
+    {
+      "block": 5,
+      "command": [
+        "bitmap_repack_timing",
+        "DISPOSABLE_BARE_REPOSITORY",
+        "true"
+      ],
+      "load_before": [
+        24.404296875,
+        28.14208984375,
+        30.271484375
+      ],
+      "wall_seconds": 70.83957612499944,
+      "exit": 0,
+      "load_after": [
+        25.71630859375,
+        27.888671875,
+        30.00341796875
+      ],
+      "stderr": "profile inventory_ns=13014584\nprofile verified_graph_ns=51515428458\nprofile traversal_ns=9355806251 selected_ewah_ns=484044 artifacts_other_ns=8741789\nprofile artifacts_ns=9365044209\n",
+      "stdout": "{\"bitmaps\":true,\"elapsed_ns\":70400301125,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":2036560}\n",
+      "sidecar_bytes": 2036560
+    }
+  ],
+  "git_version": "2.56.0",
+  "baseline_override": "Plain git repack -ad used -c repack.writeBitmaps=false to disable the bare default.",
+  "profile": "Temporary Instant stage timers in encode_pack_bitmap and artifacts; instrumentation removed from source after release build.",
+  "profile_revision": "main after #729, with explicit-only config change (explicit true unaffected)",
+  "median_git_plain_seconds": 6.423754957999336,
+  "median_git_bitmap_seconds": 9.364461770499474,
+  "git_bitmap_plain_ratio": 1.457786267,
+  "stage_seconds": {
+    "inventory": 0.013014584,
+    "verified_payload_reads_and_graph_validation": 51.515428458,
+    "selected_closure_traversal": 9.355806251,
+    "selected_ewah_encoding": 0.000484044,
+    "other_artifacts": 0.008741789
+  }
+}
