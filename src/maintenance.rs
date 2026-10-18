@@ -23,12 +23,14 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 mod lock;
+mod policy;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, io};
 
 pub use lock::{LockError, MaintenanceLock};
+pub use policy::PolicyError;
 
 use crate::{Config, Repository};
 

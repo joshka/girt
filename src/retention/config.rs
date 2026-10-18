@@ -161,7 +161,7 @@ impl ReflogExpiry {
             let value = entry
                 .value
                 .as_deref()
-                .and_then(|value| parse_date(value, now));
+                .and_then(|value| parse_expiry_date(value, now));
             let value = value.ok_or_else(|| {
                 ReflogExpiryError::Value(InvalidValue::new(
                     "gc",
@@ -259,7 +259,7 @@ fn cutoff(seconds: i128) -> Option<i128> {
     (seconds > 0).then_some(seconds)
 }
 
-fn parse_date(value: &[u8], now: i128) -> Option<Option<i128>> {
+pub(crate) fn parse_expiry_date(value: &[u8], now: i128) -> Option<Option<i128>> {
     let raw = std::str::from_utf8(value).ok()?;
     let text = raw.trim().to_ascii_lowercase();
     // Git reserves the maximum-timestamp sentinel for exact lowercase keywords; other `now`
@@ -316,7 +316,7 @@ mod tests {
     #[case::unsupported_absolute(b"2020-01-02", None)]
     #[case::unsupported_natural(b"yesterday", None)]
     fn dates(#[case] bytes: &[u8], #[case] expected: Option<Option<i128>>) {
-        assert_eq!(parse_date(bytes, 1_800_000_000), expected);
+        assert_eq!(parse_expiry_date(bytes, 1_800_000_000), expected);
     }
 
     #[test]
