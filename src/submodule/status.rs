@@ -122,10 +122,11 @@ pub fn status(repository: &Repository) -> Result<Vec<Checkout>, StatusError> {
 
 /// Lists gitlinks and inspects their checkouts, with explicit filter trust and finite budgets.
 ///
-/// `.gitmodules` uses [`Source::WorktreeOrIndex`]. Effective `submodule.<name>.ignore` overrides
-/// that file; absent per-submodule policy falls back to `diff.ignoreSubmodules`, then `none`.
-/// `all` suppresses parent changes, `dirty` skips content inspection, and `untracked` skips only
-/// untracked content. HEAD is still inspected for listing, even under `all`.
+/// `.gitmodules` uses [`crate::submodule::Source::WorktreeOrIndex`]. Effective
+/// `submodule.<name>.ignore` overrides that file; absent per-submodule policy falls back to
+/// `diff.ignoreSubmodules`, then `none`. `all` suppresses parent changes, `dirty` skips content
+/// inspection, and `untracked` skips only untracked content. HEAD is still inspected for listing,
+/// even under `all`.
 ///
 /// Child configuration rereads exactly the parent's supplied non-local source layers and adds
 /// the child's own local/worktree files. Conditional includes are reevaluated for the child;
