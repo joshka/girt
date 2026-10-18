@@ -95,7 +95,7 @@ a portable snapshot of some or all of a repository. You can clone or fetch from 
 is used to move repositories without a network and for **bundle URIs**, where a server points
 clients at a prebuilt bundle on a CDN to download first, then fetches the rest.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/523">Reads v2/v3 headers, verifies and creates full/incremental bundles, and receives through fetch/clone publication. Filtered installation and bundle URIs remain.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/523">Library support reads v2/v3 bundles, verifies and creates full/incremental bundles, and receives through fetch/clone publication. CLI commands, revision-range and automatic file-source integration remain; bundle URIs and filtered promisor installation are follow-ups.</GirtStatus>
 
 ## fsck
 
@@ -103,7 +103,7 @@ clients at a prebuilt bundle on a CDN to download first, then fetches the rest.
 points at an existing object, and every object reachable from a ref is present. It also reports
 unreachable ("dangling") objects.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/524">Bounded whole-repository object and connectivity reports, unreachable/dangling sets, pack and auxiliary-index verification. Typed message policy, configured severities and bounded skip lists; CLI reporting and additive lost-found export. Configured fetch/clone and local receive check incoming payloads before installation. Expanded diagnostics remain.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/828">Whole-repository object/connectivity checks, unreachable/dangling reporting, pack and auxiliary-index verification, configured severity/skip-list policy, CLI reporting and lost-found export. Commit/tag header and identity diagnostics match Git fixtures; configured fetch/clone and local receive enforce payload policy before installation. Further reference and metadata-blob emitters remain.</GirtStatus>
 
 ## grep
 
