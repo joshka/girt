@@ -37,9 +37,12 @@ The committed JSON uses schema version 1: an object with `schema_version`, `prov
 and per-tool `*_samples`, `*_attempts`, and `*_rss_mb` fields. Times are medians in milliseconds;
 RSS is peak MiB. A missing equivalent or unavailable successful measurement is `null`. `status` is
 `ok`, `fail`, or `timeout`; a refusal is `fail` with `failure_kind: "refusal"`. Rows also retain
-ratios, notes, issue links, fingerprints, and measurement epochs. The provenance block identifies
-builds, compatibility patches, machine, dates, fixture layouts, and method. Consumers should use
-field names rather than row order.
+ratios, notes, issue links, fingerprints, and measurement epochs. Each row records the
+`girt_version`, `girt_commit`, `jj_adapter_commit`, and `measured_on` date of its own measurement,
+so a change can be re-measured on the affected rows only. The page marks rows whose `girt_version`
+differs from the provenance `girt_release`. The provenance block identifies builds, compatibility
+patches, machine, dates, fixture layouts, and method. Consumers should use field names rather than
+row order.
 
 Fetch setup performs an untimed fetch before adding any measured commits or tags, so noop means a
 second fetch with no remote changes. Limited history uses `jj log -r ::@ --limit 100` against

@@ -29,6 +29,9 @@ export interface Row {
   sample_ranges_ms?: Partial<Record<'girt' | 'stock' | 'git', [number, number]>>;
   timeout_limits_s?: Record<string, number>;
   run_epochs?: string[];
+  girt_version?: string;
+  girt_commit?: string;
+  measured_on?: string;
 }
 
 export interface Fixture {
@@ -53,6 +56,9 @@ export interface Provenance {
   method: string;
   fixtures: Record<Size, Fixture>;
   current_main_rebuild?: { girt_commit: string };
+  girt_release?: string;
+  notes?: string[];
+  load_1m?: { min: number; median: number; max: number; cores: number };
 }
 
 export const provenance = provenanceJson as unknown as Provenance;
@@ -177,6 +183,8 @@ function cellOf(row: Row): CellData {
     issues: row.issues ?? [],
     timeoutS: row.timeout_limits_s?.girt ?? null,
     when: datesOf(row.run_epochs ?? []),
+    version: row.girt_version ?? null,
+    stale: Boolean(row.girt_version && provenance.girt_release && row.girt_version !== provenance.girt_release),
     notes: workloadNotes(row.notes),
   };
 }
