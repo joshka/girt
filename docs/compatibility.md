@@ -4243,3 +4243,12 @@ continuation in both object formats. Original fixtures cover ASCII/Unicode autho
 and exclamation escaping, and positive/negative numeric time zones. Refusal cases cover unquoted
 substitution syntax, trailing commands/assignments, missing metadata, unsupported dates, admission
 limits and cancellation. The API does not execute author scripts or install the proposed commit.
+
+`tests/am_recovery.rs` compares final am continuation, skip and abort with isolated Git in both
+object formats and both ref backends, including sessions with an earlier committed mail. It checks
+HEAD, staged entries, working cleanliness, reflog hints and ORIG_HEAD. Linked-worktree cases keep
+private am/original-HEAD state separate from the common repository. Refusal cases cover stale or
+foreign observations, unknown files, bad ranges, absent mail, queued mail, unsafe abort,
+simultaneous operations, apply-backend rebase and metadata/reftable bounds. The retirement fault
+unit checks that cleanup failure leaves original mail in a reported directory outside active Git
+state.

@@ -29,6 +29,10 @@
 //! [`State::prepare_commit`] separately decodes the fixed author assignments and proposes an
 //! unsigned commit from an explicit tree, parent and committer without installing it.
 //!
+//! Complete final-mail continue/skip or session abort through
+//! [`crate::sequencer::State::read_repository`] and an explicit recovery plan. Checkout and
+//! reference publication remain caller-owned before the shared metadata publisher runs.
+//!
 //! Snapshot limits bound all retained files and directories before interpretation. Callers must
 //! exclude concurrent operation writers while taking the snapshot; an interpreted state is an
 //! observation, not a lock or a validated resume plan. Apply-backend rebase metadata is refused.
@@ -103,11 +107,7 @@ impl<'a> State<'a> {
         if file("applying").is_none() || file("rebasing").is_some() {
             return Err(Error::NotAm);
         }
-        let next = counter(file("next"), "next")?;
-        let last = counter(file("last"), "last")?;
-        if next == 0 || last == 0 || next - 1 > last {
-            return Err(Error::Malformed("mail range"));
-        }
+        let (next, last) = mail_range(file("next"), file("last"))?;
         let mail = if next <= last {
             Some(file(&format!("{next:04}")).ok_or(Error::Malformed("current mail"))?)
         } else {
@@ -122,6 +122,18 @@ impl<'a> State<'a> {
             author_script: file("author-script"),
         }))
     }
+}
+
+pub(crate) fn mail_range(
+    next: Option<&[u8]>,
+    last: Option<&[u8]>,
+) -> Result<(usize, usize), Error> {
+    let next = counter(next, "next")?;
+    let last = counter(last, "last")?;
+    if next == 0 || last == 0 || next - 1 > last {
+        return Err(Error::Malformed("mail range"));
+    }
+    Ok((next, last))
 }
 
 fn counter(bytes: Option<&[u8]>, name: &'static str) -> Result<usize, Error> {

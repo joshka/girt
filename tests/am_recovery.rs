@@ -9,8 +9,6 @@ use girt::sequencer::{Action, Kind, Limits, State};
 use girt::{ObjectId, OperationLimits, Repository, Signature};
 use rstest::rstest;
 
-#[path = "support/am_git.rs"]
-mod fixture;
 #[path = "support/apply_git.rs"]
 mod oracle;
 use oracle::{git, git_output};
@@ -34,21 +32,27 @@ fn stopped(root: &Path, format: &str, backend: &str, partial_series: bool) {
         ],
         b"",
     );
-    if !partial_series {
-        fixture::stopped(root, format, false);
-        return;
-    }
     fs::write(root.join("file"), b"base\n").unwrap();
     git(root, &["add", "file"], b"");
     git(root, &["commit", "-m", "base"], b"");
     let base = head(root);
-    fs::write(root.join("first"), b"first\n").unwrap();
-    git(root, &["add", "first"], b"");
-    git(root, &["commit", "-m", "first"], b"");
+    if partial_series {
+        fs::write(root.join("first"), b"first\n").unwrap();
+        git(root, &["add", "first"], b"");
+        git(root, &["commit", "-m", "first"], b"");
+    }
     fs::write(root.join("blocked"), b"last\n").unwrap();
     git(root, &["add", "blocked"], b"");
     git(root, &["commit", "-m", "last"], b"");
-    let mail = git(root, &["format-patch", "--stdout", "-2"], b"");
+    let mail = git(
+        root,
+        &[
+            "format-patch",
+            "--stdout",
+            if partial_series { "-2" } else { "-1" },
+        ],
+        b"",
+    );
     git(
         root,
         &["checkout", "-b", "destination", &base.to_string()],
@@ -75,7 +79,7 @@ fn final_recovery_matches_git(
     stopped(actual.path(), format, backend, partial_series);
     stopped(expected.path(), format, backend, partial_series);
     let repo = Repository::open(actual.path()).unwrap();
-    let state = State::read(repo.git_dir(), repo.object_format(), Limits::default())
+    let state = State::read_repository(&repo, Limits::default())
         .unwrap()
         .unwrap();
     assert_eq!(state.kind(), Kind::Am);
@@ -152,7 +156,7 @@ fn final_recovery_matches_git(
     }
     assert!(!repo.git_dir().join("rebase-apply").exists());
     assert!(
-        State::read(repo.git_dir(), repo.object_format(), Limits::default())
+        State::read_repository(&repo, Limits::default())
             .unwrap()
             .is_none()
     );
@@ -166,6 +170,8 @@ fn final_recovery_matches_git(
 #[case("mail")]
 #[case("queued")]
 #[case("safety")]
+#[case("original_missing")]
+#[case("original_null")]
 #[case("simultaneous")]
 #[case("rebasing")]
 #[case("limit")]
@@ -174,7 +180,7 @@ fn unsafe_recovery_preserves_active_state(#[case] failure: &str) {
     stopped(root.path(), "sha1", "files", false);
     let repo = Repository::open(root.path()).unwrap();
     let dir = repo.git_dir().join("rebase-apply");
-    let read = || State::read(repo.git_dir(), repo.object_format(), Limits::default());
+    let read = || State::read_repository(&repo, Limits::default());
     let state = read().unwrap().unwrap();
     let old = head(root.path());
     match failure {
@@ -230,6 +236,22 @@ fn unsafe_recovery_preserves_active_state(#[case] failure: &str) {
                     .is_err()
             );
         }
+        "original_missing" | "original_null" => {
+            let original = repo.git_dir().join("ORIG_HEAD");
+            if failure == "original_missing" {
+                fs::remove_file(original).unwrap();
+            } else {
+                fs::write(
+                    original,
+                    format!("{}\n", ObjectId::null(repo.object_format())),
+                )
+                .unwrap();
+            }
+            assert!(matches!(
+                read().unwrap().unwrap().prepare(Action::Abort, old),
+                Err(girt::sequencer::Error::Unsupported(_))
+            ));
+        }
         "simultaneous" => {
             fs::write(repo.git_dir().join("CHERRY_PICK_HEAD"), format!("{old}\n")).unwrap();
             assert!(matches!(
@@ -266,7 +288,7 @@ fn foreign_repository_cannot_publish_am_metadata() {
     stopped(b.path(), "sha1", "files", false);
     let a = Repository::open(a.path()).unwrap();
     let b = Repository::open(b.path()).unwrap();
-    let state = State::read(a.git_dir(), a.object_format(), Limits::default())
+    let state = State::read_repository(&a, Limits::default())
         .unwrap()
         .unwrap();
     let recovery = state
@@ -278,4 +300,127 @@ fn foreign_repository_cannot_publish_am_metadata() {
     ));
     assert!(a.git_dir().join("rebase-apply/applying").exists());
     assert!(b.git_dir().join("rebase-apply/applying").exists());
+}
+
+#[test]
+fn changed_reftable_original_head_preserves_am_state() {
+    let root = tempfile::tempdir().unwrap();
+    stopped(root.path(), "sha1", "reftable", false);
+    let repo = Repository::open(root.path()).unwrap();
+    let mut limits = Limits::default();
+    limits.reftable.tables = 0;
+    assert!(matches!(
+        State::read_repository(&repo, limits),
+        Err(girt::sequencer::Error::Reference(_))
+    ));
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    let recovery = state.prepare(Action::Abort, head(root.path())).unwrap();
+    let source = git(root.path(), &["rev-parse", "main"], b"");
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "ORIG_HEAD",
+            std::str::from_utf8(&source).unwrap().trim(),
+        ],
+        b"",
+    );
+    assert!(matches!(
+        recovery.publish_metadata(&repo),
+        Err(girt::sequencer::Error::Changed)
+    ));
+    assert!(repo.git_dir().join("rebase-apply/applying").exists());
+}
+
+#[rstest]
+fn linked_worktree_uses_private_am_and_original_head(
+    #[values("sha1", "sha256")] format: &str,
+    #[values("files", "reftable")] backend: &str,
+) {
+    let temporary = tempfile::tempdir().unwrap();
+    let main = temporary.path().join("main");
+    let linked = temporary.path().join("linked");
+    fs::create_dir(&main).unwrap();
+    git(
+        &main,
+        &[
+            "init",
+            "-b",
+            "main",
+            &format!("--object-format={format}"),
+            &format!("--ref-format={backend}"),
+        ],
+        b"",
+    );
+    fs::write(main.join("file"), b"base\n").unwrap();
+    git(&main, &["add", "file"], b"");
+    git(&main, &["commit", "-m", "base"], b"");
+    let base = head(&main);
+    fs::write(main.join("blocked"), b"source\n").unwrap();
+    git(&main, &["add", "blocked"], b"");
+    git(&main, &["commit", "-m", "source"], b"");
+    let source = head(&main);
+    let mail = git(&main, &["format-patch", "--stdout", "-1"], b"");
+    git(
+        &main,
+        &["update-ref", "ORIG_HEAD", &source.to_string()],
+        b"",
+    );
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            linked.to_str().unwrap(),
+            &base.to_string(),
+        ],
+        b"",
+    );
+    fs::write(linked.join("blocked"), b"untracked\n").unwrap();
+    assert!(!git_output(&linked, &["am"], &mail).status.success());
+    fs::remove_file(linked.join("blocked")).unwrap();
+    let repo = Repository::open(&linked).unwrap();
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.original_head(), Some(base));
+    let recovery = state.prepare(Action::Skip, base).unwrap();
+    recovery.publish_metadata(&repo).unwrap();
+    assert!(!repo.git_dir().join("rebase-apply").exists());
+    assert_eq!(head(&main), source);
+    assert_eq!(
+        git(&main, &["rev-parse", "ORIG_HEAD"], b"").trim_ascii(),
+        source.to_string().as_bytes()
+    );
+    assert_eq!(head(&linked), base);
+}
+
+#[test]
+fn changed_destination_head_preserves_active_mail() {
+    let root = tempfile::tempdir().unwrap();
+    stopped(root.path(), "sha1", "files", false);
+    let repo = Repository::open(root.path()).unwrap();
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    let recovery = state.prepare(Action::Skip, head(root.path())).unwrap();
+    let source = git(root.path(), &["rev-parse", "main"], b"");
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "HEAD",
+            std::str::from_utf8(&source).unwrap().trim(),
+        ],
+        b"",
+    );
+    assert!(matches!(
+        recovery.publish_metadata(&repo),
+        Err(girt::sequencer::Error::Changed)
+    ));
+    assert!(repo.git_dir().join("rebase-apply/applying").exists());
+    assert_eq!(git(root.path(), &["rev-parse", "HEAD"], b""), source);
 }

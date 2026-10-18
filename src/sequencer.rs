@@ -1,10 +1,17 @@
 //! Git sequencer state and explicit recovery plans.
 //!
-//! Read Git-created state with [`State::read`], compute commits through [`crate::replay`], then
+//! Read Git-created state with [`State::read_repository`], compute commits through
+//! [`crate::replay`], then
 //! prepare a continuation, skip or abort. A plan names the required HEAD/checkout destination and
 //! metadata changes separately. The caller owns checkout and reference transactions; metadata
 //! publication is explicit and requires exclusive operation ownership. No shell script from Git
 //! state, including `author-script`, is evaluated.
+//!
+//! Am recovery uses [`crate::am::State`] to interpret author/message artifacts and prepare a commit
+//! from the staged tree. [`Kind::Am`] admits final-mail continue/skip or session abort; it leaves
+//! queued-mail execution unsupported. Repository-aware observation includes `ORIG_HEAD` from files
+//! or the private reftable stack, and metadata publication rechecks that identity. Callers still
+//! own checkout, object installation, conditional refs/reflogs and exclusive operation access.
 //!
 //! ```no_run
 //! use girt::refs::{Dereference, RefEdit, RefName, Reflog};
@@ -71,6 +78,8 @@ pub enum Kind {
     Revert,
     /// Merge-backend rebase.
     Rebase,
+    /// Patch-mail application in `rebase-apply` (final-mail continue/skip and session abort).
+    Am,
 }
 
 /// Bounds for reading operation metadata.
@@ -83,6 +92,8 @@ pub struct Limits {
     pub max_files: usize,
     /// Todo syntax and count bounds.
     pub todo: TodoLimits,
+    /// Reftable admission for repository-aware am original-HEAD reads, per observation.
+    pub reftable: crate::refs::reftable::StackLimits,
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -90,7 +101,17 @@ impl Default for Limits {
             max_bytes: 32 * 1024 * 1024,
             max_files: 128,
             todo: TodoLimits::default(),
+            reftable: crate::refs::reftable::StackLimits::default(),
         }
+    }
+}
+
+impl Limits {
+    /// Sets the reftable budget for each repository-aware original-HEAD observation.
+    #[must_use]
+    pub fn with_reftable(mut self, limits: crate::refs::reftable::StackLimits) -> Self {
+        self.reftable = limits;
+        self
     }
 }
 
