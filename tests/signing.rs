@@ -144,6 +144,7 @@ fn capture(root: &Path, repo: &Path, kind: &str, id: &str) -> Option<Capture> {
     })
 }
 
+#[cfg(unix)]
 const COMMIT_CASES: [&str; 7] = [
     "gpgsig -----BEGIN PGP SIGNATURE-----\n A\n -----END PGP SIGNATURE-----\n\nmsg\n",
     "gpgsig-sha256 -----BEGIN SSH SIGNATURE-----\n A\n\nmsg\n",
@@ -154,6 +155,7 @@ const COMMIT_CASES: [&str; 7] = [
     "gpgsig -----BEGIN PGP SIGNATURE-----\n one\ngpgsig-sha256 -----BEGIN PGP SIGNATURE-----\n A\ngpgsig -----BEGIN PGP SIGNATURE-----\n A",
 ];
 
+#[cfg(unix)]
 const TAG_CASES: [&str; 11] = [
     "\nhi\n-----BEGIN SSH SIGNATURE-----\nA\n-----END SSH SIGNATURE-----\n",
     "\nhi\n-----BEGIN PGP SIGNATURE-----\nB\n-----END PGP SIGNATURE-----\nmid\n-----BEGIN SSH SIGNATURE-----\nA\n-----END SSH SIGNATURE-----",
