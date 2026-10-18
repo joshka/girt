@@ -134,3 +134,201 @@ fn scissors_matches_commit() {
         }
     }
 }
+
+/// Messages written for trailer tests: block detection, continuations, comments and dividers.
+const TRAILER_CORPUS: &[&[u8]] = &[
+    b"",
+    b"subject",
+    b"subject\n",
+    b"subject\n\n",
+    b"subject\n\n\n",
+    b"subject\nbody",
+    b"Key: value\n",
+    b"subject\nKey: value\n",
+    b"subject\n\nbody\n\nA: b\nC-d: e\n",
+    b"subject\n\nA: b\n  continued\n\tagain\nB: c\n",
+    b"subject\n\nA: b\n  continued\nC :e\nnot a trailer\n",
+    b"subject\n\nA: 1\nx\ny\nz\n",
+    b"subject\n\nSigned-off-by: b\nx\ny\nz\n",
+    b"subject\n\nSigned-off-by: b\nx\ny\nz\nw\n",
+    b"subject\n\nSigned-off-by: 1\n  c\n  d\n  e\nx\ny\nz\n",
+    b"subject\n\nSigned-off-by: 1\n  c\n  d\n  e\nx\ny\nz\nw\n",
+    b"subject\n\nsigned-off-BY: 1\nx\ny\nz\n",
+    b"subject\n\nSigned-off-by : 1\nx\ny\nz\n",
+    b"subject\n\nSigned-off-by:1\nx\ny\nz\n",
+    b"subject\n\n(cherry picked from commit abc)\nx\ny\n",
+    b"subject\n\n(cherry picked from commit abc)\nx\ny\nz\nw\n",
+    b"subject\n\n(cherry picked from commit\nx\ny\nz\n",
+    b"subject\n\nA: 1\n(cherry picked from commit x)\n",
+    b"subject\n\nA: 1\n# comment\n#d\n",
+    b"subject\n\nA: 1\n\n# comment\n",
+    b"subject\n\nbody\n# comment\n",
+    b"subject\n\nA: 1\n# comment\nx\n",
+    b"subject\n\nA: 1\n#c\nB: 2\n",
+    b"subject\n\nA: 1\n  \nB: 2\n",
+    b"subject\n\nA: 1\n# ------------------------ >8 ------------------------\nB: 2\n",
+    b"subject\n\nA: 1\n---\nfoo\n",
+    b"subject\n\nA: 1\n--- \nB: 3\n",
+    b"subject\n\nA: 1\n---x\nB: 3\n",
+    b"subject\n\nA: 1",
+    b"subject\n\nA: 1\n\n\n",
+    b"\n\nsubject\n\nA: 1\n",
+    b"# c\nsubject\n\nA: 1\n",
+    b"A: 1\n\nB: 2\n",
+    b"subject\n\n A: b\nB: c\n",
+    b"subject\n\nA_b: c\n",
+    b"subject\n\nA b: c\n",
+    b"subject\n\n1x: c\n-x: c\nx-: c\n",
+    b"subject\n\nA:\n",
+    b"subject\n\nA: 1\n:x\n",
+    b"subject\n\nhttp://example.com\n",
+    b"subject\n\nA= 3\nB# c\n",
+    b"subject\n\nA: 1\nB: 2\nA: 3\nC: 4\n",
+    b"subject\n\nSigned-off-by: a\nfoo\n",
+    b"subject\n\nx: 1\nxy :2\nFo: 3\n",
+    b"subject\n\nA: one\n two\n",
+    b"subject\n\nA:\n two\n three\n",
+    b"subject\n\nA:  \n\ttwo\n",
+    b"subject\n\nA: one\n# c\n two\nB: 2\n",
+];
+
+/// Configurations for trailer tests, as `-c` arguments.
+const TRAILER_CONFIGS: &[&[&str]] = &[
+    &[],
+    &["trailer.separators==#"],
+    &["trailer.separators=%:"],
+    &["trailer.x.key=Y", "trailer.f.key=Foo"],
+    &["trailer.sob.key=Signed-off-by", "trailer.sob.where=start"],
+    &["trailer.a.key=Acked-by #", "trailer.separators=:#"],
+    &["trailer.where=start"],
+    &["trailer.where=after", "trailer.ifexists=replace"],
+    &["trailer.where=before", "trailer.ifexists=replace"],
+    &["trailer.where=end", "trailer.ifexists=replace"],
+    &["trailer.ifexists=addIfDifferent"],
+    &["trailer.ifexists=add", "trailer.where=after"],
+    &["trailer.ifexists=doNothing", "trailer.ifmissing=doNothing"],
+    &[
+        "trailer.where=after",
+        "trailer.a.where=before",
+        "trailer.a.ifExists=Add",
+    ],
+    &["trailer.where=BOGUS", "trailer.ifexists=Replace"],
+    &["core.commentChar=;"],
+    &["trailer.x.key=Foo: ", "trailer.y.key=Bar :"],
+];
+
+/// `--trailer` argument sets applied to every corpus message.
+const TRAILER_ARGUMENTS: &[&[&str]] = &[
+    &[],
+    &["K: v"],
+    &["a: 9", "Z: z"],
+    &["A: 1", "a: 1", "A: 3"],
+    &["Signed-off-by: a", "Signed-off-by: a", "sig: b"],
+    &["sob: me", "so: y", "Signed-off-by-me: x"],
+    &["K=v", "L% w", "M# x", "N"],
+    &["x: 1", "Fo: 4", "A : 3 "],
+    &["A: one", "A: one two", "y: b"],
+];
+
+fn config_arguments(config: &[&str]) -> Vec<String> {
+    config
+        .iter()
+        .flat_map(|setting| ["-c".to_owned(), (*setting).to_owned()])
+        .collect()
+}
+
+fn girt_config(config: &[&str]) -> girt::Config {
+    let mut text = String::new();
+    for setting in config {
+        let (name, value) = setting.split_once('=').unwrap();
+        let (section, variable) = name.rsplit_once('.').unwrap();
+        match section.split_once('.') {
+            Some((section, subsection)) => {
+                text.push_str(&format!("[{section} \"{subsection}\"]\n"))
+            }
+            None => text.push_str(&format!("[{section}]\n")),
+        }
+        text.push_str(&format!("\t{variable} = \"{value}\"\n"));
+    }
+    girt::Config::parse(text.as_bytes()).unwrap()
+}
+
+#[test]
+fn trailers_match_interpret_trailers() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Each configuration runs a few hundred Git processes; run configurations side by side.
+    std::thread::scope(|scope| {
+        for config in TRAILER_CONFIGS {
+            scope.spawn(move || check_trailers(root, config));
+        }
+    });
+}
+
+fn check_trailers(root: &Path, config: &[&str]) {
+    use girt::message::{Trailer, TrailerConfig, add_trailers, trailers};
+
+    {
+        let settings = config_arguments(config);
+        let girt_config = TrailerConfig::from_config(&girt_config(config)).unwrap();
+        for message in TRAILER_CORPUS {
+            let mut args: Vec<&str> = settings.iter().map(String::as_str).collect();
+            args.extend(["interpret-trailers", "--parse"]);
+            let expected = git(root, &args, message);
+            let mut parsed = Vec::new();
+            for trailer in trailers(message, &girt_config) {
+                let mut line = trailer.key.clone();
+                let separator = girt_config_separator(config);
+                if !trailer
+                    .key
+                    .trim_ascii_end()
+                    .last()
+                    .is_some_and(|last| separator.contains(last))
+                {
+                    line.push(separator[0]);
+                    line.push(b' ');
+                }
+                line.extend_from_slice(&trailer.value);
+                line.push(b'\n');
+                parsed.extend(line);
+            }
+            assert_eq!(
+                String::from_utf8_lossy(&parsed),
+                String::from_utf8_lossy(&expected),
+                "--parse {config:?} {:?}",
+                String::from_utf8_lossy(message)
+            );
+
+            for arguments in TRAILER_ARGUMENTS {
+                let mut args: Vec<&str> = settings.iter().map(String::as_str).collect();
+                args.push("interpret-trailers");
+                for argument in *arguments {
+                    args.extend(["--trailer", argument]);
+                }
+                let expected = git(root, &args, message);
+                let new: Vec<_> = arguments
+                    .iter()
+                    .map(|argument| {
+                        Trailer::parse_argument(argument.as_bytes(), &girt_config).unwrap()
+                    })
+                    .collect();
+                assert_eq!(
+                    String::from_utf8_lossy(&add_trailers(message, &new, &girt_config)),
+                    String::from_utf8_lossy(&expected),
+                    "{config:?} {arguments:?} {:?}",
+                    String::from_utf8_lossy(message)
+                );
+            }
+        }
+    }
+}
+
+fn girt_config_separator(config: &[&str]) -> Vec<u8> {
+    config
+        .iter()
+        .rev()
+        .find_map(|setting| setting.strip_prefix("trailer.separators="))
+        .unwrap_or(":")
+        .as_bytes()
+        .to_vec()
+}

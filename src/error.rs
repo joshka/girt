@@ -128,6 +128,7 @@ from_domain_errors! {
     crate::merge::RenameError,
     crate::merge::CommitError,
     crate::merge::PublicationError,
+    crate::message::TrailerCommandError,
     crate::attributes::Error,
     crate::attributes::LoadError,
     crate::blame::Error,
