@@ -889,13 +889,11 @@ impl Names {
 pub(crate) fn validate_path(path: &[u8]) -> Result<(), Error> {
     if path.is_empty()
         || path.contains(&0)
-        || path.contains(&b'\\')
-        || path.contains(&b':')
         || path.split(|byte| *byte == b'/').any(|part| {
             part.is_empty() || part == b"." || part == b".." || part.eq_ignore_ascii_case(b".git")
         })
     {
-        return Err(unsupported(path, "unsafe or platform-ambiguous path"));
+        return Err(unsupported(path, "unsafe path"));
     }
     if cfg!(target_os = "macos") && !path.is_ascii() {
         return Err(unsupported(path, "non-ASCII filesystem paths on macOS"));

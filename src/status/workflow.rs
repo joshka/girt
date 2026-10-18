@@ -35,8 +35,9 @@ impl Repository {
     /// macOS/Linux traversal opens components relative to directory descriptors with no-follow
     /// flags. It never follows symlink ancestors, enters `.git` components or descends into
     /// gitlinks/nested repositories. Exact directory names must match index bytes, including case.
-    /// macOS non-ASCII names are unsupported; Linux retains non-UTF-8 bytes. Both reject NUL,
-    /// backslashes, colons, empty/dot/parent components and case-insensitive `.git` components.
+    /// macOS non-ASCII names are unsupported; Linux retains non-UTF-8 bytes. Colons and
+    /// backslashes are ordinary name bytes. Both reject NUL, empty/dot/parent components and
+    /// case-insensitive `.git` components.
     /// Windows and other
     /// platforms return unsupported before accessing storage. Worktree files must live on a
     /// filesystem supporting native POSIX modes and symlinks; emulation/normalization is excluded.

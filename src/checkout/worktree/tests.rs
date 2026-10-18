@@ -212,8 +212,9 @@ fn create_obstruction(path: &Path, directory: bool) {
 #[rstest]
 #[case::gitlink(b"sub", EntryMode::Gitlink)]
 #[case::metadata_alias(b".GIT/config", EntryMode::Blob)]
-#[case::backslash(b"a\\b", EntryMode::Blob)]
-#[case::colon(b"a:b", EntryMode::Blob)]
+#[case::short_name(b"git~1/config", EntryMode::Blob)]
+#[case::trailing_dot(b".git./config", EntryMode::Blob)]
+#[case::stream(b".git::$INDEX_ALLOCATION/config", EntryMode::Blob)]
 fn rejects_unsupported_tree_paths_before_mutation(#[case] path: &[u8], #[case] mode: EntryMode) {
     let f = Fixture::new();
     let head = fs::read(f.repo.git_dir().join("HEAD")).unwrap();

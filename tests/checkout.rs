@@ -2,6 +2,7 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::fs;
+use std::io::Write as _;
 use std::ops::ControlFlow;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
@@ -16,13 +17,22 @@ fn git(root: &Path, args: &[&str]) -> Vec<u8> {
     git_with_locks(root, args, "0")
 }
 fn git_with_locks(root: &Path, args: &[&str], locks: &str) -> Vec<u8> {
+    let output = git_output(root, args, locks);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+fn git_output(root: &Path, args: &[&str], locks: &str) -> std::process::Output {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
             command.env_remove(key);
         }
     }
-    let output = command
+    command
         .current_dir(root)
         .args([
             "-c",
@@ -52,13 +62,7 @@ fn git_with_locks(root: &Path, args: &[&str], locks: &str) -> Vec<u8> {
         .env("GIT_OPTIONAL_LOCKS", locks)
         .env("LC_ALL", "C")
         .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output.stdout
+        .unwrap()
 }
 fn tree(root: &Path) -> ObjectId {
     std::str::from_utf8(&git(root, &["rev-parse", "HEAD^{tree}"]))
@@ -473,4 +477,112 @@ fn configured_symlink_placeholders_are_not_written() {
             .is_symlink()
     );
     assert_eq!(fs::read(destination.join("link")).unwrap(), b"dir/raw");
+}
+
+/// Colons and backslashes are ordinary name bytes on macOS and Linux, as they are to Git.
+#[test]
+fn posix_colon_and_backslash_names_check_out_like_git() {
+    let temp = tempfile::tempdir().unwrap();
+    git(temp.path(), &["init", "-q", "source"]);
+    let source = temp.path().join("source");
+    fs::create_dir(source.join("dir:x")).unwrap();
+    for path in ["colon:name", "back\\slash", "dir:x/a\\b"] {
+        fs::write(source.join(path), path).unwrap();
+    }
+    git(&source, &["add", "."]);
+    git(&source, &["commit", "-qm", "posix names"]);
+    let destination = temp.path().join("clone");
+    clone_without_checkout(&source, &destination, false);
+    let repo = Repository::open(&destination).unwrap();
+    checkout(&repo, None, tree(&source));
+    assert_eq!(git(&destination, &["status", "--porcelain=v1", "-z"]), b"");
+    for path in ["colon:name", "back\\slash", "dir:x/a\\b"] {
+        assert_eq!(fs::read(destination.join(path)).unwrap(), path.as_bytes());
+    }
+}
+
+/// Checkout refuses exactly the metadata-name aliases that Git refuses under the same
+/// `core.protectNTFS` and `core.protectHFS` settings, and writes nothing when it refuses.
+#[rstest]
+fn metadata_name_refusals_match_git(
+    #[values(
+        ".GIT",
+        "git~1",
+        "GIT~1",
+        ".git ",
+        ".git.",
+        ".git::$INDEX_ALLOCATION",
+        "aux",
+        "c:d",
+        ".gitx"
+    )]
+    name: &str,
+    #[values(
+        None,
+        Some("core.protectNTFS=false"),
+        Some("core.protectHFS=false"),
+        Some("core.protectNTFS=true"),
+        Some("core.protectHFS=true")
+    )]
+    setting: Option<&str>,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let oracle = temp.path().join("oracle");
+    let subject = temp.path().join("subject");
+    let mut trees = Vec::new();
+    for root in [&oracle, &subject] {
+        git(temp.path(), &["init", "-q", root.to_str().unwrap()]);
+        if let Some((key, value)) = setting.and_then(|setting| setting.split_once('=')) {
+            git(root, &["config", key, value]);
+        }
+        let blob = git(root, &["hash-object", "-w", "--stdin"]);
+        let blob = std::str::from_utf8(&blob).unwrap().trim();
+        let subtree = mktree(root, &format!("100644 blob {blob}\tconfig\0"));
+        trees.push(mktree(root, &format!("040000 tree {subtree}\t{name}\0")));
+    }
+    let git_accepts = git_output(&oracle, &["read-tree", "--reset", "-u", &trees[0]], "0")
+        .status
+        .success();
+    let repo = Repository::open(&subject).unwrap();
+    let result = repo.checkout_tree_with(
+        None,
+        Some(trees[1].parse().unwrap()),
+        Limits::default(),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.is_ok(), git_accepts, "{name:?} with {setting:?}");
+    if !git_accepts {
+        let entries: Vec<_> = fs::read_dir(&subject)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, [".git"]);
+    }
+}
+
+fn mktree(root: &Path, entries: &str) -> String {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let mut child = command
+        .current_dir(root)
+        .args(["mktree", "-z"])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", root.join("absent-config"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(entries.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }

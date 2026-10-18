@@ -23,9 +23,13 @@
 //! automatic rollback, crash durability, branch switching or force mode is provided.
 //!
 //! Linux/macOS only, on filesystems with native hard links, symlinks and POSIX modes. macOS paths
-//! and names in enumerated directories must be ASCII. Both platforms conservatively reject ASCII
-//! case aliases, metadata names, unsafe components, gitlinks, nested repositories and index
-//! extensions other than `TREE`, `FSMN`, `UNTR`, `EOIE` and `IEOT`. Intent-to-add and skip-worktree
+//! and names in enumerated directories must be ASCII. Colons and backslashes are ordinary name
+//! bytes. Both platforms conservatively reject ASCII case aliases, unsafe components, and the
+//! metadata names Git refuses: `.git` in any ASCII case, the NTFS spellings of `.git` (`git~1`,
+//! trailing dots or spaces, `:stream`) unless `core.protectNTFS` is false, and on macOS the HFS+
+//! spellings with ignorable code points unless `core.protectHFS` is false. Also refused are
+//! gitlinks, nested repositories and index extensions other than `TREE`, `FSMN`, `UNTR`, `EOIE`
+//! and `IEOT`. Intent-to-add and skip-worktree
 //! entries require caller policy and are refused. Path components are limited to 255 bytes. Windows
 //! returns unsupported. Raw checkout preserves blob bytes without attributes, filters, EOL
 //! conversion, ignores or config overrides;
