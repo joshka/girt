@@ -21,7 +21,7 @@ mod binary;
 pub use binary::BinaryKind;
 mod index;
 pub use index::{AppliedIndex, IndexError, IndexLimits};
-mod parse;
+pub(crate) mod parse;
 mod text;
 mod worktree;
 pub use worktree::{

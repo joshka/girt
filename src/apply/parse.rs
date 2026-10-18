@@ -1,6 +1,14 @@
 use super::{Error, FilePatch, Hunk, Limits, Line, Patch};
 
 pub(super) fn parse(bytes: &[u8], limits: Limits) -> Result<Patch, Error> {
+    parse_mode(bytes, limits, false)
+}
+
+pub(crate) fn parse_mail(bytes: &[u8], limits: Limits) -> Result<Patch, Error> {
+    parse_mode(bytes, limits, true)
+}
+
+fn parse_mode(bytes: &[u8], limits: Limits, mail: bool) -> Result<Patch, Error> {
     if bytes.len() > limits.max_input_bytes {
         return Err(Error::Limit("input bytes"));
     }
@@ -9,17 +17,30 @@ pub(super) fn parse(bytes: &[u8], limits: Limits) -> Result<Patch, Error> {
         line: 0,
         remaining_lines: limits.max_lines,
         remaining_binary: limits.max_binary_bytes,
+        mail,
     };
+    if mail {
+        while parser
+            .lines
+            .peek()
+            .is_some_and(|line| !line.starts_with(b"diff --git "))
+        {
+            parser.next();
+        }
+    }
     let mut files = Vec::new();
     let mut total_hunks = 0;
     while let Some(line) = parser.lines.peek().copied() {
+        if mail && trim_lf(line) == b"-- " {
+            break;
+        }
         refuse(line, parser.line + 1)?;
         if files.len() >= limits.max_files {
             return Err(Error::Limit("files"));
         }
         let file = if line.starts_with(b"diff --git ") {
             parser.git_file(limits, &mut total_hunks)?
-        } else if line.starts_with(b"--- ") {
+        } else if !mail && line.starts_with(b"--- ") {
             let mut file = empty_file(parser.line + 1);
             parser.text_file(&mut file, limits, &mut total_hunks)?;
             file
@@ -55,6 +76,7 @@ struct Parser<'a> {
     line: usize,
     remaining_lines: usize,
     remaining_binary: usize,
+    mail: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -73,7 +95,10 @@ impl<'a> Parser<'a> {
         let mut operation_paths: [Option<Vec<u8>>; 2] = [None, None];
         let (mut added, mut deleted) = (false, false);
         while let Some(line) = self.lines.peek().copied() {
-            if line.starts_with(b"diff --git ") || line.starts_with(b"--- ") {
+            if line.starts_with(b"diff --git ")
+                || line.starts_with(b"--- ")
+                || self.mail && trim_lf(line) == b"-- "
+            {
                 break;
             }
             if line.starts_with(b"GIT binary patch") {
@@ -648,4 +673,23 @@ fn full_index(bytes: &[u8]) -> Option<(crate::ObjectId, crate::ObjectId)> {
     let old: crate::ObjectId = std::str::from_utf8(&ids[..at]).ok()?.parse().ok()?;
     let new: crate::ObjectId = std::str::from_utf8(&ids[at + 2..]).ok()?.parse().ok()?;
     (old.format() == new.format()).then_some((old, new))
+}
+
+#[cfg(test)]
+mod mail_tests {
+    use super::*;
+
+    #[test]
+    fn signature_shaped_deletion_is_counted_hunk_content() {
+        let patch = parse_mail(b"diffstat preamble\ndiff --git a/file b/file\n--- a/file\n+++ b/file\n@@ -1,2 +1 @@\n-base\n-- \n+new\n-- \nsignature\n", Limits::default()).unwrap();
+        assert_eq!(
+            patch.files()[0].apply(b"base\n- \n").unwrap().content,
+            b"new\n"
+        );
+    }
+
+    #[test]
+    fn traditional_sections_after_git_file_are_refused() {
+        assert!(parse_mail(b"diff --git a/one b/one\n--- a/one\n+++ b/one\n@@ -1 +1 @@\n-old\n+new\n--- a/two\n+++ b/two\n@@ -1 +1 @@\n-old\n+new\n", Limits::default()).is_err());
+    }
 }

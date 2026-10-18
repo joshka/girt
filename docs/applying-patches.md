@@ -316,3 +316,24 @@ mail. These observations do not validate agreement between mail, artifacts, HEAD
 constitute permission to resume or remove state. Author scripts remain untrusted opaque bytes and
 are never executed. Exclude concurrent operation writers while taking the snapshot. Inspection
 writes no files; Git can still continue or abort its operation afterwards.
+
+## Stage the current mail patch
+
+`am::apply_current` takes an unchanged operation snapshot and explicit `ApplyLimits`, then stages
+its extracted Git-style patch into working files and the index. A full raw tracked-status scan must
+be clean against HEAD; normalized-only cleanliness, gitlinks and unsupported working-file forms are
+refused. Untracked obstructions remain untouched. Filters use a fixed attribute view with external
+commands refused. Diffstat preambles and signatures are transport framing; a signature-shaped line
+inside a counted hunk remains content.
+
+The operation holds the index lock, validates both drafts and rechecks operation metadata before
+installing additive objects, publishing working files and publishing the index, in that order. It
+never writes HEAD or advances the mail range. After success, Git `am --continue` can create the
+commit. No commit hooks or three-way fallback run here.
+
+Exclude operation, HEAD and working-file writers throughout the call. This is not a batch
+transaction or crash-durable journal. Preparation failures leave the index and working files
+unchanged; additive objects can remain after installation starts. Late failures retain the exact
+working-write report in `ApplyFailure`, including partial leaves or completed changes preceding an
+index failure. Inspect those files and the retained am metadata before recovery. A failed call does
+not authorize Git continuation, and no automatic rollback replaces independent work.

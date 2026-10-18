@@ -4228,3 +4228,12 @@ SHA-256 repositories. It compares original mail and extracted patch bytes with
 then continues or aborts with Git. Additional cases cover interrupted preparation, completed ranges,
 missing mail, malformed/overflowing counters, non-am metadata and snapshot admission limits. The
 state reader performs no repository mutation or script evaluation.
+
+`tests/am_apply.rs` creates stopped Git am sessions with an untracked obstruction, removes the
+obstruction, and stages the current mail through girt in both object formats. Text and binary cases
+then continue with Git into the identical commit. No-write cases cover dirty/staged tracked state,
+untracked obstructions, changed or foreign operation snapshots, held index locks, hunk failure,
+cancellation and patch admission. A composition fault unit replaces the stored index after working
+publication and verifies that the failure preserves all working writes and the independent index.
+Existing working-file fault units cover per-leaf publication failures. No crash-durability or
+three-way-merge claim is made.
