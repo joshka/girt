@@ -703,6 +703,8 @@ def matrix_main():
                     help='calibrate Git/stock/girt; 6/3/1 samples at <=10/>10/>60 seconds; bounded timeouts')
     ap.add_argument('--bounded-disk', action='store_true',
                     help='use one per-run copy at a time; save and delete outputs after validation')
+    ap.add_argument('--fresh-read-copies', action='store_true',
+                    help='time read-only cells on a fresh copy per sample, like mutations')
     ap.add_argument('--work', default=str(BENCH_HOME / 'matrix-run'))
     ap.add_argument('--out', default='~/tmp/jj-bench-matrix.json')
     ap.add_argument('--ops', default='')
@@ -1128,7 +1130,7 @@ def matrix_main():
                             if block == 0 and not any(s['repo']==name and s['op']==op and s['tool']==tool for s in skipped):
                                 skipped.append(dict(repo=name,op=op,tool=tool,reason=cell['note']))
                             continue
-                        shared = op.startswith('log-') or op in read_ops
+                        shared = (op.startswith('log-') or op in read_ops) and not args.fresh_read_copies
                         if shared:
                             root = read_baseline(tool,cell['scenario'])
                             cwd = setup_cell(tool,cell,root,f)
@@ -1167,7 +1169,9 @@ def matrix_main():
                         pending.append((tool,cell,root,cwd,position))
                     heads_before = {str(root): sorted(p.name for p in (root/'repo/.jj/repo/op_heads/heads').glob('*'))
                                     for tool,cell,root,cwd,position in pending
-                                    if root in baselines.values() and tool!='git'}
+                                    if tool!='git' and (root in baselines.values()
+                                                        or (args.fresh_read_copies
+                                                            and (op.startswith('log-') or op in read_ops)))}
                     if not streamed:
                         LOCK_STATE.acquire()
                     try:
@@ -1258,7 +1262,7 @@ def matrix_main():
                 if profile_needed:
                     for profile_tool in (('girt','stock') if args.profile_stock else ('girt',)):
                         cell = next(s for s in specs[profile_tool] if s['op']==op)
-                        shared_profile = op.startswith('log-') or op in read_ops
+                        shared_profile = (op.startswith('log-') or op in read_ops) and not args.fresh_read_copies
                         root = work/f'profile-{name}-{op}-{profile_tool}'
                         if shared_profile:
                             root = read_baseline(profile_tool,cell['scenario'])
