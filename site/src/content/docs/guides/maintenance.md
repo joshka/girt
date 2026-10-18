@@ -17,15 +17,16 @@ the operation.
 
 ## Choose an operation
 
-| Task                    | API                       | What changes                                      |
-| ----------------------- | ------------------------- | ------------------------------------------------- |
-| Explain retention       | `plan_retention`          | Read-only plan and typed outcome                  |
-| Add packed storage      | `repack_retained`         | New/reused indexed pack; old storage remains      |
-| Expire history          | `expire_reflogs`          | Eligible reflog records, with durable replacement |
-| Reclaim old loose files | `prune_unreachable_loose` | Eligible unreachable primary loose files          |
-| Replace old packs       | `retire_old_packs`        | Verified replacement, then eligible old artifacts |
-| Expire and prune        | `collect_garbage`         | Reflogs, pack consolidation if due, loose pruning |
-| Run all phases          | `run_maintenance`         | Expiry, pack retirement, then loose pruning       |
+| Task                    | API                       | What changes                                        |
+| ----------------------- | ------------------------- | --------------------------------------------------- |
+| Explain retention       | `plan_retention`          | Read-only plan and typed outcome                    |
+| Add packed storage      | `repack_retained`         | New/reused indexed pack; old storage remains        |
+| Expire history          | `expire_reflogs`          | Eligible reflog records, with durable replacement   |
+| Reclaim old loose files | `prune_unreachable_loose` | Eligible unreachable primary loose files            |
+| Remove loose duplicates | `prune_packed`            | Verified loose copies already held in primary packs |
+| Replace old packs       | `retire_old_packs`        | Verified replacement, then eligible old artifacts   |
+| Expire and prune        | `collect_garbage`         | Reflogs, pack consolidation if due, loose pruning   |
+| Run all phases          | `run_maintenance`         | Expiry, pack retirement, then loose pruning         |
 
 `collect_garbage` consolidates packs only when there are more of them than Git's `gc.autoPackLimit`
 allows (50 by default; 0 turns it off), counting indexed packs without a `.keep` file as

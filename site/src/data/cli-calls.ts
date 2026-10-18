@@ -344,6 +344,10 @@ export const calls: Record<string, CliCalls> = {
   'maintenance repack': {
     api: [repository('repack_retained')],
   },
+  'prune-packed': {
+    git: 'git prune-packed',
+    api: [unreleased('Repository::prune_packed', 531)],
+  },
   'maintenance run': {
     api: [repository('expire_reflogs'), repository('retire_old_packs'), repository('prune_unreachable_loose')],
   },

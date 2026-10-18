@@ -18,6 +18,8 @@
 //! [`Repository::collect_garbage`](crate::Repository::collect_garbage) expires reflogs and prunes
 //! loose objects, and consolidates packs once they outnumber `gc.autoPackLimit`; see
 //! [`PackConsolidation`]. No other operation consolidates packs.
+//! [`Repository::prune_packed`](crate::Repository::prune_packed) removes primary loose copies
+//! only after directly verifying their packed survivors; it does not walk reachability.
 //! The caller supplies [`MaintenanceIsolation`] to exclude external writers and dependent readers
 //! for the full operation. Failure reports preserve completed effects; retry from fresh scans under
 //! a new isolation guard. Read each method's platform and recovery contract before use.
@@ -227,7 +229,11 @@ pub use error::{RetentionError, RetentionErrorKind};
 mod repack;
 pub use repack::{BitmapOutcome, RepackError, RepackLimits, RepackPublished};
 mod prune;
+mod prune_packed;
 pub use prune::{MaintenanceIsolation, PruneCause, PruneFailure, PruneReport};
+pub use prune_packed::{
+    PrunePackedCause, PrunePackedFailure, PrunePackedLimits, PrunePackedReport,
+};
 mod config;
 pub(crate) use config::parse_expiry_date;
 pub use config::{ReflogCutoffs, ReflogExpiry, ReflogExpiryError};

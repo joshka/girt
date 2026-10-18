@@ -187,6 +187,8 @@ enum Command {
     Completions(complete::CompletionsArgs),
     /// Print the `girt.1` man page, or write every page with `--out`.
     Man(complete::ManArgs),
+    /// Remove loose copies only after verifying their installed packed survivors.
+    PrunePacked(maintenance::PrunePackedArgs),
 }
 
 /// Help colors in the style of Cargo.
@@ -344,6 +346,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Maintenance(command) => maintenance::run(command, context),
         Command::Completions(args) => complete::completions(args),
         Command::Man(args) => complete::man(args),
+        Command::PrunePacked(args) => maintenance::prune_packed(args, context),
     }
 }
 

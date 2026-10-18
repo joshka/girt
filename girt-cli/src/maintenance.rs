@@ -398,3 +398,47 @@ pub fn multi_pack_index(command: MultiPackIndexCommand, context: &Context) -> Re
     }
     Ok(ExitCode::SUCCESS)
 }
+
+/// Options for verified removal of loose copies already stored in primary packs.
+#[derive(Debug, clap::Args)]
+pub struct PrunePackedArgs {
+    /// Assert that no other writer, pack installer or dependent reader uses the repository.
+    #[arg(long, required = true)]
+    yes: bool,
+    /// Maximum fanout directories and entries visited, including ignored names.
+    #[arg(long, default_value_t = 1_000_000)]
+    max_entries: usize,
+    /// Maximum combined packed survivor payload bytes verified before deletion.
+    #[arg(long, default_value_t = 1_073_741_824)]
+    max_bytes: u64,
+}
+
+/// Removes verified loose duplicates under the user's explicit isolation assertion.
+pub fn prune_packed(args: PrunePackedArgs, context: &Context) -> Result<ExitCode> {
+    if !args.yes {
+        bail!("--yes must assert repository-wide isolation");
+    }
+    let repository = context.repository()?;
+    let mut limits = girt::retention::PrunePackedLimits::default();
+    limits.max_entries = args.max_entries;
+    limits.max_bytes = args.max_bytes;
+    let report = repository
+        .prune_packed(&mut UserAsserted, limits, &AtomicBool::new(false))
+        .map_err(|failure| {
+            let deleted = failure.report.deleted.len();
+            let uncertain = failure.uncertain.map_or_else(
+                || "none".to_owned(),
+                |id| id.to_string(),
+            );
+            eyre!(failure).wrap_err(format!(
+                "pruning verified loose duplicates: deleted {deleted}; uncertain loose object {uncertain}"
+            ))
+        })?;
+    if !context.git {
+        let mut out = stdout();
+        writeln!(out, "deleted {}", report.deleted.len())?;
+        writeln!(out, "retained {}", report.retained.len())?;
+        writeln!(out, "verified-bytes {}", report.verified_bytes)?;
+    }
+    Ok(ExitCode::SUCCESS)
+}

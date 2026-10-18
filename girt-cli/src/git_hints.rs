@@ -72,7 +72,7 @@ const ENTRIES: &[Entry] = &[
         "archive", "bisect", "blame", "checkout", "clone", "config", "diff", "fetch", "grep",
         "help", "history", "init", "log", "maintenance", "multi-pack-index", "push", "remote",
         "replace", "repo", "rerere", "reset", "status", "worktree",
-        "fsck",
+        "fsck", "prune-packed",
     ], Hint::Same),
     commands(&["annotate"], use_(&[("annotate", "blame")])),
     commands(&["cat-file"], use_(&[
@@ -131,7 +131,7 @@ const ENTRIES: &[Entry] = &[
     ], QUERIES),
     commands(&[
         "commit-graph", "pack-objects", "pack-redundant",
-        "prune-packed", "show-index", "unpack-file", "unpack-objects",
+        "show-index", "unpack-file", "unpack-objects",
     ], STORE),
     commands(&[
         "backfill", "bundle", "credential", "credential-cache", "credential-store",
