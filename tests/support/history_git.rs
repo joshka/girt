@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use girt::{ObjectFormat, ObjectId, Repository};
-fn run(directory: &Path, args: &[&str], input: &[u8]) -> std::process::Output {
+pub fn run(directory: &Path, args: &[&str], input: &[u8]) -> std::process::Output {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {

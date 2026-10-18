@@ -1,7 +1,8 @@
 //! Indexed commit metadata from Git's auxiliary commit-graph files.
 //!
 //! [`CommitGraph::parse`] checks the checksum and every structural claim of the whole file, then
-//! reads records from the retained bytes on demand. This does not establish that objects exist or
+//! reads records from the retained bytes on demand. Default repository opening skips only the
+//! checksum, as Git does; see [`Checksum`]. This does not establish that objects exist or
 //! agree with the index. Keep
 //! object verification separate when consuming repositories whose auxiliary metadata is untrusted.
 //! Use [`crate::Objects::with_commit_graph`] to opt into indexed history queries.
@@ -72,6 +73,22 @@ pub struct GraphCommit {
     pub generation: u32,
     /// Generation v2, the commit time plus its corrected-date offset, when present.
     pub corrected_commit_date: Option<u64>,
+}
+
+/// Whether loading hashes each graph file to check its trailer checksum.
+///
+/// Every structural check runs either way: chunk table and bounds, parent positions, EDGE runs,
+/// resource budgets, generation order or acyclicity, and chain base identities. The checksum only
+/// detects corruption that leaves the structure valid, such as a changed commit time or tree.
+/// Hashing the whole file dominates opening a large graph, so Git leaves it to
+/// `git commit-graph verify`, and girt's default repository opening skips it too.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Checksum {
+    /// Hash every file and reject a trailer mismatch with [`GraphError::Checksum`].
+    #[default]
+    Verify,
+    /// Trust the trailer without hashing; used by [`crate::Repository::commit_graph`].
+    Skip,
 }
 
 /// Resource bounds applied before accepting a graph.
@@ -147,19 +164,20 @@ impl CommitGraph {
         if bytes.len() > limits.max_bytes {
             return Err(GraphError::Limit("bytes"));
         }
-        Self::parse_owned(bytes.to_vec(), format, limits)
+        Self::parse_owned(bytes.to_vec(), format, limits, Checksum::Verify)
     }
 
     fn parse_owned(
         bytes: Vec<u8>,
         format: ObjectFormat,
         limits: GraphLimits,
+        checksum: Checksum,
     ) -> Result<Self, GraphError> {
         if bytes.get(7).is_some_and(|bases| *bases != 0) {
             Chunks::parse(&bytes, format, limits)?;
             return Err(GraphError::Unsupported("split file requires bases"));
         }
-        Self::parse_files(vec![bytes], format, limits)
+        Self::parse_files(vec![bytes], format, limits, checksum)
     }
 
     /// Parses a split chain supplied in base-to-tip order with default bounds.
@@ -186,16 +204,17 @@ impl CommitGraph {
     ) -> Result<Self, GraphError> {
         check_chain_bounds(layers.iter().map(|layer| layer.len()), layers.len(), limits)?;
         let owned = layers.iter().map(|layer| layer.to_vec()).collect();
-        Self::parse_chain_owned(owned, format, limits)
+        Self::parse_chain_owned(owned, format, limits, Checksum::Verify)
     }
 
     fn parse_chain_owned(
         files: Vec<Vec<u8>>,
         format: ObjectFormat,
         limits: GraphLimits,
+        checksum: Checksum,
     ) -> Result<Self, GraphError> {
         check_chain_bounds(files.iter().map(Vec::len), files.len(), limits)?;
-        Self::parse_files(files, format, limits)
+        Self::parse_files(files, format, limits, checksum)
     }
 
     /// Checks base-to-tip files completely, hashing large inputs on a second thread.
@@ -203,20 +222,26 @@ impl CommitGraph {
     /// The structural checks and the history index do not depend on the checksum, so they run
     /// while it is computed. Nothing is returned until both have finished, and a checksum
     /// mismatch is reported in preference to any structural error found in the same bytes.
+    /// [`Checksum::Skip`] runs only the structural checks.
     fn parse_files(
         files: Vec<Vec<u8>>,
         format: ObjectFormat,
         limits: GraphLimits,
+        checksum: Checksum,
     ) -> Result<Self, GraphError> {
         for bytes in &files {
             Chunks::header(bytes, format, limits)?;
         }
-        let checksums = || {
-            files
+        let checksums = || match checksum {
+            Checksum::Verify => files
                 .iter()
-                .try_for_each(|bytes| Chunks::checksum(bytes, format))
+                .try_for_each(|bytes| Chunks::checksum(bytes, format)),
+            Checksum::Skip => Ok(()),
         };
-        let total: usize = files.iter().map(Vec::len).sum();
+        let total: usize = match checksum {
+            Checksum::Verify => files.iter().map(Vec::len).sum(),
+            Checksum::Skip => 0,
+        };
         let (layouts, history) = std::thread::scope(|scope| {
             let hashing = (total >= CONCURRENT_CHECKSUM_BYTES)
                 .then(|| {
