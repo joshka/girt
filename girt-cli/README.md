@@ -147,10 +147,9 @@ These come from the library and are listed in each command's `--help`:
   on PATH. Configured command strings execute through the shell, so trust the configuration.
   Terminal prompts/job control are unavailable; use an agent or askpass. Non-OpenSSH variants,
   percent-encoded SSH URLs, query/fragment fields and paths starting with `~` are unsupported.
-- HTTP(S) `clone` and `remote heads` still use anonymous access, without credential helpers. `fetch`
-  and `push` use the library's configured credential helpers, including `store`; they decline
-  interactive credential prompts. Adding helpers to clone/discovery requires sharing the workflow
-  adapter's helper selection and authentication retry policy.
+- HTTP(S) `clone`, `fetch` and `push` use the library's configured credential helpers, including
+  `store`; they decline interactive credential prompts. `remote heads` uses anonymous HTTP discovery
+  without credential helpers.
 - `object count --git` omits Git's `garbage` and `size-garbage` lines: girt does not classify stray
   files in object directories. An `.idx` without its `.pack` fails opening instead of counting as
   garbage. Multi-pack indexes are not read, so `object list` and `count` see only `.idx` packs.
