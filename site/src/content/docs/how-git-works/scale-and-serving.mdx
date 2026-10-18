@@ -27,9 +27,11 @@ Optional **changed-path Bloom filters** can rule out changes to a path relative 
 A positive answer can be a false positive and requires comparison; merge filters do not rule out
 differences from other parents. Git writes a standalone graph during `git gc` by default unless
 `gc.writeCommitGraph` disables it. Default `git maintenance run` writes split chains, as does its
-explicit commit-graph task. Reading an existing graph is enough to benefit.
+explicit commit-graph task. Reading an existing graph is enough to benefit. Girt attaches valid
+graphs to repository object readers by default, honoring `core.commitGraph=false`; unusable graphs
+fall back to object reads, and object verification is available explicitly.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/492">Single/split reading and writing, explicit verification, opt-in indexed history and first-parent Bloom queries; automatic GC writing remains.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/492">Single/split reading and writing, explicit verification, default indexed history and first-parent Bloom queries; automatic GC writing remains.</GirtStatus>
 
 ## Multi-pack index
 

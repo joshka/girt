@@ -6,6 +6,12 @@
 //! does not refresh configuration or shallow boundaries. Choose [`PackLimits`] for opening and
 //! [`ReadLimits`] for individual decoding work. These bounds are not a process-wide memory quota.
 //!
+//! Repository readers trust structurally validated commit-graph metadata for history queries by
+//! default, honoring `core.commitGraph=false`. Missing or unusable graphs fall back to object
+//! reads. Use [`crate::commit_graph::CommitGraph::verify`] for explicit object verification, or
+//! [`Objects::without_commit_graph`] to read commits during each history query. Typed reads always
+//! verify objects. Storage refresh retains the attached graph snapshot.
+//!
 //! # Default and explicit limits
 //!
 //! The short names use the `Default` limits and never cancel: [`crate::Repository::objects`],

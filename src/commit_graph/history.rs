@@ -16,14 +16,28 @@ impl Objects {
     /// # Errors
     ///
     /// Rejects a different hash format, missing parent records or cyclic indexed ancestry.
-    pub fn with_commit_graph(mut self, mut graph: CommitGraph) -> Result<Self, GraphError> {
+    pub fn with_commit_graph(mut self, graph: CommitGraph) -> Result<Self, GraphError> {
+        self.attach_commit_graph(graph)?;
+        Ok(self)
+    }
+
+    /// Removes the auxiliary index so history queries read commit objects directly.
+    ///
+    /// Useful when object claims must be checked during each query rather than trusted from an
+    /// index. This does not alter repository configuration or other readers.
+    pub fn without_commit_graph(mut self) -> Self {
+        self.commit_graph = None;
+        self
+    }
+
+    pub(crate) fn attach_commit_graph(&mut self, mut graph: CommitGraph) -> Result<(), GraphError> {
         if graph.format != self.object_format() {
             return Err(GraphError::HashFormat);
         }
         graph.check_ancestry()?;
         graph.generation_order = graph.generation_order();
         self.commit_graph = Some(Arc::new(graph));
-        Ok(self)
+        Ok(())
     }
 }
 
