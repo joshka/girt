@@ -21,6 +21,9 @@ Resume preserves completed measurements, including older six-sample cells and pa
 partial cell can already satisfy the adaptive target. Refusals remain explicit failures with no
 successful girt ratio. Record the reason and issue link rather than fabricating samples.
 
+Pass `--fresh-read-copies` to time read-only cells, such as `log`, on a fresh copy per sample
+instead of a reused baseline, when an earlier build may have left objects behind.
+
 Hold `/tmp/girt-timing.lock` only while timing; release it during setup and validation. With
 `--bounded-disk`, prepare one copy at a time, checkpoint timing and validation, then remove the
 copy. Retain raw JSON, logs, fingerprints, fixture facts, and profile evidence. Full `git fsck`
