@@ -27,6 +27,8 @@ fn applies_exact_bytes(#[case] patch: &[u8], #[case] before: &[u8], #[case] afte
 
     assert_eq!(result.content, after);
     assert_eq!(result.hunks.len(), 1);
+    let reversed = patch.reversed().unwrap();
+    assert_eq!(reversed.files()[0].apply(after).unwrap().content, before);
 }
 
 #[test]

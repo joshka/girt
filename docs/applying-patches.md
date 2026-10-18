@@ -39,8 +39,8 @@ without asserting preimage identity; declared modes are checked during tree appl
 object IDs are checked against content. File paths come from `---` and `+++`. Combined diffs and
 submodule modes return explicit unsupported errors. Git mode changes, new/deleted files and
 rename/copy metadata (including declared similarity) are retained and applied. Offset/fuzz matching,
-whitespace options, reverse application, recount, index/worktree publication, format-patch and
-mailbox/am remain tracked in
+whitespace options, recount, index/worktree publication, format-patch and mailbox/am remain tracked
+in
 [issue 506](https://github.com/joshka/girt/issues/506).
 
 The parser requires a standalone patch: mail headers, prose and signatures must be removed first.
@@ -82,9 +82,10 @@ every newly visited directory path.
 
 Git `GIT binary patch` records are decoded from base85 and zlib into literal bytes or pack-delta
 instructions. `FilePatch::binary_kind()` identifies the forward encoding; a second block is retained
-and its encoding can be inspected with `reverse_binary_kind()`, but reverse application is not yet
-exposed. Both records count against `Limits::max_binary_bytes`, an aggregate inflated-payload bound
-across the whole patch. The existing output bound separately caps a reconstructed delta result.
+and its encoding can be inspected with `reverse_binary_kind()`, and `Patch::reversed` selects it for
+application. Both records count against `Limits::max_binary_bytes`, an aggregate inflated-payload
+bound across the whole patch. The existing output bound separately caps a reconstructed delta
+result.
 
 Binary application requires full same-format `index` identities and checks the supplied preimage and
 computed postimage hashes. A new or deleted side uses Git's null identity. Tree application also
@@ -96,3 +97,16 @@ The extended parser currently expects default `a/` and `b/` prefixes for rename/
 non-default and omitted prefixes can be refused before path mapping. Dissimilarity headers from
 Git's break-rewrite output are explicitly unsupported. Binary blocks require their terminating blank
 line, including the final block.
+
+## Reverse a patch
+
+Call `patch.reversed()?` before applying to content or a stored tree to exchange the old and new
+sides. Reversal consumes the parsed patch and moves its payloads without copying them. It exchanges
+paths, modes, hunk coordinates and additions/removals, retaining file order and diagnostic patch
+lines. Binary reversal requires the patch's second block and verifies the exchanged object IDs.
+
+Copies follow Git's reverse-copy behavior: the exchanged destination must be absent, and the
+exchanged source is retained. Reversing a copy therefore usually fails while the original source
+still exists. This operation does not automatically remove the copied file. Tree application still
+refuses directory-to-file transitions, including when reversing a supported file-to-directory
+transition.

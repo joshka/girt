@@ -44,6 +44,44 @@ impl Fixture {
         }
         editor.write().unwrap()
     }
+    fn compare_reverse(&self, before: ObjectId, after: ObjectId, args: &[&str]) {
+        let before_hex = before.to_string();
+        let after_hex = after.to_string();
+        let mut command = vec![
+            "diff-tree",
+            "-r",
+            "-p",
+            "--no-commit-id",
+            "--binary",
+            "--full-index",
+        ];
+        command.extend(args);
+        command.extend([before_hex.as_str(), after_hex.as_str()]);
+        let bytes = git(self.root.path(), &command, b"");
+        let reversed = Patch::parse(&bytes).unwrap().reversed().unwrap();
+
+        let result = reversed
+            .apply_tree(&self.repo.objects().unwrap(), after)
+            .unwrap();
+        assert_eq!(result.tree().id(), before);
+        git(self.root.path(), &["read-tree", &after_hex], b"");
+        git(self.root.path(), &["apply", "--cached", "-R"], &bytes);
+        assert_eq!(
+            git(self.root.path(), &["write-tree"], b""),
+            format!("{before}\n").as_bytes()
+        );
+
+        let forward = reversed.reversed().unwrap();
+        assert_eq!(
+            forward
+                .apply_tree(&self.repo.objects().unwrap(), before)
+                .unwrap()
+                .tree()
+                .id(),
+            after
+        );
+    }
+
     fn compare(&self, before: ObjectId, after: ObjectId, args: &[&str]) {
         let before_hex = before.to_string();
         let after_hex = after.to_string();
@@ -97,6 +135,7 @@ fn git_mode_add_delete_and_type_changes(#[case] format: &str) {
     ]);
 
     fixture.compare(before, after, &[]);
+    fixture.compare_reverse(before, after, &[]);
 }
 
 #[rstest]
@@ -190,6 +229,7 @@ fn git_binary_literals_and_deltas(#[case] format: &str) {
     ]);
 
     fixture.compare(before, after, &[]);
+    fixture.compare_reverse(before, after, &[]);
 }
 
 #[test]
@@ -412,6 +452,88 @@ fn binary_blocks_require_terminating_blank_line() {
         Patch::parse(&bytes),
         Err(girt::apply::Error::Malformed {
             reason: "missing binary block terminator",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn reverse_text_rename_preserves_missing_newline() {
+    let fixture = Fixture::new("sha1");
+    let before = fixture.tree(&[(b"old", EntryMode::Blob, b"one\ntwo\nthree\nfour")]);
+    let after = fixture.tree(&[(b"new", EntryMode::Executable, b"one\nchanged\nthree\nfour")]);
+
+    fixture.compare_reverse(before, after, &["--find-renames=20%"]);
+}
+
+#[test]
+fn reverse_copy_requires_absent_destination_like_git() {
+    let fixture = Fixture::new("sha1");
+    let before = fixture.tree(&[(b"source", EntryMode::Blob, b"one\ntwo\n")]);
+    let after = fixture.tree(&[
+        (b"source", EntryMode::Blob, b"one\ntwo\n"),
+        (b"copy", EntryMode::Blob, b"one\ntwo\n"),
+    ]);
+    let bytes =
+        b"diff --git a/source b/copy\nsimilarity index 100%\ncopy from source\ncopy to copy\n";
+    let reversed = Patch::parse(bytes).unwrap().reversed().unwrap();
+
+    assert!(
+        reversed
+            .apply_tree(&fixture.repo.objects().unwrap(), after)
+            .is_err()
+    );
+    git(fixture.root.path(), &["read-tree", &after.to_string()], b"");
+    assert!(
+        !support::git_output(fixture.root.path(), &["apply", "--cached", "-R"], bytes)
+            .status
+            .success()
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["write-tree"], b""),
+        format!("{after}\n").as_bytes()
+    );
+
+    let only_copy = fixture.tree(&[(b"copy", EntryMode::Blob, b"one\ntwo\n")]);
+    assert_eq!(
+        reversed
+            .apply_tree(&fixture.repo.objects().unwrap(), only_copy)
+            .unwrap()
+            .tree()
+            .id(),
+        fixture.tree(&[
+            (b"copy", EntryMode::Blob, b"one\ntwo\n"),
+            (b"source", EntryMode::Blob, b"one\ntwo\n")
+        ])
+    );
+    assert_ne!(only_copy, before);
+}
+
+#[test]
+fn binary_reversal_requires_reverse_data() {
+    let fixture = Fixture::new("sha1");
+    let before = fixture.tree(&[(b"f", EntryMode::Blob, b"\0old")]);
+    let after = fixture.tree(&[(b"f", EntryMode::Blob, b"\0new")]);
+    let bytes = git(
+        fixture.root.path(),
+        &[
+            "diff-tree",
+            "-r",
+            "-p",
+            "--binary",
+            "--full-index",
+            &before.to_string(),
+            &after.to_string(),
+        ],
+        b"",
+    );
+    let first_end = bytes.windows(2).position(|pair| pair == b"\n\n").unwrap() + 2;
+    let patch = Patch::parse(&bytes[..first_end]).unwrap();
+
+    assert!(matches!(
+        patch.reversed(),
+        Err(girt::apply::Error::Unsupported {
+            feature: "binary reversal without a reverse block",
             ..
         })
     ));

@@ -52,6 +52,45 @@ impl Patch {
         parse::parse(bytes, limits)
     }
 
+    /// Reverses paths, modes, text hunks and binary identities without copying payloads.
+    ///
+    /// Apply the returned patch to the original postimage to undo supported edits. File order and
+    /// diagnostic patch lines are retained. Copies remain copies with exchanged paths, as with
+    /// Git's reverse application: the reversed destination must be absent. In particular, this
+    /// does not remove a copied file while retaining its original source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Unsupported`] if a binary patch has no reverse block. No storage is read
+    /// or written. The parsed patch is consumed, so reversal needs no additional payload budget.
+    pub fn reversed(mut self) -> Result<Self, Error> {
+        for file in &mut self.files {
+            if let Some(binary) = &mut file.binary {
+                let reverse = binary.reverse.take().ok_or(Error::Unsupported {
+                    line: file.line,
+                    feature: "binary reversal without a reverse block",
+                })?;
+                binary.reverse = Some(std::mem::replace(&mut binary.forward, reverse));
+                std::mem::swap(&mut binary.old, &mut binary.new);
+            }
+
+            std::mem::swap(&mut file.old_path, &mut file.new_path);
+            std::mem::swap(&mut file.old_mode, &mut file.new_mode);
+            for hunk in &mut file.hunks {
+                std::mem::swap(&mut hunk.old_start, &mut hunk.new_start);
+                for line in &mut hunk.lines {
+                    line.kind = match line.kind {
+                        b'+' => b'-',
+                        b'-' => b'+',
+                        other => other,
+                    };
+                }
+            }
+        }
+
+        Ok(self)
+    }
+
     /// File edits in input order. Duplicate paths are retained.
     pub fn files(&self) -> &[FilePatch] {
         &self.files
@@ -92,8 +131,8 @@ impl FilePatch {
         self.binary.as_ref().map(|patch| patch.forward.kind)
     }
 
-    /// Reverse binary encoding when the patch supplied a second block. Reverse application is not
-    /// yet exposed.
+    /// Reverse binary encoding when the patch supplied a second block.
+    /// Use [`Patch::reversed`] to select it for application.
     pub fn reverse_binary_kind(&self) -> Option<BinaryKind> {
         self.binary
             .as_ref()

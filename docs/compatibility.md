@@ -3650,3 +3650,12 @@ signatures in SHA-1 and SHA-256 repositories. It compares `%G?|%GS|%GK|%GF|%GP|%
 a revoked key, a signed tag, and an X.509 certificate from `gpgsm`. Expired keys and signatures are
 made with `--faked-system-time` through a POSIX shell wrapper; those cases and all tests skip when
 `gpg` or `gpgsm` is absent.
+
+### Reverse patch application
+
+`tests/apply_extended.rs` compares `Patch::reversed` tree IDs with isolated `git apply --cached -R`
+for SHA-1/SHA-256 binary literals/deltas, additions/deletions, empty files and mode/type changes. A
+text rename preserves missing final newlines, and reversing twice restores forward application.
+Reverse copies exchange paths and retain copy behavior; both implementations refuse an occupied
+reversed destination, and Git leaves its index unchanged. Missing reverse binary blocks are refused.
+The existing directory-to-file limitation also applies to reversed patches.
