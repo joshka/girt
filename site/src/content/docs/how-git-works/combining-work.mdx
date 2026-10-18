@@ -38,10 +38,11 @@ When there are several merge bases, Git's default strategy first merges the base
 virtual base. Cherry-pick, revert, rebase and stash are all merges underneath: cherry-picking C is a
 merge whose base is C's parent. Without merging, a tool can read history but can't combine work.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/493">
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/merge/index.html">
   Content and whitespace policies, rename-aware tree/commit merging with clean recursive bases,
   original conflict stages, per-path attribute/custom drivers and guarded conflict checkout. Conflicted virtual
   bases, directory-stage expansion and ambiguous rename layouts remain limited.
+  Remaining work is tracked in [#493](https://github.com/joshka/girt/issues/493).
 </GirtStatus>
 
 ## Cherry-pick, revert, rebase and stash
@@ -55,12 +56,13 @@ Stash records working files and the index as commits, with an optional extra par
 files. Applying a stash merges those saved changes into the current checkout. These operations can
 stop on the same conflicts as a merge; the provisional tree alone does not resolve them.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/608">
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/replay/index.html">
   Object-only cherry-pick, revert and ordered rebase sequences with mainline selection, commit metadata,
   explicit empty policies and first-conflict progress. Linear todo execution and explicit Git sequencer
   recovery metadata are supported. Stash snapshots, apply/index plans and files-backend stash history
   are supported through explicit publication; merge-topology replay, repository stash capture/cleanup
   and reftable stash history editing remain partial.
+  Remaining work is tracked in [#608](https://github.com/joshka/girt/issues/608).
 </GirtStatus>
 
 ## Filters
@@ -79,7 +81,7 @@ Git LFS works this way: the repository stores a small pointer file, and the smud
 it with the real file on checkout. Without filters, checkout writes the pointer instead of the file,
 and [status](/girt/how-git-works/working-tree/#status) reports converted files as changed.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">Line endings, `ident`, clean/smudge commands and the long-running filter process (Git LFS works) in `girt::filter`, which runs commands only when the caller allows it. `working-tree-encoding` for UTF-16 and UTF-32 only ([#593](https://github.com/joshka/girt/issues/593)); no `delay` capability. Status and checkout apply them through `Repository::status_with_filters` and `Repository::checkout_tree_with_filters`, and clone, `Repo` and the CLI apply them by default.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/filter/index.html">Line endings, `ident`, clean/smudge commands and the long-running filter process (Git LFS works) in `girt::filter`, which runs commands only when the caller allows it. `working-tree-encoding` for UTF-16 and UTF-32 only ([#593](https://github.com/joshka/girt/issues/593)); no `delay` capability. Status and checkout apply them through `Repository::status_with_filters` and `Repository::checkout_tree_with_filters`, and clone, `Repo` and the CLI apply them by default.</GirtStatus>
 
 ## Applying patches
 
@@ -162,7 +164,7 @@ selects `src/sub/b.rs`. With it, `*` stops at `/` and `**` spans directories.
 exactly as one of its parents had them is skipped, and the walk follows only that parent, so side
 branches that never touched the paths are not listed.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/495">Parsing and matching are in `girt::pathspec`; status, tree diff and log take pathspecs but refuse `attr:` magic, and log has only Git's default merge simplification.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/pathspec/index.html">Parsing and matching are in `girt::pathspec`; status, tree diff and log take pathspecs but refuse `attr:` magic, and log has only Git's default merge simplification. Remaining work is tracked in [#495](https://github.com/joshka/girt/issues/495).</GirtStatus>
 
 ## Commit message cleanup and trailers
 

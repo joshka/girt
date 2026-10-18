@@ -31,7 +31,7 @@ explicit commit-graph task. Reading an existing graph is enough to benefit. Girt
 graphs to repository object readers by default, honoring `core.commitGraph=false`; unusable graphs
 fall back to object reads, and object verification is available explicitly.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/492">Single/split reading and writing, explicit verification, default indexed history and first-parent Bloom queries; opening overhead and automatic GC writing remain.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/commit_graph/index.html">Single/split reading and writing, explicit verification, default indexed history and first-parent Bloom queries; opening overhead and automatic GC writing remain. Remaining work is tracked in [#492](https://github.com/joshka/girt/issues/492).</GirtStatus>
 
 A quiet-window comparison on 82,500 commits found a 351-commit range taking 28.7 ms after opening
 validation improvements, versus 113.8 ms before and 16.1 ms for Git log. Ancestry took 27.0 ms
