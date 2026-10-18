@@ -420,3 +420,147 @@ fn reverting_a_merge_names_the_selected_parent() {
     );
     assert_eq!(replay.result.tree.id(), expected.tree());
 }
+
+#[rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn rebase_sequence_matches_git_without_installing_intermediate_objects(#[case] format: &str) {
+    let fixture = Fixture::new(format);
+    success(
+        fixture.root.path(),
+        &["checkout", "--detach", &fixture.source.to_string()],
+    );
+    std::fs::write(fixture.root.path().join("file"), b"ONE\ntwo\nTHREE\n").unwrap();
+    success(fixture.root.path(), &["commit", "-am", "second"]);
+    let second = head(fixture.root.path());
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let replay = repo
+        .objects()
+        .unwrap()
+        .rebase(
+            &[fixture.source, second],
+            fixture.onto,
+            writer(),
+            girt::replay::RebaseOptions::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(replay.stopped.is_none());
+    assert_eq!(replay.completed.len(), 2);
+    assert_eq!(head(fixture.root.path()), second);
+    assert!(
+        repo.objects()
+            .unwrap()
+            .read_commit(replay.completed[0].destination)
+            .is_err()
+    );
+    assert!(repo.objects().unwrap().read_commit(replay.tip).is_err());
+    success(
+        fixture.root.path(),
+        &[
+            "rebase",
+            "--onto",
+            &fixture.onto.to_string(),
+            &fixture.base.to_string(),
+        ],
+    );
+    assert_eq!(replay.tip, head(fixture.root.path()));
+    let loose = repo.loose_objects();
+    install_rebase(&replay, &loose);
+    assert_eq!(
+        repo.objects()
+            .unwrap()
+            .read_commit(replay.tip)
+            .unwrap()
+            .parents(),
+        &[replay.completed[0].destination]
+    );
+}
+
+fn install_rebase(rebase: &girt::replay::Rebase, loose: &girt::LooseObjects) {
+    for step in &rebase.completed {
+        for (_, bytes) in &step.replay.result.blobs {
+            loose.write_blob(bytes).unwrap();
+        }
+        for tree in &step.replay.result.trees {
+            loose.write_tree(tree).unwrap();
+        }
+        if let Some(commit) = &step.replay.commit {
+            loose.write_commit(commit).unwrap();
+        }
+    }
+}
+
+#[test]
+fn rebase_stops_at_first_conflict_with_completed_progress() {
+    let fixture = Fixture::new("sha1");
+    success(
+        fixture.root.path(),
+        &["checkout", "--detach", &fixture.source.to_string()],
+    );
+    std::fs::write(fixture.root.path().join("other"), b"conflicting source\n").unwrap();
+    success(fixture.root.path(), &["add", "."]);
+    success(fixture.root.path(), &["commit", "-m", "conflicting second"]);
+    let second = head(fixture.root.path());
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let replay = repo
+        .objects()
+        .unwrap()
+        .rebase(
+            &[fixture.source, second, fixture.base],
+            fixture.onto,
+            writer(),
+            girt::replay::RebaseOptions::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(replay.completed.len(), 1);
+    assert_eq!(replay.stopped.as_ref().unwrap().source, second);
+    assert_eq!(replay.stopped.as_ref().unwrap().status, Status::Conflicted);
+    assert_eq!(replay.tip, replay.completed[0].destination);
+    assert_eq!(head(fixture.root.path()), second);
+}
+
+#[test]
+fn rebase_skips_redundant_inputs_and_bounds_the_sequence() {
+    let fixture = Fixture::new("sha1");
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let objects = repo.objects().unwrap();
+    let mut options = girt::replay::RebaseOptions::default();
+    options.replay.redundant = EmptyPolicy::Skip;
+    let replay = objects
+        .rebase(
+            &[fixture.source],
+            fixture.source,
+            writer(),
+            options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(replay.tip, fixture.source);
+    assert_eq!(
+        replay.completed[0].replay.status,
+        Status::Skipped(EmptyKind::Redundant)
+    );
+    options.max_commits = 0;
+    assert!(matches!(
+        objects.rebase(
+            &[fixture.source],
+            fixture.onto,
+            writer(),
+            options,
+            &AtomicBool::new(false)
+        ),
+        Err(girt::replay::RebaseError::Limit)
+    ));
+    assert!(matches!(
+        objects.rebase(
+            &[fixture.source],
+            fixture.onto,
+            writer(),
+            girt::replay::RebaseOptions::default(),
+            &AtomicBool::new(true)
+        ),
+        Err(girt::replay::RebaseError::Cancelled)
+    ));
+}

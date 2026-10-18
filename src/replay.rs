@@ -51,6 +51,9 @@
 use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicBool;
 
+mod rebase;
+pub use rebase::{Rebase, RebaseError, RebaseOptions, RebasedCommit};
+
 use crate::merge::{TreeMerge, TreeMergeOptions};
 use crate::{Commit, ObjectId, Objects, Signature};
 
@@ -202,6 +205,43 @@ impl Objects {
     ) -> Result<Replay, Error> {
         let original = self.read_commit(source)?;
         let onto = self.read_commit(destination)?;
+        let operation = Operation {
+            source,
+            original: &original,
+            onto: &onto,
+            committer,
+            options,
+            reverse,
+        };
+        operation.compute(self, cancel, &mut crate::merge::ReplayTrees::default())
+    }
+}
+
+struct Operation<'a> {
+    source: ObjectId,
+    original: &'a Commit,
+    onto: &'a Commit,
+    committer: Signature,
+    options: Options,
+    reverse: bool,
+}
+
+impl Operation<'_> {
+    fn compute(
+        self,
+        objects: &Objects,
+        cancel: &AtomicBool,
+        memory: &mut crate::merge::ReplayTrees,
+    ) -> Result<Replay, Error> {
+        let Self {
+            source,
+            original,
+            onto,
+            committer,
+            options,
+            reverse,
+        } = self;
+        let destination = onto.id();
         let parent = match options.mainline {
             Some(number) => Some(
                 *original
@@ -213,9 +253,9 @@ impl Objects {
             None => original.parents().first().copied(),
         };
         let parent_tree = parent
-            .map(|id| self.read_commit(id).map(|commit| commit.tree()))
+            .map(|id| objects.read_commit(id).map(|commit| commit.tree()))
             .transpose()?;
-        let empty = crate::Tree::new(self.object_format(), vec![])
+        let empty = crate::Tree::new(objects.object_format(), vec![])
             .map_err(crate::merge::TreeError::from)
             .map_err(crate::merge::RenameError::from)?;
         let parent_tree = parent_tree.unwrap_or(empty.id());
@@ -225,11 +265,9 @@ impl Objects {
         } else {
             (parent_tree, original.tree())
         };
-        let result = crate::merge::replay_trees(
-            self,
-            base,
-            onto.tree(),
-            theirs,
+        let result = memory.merge(
+            objects,
+            [base, onto.tree(), theirs],
             empty,
             options.trees,
             cancel,
@@ -261,7 +299,7 @@ impl Objects {
             } else {
                 original.to_fields()?.author
             };
-            let message = replay_message(&original, source, parent, options.record_origin, reverse);
+            let message = replay_message(original, source, parent, options.record_origin, reverse);
             Some(
                 Commit::builder(result.tree.id(), author, message)
                     .parent(destination)

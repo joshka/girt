@@ -3125,3 +3125,12 @@ Opaque source headers and signatures are omitted. Messages are byte-oriented; ca
 messages are not cleaned through Git configuration. Existing content/rename merge limitations apply.
 Git sequencer continuation, interactive rebase and stash publication are separate planned work in
 [the replay design](https://github.com/joshka/girt/issues/608).
+
+### In-memory rebase
+
+`Objects::rebase` replays an explicitly ordered sequence onto a supplied destination, retaining
+intermediate objects in memory. The Git fixtures compare two-commit sequence identities with
+`git rebase --onto` in SHA-1 and SHA-256 repositories. Additional cases cover first-conflict
+progress, redundant skipping, input bounds, cancellation and no intermediate object publication.
+Automatic range selection, patch-ID filtering, merge-topology reconstruction and on-disk state are
+not part of this primitive.

@@ -32,3 +32,21 @@ The [compatibility contract](compatibility.md#commit-replay) records Git-oracle 
 inherited merge limitations. The unreleased API and remaining rebase, sequencer and stash work are
 tracked in
 [the replay design](https://github.com/joshka/girt/issues/608).
+
+## Rebase an explicit sequence
+
+`Objects::rebase` takes an ordered slice of source identities and an explicit destination. Select
+the range before calling; it does not discover commits, filter patch IDs or reconstruct merge
+topology. Each source preserves its author and receives the supplied committer. Merge sources use
+the replay mainline policy. `RebaseOptions::max_commits` bounds the sequence before any commit
+reads.
+
+The result contains completed steps, the last completed tip and an optional stopped replay. A
+conflict or stop-on-empty leaves that source unresolved; skip records a mapping to the unchanged tip
+and continues. Generated trees and blobs remain available to later steps in memory. Errors and
+cancellation discard the in-memory result without repository changes.
+
+Install each completed step's generated blobs, trees and optional commit in sequence order before
+publishing the resulting tip. A stopped replay owns additional provisional objects and original
+conflict sides for a caller-owned resolution workflow. It does not move HEAD or write Git's
+sequencer state. The caller chooses whether to retain completed objects after a stop.
