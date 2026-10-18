@@ -21,7 +21,11 @@
 //! [`TreeMerge`] with a candidate root, generated objects and original conflict sides. Install
 //! generated objects explicitly before publishing a clean root. This primitive does not infer
 //! renames; rename-aware composition remains a separate operation.
+//! [`Driver`] selects built-in or caller-owned custom drivers from an attribute state.
+//! [`MarkerOptions::from_config`] applies an explicit conflict-style configuration snapshot.
 mod content;
+mod driver;
+pub use driver::{Driver, DriverError};
 mod render;
 mod tree;
 mod types;

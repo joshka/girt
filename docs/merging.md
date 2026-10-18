@@ -64,3 +64,22 @@ This is a path-based primitive. It does not infer renames, build virtual merge b
 drivers or create commits. Callers requiring Git rename behavior must reconcile renamed paths before
 using it. The later commit/sequencer layer can reuse the same structured results while owning
 history and publication policy.
+
+## Attributes and Drivers
+
+Look up the `merge` attribute for the path through `attributes::Attributes` or a repository's
+`attributes::Lookup`, then pass that state to `merge::Driver::from_attribute`. A set attribute
+selects text, an unset attribute selects binary, and a string names text, binary, union or a custom
+driver. Unspecified attributes select automatic detection. `Driver::configured` also applies
+`merge.default` from an explicit configuration snapshot when the attribute is unspecified.
+
+`Driver::merge` runs built-in content computation. Text and union still detect binary input; union
+does not turn binary conflicts into text. A custom driver returns `CustomRequired` with its name.
+Match `Driver::Custom` to invoke your own callback or command, using caller-owned process, resource
+and trust policy. Return `ContentMerge::resolved` for accepted output or `ContentMerge::conflicted`
+to preserve original whole-input sides. No configured shell command is run implicitly.
+
+`MarkerOptions::from_config` interprets `merge.conflictStyle` from the supplied snapshot. Values are
+case-sensitive: merge, diff3 and zdiff3 are accepted; implicit, empty and unknown values return a
+typed error. Missing configuration selects merge. Attribute/configuration lookup and this driver
+selection are explicit composition; path-based tree merging does not yet route attributes itself.

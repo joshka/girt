@@ -2955,3 +2955,16 @@ renames. Directory conflicts remain structured entries and cannot yet become lea
 provisional conflicted tree selects ours (or the surviving side for modify/delete), rather than
 Git's marker blobs and conflict-path renaming. Generated objects remain in memory until the caller
 installs them. Virtual merge bases, driver selection and publication are separate layers.
+
+## Merge Driver Selection
+
+`tests/merge_drivers.rs` compares set, unset, unspecified and named merge attributes with isolated
+`git check-attr --cached`, including built-in text/binary/union and a custom name. Focused checks
+cover effective conflict-style precedence, invalid styles, configured default-driver selection,
+explicit custom dispatch and unresolved binary input under text/union. Original isolated
+`git merge-tree --write-tree` observations establish that text and union retain binary conflicts;
+`git merge-file` observations establish case-sensitive conflict-style values.
+
+Custom drivers are returned to the caller, not executed implicitly. Configuration and attributes are
+explicit input snapshots; tree-path routing and configured external command execution remain
+caller-owned composition.
