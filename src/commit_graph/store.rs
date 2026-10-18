@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 
-use super::{CommitGraph, GraphError, GraphLimits, bad};
+use super::{Checksum, CommitGraph, GraphError, GraphLimits, bad};
 use crate::{ObjectFormat, ObjectId, Objects, ReadLimits, Repository};
 
 /// Failure to load an auxiliary index or validate its object claims.
@@ -43,7 +43,8 @@ impl CommitGraph {
     /// Loads a standalone graph or split chain from an object directory with default bounds.
     ///
     /// Prefers `info/commit-graph` when present. Returns `None` when neither it nor the chain
-    /// manifest exists. Does not inspect repository configuration or verify object claims.
+    /// manifest exists. Checks every file's checksum ([`Checksum::Verify`]). Does not inspect
+    /// repository configuration or verify object claims.
     ///
     /// # Errors
     ///
@@ -64,9 +65,26 @@ impl CommitGraph {
         format: ObjectFormat,
         limits: GraphLimits,
     ) -> Result<Option<Self>, GraphLoadError> {
+        Self::open_checked(object_dir, format, limits, Checksum::Verify)
+    }
+
+    /// Loads graph files with explicit limits and checksum policy.
+    ///
+    /// [`Checksum::Skip`] keeps every structural check and the chain's filename identities, but
+    /// does not hash the files, so corruption that leaves the structure valid goes unnoticed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::open`], except [`GraphError::Checksum`] when skipping.
+    pub fn open_checked(
+        object_dir: &Path,
+        format: ObjectFormat,
+        limits: GraphLimits,
+        checksum: Checksum,
+    ) -> Result<Option<Self>, GraphLoadError> {
         let info = object_dir.join("info");
         if let Some(bytes) = read_optional(&info.join("commit-graph"), limits.max_bytes)? {
-            return Ok(Some(Self::parse_owned(bytes, format, limits)?));
+            return Ok(Some(Self::parse_owned(bytes, format, limits, checksum)?));
         }
         let directory = info.join("commit-graphs");
         let manifest_limit = 256 * (format.digest_len() * 2 + 1);
@@ -101,7 +119,9 @@ impl CommitGraph {
         if layers.is_empty() {
             return Err(bad("empty chain").into());
         }
-        Ok(Some(Self::parse_chain_owned(layers, format, limits)?))
+        Ok(Some(Self::parse_chain_owned(
+            layers, format, limits, checksum,
+        )?))
     }
 
     /// Checks each indexed tree, ordered parent list and committer date against verified objects.
@@ -156,8 +176,10 @@ impl Repository {
     /// Loads optional commit-graph metadata under this handle's `core.commitGraph` setting.
     ///
     /// An absent setting enables loading. `false` returns `None` without opening graph files.
-    /// Structural validation does not establish agreement with objects; use [`CommitGraph::verify`]
-    /// when required by the caller's trust policy. Errors permit callers to fall back to objects.
+    /// Runs every structural check but skips the whole-file checksum ([`Checksum::Skip`]), as Git
+    /// does outside `git commit-graph verify`; use [`CommitGraph::open`] to check it. Structural
+    /// validation does not establish agreement with objects; use [`CommitGraph::verify`] when
+    /// required by the caller's trust policy. Errors permit callers to fall back to objects.
     ///
     /// # Errors
     ///
@@ -166,7 +188,12 @@ impl Repository {
         if self.config().boolean("core", None, "commitGraph")? == Some(false) {
             return Ok(None);
         }
-        CommitGraph::open(self.object_dir(), self.object_format())
+        CommitGraph::open_checked(
+            self.object_dir(),
+            self.object_format(),
+            GraphLimits::default(),
+            Checksum::Skip,
+        )
     }
 }
 

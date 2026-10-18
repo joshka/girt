@@ -565,10 +565,15 @@ corrected-date or topological-generation order. Unknown coverage or generation o
 traversal. Indexed queries preserve shallow boundaries and commit/parent bounds; per-object read
 limits apply to fallback reads. Repository object readers attach valid graphs by default, honoring
 `core.commitGraph=false`, and fall back to object reads for missing, corrupt or structurally
-unusable graphs. Explicit `CommitGraph::verify` checks object claims before querying;
-`Objects::without_commit_graph` removes the index from a reader. Supported Bloom filters can skip
-tree comparisons in first-parent path walks and single-parent blame steps; unknown filters fall back
-to tree reads.
+unusable graphs. Like Git, which leaves the trailer to `git commit-graph verify`, default repository
+loading (`Repository::commit_graph` and the readers that attach it) skips the whole-file checksum
+but keeps every structural check above and the chain's filename identities. `CommitGraph::parse`,
+`parse_chain` and `open` still check it, and `open_checked` takes an explicit `Checksum` policy.
+Corruption that leaves the structure valid, such as a changed tree or commit date, is therefore
+found by those paths or by `CommitGraph::verify`, not by default opening. Explicit
+`CommitGraph::verify` checks object claims before querying; `Objects::without_commit_graph` removes
+the index from a reader. Supported Bloom filters can skip tree comparisons in first-parent path
+walks and single-parent blame steps; unknown filters fall back to tree reads.
 
 `tests/commit_graph.rs` generates original histories using the installed Git executable, writes both
 generation versions with `git commit-graph write --reachable`, runs `git commit-graph verify`, and

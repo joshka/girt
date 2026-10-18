@@ -1,7 +1,7 @@
 //! Verified graph construction and standalone/split artifact encoding.
 use std::collections::BTreeMap;
 
-use super::{Chunks, CommitGraph, GraphCommit, GraphError, GraphLimits, bad, id};
+use super::{Checksum, Chunks, CommitGraph, GraphCommit, GraphError, GraphLimits, bad, id};
 use crate::{HistoryError, HistoryLimits, IdMap, ObjectFormat, ObjectId, Objects};
 
 /// Failure to construct or encode a complete commit-graph artifact.
@@ -121,7 +121,7 @@ impl CommitGraph {
             max_parents: usize::MAX,
             ..GraphLimits::default()
         };
-        Ok(Self::parse_owned(bytes, format, limits)?)
+        Ok(Self::parse_owned(bytes, format, limits, Checksum::Verify)?)
     }
 
     /// Encodes a standalone graph with generation v1/v2 and no Bloom filters.

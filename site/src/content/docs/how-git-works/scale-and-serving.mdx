@@ -29,17 +29,18 @@ differences from other parents. Git writes a standalone graph during `git gc` by
 `gc.writeCommitGraph` disables it. Default `git maintenance run` writes split chains, as does its
 explicit commit-graph task. Reading an existing graph is enough to benefit. Girt attaches valid
 graphs to repository object readers by default, honoring `core.commitGraph=false`; unusable graphs
-fall back to object reads, and object verification is available explicitly.
+fall back to object reads, and object verification is available explicitly. Like Git, default
+opening checks the graph's structure but not its whole-file checksum, which explicit parsing and
+verification still check.
 
 <GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/commit_graph/index.html">Single/split reading and writing, explicit verification, default indexed history and first-parent Bloom queries; opening overhead and automatic GC writing remain. Remaining work is tracked in [#492](https://github.com/joshka/girt/issues/492).</GirtStatus>
 
-A quiet-window comparison on 82,500 commits found a 351-commit range taking 28.7 ms after opening
-validation improvements, versus 113.8 ms before and 16.1 ms for Git log. Ancestry took 27.0 ms
-versus 118.8 ms before and 9.54 ms for Git. These warm process totals are 1.78 and 2.83 times Git;
-opening still dominates at about 19–20 ms. The
-[timing issue](https://github.com/joshka/girt/issues/569) and
-[opening-cost follow-up](https://github.com/joshka/girt/issues/625) link raw measurements and memory
-evidence. This is progress, with remaining opening cost, rather than Git parity.
+On Linux v6.1, reading records in place ([#733](https://github.com/joshka/girt/pull/733)) took a
+near-tip ancestry check from 700 ms to 51.6 ms, against 10.5 ms for Git, and counting `v6.0..v6.1`
+from 726 ms to 68.5 ms, against 54.6 ms. Peak memory fell from 504 MiB to 107 MiB. About 36 ms of
+the remaining near-tip time was the whole-file checksum, which default opening now skips. The
+[opening-cost issue](https://github.com/joshka/girt/issues/625) links raw measurements. This is
+progress toward Git parity rather than parity.
 
 ## Multi-pack index
 

@@ -1218,8 +1218,9 @@ impl Repository {
     /// See [`crate::Objects`] for supported versions, validation timing, snapshot lifetime,
     /// external-base policy, and filesystem assumptions. Does not create files or directories.
     ///
-    /// Attaches the repository's commit-graph by default after checksum and structural checks,
-    /// honoring `core.commitGraph=false`. Missing or unusable indexes fall back to object reads.
+    /// Attaches the repository's commit-graph by default after structural checks, skipping the
+    /// whole-file checksum as Git does (see [`Self::commit_graph`]), and honoring
+    /// `core.commitGraph=false`. Missing or unusable indexes fall back to object reads.
     /// Indexed history trusts the graph's object claims, as Git does. Use
     /// [`crate::commit_graph::CommitGraph::verify`] before querying when object verification is
     /// required, or [`crate::Objects::without_commit_graph`] to read commits during each query.
