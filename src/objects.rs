@@ -116,7 +116,9 @@ mod alternates;
 mod header;
 mod listing;
 mod prefix;
+mod promised;
 mod typed;
+mod walk;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -127,7 +129,9 @@ pub use header::ObjectHeader;
 pub use listing::{IndexedPack, ListLimits, LooseIds, LooseObject, ObjectStore, PackIds};
 pub(crate) use prefix::LooseListing;
 pub use prefix::ResolvePrefixError;
+pub use promised::PromisedObjects;
 pub use typed::{ReadBlobError, ReadCommitError, ReadTagError, ReadTreeError};
+pub use walk::{MissingObjects, ObjectWalk, ObjectWalkError, ObjectWalkLimits};
 
 use crate::pack::FilePack;
 use crate::pack::reader::check_cancelled;
@@ -598,6 +602,9 @@ pub struct Objects {
     abbreviations: Arc<prefix::LooseAbbreviations>,
     pub(crate) multi_pack_index_enabled: bool,
     pub(crate) bitmaps_enabled: bool,
+    /// Whether `.promisor` packs promise missing objects; set by [`crate::Repository`] from
+    /// [`crate::Repository::is_partial_clone`].
+    pub(crate) partial_clone: bool,
     /// Set only on the history view inside [`crate::replace::ReplacedObjects`].
     pub(crate) replacements: Option<Arc<crate::replace::Replacements>>,
 }
@@ -731,6 +738,7 @@ impl Objects {
                 abbreviations: Arc::default(),
                 multi_pack_index_enabled,
                 bitmaps_enabled: true,
+                partial_clone: false,
                 replacements: None,
                 directory,
                 shallow: crate::ShallowRoots::empty(format),

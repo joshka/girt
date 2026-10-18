@@ -242,6 +242,7 @@ from_domain_errors! {
     crate::ReadTagError,
     crate::ReadTreeError,
     crate::ResolvePrefixError,
+    crate::ObjectWalkError,
     crate::pack::IndexRebuildError,
     crate::PackWriteError,
     crate::PeelError,

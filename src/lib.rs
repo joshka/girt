@@ -273,9 +273,10 @@ pub use object::{
 };
 pub(crate) use objects::UnverifiedObject;
 pub use objects::{
-    AlternateLimits, IndexedPack, ListLimits, LooseIds, LooseObject, Object, ObjectHeader,
-    ObjectReadError, ObjectStore, Objects, PackIds, PackLimits, ReadBlobError, ReadCommitError,
-    ReadLimits, ReadTagError, ReadTreeError, ResolvePrefixError,
+    AlternateLimits, IndexedPack, ListLimits, LooseIds, LooseObject, MissingObjects, Object,
+    ObjectHeader, ObjectReadError, ObjectStore, ObjectWalk, ObjectWalkError, ObjectWalkLimits,
+    Objects, PackIds, PackLimits, PromisedObjects, ReadBlobError, ReadCommitError, ReadLimits,
+    ReadTagError, ReadTreeError, ResolvePrefixError,
 };
 pub use pack::{
     DeltaOptions, DeltaStats, PackCompression, PackObject, PackWriteError, PackWriteLimits,
