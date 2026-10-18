@@ -1,8 +1,8 @@
 ---
-// Selected jj commands on the large repository: jj on girt against stock jj and Git, with a
-// diverging bar centred on parity. Wins and losses are shown together.
-import { formatMs } from '../data/jj-performance';
-import { comparisonRepo, comparisons, measured, parity } from '../data/landing';
+// Everyday jj commands on the large repository: jj on girt against stock jj and Git, with a
+// diverging bar centred on parity. Below it, the biggest gaps across every repository.
+import { formatMs, ISSUES_URL } from '../data/jj-performance';
+import { biggestGaps, comparisonRepo, comparisons, measured, parity } from '../data/landing';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 // Half the bar track spans a 40× difference on a log scale.
@@ -12,6 +12,13 @@ const times = (ratio: number) => {
   const factor = ratio < 1 ? 1 / ratio : ratio;
   return factor >= 10 ? `${Math.floor(factor)}×` : `${factor.toFixed(1)}×`;
 };
+// Within 5% either way reads as a tie rather than "1.0× slower".
+const describe = (ratio: number | null) =>
+  ratio == null
+    ? 'times out'
+    : ratio >= 0.95 && ratio <= 1.05
+      ? 'about the same'
+      : `${times(ratio)} ${ratio < 1 ? 'faster' : 'slower'}`;
 ---
 
 <div class="girt-compare not-content">
@@ -45,10 +52,8 @@ const times = (ratio: number) => {
               <td class:list={['num', 'ratio', row.ratio == null || row.ratio >= 1 ? 'slower' : 'faster']}>
                 {row.ratio == null ? (
                   <span class="failed">times out</span>
-                ) : row.ratio < 1 ? (
-                  `${times(row.ratio)} faster`
                 ) : (
-                  `${times(row.ratio)} slower`
+                  describe(row.ratio)
                 )}
               </td>
               <td class="bar-cell" aria-hidden="true">
@@ -69,12 +74,30 @@ const times = (ratio: number) => {
     </table>
   </div>
   <p class="note">
-    {comparisonRepo}, selected rows, best and worst. Across all three repositories, jj on girt is
+    Everyday commands on the {comparisonRepo} kernel repository. Across all three repositories, jj on girt is
     less than 20% slower than stock jj (or faster) in {parity.atMost20PercentSlower} of the{' '}
     {parity.compared} cells where both finished
     {parity.unfinished > 0 && <>; {parity.unfinished} more did not finish with girt</>}. {measured.machine},{' '}
     {measured.versions && <>girt {measured.versions}, </>}measured {measured.dates}.{' '}
     <a href={`${base}/performance/jj-benchmark/`}>All results</a>
+  </p>
+  <p class="note">
+    Biggest gaps, by extra wait over stock jj:{' '}
+    {
+      biggestGaps.map((gap, i) => (
+        <>
+          <code>{gap.command}</code> on {gap.repo} {describe(gap.ratio)}
+          {gap.issue && (
+            <>
+              {' '}
+              (<a href={`${ISSUES_URL}${gap.issue}`}>issue {gap.issue}</a>)
+            </>
+          )}
+          {i < biggestGaps.length - 1 ? '; ' : '. '}
+        </>
+      ))
+    }
+    <a href={`${base}/performance/jj-benchmark/`}>Performance page</a>
   </p>
 </div>
 

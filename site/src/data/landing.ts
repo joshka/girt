@@ -1,9 +1,10 @@
 // Landing-page comparison, computed at build time from the committed benchmark JSON so it can't
-// drift from the performance page. The rows are a hand-picked mix of the best and worst cells on the
-// large repository; a missing row fails the build instead of showing a stale figure. Only rows
+// drift from the performance page. The table is a fixed list of the commands a jj user runs all day,
+// on the large repository; a missing row fails the build instead of showing a stale figure. Only rows
 // where girt and stock jj do the same work qualify: `jj util gc` is excluded because girt's gc does
 // not rewrite existing packs as `git gc` does.
 import rows from '../../../docs/jj-performance.json';
+import { REPOSITORIES } from './jj-commands';
 import { GIRT_RESPONSIBLE_RATIO, provenance, spanOf, type Row } from './jj-performance';
 
 const allRows = rows as unknown as Row[];
@@ -18,18 +19,22 @@ export interface Comparison {
   ratio: number | null;
 }
 
-const PICKS: [op: string, variant: string, command: string][] = [
-  ['git fetch', '1', 'jj git fetch (one new commit)'],
-  ['status', 'untracked', 'jj status (untracked files)'],
+// The variant of each everyday command closest to how it is used day to day.
+const EVERYDAY: [op: string, variant: string, command: string][] = [
+  ['status', 'small-edit', 'jj status'],
   ['log', 'default', 'jj log'],
-  ['status', 'clean', 'jj status'],
-  ['git fetch', 'noop', 'jj git fetch (nothing new)'],
-  ['log', 'ancestry', 'jj log (ancestry query)'],
+  ['diff', 'wc', 'jj diff'],
+  ['commit', 'default', 'jj commit'],
+  ['describe', 'default', 'jj describe'],
+  ['rebase', '1', 'jj rebase'],
+  ['git fetch', '1', 'jj git fetch'],
+  ['git push', 'update', 'jj git push'],
+  ['git clone', 'local-full-checkout', 'jj git clone'],
 ];
 
-export const comparisonRepo = 'Linux v6.1';
+export const comparisonRepo = REPOSITORIES.large.label;
 
-export const comparisons: Comparison[] = PICKS.map(([op, variant, command]) => {
+export const comparisons: Comparison[] = EVERYDAY.map(([op, variant, command]) => {
   const row = allRows.find((r) => r.size === 'large' && r.op === op && r.variant === variant);
   if (!row || row.stock_ms == null) {
     throw new Error(`benchmark row large ${op} ${variant} is missing or has no stock jj time`);
@@ -67,3 +72,27 @@ export const measured = {
   versions: span.versions,
   dates: span.dates ?? provenance.dates.replace(/\s*\(.*\)$/, ''),
 };
+
+export interface Gap {
+  command: string;
+  repo: string;
+  /** girt ÷ stock jj; null when girt did not finish. */
+  ratio: number | null;
+  issue: number | null;
+}
+
+/**
+ * The comparable cells, across every repository size, where girt makes a jj user wait longest
+ * beyond stock jj. Cells girt did not finish come first, longest stock time first.
+ */
+export const biggestGaps: Gap[] = comparableRows
+  .filter((row) => row.stock_ms != null && (row.girt_ms == null || row.girt_ms > row.stock_ms))
+  .map((row) => ({ row, extra: row.girt_ms == null ? Infinity : row.girt_ms - row.stock_ms! }))
+  .sort((a, b) => b.extra - a.extra || b.row.stock_ms! - a.row.stock_ms!)
+  .slice(0, 3)
+  .map(({ row }) => ({
+    command: `jj ${row.op}`,
+    repo: REPOSITORIES[row.size].label,
+    ratio: row.girt_ms == null ? null : row.girt_ms / row.stock_ms!,
+    issue: row.issues?.[0] ?? null,
+  }));

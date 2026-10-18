@@ -409,11 +409,13 @@ related columns.
 Columns: command, girt, stock jj and Git (median times), then the ratio and a diverging bar.
 
 - **Times:** girt's time is bold. Git's time is muted, as the reference point.
-- **Ratio:** neutral text in dark mode ("1.8× slower"). In light mode it is `rust-700` or
-  `verdigris-700`.
+- **Ratio:** neutral text in dark mode ("1.8× slower"; "about the same" within 0.95–1.05×). In light
+  mode it is `rust-700` or `verdigris-700`.
 - **Bar:** centred on parity on a log scale, verdigris to the left for faster and rust to the right
   for slower. A timeout is a hatched rust bar plus a `status-chip-failed` chip.
-- **Selection:** the card states that its rows are hand-picked best and worst. Its summary covers
+- **Selection:** the rows are a fixed list of everyday jj commands on the large repository, and the
+  card says so. Below the summary, a line names the three comparable cells across all sizes with the
+  most extra wait over stock jj (timeouts first), each with its tracking issue. Its summary covers
   all repository sizes: how many cells are less than 20% slower than stock jj (faster cells
   included), out of the cells where both finished, plus how many did not finish with girt. It also
   gives the machine and dates and links to the full results. All figures are computed at build time
