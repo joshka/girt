@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/joshka/girt/compare/girt-v0.14.0...girt-v0.14.1) - 2026-10-18
+
+### Other
+
+- Consolidate packs during gc once they exceed gc.autoPackLimit ([#479](https://github.com/joshka/girt/pull/479))
+- Add a How Git works guide to the site ([#536](https://github.com/joshka/girt/pull/536))
+- Add CLI command references in the right margin ([#491](https://github.com/joshka/girt/pull/491))
+- Re-measure the worst medium jj rows on girt 0.14.0; mark util gc as not like-for-like ([#470](https://github.com/joshka/girt/pull/470))
+- Re-measure jj tree-writing rows on girt 0.13.1 (small and medium) ([#467](https://github.com/joshka/girt/pull/467))
+
 ## [0.14.0](https://github.com/joshka/girt/compare/girt-v0.13.1...girt-v0.14.0) - 2026-10-18
 
 ### Other

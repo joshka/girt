@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8](https://github.com/joshka/girt/compare/girt-cli-v0.2.7...girt-cli-v0.2.8) - 2026-10-18
+
+### Other
+
+- Point Git users at girt equivalents for Git commands and flags ([#490](https://github.com/joshka/girt/pull/490))
+- Center CLI docs on using girt ([#480](https://github.com/joshka/girt/pull/480))
+- Give CLI commands their own docs section ([#473](https://github.com/joshka/girt/pull/473))
+
 ## [0.2.7](https://github.com/joshka/girt/compare/girt-cli-v0.2.6...girt-cli-v0.2.7) - 2026-10-18
 
 ### Other
