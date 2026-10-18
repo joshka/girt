@@ -8,25 +8,31 @@ description: Exercise the library transfer workflows on disposable repositories.
 repositories to experiment with writes. Run `girt help clone`, `girt help fetch` and
 `girt help push` for effects and options.
 
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
+
 ## Clone locally
 
-Use the repository from [Comparing with Git](/girt/cli/comparing-with-git/).
+Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
-These commands make separate destinations from the same source. The source directory in girt's
-absolute destination path is shown as `/path/to/cli-example`. Git writes its progress below to
-stderr; girt writes its result to stdout.
+Clone the current repository into a new sibling directory. The source directory in the absolute
+destination path is shown as `/path/to/cli-example`. The result goes to stdout; live progress goes
+to stderr when it is a terminal.
 
 ```text
 $ girt clone . ../cli-example-clone
 cloned into /path/to/cli-example/../cli-example-clone
 HEAD -> refs/heads/main e5d83fbd011e44793ba5f60d5091bb569e12352f
-$ git clone . ../cli-example-git-clone
-Cloning into '../cli-example-git-clone'...
-done.
 ```
 
-The cloned HEAD resolves to the same commit. `girt fetch origin` corresponds to `git fetch origin`
-for the configured refspecs. `girt push origin main:main` corresponds to
+The result names the destination and the branch and commit selected for HEAD. The clone includes a
+working tree unless you pass `--bare` or `--no-checkout`.
+
+`girt clone` corresponds to `git clone`; `girt fetch origin` corresponds to `git fetch origin` for
+the configured refspecs. `girt push origin main:main` corresponds to
 `git push --force-with-lease origin main:main` for the CLI's lease check, though a non-fast-forward
 update also needs girt's `+` refspec prefix. Fetch first if the lease rejects stale state.
 

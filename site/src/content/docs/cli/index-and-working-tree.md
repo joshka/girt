@@ -9,22 +9,39 @@ working tree without moving HEAD. `worktree list`, `lock`, `unlock`, `prune` and
 linked-worktree registrations. Run `girt help checkout` and `girt help worktree` before changing
 state.
 
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
+
 ## List tracked paths
 
-Use the repository from [Comparing with Git](/girt/cli/comparing-with-git/).
+Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
 ```text
 $ girt index list
 notes.txt
-$ git ls-files
-notes.txt
 ```
 
-The index records `notes.txt`. `girt --git status --untracked` corresponds to
-`git status --porcelain`; without `--untracked`, use `git status --porcelain -uno`. Compare
-`girt --git ignore check` to `git check-ignore -v`, and `girt --git worktree list` to
-`git worktree list`. Checkout's equivalent is `git read-tree -um <tree>` rather than `git checkout`:
-it does not switch branches. Use a disposable copy for checkout experiments.
+The index records `notes.txt` as a tracked path. `status` compares HEAD, the index and working tree;
+its two status letters describe staged and unstaged changes. Add `--untracked` to include files
+outside the index. For example, after creating an untracked `draft.txt`:
+
+```text
+$ girt status --untracked
+?? draft.txt
+```
+
+`??` marks an untracked path. `ignore check <path>` explains whether an ignore rule matches and
+prints its source and pattern when one does. `worktree list` prints each checkout's path, HEAD ID
+and branch or state. `checkout <tree>` replaces files and the index without moving HEAD or switching
+branches; use a disposable copy for checkout experiments.
+
+The corresponding Git operations are `git ls-files`, `git status --porcelain`,
+`git check-ignore -v`, `git worktree list` and `git read-tree -um <tree>`. girt's default status
+omits untracked files, like `git status --porcelain -uno`; its flags and record formatting follow
+its own CLI conventions.
 
 ## Library API and limits
 

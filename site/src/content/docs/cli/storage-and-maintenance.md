@@ -8,9 +8,15 @@ pack index. `maintenance plan` computes retention without writing, `repack` adds
 deleting old storage, and `run` can expire reflogs, retire packs and prune loose objects. Run
 `girt help maintenance run` before selecting destructive phases.
 
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
+
 ## Inspect retention and storage
 
-Use the repository from [Comparing with Git](/girt/cli/comparing-with-git/).
+Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
 ```text
 $ girt maintenance plan
@@ -21,22 +27,17 @@ unreachable-loose 0
 unreachable-packed 0
 protected-packs 0
 alternates 0
-$ git count-objects -v
-count: 6
-size: 24
-in-pack: 0
-packs: 0
-size-pack: 0
-prune-packable: 0
-garbage: 0
-size-garbage: 0
 ```
 
-The six retained objects are two commits, two trees and two blobs. Git's storage count also sees six
-loose objects; its disk-size fields depend on filesystem allocation. `count-objects` is a storage
-inventory, not an equivalent retention plan. There is no exact Git equivalent for girt's maintenance
-output or policy. `git verify-pack` checks an individual indexed pack, and `git index-pack <pack>`
-corresponds to `girt pack reindex <pack>`.
+`roots` counts distinct starting object IDs recovered from references, reflogs, indexes and other
+retention inputs. `reachable` counts the objects visited from those candidates. Here the plan
+retains six objects: two commits, two trees and two blobs. None are unreachable. `protected-packs`
+counts packs protected from retirement, and `alternates` reports borrowed object stores. Planning is
+read-only; it lets you inspect retention before selecting maintenance phases.
+
+`git verify-pack` checks an individual indexed pack, and `git index-pack <pack>` corresponds to
+`girt pack reindex <pack>`. Maintenance planning and execution follow girt's own retention policy
+and have no single Git command equivalent.
 
 ## Library API and safety
 

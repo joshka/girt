@@ -1,76 +1,51 @@
 ---
 title: Comparing with Git
-description: Build a small repository and compare library behavior through the CLI.
+description: Use the CLI as a testing surface for library behavior and performance.
 ---
 
-Run girt next to Git to check the library on the same stored data. Begin with read-only commands;
-use disposable copies for operations that change references, the index, files or storage. The CLI is
-a realistic way to experiment with Git-like operations before composing the same APIs in Rust. It
-exposes the library's current support rather than providing a replacement Git workflow.
+The CLI lets you run a library operation against the same repository as Git to investigate behavior
+or measure performance. This is an optional testing workflow; start with
+[Getting started with the CLI](/girt/cli/getting-started/) to learn the commands and create an
+example repository.
 
-## Create the example repository
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
 
-Install `girt` with `cargo install girt-cli`. Run this setup in a new scratch directory. It uses
-only Git's executable and creates two commits with fixed identities and dates, so the IDs below are
-reproducible. `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` isolate the example from user and system
-configuration; keep these overrides in this example shell.
+## Choose corresponding operations
 
-```sh
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
-export GIT_AUTHOR_NAME=Example GIT_COMMITTER_NAME=Example
-export GIT_AUTHOR_EMAIL=example@example.com GIT_COMMITTER_EMAIL=example@example.com
-export GIT_AUTHOR_DATE=2026-01-01T12:00:00+0000
-export GIT_COMMITTER_DATE=2026-01-01T12:00:00+0000
-git init --object-format=sha1 -b main cli-example
-cd cli-example
-printf 'one\ntwo\n' > notes.txt
-git add notes.txt
-git -c commit.gpgsign=false commit -m 'Add notes'
-printf 'one\ntwo\nthree\n' > notes.txt
-git -c commit.gpgsign=false commit -am 'Extend notes'
-```
+The command pages list Git equivalents to help you find the same operation. girt organizes commands
+around library concepts: `girt tree list` corresponds to `git ls-tree`, and `girt ref set`
+corresponds to `git update-ref`. Names, flags and default output can differ intentionally. Matching
+Git's entire CLI is not a requirement for the library or this experimental front end.
 
-The command pages show output captured from this repository. Paths vary with its location. Commands
-run from `cli-example` unless stated otherwise; `girt -C cli-example ...` lets you run from its
-parent directory.
+## Compare bytes when useful
 
-## Compare matching output
-
-Default output favors full IDs and simple records. Use `--git` when the command provides a matching
-Git format. In Bash or Zsh, compare the recursive tree listing directly:
+`--git` selects Git-compatible output where a command supports it. For example, in Bash or Zsh:
 
 ```sh
 diff <(girt --git tree list --recursive HEAD) <(git ls-tree -r HEAD)
 ```
 
-An empty diff and exit status 0 mean these listings match. Both commands produce this record:
+An empty diff means this tree listing matches. The option makes byte-for-byte checks convenient; it
+does not establish compatibility for every operation. Blame uses structured ranges and refuses
+`--git`. Clone, fetch and push keep their own result format, and maintenance has no exact Git
+counterpart. Use the command's documented semantics to interpret results.
 
-<!-- markdownlint-disable MD010 -->
+## Measure performance
 
-```text
-100644 blob 4cb29ea38f70d7c61b2a3a25b02e3bdf44905402	notes.txt
+Time the same operation on the same repository and revision, with equivalent options. For example,
+if Hyperfine is installed:
+
+```sh
+hyperfine 'girt --git tree list --recursive HEAD' 'git ls-tree -r HEAD'
 ```
 
-<!-- markdownlint-enable MD010 -->
+Keep repository contents fixed and record the versions, options and cache conditions with the
+result. Use disposable copies for operations that write, and reset them between runs. Otherwise a
+later run may do less work because an earlier run already changed the repository.
 
-This checks tree entries, modes and IDs; it does not establish every library operation's
-compatibility. For a different repository, compare the same revision and options and keep its
-contents fixed during the comparison.
-
-## Read differences
-
-A formatting difference can be intentional. `girt ref list` prints an ID and name, while
-`git for-each-ref` includes the object kind; `girt --git ref list` adds that field. Blame prints
-structured ranges and refuses `--git`. Clone, fetch and push retain girt's result format with
-`--git`, which only suppresses their progress. Maintenance has no exact Git equivalent.
-
-An error can mark an unsupported operation rather than a different result: for example, dated reflog
-selectors are refused. Read the error chain and `girt help <command>` before treating the outputs as
-comparable. For supported inputs, an unexplained difference is useful evidence for a bug report:
-include both commands, versions, exit statuses and a reproducible repository without private data.
-See [Limits and trust](/girt/guides/limits-and-trust/) for library boundaries.
-
-The command pages link the APIs used by the CLI. Follow those links for contracts, limits and caller
-obligations when moving the experiment into Rust. The
-[CLI parity tests](https://github.com/joshka/girt/blob/main/girt-cli/tests/git_parity.rs) cover
-specific command pairs; they do not promise identical behavior for every Git feature.
+Errors and refusals describe the library's supported boundary; they are not timing results for a
+completed operation. See [Limits and trust](/girt/guides/limits-and-trust/) for those boundaries.

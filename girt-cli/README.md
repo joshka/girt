@@ -3,6 +3,10 @@
 `girt` is a command-line tool for inspecting, comparing and benchmarking Git repositories with the
 [girt](https://github.com/joshka/girt) library. It is not a replacement for Git: it exposes what the
 library does today, under names that follow girt's concepts rather than Git's plumbing commands.
+Command names and parameters have no stability goal; the library is the core deliverable.
+
+See the [CLI documentation](https://www.joshka.net/girt/cli/) for installation, examples and command
+usage.
 
 ```sh
 cargo install girt-cli
@@ -14,8 +18,11 @@ girt diff --patch v1 main
 ## Output
 
 Default output is line-oriented and meant for both people and scripts: full object IDs, one record
-per line, stable field order. `--git` makes a command print exactly what its Git equivalent prints,
-so the two tools can be diffed:
+per line. `--git` selects Git-compatible output where the command supports it, for byte comparisons
+and performance experiments. It does not reproduce Git's full CLI. Clone, fetch and push retain
+girt's result format; blame refuses the option, and maintenance ignores it.
+
+For example, compare the same tree listing or batch object lookup:
 
 ```sh
 diff <(girt --git tree list --recursive HEAD) <(git ls-tree -r HEAD)
@@ -24,7 +31,7 @@ hyperfine 'girt object batch --check < ids' 'git cat-file --batch-check < ids'
 
 `tests/git_parity.rs` checks these pairings against `git` in a scratch repository.
 
-| girt                                                                | Git equivalent for `--git`                                                                           |
+| girt                                                                | Corresponding Git operation                                                                          |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `repo info`                                                         | `git rev-parse --git-dir --git-common-dir --show-toplevel --is-bare-repository --show-object-format` |
 | `init`                                                              | `git init`                                                                                           |

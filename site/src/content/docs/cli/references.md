@@ -7,24 +7,27 @@ description: Read names and reflogs and make guarded reference updates.
 `delete` change references; use `--expect` or `--create-only` where applicable to guard against a
 stale value. Run `girt help ref set` before writing.
 
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
+
 ## Inspect branch names
 
-Use the repository from [Comparing with Git](/girt/cli/comparing-with-git/).
-
-<!-- markdownlint-disable MD010 -->
+Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
 ```text
 $ girt ref list
 e5d83fbd011e44793ba5f60d5091bb569e12352f refs/heads/main
-$ git for-each-ref
-e5d83fbd011e44793ba5f60d5091bb569e12352f commit	refs/heads/main
 ```
 
-<!-- markdownlint-enable MD010 -->
+Each record contains the target object ID and full reference name. Here `refs/heads/main` points to
+the latest commit. `ref show HEAD` also shows the symbolic chain from HEAD to the branch.
 
-The default girt record omits the object kind. Use `girt --git ref list` for Git's format.
-`ref show` corresponds to `git rev-parse`, `ref set` to `git update-ref`, `ref delete` to
-`git update-ref -d`, and `ref log` to `git reflog show`.
+The Git equivalents are `git for-each-ref` for listing, `git rev-parse` for resolving a name,
+`git update-ref` for setting a value, `git update-ref -d` for deleting it and `git reflog show` for
+reading its log.
 
 ## Library API and limits
 
