@@ -1,6 +1,6 @@
 ---
 title: Working with submodules
-description: Inspect submodules and plan initialization or updates without fetching or changing checkouts.
+description: Inspect submodules, publish initialization config, and update existing child checkouts.
 ---
 
 A submodule stores a commit ID as a gitlink (tree mode `160000`) in its parent repository. The
@@ -136,11 +136,12 @@ assert_eq!(draft.config().string("submodule", Some(b"math"), "update"), Some(b"c
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The example changes an in-memory document. For a repository write, acquire
-`Repository::edit_config`, recheck effective settings under caller exclusion, append to its
-document, commit, and reopen the repository. Plans are observations rather than publication
-preconditions; they do not provide a multi-source configuration transaction. Attribute-dependent
-activation pathspecs are explicitly refused because this pure planner performs no attribute lookup;
+The example changes an in-memory document. `InitPlan::apply` instead locks the parent's local
+config, rereads effective settings from the original opening sources, checks the plan's relevant
+values, and publishes through `ConfigEdit`. It preserves unrelated direct-file bytes and returns
+whether config was published. Reopen afterwards. Other configuration sources and repository metadata
+must remain stable under caller exclusion; this is not a multi-source configuration transaction.
+Attribute-dependent activation pathspecs are explicitly refused because planning performs no lookup;
 [issue 695](https://github.com/joshka/girt/issues/695) tracks an explicit lookup input.
 
 `Definition::plan_update` requires an initialized effective URL and the recorded commit selected
@@ -156,6 +157,62 @@ eligible only because the caller explicitly selected them. Parsed bytes without 
 a config source is a trust decision; assigning a scope does not prove a file is trusted. Plans
 execute no shell command. Avoid logging URLs and command text, which can contain credentials.
 
-Initialization execution, checkout updates and clone recursion remain unsupported. Track those
-operations in
+## Apply a recorded-commit checkout
+
+`UpdatePlan::apply` supports checkout and none for an already populated child whose recorded commit
+is present. It checks the current parent gitlink and relevant effective config, locks the child's
+HEAD/references, uses the child's baseline and target attributes/filters, publishes files/index,
+then publishes detached HEAD. The child's branch is preserved. If HEAD already matches, attachment
+and dirty files remain unchanged, as with Git update without force.
+
+This example needs an existing populated submodule. Choose the normal gitlink and matching metadata
+definition before constructing its plan. No transport occurs.
+
+```no_run
+use girt::{Repository, Signature, submodule};
+
+let parent = Repository::open("project")?;
+let objects = parent.objects()?;
+let modules = submodule::Modules::read(&parent, &objects, submodule::Source::WorktreeOrIndex)?
+    .ok_or("missing .gitmodules")?;
+let index = parent.read_index(Default::default())?.ok_or("missing index")?;
+let entry = index.entries().iter().find(|entry| {
+    entry.path == b"vendor/math" && entry.mode == girt::index::Mode::Gitlink
+        && entry.stage == girt::index::Stage::Normal
+}).ok_or("normal gitlink missing")?;
+let math = modules.get(b"math").ok_or("definition missing")?;
+let plan = math.plan_update(parent.config(), entry.id, submodule::Commands::Refuse)?;
+let committer = Signature {
+    name: b"A. Writer".to_vec(), email: b"writer@example.com".to_vec(),
+    seconds: 1_700_000_000, offset_minutes: 0,
+};
+let options = submodule::UpdateOptions::new(committer); // Filter programs are refused by default.
+let report = plan.apply(&parent, &options)?;
+assert!(report.head_updated || report.checkout.is_none());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Use `UpdateOptions::with_environment` for captured attributes and filter-program environment, and
+`with_filter_commands` to permit filter programs separately from custom update methods. Programs
+receive only the supplied snapshot; choose `Environment::from_process()` explicitly when those
+variables are wanted. Entering the child clears parent repository context, sets its `GIT_DIR` and
+empty prefix, and retains user runtime config parameters/count pairs. Children inherit exactly the
+parent's caller-selected non-local config sources and add their own local config. Parent-local
+settings are excluded. `with_limits` bounds checkout/index/object reads; `apply_with` additionally
+accepts cancellation. None performs no child operation. Rebase/merge execution is tracked in
+[issue 700](https://github.com/joshka/girt/issues/700); custom-method execution is explicitly
+refused even when a plan was authorized to contain the command.
+
+Callers must exclude parent index/config writers and child metadata/worktree writers throughout
+execution. Symlink paths are refused, but nested repository metadata remains a trust boundary, as in
+repository opening. Dirty/staged/conflicted content, missing child/commit and active operations are
+refused before checkout. Windows supports init config publication and an explicit unsupported
+checkout result; checkout runs on macOS/Linux.
+
+Inspect `UpdateError::Checkout` for partial file/index effects with HEAD unchanged.
+`UpdateError::AfterCheckout` retains the completed checkout and late failure, including any
+reference transaction effects. No rollback is attempted: observe the residual state under exclusion
+before deciding how to recover. Successful reports do not authorize later writes.
+
+Missing-child clone/fetch, absorbed-layout creation and recursion remain tracked in
 [the submodules issue](https://github.com/joshka/girt/issues/507).

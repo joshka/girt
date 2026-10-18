@@ -438,26 +438,12 @@ impl<'a> Inspection<'a> {
         if matches!(checkout.ignore, Ignore::Dirty | Ignore::All) {
             return Ok(());
         }
-        let mut environment = self.environment.clone();
-        for name in [
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_INDEX_FILE",
-            "GIT_COMMON_DIR",
-            "GIT_OBJECT_DIRECTORY",
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        ] {
-            environment = environment.without(name);
-        }
-        if environment.get("HOME").is_none()
-            && let Some(home) = &repository.inherited_config().context.home
-        {
-            environment = environment.with("HOME", home.as_os_str());
-        }
+        let environment = super::child_environment(&repository, &self.environment);
         let mut filters = repository
             .filters(&environment, self.commands)
             .map_err(|e| at(&checkout.path, e))?;
         filters.set_driver_limits(self.driver_limits);
+        filters.set_command_environment(&environment);
         let untracked = if checkout.ignore == Ignore::Untracked {
             status::UntrackedFiles::Omit
         } else {
@@ -559,7 +545,7 @@ fn registered(repo: &Repository, name: Option<&[u8]>, path: &[u8]) -> Result<boo
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn checkout_path(
+pub(super) fn checkout_path(
     repo: &Repository,
     path: &[u8],
 ) -> Result<Option<std::path::PathBuf>, StatusError> {

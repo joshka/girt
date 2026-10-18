@@ -156,9 +156,29 @@ command-line and environment configuration, while rejecting `.gitmodules` comman
 Separate tests check library-only acceptance of system/worktree command provenance,
 missing-provenance refusal, independent command permission and preservation of the caller's recorded
 target. System/worktree command execution has not been compared with Git. Attribute-dependent
-activation is explicitly refused. Plans do not execute initialization, transport or checkout; those
-operations remain tracked in
+activation is explicitly refused. Constructing plans performs no initialization, transport or
+checkout. Execution remains tracked in
 [issue 507](https://github.com/joshka/girt/issues/507).
+
+`tests/submodule_execute.rs` compares checkout updates with Git in both object formats: detached
+HEAD, preserved child branches and target-owned attributes, EOL conversion and filter drivers.
+Already matching HEAD retains branch attachment and dirty content. Library checks cover config
+lock/stale-input refusal, direct-file byte preservation, caller-selected local config refresh,
+parent-local filter exclusion, filter permission/limits, dirty refusal, missing child/commit,
+symlink refusal and cancellation. Unit fault injection after checkout verifies retained file/index
+effects for late cancellation, parent index changes and failed HEAD publication, preserving the
+reference transaction's typed error. Config initialization is portable; checkout is
+macOS/Linux-only. Existing absorbed directories and gitfiles are consumed, but creating them and
+missing-object fetch are outside this layer. Rebase/merge execution is tracked in
+[issue 700](https://github.com/joshka/girt/issues/700); custom update execution is explicitly
+refused. No implicit network access, hooks, rollback or recursive checkout occurs. Command-layout
+opening retains the caller's cwd/worktree override for fresh checks. One-shot and process-filter
+fixtures compare child environment with Git: repository-local context is cleared, child `GIT_DIR`
+and empty `GIT_PREFIX` are supplied, and user runtime config parameters/count pairs survive. Child
+programs receive the captured snapshot; ordinary pipelines retain their existing ambient-program
+environment, tracked separately in [issue 714](https://github.com/joshka/girt/issues/714). A
+deterministic lock test confirms stored-HEAD updates with append logging hold the old symbolic
+branch lock through checkout.
 
 ## Mailmap
 

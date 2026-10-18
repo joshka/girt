@@ -12,7 +12,9 @@
 //! computes initialization/update plans without changing a checkout. [`status()`] inspects existing
 //! checkouts; configured parent status includes these observations in [`crate::status::Report`].
 //! [`Definition::plan_init`] proposes local config assignments; [`Definition::plan_update`] selects
-//! a recorded commit and update method. Both leave publication and execution explicit. External
+//! a recorded commit and update method. [`InitPlan::apply`] publishes config after checking inputs;
+//! [`UpdatePlan::apply`] performs filtered checkout/none updates in existing children. Fetch, clone
+//! and recursion remain explicit future operations. External
 //! update commands are always refused in `.gitmodules`; user configuration additionally requires
 //! resolved provenance and separate [`Commands`] permission.
 //!
@@ -28,12 +30,14 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+mod execute;
 mod load;
 mod plan;
 mod status;
-pub use plan::{Commands, InitPlan, PlanError, UpdateMethod, UpdatePlan};
 mod url;
+pub use execute::{InitError, UpdateError, UpdateOptions, UpdateReport};
 pub use load::{LoadError, Source};
+pub use plan::{Commands, InitPlan, PlanError, UpdateMethod, UpdatePlan};
 pub use status::{Checkout, StatusError, status, status_with};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) use status::{complete_status, ignored_gitlinks};
@@ -345,3 +349,38 @@ pub enum Error {
 #[cfg(doctest)]
 #[doc = include_str!("../site/src/content/docs/guides/submodules.md")]
 mod website_submodules_guide {}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn child_environment(
+    child: &crate::Repository,
+    source: &crate::workflow::Environment,
+) -> crate::workflow::Environment {
+    let mut environment = source.clone();
+    // Git clears repository-local context but preserves user command/environment config layers.
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+    ] {
+        environment = environment.without(name);
+    }
+    environment = environment
+        .with("GIT_DIR", child.git_dir().as_os_str())
+        .with("GIT_PREFIX", "");
+    if environment.get("HOME").is_none()
+        && let Some(home) = &child.inherited_config().context.home
+    {
+        environment = environment.with("HOME", home.as_os_str());
+    }
+    environment
+}

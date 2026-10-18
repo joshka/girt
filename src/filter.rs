@@ -553,6 +553,12 @@ impl std::fmt::Debug for Pipeline {
 }
 
 impl Pipeline {
+    // Set only on a freshly loaded child pipeline, before a process filter can start.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn set_command_environment(&mut self, environment: &Environment) {
+        self.drivers.environment = Some(environment.clone());
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn environment(&self) -> Option<&Environment> {
         match &self.rules {

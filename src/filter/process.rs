@@ -123,9 +123,7 @@ impl Process {
     pub(super) fn start(command: &[u8], drivers: &Drivers) -> std::io::Result<Self> {
         let mut shell = Command::new("sh");
         shell.arg("-c").arg(os_string(command.to_vec()));
-        if let Some(directory) = &drivers.directory {
-            shell.current_dir(directory);
-        }
+        drivers.configure_command(&mut shell);
         let mut child = shell
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
