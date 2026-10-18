@@ -23,8 +23,9 @@
 //! differently; binary detection scans whole blobs for NUL rather than a prefix; girt runs no
 //! textconv or external diff commands (drivers that configure them are refused, see
 //! [`External`]); Git's built-in diff drivers other than `rust` use the default function rule
-//! (see [`FunctionLines::builtin`]); whitespace options, colour and binary patch encoding are not
-//! provided.
+//! (see [`FunctionLines::builtin`]); whitespace options and colour are not provided. Binary payload
+//! encoding is selected with [`Options::with_binary_patch`]; its compression and delta choices can
+//! differ from Git while preserving exactly the same blobs.
 //!
 //! ```
 //! use girt::tree::TreeEditor;
@@ -62,6 +63,7 @@
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+mod binary;
 mod drivers;
 mod function;
 mod hunks;
@@ -110,6 +112,10 @@ pub struct Options {
     pub abbrev_len: Option<usize>,
     /// How changed content is classified (default [`BinaryMode::Auto`]; `Text` is `--text`).
     pub binary: BinaryMode,
+    /// Emit forward/reverse `GIT binary patch` blocks instead of binary summary lines.
+    /// Also uses full object IDs for encoded binary index headers, as `git diff --binary` does.
+    /// Default false; text classification and attributes still apply.
+    pub binary_patch: bool,
     /// Use indentation and blank separators to place equivalent changes (default true).
     /// Set false for placement analogous to Git's `--no-indent-heuristic`; compaction still
     /// applies. Some ambiguous placements differ from Git; see [`crate::content_diff::diff`].
@@ -170,6 +176,13 @@ impl Options {
         self
     }
 
+    /// Sets [`Self::binary_patch`].
+    #[must_use]
+    pub fn with_binary_patch(mut self, enabled: bool) -> Self {
+        self.binary_patch = enabled;
+        self
+    }
+
     /// Sets [`Self::external`].
     #[must_use]
     pub fn with_external(mut self, external: External) -> Self {
@@ -184,6 +197,7 @@ impl Default for Options {
             context_lines: 3,
             abbrev_len: None,
             binary: BinaryMode::Auto,
+            binary_patch: false,
             indent_heuristic: true,
             external: External::Refuse,
         }
@@ -195,16 +209,44 @@ impl Default for Options {
 /// Each file pair is read under `read`, with the pair's combined payload also capped by
 /// `diff.max_input_bytes`, and then compared under `diff`. Output is streamed and not retained,
 /// so these bound memory and work per file rather than for the entries slice.
-#[derive(Clone, Copy, Debug, Default)]
+///
+/// Binary payload encoding admits the same combined input bound. It additionally retains
+/// compressed literal and delta candidates, bounded by a constant multiple of admitted input
+/// plus zlib scratch and a 32 KiB anchor table. `binary_delta_work` bounds delta matching across
+/// both directions: one unit per indexed anchor, scanned position or compared byte. Exhaustion uses
+/// a literal block. Compression and output are linear in the admitted inputs and generated
+/// instructions, with cancellation checks between chunks; compressed bytes can vary with backend
+/// versions. These are algorithmic bounds, not a total-process heap or wall-clock limit.
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Limits {
     /// Bounds for reading each blob.
     pub read: ReadLimits,
     /// Bounds for comparing each file pair.
     pub diff: DiffLimits,
+    /// Matching work shared by forward/reverse binary deltas; default 64 Mi units.
+    /// Zero disables delta search and emits literals.
+    pub binary_delta_work: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            read: ReadLimits::default(),
+            diff: DiffLimits::default(),
+            binary_delta_work: 64 * 1024 * 1024,
+        }
+    }
 }
 
 impl Limits {
+    /// Sets [`Self::binary_delta_work`].
+    #[must_use]
+    pub fn with_binary_delta_work(mut self, binary_delta_work: usize) -> Self {
+        self.binary_delta_work = binary_delta_work;
+        self
+    }
+
     /// Sets [`Self::read`].
     #[must_use]
     pub fn with_read(mut self, read: ReadLimits) -> Self {
@@ -463,17 +505,6 @@ impl<W: io::Write> Renderer<'_, W> {
         if old_id == new_id {
             return Ok(());
         }
-        let old_abbrev = self.abbreviate(old_id)?;
-        let new_abbrev = self.abbreviate(new_id)?;
-        let out = &mut *self.out;
-        write!(out, "index {old_abbrev}..{new_abbrev}")?;
-        match (old, new) {
-            (Some(old), Some(new)) if old.mode == new.mode => {
-                writeln!(out, " {}", new.mode.octal())?;
-            }
-            _ => writeln!(out)?,
-        }
-
         let content = self.read(new_path, old, new)?;
         let binary = match (self.options.binary, old_driver.content, new_driver.content) {
             (BinaryMode::Auto, Content::Auto, Content::Auto) | (BinaryMode::Text, ..) => {
@@ -509,6 +540,18 @@ impl<W: io::Write> Renderer<'_, W> {
                 source,
             },
         })?;
+        let full = self.options.binary_patch && matches!(content_diff, ContentDiff::Binary { .. });
+        let old_abbrev = self.abbreviate(old_id, full)?;
+        let new_abbrev = self.abbreviate(new_id, full)?;
+        let out = &mut *self.out;
+        write!(out, "index {old_abbrev}..{new_abbrev}")?;
+        match (old, new) {
+            (Some(old), Some(new)) if old.mode == new.mode => {
+                writeln!(out, " {}", new.mode.octal())?;
+            }
+            _ => writeln!(out)?,
+        }
+
         let old_name = if old.is_some() {
             &old_name
         } else {
@@ -523,7 +566,17 @@ impl<W: io::Write> Renderer<'_, W> {
         match content_diff {
             ContentDiff::Unchanged => {}
             ContentDiff::Binary { .. } => {
-                writeln!(out, "Binary files {old_name} and {new_name} differ")?;
+                if self.options.binary_patch {
+                    binary::write(
+                        out,
+                        &content.old,
+                        &content.new,
+                        self.limits.binary_delta_work,
+                        self.cancel,
+                    )?;
+                } else {
+                    writeln!(out, "Binary files {old_name} and {new_name} differ")?;
+                }
             }
             ContentDiff::Text(text) => {
                 // Like GNU diff, Git ends a name containing a space with a tab so it parses back.
@@ -557,7 +610,13 @@ impl<W: io::Write> Renderer<'_, W> {
     }
 
     /// Abbreviates an identity, or prints the null identity at the minimum length.
-    fn abbreviate(&self, id: Option<ObjectId>) -> Result<String, Error> {
+    fn abbreviate(&self, id: Option<ObjectId>, full: bool) -> Result<String, Error> {
+        if full {
+            return Ok(id.map_or_else(
+                || "0".repeat(self.objects.object_format().digest_len() * 2),
+                |id| id.to_string(),
+            ));
+        }
         match id {
             Some(id) => self
                 .objects
