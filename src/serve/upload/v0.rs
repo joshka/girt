@@ -51,8 +51,11 @@ impl UploadPack<'_> {
     }
 
     /// Writes the v0 reference advertisement, with capabilities after the first reference.
-    pub(super) fn advertise_v0(
+    ///
+    /// A stateless (HTTP) advertisement also offers `no-done`, as Git's does.
+    pub(in crate::serve) fn advertise_v0(
         &self,
+        stateless: bool,
         output: &mut impl Write,
         cancel: &AtomicBool,
     ) -> Result<(), ServeError> {
@@ -60,6 +63,9 @@ impl UploadPack<'_> {
         let mut capabilities = b"multi_ack thin-pack side-band side-band-64k ofs-delta shallow \
             deepen-since deepen-not deepen-relative no-progress include-tag multi_ack_detailed"
             .to_vec();
+        if stateless {
+            capabilities.extend_from_slice(b" no-done");
+        }
         let policy = self.v0_wants();
         // As in Git, `allowReachableSHA1InWant` alone doesn't advertise tips.
         if matches!(policy, WantPolicy::Tips | WantPolicy::Any) {
@@ -120,12 +126,17 @@ impl UploadPack<'_> {
     }
 
     /// Serves one v0 session after the advertisement: wants, shallow lines, negotiation and pack.
+    ///
+    /// A stateless (HTTP) request is one round: it ends without a pack when the input ends after a
+    /// flush, unless the client sent `no-done` and the server is ready, as with Git.
     pub(super) fn serve_v0<R: Read>(
         &self,
+        stateless: bool,
         wire: &mut Wire<'_, R>,
         output: &mut impl Write,
         cancel: &AtomicBool,
     ) -> Result<(), ServeError> {
+        let mut no_done = false;
         let mut request = FetchRequest::default();
         let mut negotiation = Negotiation {
             acks: Acks::Plain,
@@ -166,6 +177,8 @@ impl UploadPack<'_> {
                                 negotiation.acks = Acks::Continue;
                             }
                             b"multi_ack_detailed" => negotiation.acks = Acks::Detailed,
+                            // Git honours `no-done` only on stateless connections.
+                            b"no-done" => no_done = stateless,
                             b"side-band" if band == Band::Raw => {
                                 band = Band::Packets(SMALL_SIDEBAND_DATA);
                             }
@@ -270,8 +283,9 @@ impl UploadPack<'_> {
         } else {
             shallow::Boundaries::default()
         };
-        // Like Git, a fetch with shallow boundaries never stops negotiation early.
-        let deepen = !boundaries.cut.is_empty() || !request.shallow.is_empty();
+        // Like Git, a full-duplex fetch with shallow boundaries never stops negotiation early; a
+        // stateless one may.
+        let deepen = !stateless && (!boundaries.cut.is_empty() || !request.shallow.is_empty());
         let mut haves = 0;
         loop {
             match wire.frame_or_end()? {
@@ -348,6 +362,9 @@ impl UploadPack<'_> {
                         }
                     }
                     output.flush()?;
+                    if no_done && negotiation.ready && negotiation.acks == Acks::Detailed {
+                        break;
+                    }
                 }
                 Some(Frame::Delim | Frame::ResponseEnd) => {
                     return Err(ServeError::Protocol("unexpected special packet"));
