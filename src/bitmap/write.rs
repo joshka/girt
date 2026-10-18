@@ -42,7 +42,8 @@ pub struct WriteLimits {
     /// Maximum node/edge visits and cached word unions across selected traversals (100 million).
     pub max_visits: usize,
     /// Maximum combined returned artifact bytes (64 MiB).
-    /// Separately caps retained selected-closure words; a full cache falls back to walking.
+    /// Separately caps retained selected-closure words and an optional repack graph snapshot; a
+    /// full snapshot falls back to the verified object reader.
     pub max_bytes: usize,
     /// Bounds each verified object read.
     pub read: ReadLimits,
@@ -147,6 +148,33 @@ impl Objects {
         limits: WriteLimits,
         cancel: &AtomicBool,
     ) -> Result<Written, WriteError> {
+        self.encode_pack_bitmap_inner(pack, options, limits, cancel, None)
+    }
+
+    pub(crate) fn encode_pack_bitmap_from_verified_graph(
+        &self,
+        pack: ObjectId,
+        verified: &crate::retention::VerifiedGraph,
+        limits: WriteLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Written, WriteError> {
+        self.encode_pack_bitmap_inner(
+            pack,
+            WriteOptions::default(),
+            limits,
+            cancel,
+            Some(verified),
+        )
+    }
+
+    fn encode_pack_bitmap_inner(
+        &self,
+        pack: ObjectId,
+        options: WriteOptions,
+        limits: WriteLimits,
+        cancel: &AtomicBool,
+        verified: Option<&crate::retention::VerifiedGraph>,
+    ) -> Result<Written, WriteError> {
         check(cancel)?;
         if !self.shallow_roots().is_empty() {
             return Err(WriteError::Shallow);
@@ -164,14 +192,21 @@ impl Objects {
             .map(|position| pack.identity_at(position))
             .collect();
         let order: Vec<_> = pack.positions_by_offset()?.collect();
-        let graph = graph::Graph::read(
-            self.object_format(),
-            &ids,
-            &order,
-            limits,
-            cancel,
-            |position| pack.read(position, limits.read, cancel),
-        )?;
+        let graph = match verified {
+            Some(verified) => {
+                graph::Graph::from_verified(&ids, &order, verified, limits, cancel, |position| {
+                    pack.read(position, limits.read, cancel)
+                })?
+            }
+            None => graph::Graph::read(
+                self.object_format(),
+                &ids,
+                &order,
+                limits,
+                cancel,
+                |position| pack.read(position, limits.read, cancel),
+            )?,
+        };
         let written = encode::artifacts(
             pack.checksum(),
             &order,

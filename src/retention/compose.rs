@@ -514,18 +514,25 @@ impl Repository {
         } else {
             None
         };
-        let mut session =
-            super::inputs::Session::new_folding(self, policy, report.consolidated, cancel)
-                .map_err(|reason| {
-                    failed(
-                        if cancel.load(Ordering::Relaxed) {
-                            MaintenanceCause::Cancelled
-                        } else {
-                            MaintenanceCause::Incomplete(reason)
-                        },
-                        report.clone(),
-                    )
-                })?;
+        let bitmap_graph_bytes =
+            repack.and_then(|limits| super::repack::bitmap_graph_bytes(self, limits));
+        let mut session = super::inputs::Session::new_folding_with_bitmap_graph(
+            self,
+            policy,
+            report.consolidated,
+            bitmap_graph_bytes,
+            cancel,
+        )
+        .map_err(|reason| {
+            failed(
+                if cancel.load(Ordering::Relaxed) {
+                    MaintenanceCause::Cancelled
+                } else {
+                    MaintenanceCause::Incomplete(reason)
+                },
+                report.clone(),
+            )
+        })?;
         after_plan();
         if cancel.load(Ordering::Relaxed) {
             return Err(failed(MaintenanceCause::Cancelled, report));

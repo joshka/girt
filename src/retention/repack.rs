@@ -325,12 +325,10 @@ impl Repository {
     ) -> Result<RepackPublished, RepackError> {
         let _headers = crate::pack::HeaderScope::new();
         check(cancel)?;
-        // Publishing omits promised objects it cannot copy, so execution refuses partial clones
-        // whatever the planning policy allows. The configuration is read again from disk, before
-        // planning and again before publishing, so a handle opened before the repository became a
-        // partial clone still refuses.
+        // Keep the existing partial-clone execution gate before capturing a reusable graph.
         self.refuse_partial_clone()?;
-        let mut plan = self.plan_retention(policy, cancel);
+        let mut plan =
+            self.plan_retention_folding(policy, false, bitmap_graph_bytes(self, limits), cancel);
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
             return Err(RepackError::Incomplete(reason));
         }
@@ -561,12 +559,22 @@ impl Repository {
                 BitmapOutcome::SkippedProtected
             } else {
                 published.bitmap = BitmapOutcome::Failed;
-                match crate::bitmap::write_repack_bitmap(
-                    self,
-                    written.checksum,
-                    limits.bitmap,
-                    cancel,
-                ) {
+                let bitmap = match plan.bitmap_graph.as_ref() {
+                    Some(graph) => crate::bitmap::write_repack_bitmap_from_verified_graph(
+                        self,
+                        written.checksum,
+                        graph,
+                        limits.bitmap,
+                        cancel,
+                    ),
+                    None => crate::bitmap::write_repack_bitmap(
+                        self,
+                        written.checksum,
+                        limits.bitmap,
+                        cancel,
+                    ),
+                };
+                match bitmap {
                     Ok(bitmap) => BitmapOutcome::Written(bitmap),
                     Err(source) => {
                         if limits.write_bitmaps != Some(true)
@@ -599,7 +607,7 @@ fn bitmap_limit(error: &crate::Error) -> Option<&'static str> {
     }
 }
 
-fn configured_bitmaps(
+pub(super) fn configured_bitmaps(
     repository: &Repository,
     requested: Option<bool>,
 ) -> Result<bool, RepackError> {
@@ -621,6 +629,13 @@ fn configured_bitmaps(
         .config()
         .boolean(section, None, "writeBitmaps")?
         .unwrap_or(false))
+}
+
+pub(super) fn bitmap_graph_bytes(repository: &Repository, limits: RepackLimits) -> Option<usize> {
+    configured_bitmaps(repository, limits.write_bitmaps)
+        .ok()
+        .filter(|&enabled| enabled)
+        .map(|_| limits.bitmap.max_bytes)
 }
 
 fn charge_input(len: u64, bytes: &mut u64, limits: PackWriteLimits) -> Result<(), PackWriteError> {

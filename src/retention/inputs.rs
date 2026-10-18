@@ -280,14 +280,34 @@ impl Session {
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
     ) -> Result<Self, RetentionError> {
-        Self::new_folding(repository, policy, false, cancel)
+        Self::new_with_bitmap_graph(repository, policy, None, cancel)
+    }
+
+    pub(super) fn new_with_bitmap_graph(
+        repository: &Repository,
+        policy: &RetentionPolicy,
+        bitmap_graph_bytes: Option<usize>,
+        cancel: &AtomicBool,
+    ) -> Result<Self, RetentionError> {
+        Self::new_folding_with_bitmap_graph(repository, policy, false, bitmap_graph_bytes, cancel)
     }
 
     // See `Repository::plan_retention_folding`.
+    #[cfg(test)]
     pub(super) fn new_folding(
         repository: &Repository,
         policy: &RetentionPolicy,
         fold_recent_packs: bool,
+        cancel: &AtomicBool,
+    ) -> Result<Self, RetentionError> {
+        Self::new_folding_with_bitmap_graph(repository, policy, fold_recent_packs, None, cancel)
+    }
+
+    pub(super) fn new_folding_with_bitmap_graph(
+        repository: &Repository,
+        policy: &RetentionPolicy,
+        fold_recent_packs: bool,
+        bitmap_graph_bytes: Option<usize>,
         cancel: &AtomicBool,
     ) -> Result<Self, RetentionError> {
         let inputs = Inputs::observe(repository, policy, cancel)?;
@@ -296,7 +316,8 @@ impl Session {
         if current.is_partial_clone() {
             return Err(RetentionError::PartialClone);
         }
-        let plan = current.plan_retention_folding(policy, fold_recent_packs, cancel);
+        let plan =
+            current.plan_retention_folding(policy, fold_recent_packs, bitmap_graph_bytes, cancel);
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
             return Err(reason);
         }

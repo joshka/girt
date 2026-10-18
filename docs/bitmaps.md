@@ -131,6 +131,11 @@ alternate contains it. Shallow repositories cannot establish full-DAG claims and
 Existing bitmaps are never used to construct new claims. Objects are decoded in pack-offset order to
 reuse delta bases; graph and selected-commit positions remain in sorted object-ID order.
 
+When repacking, a complete retention plan may supply its bounded typed graph edges to bitmap
+encoding. The replacement pack is still read and identity-checked before its sidecars are
+published; its decoded kinds must match the plan. A missing or over-budget snapshot uses the
+ordinary verified graph reader, and pack retirement keeps its independent survivor verification.
+
 Supply `WriteOptions::commits` for explicit selection. An empty list chooses graph tips first, then
 samples remaining commits evenly in sorted ID order, up to `max_commits` (64 by default). Explicit
 selections are deduplicated and must fit that cap. This policy is deterministic; it does not copy
@@ -146,7 +151,9 @@ Output uses EWAH runs and literals, independent commit records and a lookup tabl
 performed. MIDX output includes zero pathname-hash hints for unknown names; those hints affect delta
 heuristics only. Both artifact types carry the inventory checksum and their own checksums.
 `WriteLimits` separately bounds input objects/packs, decoded graph bytes/edges, repeated selected
-reachability work, per-object reads and combined output bytes. No partial artifacts are returned.
+reachability work, per-object reads and combined output bytes. Its byte cap also bounds retained
+closure words and optional repack graph snapshots independently; a full snapshot falls back to the
+verified graph reader. No partial artifacts are returned.
 
 ## Publish bitmaps and configure repacks
 

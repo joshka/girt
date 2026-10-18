@@ -54,6 +54,7 @@ impl<'graph, 'ids> Closures<'graph, 'ids> {
             for &target in self.graph.targets(index) {
                 check(cancel)?;
                 charge(&mut self.remaining)?;
+                let target = target as usize;
                 let bit = self.inverse[target];
                 if bitmap[bit / 64] & (1 << (bit % 64)) == 0 {
                     stack.push(target);

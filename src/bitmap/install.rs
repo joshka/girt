@@ -179,7 +179,7 @@ fn install<I: MaintenanceIsolation>(
             operation: "acquire maintenance exclusion",
             source: source.into(),
         })?;
-    install_held(repository, target, options, limits, cancel)
+    install_held(repository, target, options, limits, cancel, None)
 }
 
 // Additive repack may race with external retirement under its existing caller contract. All bytes
@@ -197,6 +197,24 @@ pub(crate) fn write_repack_bitmap(
         WriteOptions::default(),
         limits,
         cancel,
+        None,
+    )
+}
+
+pub(crate) fn write_repack_bitmap_from_verified_graph(
+    repository: &Repository,
+    pack: ObjectId,
+    verified: &crate::retention::VerifiedGraph,
+    limits: WriteLimits,
+    cancel: &AtomicBool,
+) -> Result<Published, InstallError> {
+    install_held(
+        repository,
+        Target::Pack(pack),
+        WriteOptions::default(),
+        limits,
+        cancel,
+        Some(verified),
     )
 }
 
@@ -206,6 +224,7 @@ fn install_held(
     options: WriteOptions,
     limits: WriteLimits,
     cancel: &AtomicBool,
+    verified_graph: Option<&crate::retention::VerifiedGraph>,
 ) -> Result<Published, InstallError> {
     let mut operation = "acquire writer lock";
     let mut published = false;
@@ -225,7 +244,11 @@ fn install_held(
         operation = "encode graph artifacts";
         let (index, written, packs, basename) = match target {
             Target::Pack(id) => {
-                let written = objects.encode_pack_bitmap(id, options, limits, cancel)?;
+                let written = match verified_graph {
+                    Some(verified) => objects
+                        .encode_pack_bitmap_from_verified_graph(id, verified, limits, cancel)?,
+                    None => objects.encode_pack_bitmap(id, options, limits, cancel)?,
+                };
                 (None, written, 1, directory.join(format!("pack-{id}")))
             }
             Target::Multi(midx) => {
