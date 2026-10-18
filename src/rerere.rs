@@ -17,7 +17,8 @@
 //! side was ours. The ID hashes each conflict's sides with the repository's object hash; text
 //! outside the conflicts does not affect it. See [`normalize`].
 //!
-//! [`Rerere::run`] does what `git rerere` does after a conflicted operation or before a commit.
+//! [`Rerere::run_on_index`] does what `git rerere` does after a conflicted operation or before a
+//! commit; call it after [`Repository::checkout_merge`] publishes conflicts.
 //! [`is_enabled`] applies `rerere.enabled`, which defaults to on when `rr-cache` exists.
 //!
 //! ```
@@ -448,6 +449,24 @@ impl<'repo> Rerere<'repo> {
         Ok(())
     }
 
+    /// Runs [`Self::run`] on the index's unmerged paths, as `git rerere` does.
+    ///
+    /// Call this after publishing conflicts with [`Repository::checkout_merge`] (for a merge,
+    /// cherry-pick, revert, rebase step or stash apply) to replay known resolutions, and again
+    /// before committing the resolved result to record the new resolutions. Check
+    /// [`is_enabled`] first, as Git only does this when rerere is enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns index read errors and the errors of [`Self::run`].
+    pub fn run_on_index(&mut self) -> Result<Report, Error> {
+        let index = self.repo.read_index(Default::default())?;
+        let mut unmerged: Vec<Vec<u8>> = Vec::new();
+        for path in unmerged_files(index.as_ref()) {
+            unmerged.push(path);
+        }
+        self.run(&unmerged)
+    }
     /// Tracked paths, as `git rerere status` lists them.
     pub fn status(&self) -> impl Iterator<Item = &[u8]> {
         self.tracked.iter().map(|t| t.path.as_slice())
@@ -721,6 +740,50 @@ impl<'repo> Rerere<'repo> {
         write_atomically(&path, &bytes)?;
         Ok(())
     }
+}
+
+/// Unmerged paths rerere can handle: both sides are staged as regular files.
+///
+/// Git leaves add/delete, symbolic link and submodule conflicts to the user.
+fn unmerged_files(index: Option<&crate::index::Index>) -> Vec<Vec<u8>> {
+    use crate::index::{Mode, Stage};
+
+    let mut paths: Vec<Vec<u8>> = Vec::new();
+    let entries = index.map(|index| index.entries()).unwrap_or_default();
+    for entry in entries {
+        let regular = matches!(entry.mode, Mode::Regular | Mode::Executable);
+        if entry.stage != Stage::Theirs || !regular {
+            continue;
+        }
+        let ours = entries.iter().any(|other| {
+            other.path == entry.path
+                && other.stage == Stage::Ours
+                && matches!(other.mode, Mode::Regular | Mode::Executable)
+        });
+        if ours {
+            paths.push(entry.path.clone());
+        }
+    }
+    paths
+}
+
+/// Unmerged paths in the index that rerere does not handle, which `git rerere remaining` also
+/// lists.
+///
+/// # Errors
+///
+/// Returns index read errors.
+pub fn unhandled(repo: &Repository) -> Result<Vec<Vec<u8>>, Error> {
+    let index = repo.read_index(Default::default())?;
+    let handled = unmerged_files(index.as_ref());
+    let mut paths: Vec<Vec<u8>> = Vec::new();
+    for entry in index.iter().flat_map(|index| index.entries()) {
+        let unmerged = entry.stage != crate::index::Stage::Normal;
+        if unmerged && !handled.contains(&entry.path) && paths.last() != Some(&entry.path) {
+            paths.push(entry.path.clone());
+        }
+    }
+    Ok(paths)
 }
 
 /// Removes old `rr-cache` entries, as `git rerere gc` does, with the configured ages.

@@ -124,6 +124,14 @@ export const calls: Record<string, CliCalls> = {
       unreleased('ReplacedObjects::walk', 529),
     ],
   },
+  rerere: {
+    git: 'git rerere',
+    api: [
+      unreleased('rerere::is_enabled', 528),
+      unreleased('Rerere::run_on_index', 528),
+      unreleased('rerere::normalize', 528),
+    ],
+  },
   'ref log': {
     git: 'git reflog show',
     api: [references('reflog'), objects('abbreviate')],

@@ -279,6 +279,10 @@ impl Repository {
     /// Uses default checkout bounds and no cancellation. See [`Self::checkout_merge_with`] for
     /// baseline, platform, concurrency and partial-effect contracts.
     ///
+    /// Git replays recorded resolutions at this point when rerere is enabled; girt leaves that to
+    /// the caller. Follow with [`crate::rerere::Rerere::run_on_index`] when
+    /// [`crate::rerere::is_enabled`], and run it again before committing the resolution.
+    ///
     /// # Errors
     ///
     /// Returns [`PublicationError`]; checkout failures retain their full partial report.

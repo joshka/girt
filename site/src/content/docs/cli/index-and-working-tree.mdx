@@ -193,3 +193,41 @@ $ girt worktree list
 The CLI has no command to create a linked worktree. The library can
 ([`Repository::create_orphan_worktree`](https://docs.rs/girt/latest/girt/repository/struct.Repository.html#method.create_orphan_worktree))
 creates one with an unborn branch, and `git worktree add` works too.
+
+## Reuse conflict resolutions (`girt rerere`)
+
+<Example cmd="rerere">
+
+With `rerere.enabled` set, or an existing `.git/rr-cache`, `girt rerere` records each conflict in
+the index's unmerged files. Once you resolve a file, the next `girt rerere` records the resolution.
+When the same conflict comes back in a later merge, `girt rerere` writes the recorded resolution
+into the file.
+
+```console
+$ girt rerere
+Recorded preimage for 'f'
+$ girt rerere diff
+--- a/f
++++ b/f
+@@ -1,7 +1,3 @@
+ a
+-<<<<<<<
+-MAIN
+-=======
+-SIDE
+->>>>>>>
++BOTH
+ c
+$ girt rerere
+Recorded resolution for 'f'.
+```
+
+</Example>
+
+Recordings live in Git's `rr-cache`, so resolutions recorded by `git rerere` are replayed by girt
+and the other way round. `girt rerere status` and `remaining` list the tracked and still-conflicted
+paths, `forget <path>` drops a resolution, `clear` stops tracking the current conflicts, and `gc`
+removes records older than `gc.rerereResolved` (60 days) or, without a resolution,
+`gc.rerereUnresolved` (15 days). With `rerere.autoUpdate`, replayed files are staged. girt has no
+merge command, so nothing runs rerere for you; the library leaves that call to callers of
+`Repository::checkout_merge`.
