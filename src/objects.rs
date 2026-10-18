@@ -598,6 +598,8 @@ pub struct Objects {
     abbreviations: Arc<prefix::LooseAbbreviations>,
     pub(crate) multi_pack_index_enabled: bool,
     pub(crate) bitmaps_enabled: bool,
+    /// Set only on the history view inside [`crate::replace::ReplacedObjects`].
+    pub(crate) replacements: Option<Arc<crate::replace::Replacements>>,
 }
 
 #[derive(Debug, Clone)]
@@ -729,6 +731,7 @@ impl Objects {
                 abbreviations: Arc::default(),
                 multi_pack_index_enabled,
                 bitmaps_enabled: true,
+                replacements: None,
                 directory,
                 shallow: crate::ShallowRoots::empty(format),
                 commit_graph: None,
@@ -1264,6 +1267,28 @@ impl Objects {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn read_controlled(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<Object>, ObjectReadError> {
+        // Only the view inside `ReplacedObjects` carries replacements; public readers never do.
+        if let Some(replacements) = &self.replacements {
+            let target = replacements.resolve(id)?;
+            if target != id {
+                return self
+                    .read_stored(target, limits, cancelled)?
+                    .map(Some)
+                    .ok_or(ObjectReadError::MissingReplacement {
+                        original: id,
+                        replacement: target,
+                    });
+            }
+        }
+        self.read_stored(id, limits, cancelled)
+    }
+
+    fn read_stored(
         &self,
         id: ObjectId,
         limits: ReadLimits,
@@ -1884,6 +1909,17 @@ pub enum ObjectReadError {
     /// Report the damaged dependency chain; increasing depth limits cannot resolve a cycle.
     #[error("cyclic delta chain")]
     DeltaCycle,
+    /// Replacement links from this ID exceed four or form a cycle; see [`crate::replace`].
+    #[error("replace depth too high for object {0}")]
+    ReplaceDepth(ObjectId),
+    /// A replace reference names an object that is absent.
+    #[error("replacement {replacement} not found for {original}")]
+    MissingReplacement {
+        /// The ID that was looked up.
+        original: ObjectId,
+        /// The absent replacement it resolves to.
+        replacement: ObjectId,
+    },
 }
 
 fn charge_copy_entry(entries: &mut usize, max: usize) -> Result<(), ObjectReadError> {

@@ -56,7 +56,8 @@ pub(crate) fn object(error: &crate::ObjectReadError) -> &'static str {
         Unsupported(_) | IndexVersion(_) | PackVersion(_) | ObjectType(_) => "unsupported",
         Alternate { .. } | Corrupt(_) | DeltaCycle => "corrupt",
         Limit(_) => "limit",
-        MissingBase(_) => "missing",
+        MissingBase(_) | MissingReplacement { .. } => "missing",
+        ReplaceDepth(_) => "corrupt",
     }
 }
 

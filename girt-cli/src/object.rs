@@ -6,12 +6,13 @@ use std::process::ExitCode;
 
 use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
+use girt::replace::ReplacedObjects;
 use girt::{
-    Commit, ListLimits, Object, ObjectId, ObjectKind, ObjectStore, Objects, ReadLimits, Repository,
-    Tag, Tree,
+    Commit, ListLimits, Object, ObjectId, ObjectKind, ObjectStore, ReadLimits, Repository, Tag,
+    Tree,
 };
 
-use crate::common::{resolve, stdout, write_line};
+use crate::common::{self, stdout, write_line};
 use crate::tree::write_entry;
 use crate::{Context, complete};
 
@@ -225,22 +226,26 @@ fn hash(args: HashArgs, context: &Context) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Opens storage and reads the object a revision names.
-fn read(context: &Context, rev: &str) -> Result<Object> {
+/// Opens storage and reads the object a revision names, through replace references as Git does,
+/// returning the requested ID with it.
+fn read(context: &Context, rev: &str) -> Result<(ObjectId, Object)> {
     let repository = context.repository()?;
-    let objects = repository.objects()?;
-    let id = resolve(&repository, rev)?;
-    read_id(&objects, id)?.ok_or_else(|| eyre!("missing object {id}"))
+    let objects = context.replaced_objects(&repository, repository.objects()?)?;
+    let id = common::resolve_replaced(&repository, &objects, rev, None)?;
+    let object = read_replaced(&objects, id)?.ok_or_else(|| eyre!("missing object {id}"))?;
+    Ok((id, object))
 }
 
-fn read_id(objects: &Objects, id: ObjectId) -> Result<Option<Object>> {
+/// Reads `id` through replace references; Git's `cat-file` reports the requested ID with the
+/// replacement's content.
+fn read_replaced(objects: &ReplacedObjects, id: ObjectId) -> Result<Option<Object>> {
     objects
         .read_with(id, ReadLimits::trusted())
         .wrap_err_with(|| format!("reading {id}"))
 }
 
 fn show(args: RevArgs, context: &Context) -> Result<ExitCode> {
-    let object = read(context, &args.rev)?;
+    let (_, object) = read(context, &args.rev)?;
     let mut out = stdout();
     if object.kind() == ObjectKind::Tree {
         let tree = Tree::parse(object.object_format(), object.data()).wrap_err("parsing tree")?;
@@ -255,7 +260,7 @@ fn show(args: RevArgs, context: &Context) -> Result<ExitCode> {
 }
 
 fn info(args: InfoArgs, context: &Context) -> Result<ExitCode> {
-    let object = read(context, &args.rev)?;
+    let (id, object) = read(context, &args.rev)?;
     let mut out = stdout();
     let kind = object.kind().as_str();
     let size = object.data().len();
@@ -264,14 +269,14 @@ fn info(args: InfoArgs, context: &Context) -> Result<ExitCode> {
     } else if args.size {
         writeln!(out, "{size}")?;
     } else {
-        writeln!(out, "{} {kind} {size}", object.id())?;
+        writeln!(out, "{id} {kind} {size}")?;
     }
     out.flush()?;
     Ok(ExitCode::SUCCESS)
 }
 
 fn cat(args: RevArgs, context: &Context) -> Result<ExitCode> {
-    let object = read(context, &args.rev)?;
+    let (_, object) = read(context, &args.rev)?;
     let mut out = stdout();
     out.write_all(object.data())?;
     out.flush()?;
@@ -290,11 +295,11 @@ fn id(args: RevArgs, context: &Context) -> Result<ExitCode> {
 
 fn exists(args: RevArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = repository.objects()?;
-    let Ok(id) = resolve(&repository, &args.rev) else {
+    let objects = context.replaced_objects(&repository, repository.objects()?)?;
+    let Ok(id) = common::resolve_replaced(&repository, &objects, &args.rev, None) else {
         return Ok(ExitCode::FAILURE);
     };
-    Ok(match read_id(&objects, id)? {
+    Ok(match read_replaced(&objects, id)? {
         Some(_) => ExitCode::SUCCESS,
         None => ExitCode::FAILURE,
     })
@@ -302,7 +307,7 @@ fn exists(args: RevArgs, context: &Context) -> Result<ExitCode> {
 
 fn batch(args: BatchArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = repository.objects()?;
+    let objects = context.replaced_objects(&repository, repository.objects()?)?;
     let mut input = io::stdin().lock();
     let mut out = stdout();
     let mut line = String::new();
@@ -312,18 +317,17 @@ fn batch(args: BatchArgs, context: &Context) -> Result<ExitCode> {
             break;
         }
         let rev = line.trim_end_matches(['\n', '\r']);
-        let object = match resolve(&repository, rev) {
-            Ok(id) => read_id(&objects, id)?,
+        let object = match common::resolve_replaced(&repository, &objects, rev, None) {
+            Ok(id) => read_replaced(&objects, id)?.map(|object| (id, object)),
             Err(_) => None,
         };
-        let Some(object) = object else {
+        let Some((id, object)) = object else {
             writeln!(out, "{rev} missing")?;
             continue;
         };
         writeln!(
             out,
-            "{} {} {}",
-            object.id(),
+            "{id} {} {}",
             object.kind().as_str(),
             object.data().len()
         )?;

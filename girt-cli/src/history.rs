@@ -8,10 +8,10 @@ use std::sync::atomic::AtomicBool;
 use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, eyre};
 use girt::display::DateFormat;
+use girt::replace::ReplacedObjects;
 use girt::revision::Selection;
 use girt::{
-    Commit, HistoryLimits, IdentityDate, IdentityRef, ObjectId, Objects, ReadLimits,
-    TreeCompareLimits,
+    Commit, HistoryLimits, IdentityDate, IdentityRef, ObjectId, ReadLimits, TreeCompareLimits,
 };
 
 use crate::common::{self, display_bytes};
@@ -218,14 +218,17 @@ fn tracked_changes(repository: &girt::Repository, context: &Context) -> Result<b
 pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let objects = repository.objects()?;
-    let commit = |rev: &str| common::resolve_commit(&repository, &objects, rev);
+    let replaced = context.replaced_objects(&repository, objects.clone())?;
+    let commit = |rev: &str| {
+        common::resolve_replaced(&repository, &replaced, rev, Some(girt::ObjectKind::Commit))
+    };
     let limits = HistoryLimits::trusted();
     let mut out = common::stdout();
     let code = match command {
         Command::Count { revs } => {
-            let selection = common::select(&repository, &objects, &revs)?;
-            let hidden = hidden(&objects, &selection)?;
-            let ids = objects
+            let selection = common::select(&repository, &replaced, &revs)?;
+            let hidden = hidden(&replaced, &selection)?;
+            let ids = replaced
                 .walk_with(&selection.include, limits)
                 .wrap_err("walking history")?;
             let count = ids.iter().filter(|id| !hidden.contains(id)).count();
@@ -233,7 +236,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
             ExitCode::SUCCESS
         }
         Command::MergeBase { a, b, all } => {
-            let bases = objects
+            let bases = replaced
                 .merge_bases_with(commit(&a)?, commit(&b)?, limits)
                 .wrap_err("finding merge bases")?;
             let shown = if all {
@@ -382,13 +385,14 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
     };
     let yellow = crate::color::style(context.color, crate::color::YELLOW);
     let reset = crate::color::style(context.color, crate::color::RESET);
-    let selection = common::select(&repository, &objects, &args.revs)?;
-    let hidden = hidden(&objects, &selection)?;
+    let replaced = context.replaced_objects(&repository, objects.clone())?;
+    let selection = common::select(&repository, &replaced, &args.revs)?;
+    let hidden = hidden(&replaced, &selection)?;
     let width = common::abbrev_len(&repository, &objects)?;
     let short = |id: ObjectId| objects.abbreviate(id, width).map(|p| p.to_string());
     let mut out = common::stdout();
     let paths = context.pathspec(&repository, &args.pathspecs)?;
-    let mut walk = DateOrder::new(&objects, &selection.include, hidden)?;
+    let mut walk = DateOrder::new(&replaced, &selection.include, hidden)?;
     let mut first = true;
     let mut shown = 0;
     let cancel = AtomicBool::new(false);
@@ -397,7 +401,7 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
         let parents = if objects.shallow_roots().contains(id) {
             &[][..]
         } else {
-            commit.parents()
+            replaced.parents(id, &commit)
         };
         // Even `-- .` simplifies history (it hides commits that change nothing), so only a log
         // without pathspecs skips the comparison.
@@ -503,7 +507,7 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
 
 /// Git's default `git log` order: a max-heap on committer date, ties in discovery order.
 struct DateOrder<'a> {
-    objects: &'a Objects,
+    objects: &'a ReplacedObjects,
     heap: BinaryHeap<(i64, std::cmp::Reverse<usize>, ObjectId)>,
     seen: HashSet<ObjectId>,
     pushed: usize,
@@ -511,7 +515,11 @@ struct DateOrder<'a> {
 
 impl<'a> DateOrder<'a> {
     /// Starts at `roots`, never entering `hidden` commits.
-    fn new(objects: &'a Objects, roots: &[ObjectId], hidden: HashSet<ObjectId>) -> Result<Self> {
+    fn new(
+        objects: &'a ReplacedObjects,
+        roots: &[ObjectId],
+        hidden: HashSet<ObjectId>,
+    ) -> Result<Self> {
         let mut walk = Self {
             objects,
             heap: BinaryHeap::new(),
@@ -567,7 +575,7 @@ impl<'a> DateOrder<'a> {
 ///
 /// This walks the excluded history in full, unlike Git, which stops once the remaining queue is
 /// uninteresting; ranges near the root of a long history pay for the whole excluded side.
-fn hidden(objects: &Objects, selection: &Selection) -> Result<HashSet<ObjectId>> {
+fn hidden(objects: &ReplacedObjects, selection: &Selection) -> Result<HashSet<ObjectId>> {
     if selection.exclude.is_empty() {
         return Ok(HashSet::new());
     }
