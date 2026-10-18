@@ -4,7 +4,6 @@ pub(super) fn parse(bytes: &[u8], limits: Limits) -> Result<Patch, Error> {
     if bytes.len() > limits.max_input_bytes {
         return Err(Error::Limit("input bytes"));
     }
-
     let mut parser = Parser {
         lines: bytes.split_inclusive(is_lf as fn(&u8) -> bool).peekable(),
         line: 0,
@@ -12,77 +11,39 @@ pub(super) fn parse(bytes: &[u8], limits: Limits) -> Result<Patch, Error> {
     };
     let mut files = Vec::new();
     let mut total_hunks = 0;
-    let mut git_header = false;
-    let mut index_seen = false;
-    while let Some(line) = parser.next() {
-        refuse(line, parser.line)?;
-        if line.starts_with(b"diff --git ") {
-            if git_header || trim_lf(&line[11..]).is_empty() {
-                return Err(malformed(parser.line, "incomplete Git file header"));
-            }
-            git_header = true;
-            continue;
-        }
-        if line.starts_with(b"index ") {
-            if !git_header || index_seen {
-                return Err(malformed(parser.line, "unexpected index header"));
-            }
-            validate_index(trim_lf(&line[6..]), parser.line)?;
-            index_seen = true;
-            continue;
-        }
-        if !line.starts_with(b"--- ") {
-            return Err(malformed(parser.line, "expected file header"));
-        }
+    while let Some(line) = parser.lines.peek().copied() {
+        refuse(line, parser.line + 1)?;
         if files.len() >= limits.max_files {
             return Err(Error::Limit("files"));
         }
-
-        let old_path = path(&line[4..], parser.line)?;
-        let next = parser
-            .next()
-            .ok_or_else(|| malformed(parser.line, "missing new path"))?;
-        if !next.starts_with(b"+++ ") {
-            return Err(malformed(parser.line, "expected new path"));
-        }
-        let new_path = path(&next[4..], parser.line)?;
-        if old_path.is_none() && new_path.is_none() {
-            return Err(malformed(parser.line, "both paths absent"));
-        }
-
-        let mut hunks = Vec::new();
-        while parser
-            .lines
-            .peek()
-            .is_some_and(|line| line.starts_with(b"@@ "))
-        {
-            if total_hunks >= limits.max_hunks {
-                return Err(Error::Limit("hunks"));
-            }
-            hunks.push(parser.hunk()?);
-            total_hunks += 1;
-        }
-        if let Some(next) = parser.lines.peek() {
-            refuse(next, parser.line + 1)?;
-        }
-        if hunks.is_empty() {
-            return Err(malformed(parser.line, "missing hunks"));
-        }
-        git_header = false;
-        index_seen = false;
-        files.push(FilePatch {
-            old_path,
-            new_path,
-            hunks,
-        });
-    }
-    if git_header {
-        return Err(malformed(parser.line, "incomplete Git file header"));
+        let file = if line.starts_with(b"diff --git ") {
+            parser.git_file(limits, &mut total_hunks)?
+        } else if line.starts_with(b"--- ") {
+            let mut file = empty_file(parser.line + 1);
+            parser.text_file(&mut file, limits, &mut total_hunks)?;
+            file
+        } else {
+            return Err(malformed(parser.line + 1, "expected file header"));
+        };
+        files.push(file);
     }
     if files.is_empty() {
         return Err(malformed(1, "no file edits"));
     }
     Ok(Patch { files })
+}
+
+fn empty_file(line: usize) -> FilePatch {
+    FilePatch {
+        old_path: None,
+        new_path: None,
+        hunks: Vec::new(),
+        line,
+        old_mode: None,
+        new_mode: None,
+        operation: super::FileOperation::Edit,
+        similarity: None,
+    }
 }
 
 type Lines<'a> = std::iter::Peekable<std::slice::SplitInclusive<'a, u8, fn(&u8) -> bool>>;
@@ -98,6 +59,191 @@ impl<'a> Parser<'a> {
         let next = self.lines.next()?;
         self.line += 1;
         Some(next)
+    }
+
+    fn git_file(&mut self, limits: Limits, total_hunks: &mut usize) -> Result<FilePatch, Error> {
+        let header = self.next().unwrap();
+        let mut file = empty_file(self.line);
+        let fallback = git_paths(trim_lf(&header[11..]), self.line);
+        let mut index_seen = false;
+        let mut operation_paths: [Option<Vec<u8>>; 2] = [None, None];
+        let (mut added, mut deleted) = (false, false);
+        while let Some(line) = self.lines.peek().copied() {
+            if line.starts_with(b"diff --git ") || line.starts_with(b"--- ") {
+                break;
+            }
+            refuse(line, self.line + 1)?;
+            self.next();
+            let at = self.line;
+            if let Some(bytes) = line.strip_prefix(b"index ") {
+                if index_seen {
+                    return Err(malformed(at, "duplicate index header"));
+                }
+                validate_index(trim_lf(bytes), at)?;
+                if let Some(mode) = trim_lf(bytes).split(|b| *b == b' ').nth(1) {
+                    let mode = mode_value(mode, at)?;
+                    if file.old_mode.is_none() {
+                        file.old_mode = Some(mode);
+                    }
+                    if file.new_mode.is_none() {
+                        file.new_mode = Some(mode);
+                    }
+                }
+                index_seen = true;
+            } else if let Some(bytes) = line.strip_prefix(b"old mode ") {
+                set_mode(&mut file.old_mode, mode_value(trim_lf(bytes), at)?, at)?;
+            } else if let Some(bytes) = line.strip_prefix(b"new mode ") {
+                set_mode(&mut file.new_mode, mode_value(trim_lf(bytes), at)?, at)?;
+            } else if let Some(bytes) = line.strip_prefix(b"new file mode ") {
+                if added || deleted {
+                    return Err(malformed(at, "conflicting file creation/deletion"));
+                }
+                added = true;
+                set_mode(&mut file.new_mode, mode_value(trim_lf(bytes), at)?, at)?;
+            } else if let Some(bytes) = line.strip_prefix(b"deleted file mode ") {
+                if added || deleted {
+                    return Err(malformed(at, "conflicting file creation/deletion"));
+                }
+                deleted = true;
+                set_mode(&mut file.old_mode, mode_value(trim_lf(bytes), at)?, at)?;
+            } else if let Some(bytes) = line.strip_prefix(b"similarity index ") {
+                if file.similarity.is_some() {
+                    return Err(malformed(at, "duplicate similarity"));
+                }
+                let value = trim_lf(bytes)
+                    .strip_suffix(b"%")
+                    .ok_or_else(|| malformed(at, "invalid similarity"))?;
+                let value = number(value, at)?;
+                if value > 100 {
+                    return Err(malformed(at, "invalid similarity"));
+                }
+                file.similarity = Some(value as u8);
+            } else if let Some((operation, side, bytes)) = operation_header(line) {
+                if file.operation != super::FileOperation::Edit && file.operation != operation {
+                    return Err(malformed(at, "conflicting rename/copy"));
+                }
+                file.operation = operation;
+                if operation_paths[side].is_some() {
+                    return Err(malformed(at, "duplicate operation path"));
+                }
+                let raw = trim_lf(bytes);
+                let name = if raw.starts_with(b"\"") {
+                    quoted_path(raw, at)?
+                } else {
+                    raw.to_vec()
+                };
+                if name.is_empty() || name.contains(&0) {
+                    return Err(malformed(at, "invalid operation path"));
+                }
+                let mut path = if side == 0 {
+                    b"a/".to_vec()
+                } else {
+                    b"b/".to_vec()
+                };
+                path.extend(name);
+                operation_paths[side] = Some(path);
+            } else {
+                return Err(malformed(at, "unknown extended header"));
+            }
+        }
+        if self
+            .lines
+            .peek()
+            .is_some_and(|line| line.starts_with(b"--- "))
+        {
+            self.text_file(&mut file, limits, total_hunks)?;
+        }
+        if !file.hunks.is_empty()
+            && ((added && file.old_path.is_some()) || (deleted && file.new_path.is_some()))
+        {
+            return Err(malformed(file.line, "file kind disagrees with text paths"));
+        }
+        if file.hunks.is_empty() {
+            let paths = match (&operation_paths[0], &operation_paths[1]) {
+                (Some(old), Some(new)) => (old.clone(), new.clone()),
+                (None, None) => fallback?,
+                _ => return Err(malformed(file.line, "incomplete operation paths")),
+            };
+            if paths.0.is_empty()
+                || paths.1.is_empty()
+                || paths.0.contains(&0)
+                || paths.1.contains(&0)
+            {
+                return Err(malformed(file.line, "invalid Git path"));
+            }
+            file.old_path = (!added).then_some(paths.0);
+            file.new_path = (!deleted).then_some(paths.1);
+        }
+        if file.operation != super::FileOperation::Edit {
+            if added || deleted || operation_paths.iter().any(Option::is_none) {
+                return Err(malformed(file.line, "incomplete or conflicting operation"));
+            }
+            if file.old_path != operation_paths[0] || file.new_path != operation_paths[1] {
+                return Err(malformed(
+                    file.line,
+                    "operation paths disagree with text headers",
+                ));
+            }
+        } else if file.similarity.is_some() {
+            return Err(malformed(file.line, "similarity without rename/copy"));
+        }
+        if file.hunks.is_empty()
+            && file.operation == super::FileOperation::Edit
+            && !added
+            && !deleted
+            && (file.old_mode.is_none()
+                || file.new_mode.is_none()
+                || file.old_mode == file.new_mode)
+        {
+            return Err(malformed(file.line, "no file changes"));
+        }
+        if added {
+            file.old_path = None;
+            file.old_mode = None;
+        }
+        if deleted {
+            file.new_path = None;
+            file.new_mode = None;
+        }
+        Ok(file)
+    }
+
+    fn text_file(
+        &mut self,
+        file: &mut FilePatch,
+        limits: Limits,
+        total_hunks: &mut usize,
+    ) -> Result<(), Error> {
+        let old = self.next().unwrap();
+        file.old_path = path(&old[4..], self.line)?;
+        let new = self
+            .next()
+            .ok_or_else(|| malformed(self.line, "missing new path"))?;
+        if !new.starts_with(b"+++ ") {
+            return Err(malformed(self.line, "expected new path"));
+        }
+        file.new_path = path(&new[4..], self.line)?;
+        if file.old_path.is_none() && file.new_path.is_none() {
+            return Err(malformed(self.line, "both paths absent"));
+        }
+        while self
+            .lines
+            .peek()
+            .is_some_and(|line| line.starts_with(b"@@ "))
+        {
+            if *total_hunks >= limits.max_hunks {
+                return Err(Error::Limit("hunks"));
+            }
+            file.hunks.push(self.hunk()?);
+            *total_hunks += 1;
+        }
+        if let Some(next) = self.lines.peek() {
+            refuse(next, self.line + 1)?;
+        }
+        if file.hunks.is_empty() {
+            return Err(malformed(self.line, "missing hunks"));
+        }
+        Ok(())
     }
 
     fn hunk(&mut self) -> Result<Hunk, Error> {
@@ -275,20 +421,6 @@ fn refuse(line: &[u8], at: usize) -> Result<(), Error> {
         "combined diff"
     } else if line.starts_with(b"GIT binary patch") || line.starts_with(b"Binary files ") {
         "binary patch"
-    } else if [
-        b"old mode ".as_slice(),
-        b"new mode ",
-        b"new file mode ",
-        b"deleted file mode ",
-        b"rename ",
-        b"copy ",
-        b"similarity index ",
-        b"dissimilarity index ",
-    ]
-    .iter()
-    .any(|prefix| line.starts_with(prefix))
-    {
-        "extended file operation"
     } else {
         return Ok(());
     };
@@ -335,4 +467,92 @@ fn validate_index(bytes: &[u8], line: usize) -> Result<(), Error> {
         return Err(malformed(line, "trailing index fields"));
     }
     Ok(())
+}
+
+fn mode_value(bytes: &[u8], line: usize) -> Result<crate::EntryMode, Error> {
+    match bytes {
+        b"100644" => Ok(crate::EntryMode::Blob),
+        b"100755" => Ok(crate::EntryMode::Executable),
+        b"120000" => Ok(crate::EntryMode::Symlink),
+        _ => Err(Error::Unsupported {
+            line,
+            feature: "file mode",
+        }),
+    }
+}
+
+fn set_mode(
+    slot: &mut Option<crate::EntryMode>,
+    value: crate::EntryMode,
+    line: usize,
+) -> Result<(), Error> {
+    if slot.is_some() {
+        return Err(malformed(line, "duplicate mode"));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+fn operation_header(line: &[u8]) -> Option<(super::FileOperation, usize, &[u8])> {
+    [
+        (b"rename from ".as_slice(), super::FileOperation::Rename, 0),
+        (b"rename to ".as_slice(), super::FileOperation::Rename, 1),
+        (b"copy from ".as_slice(), super::FileOperation::Copy, 0),
+        (b"copy to ".as_slice(), super::FileOperation::Copy, 1),
+    ]
+    .into_iter()
+    .find_map(|(prefix, operation, side)| {
+        line.strip_prefix(prefix)
+            .map(|bytes| (operation, side, bytes))
+    })
+}
+
+fn git_paths(bytes: &[u8], line: usize) -> Result<(Vec<u8>, Vec<u8>), Error> {
+    if bytes.starts_with(b"\"") {
+        let mut escaped = false;
+        let end = bytes
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(at, byte)| {
+                if escaped {
+                    escaped = false;
+                    None
+                } else if *byte == b'\\' {
+                    escaped = true;
+                    None
+                } else if *byte == b'"' {
+                    Some(at + 1)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| malformed(line, "unterminated Git path"))?;
+        let old = quoted_path(&bytes[..end], line)?;
+        let rest = bytes
+            .get(end + 1..)
+            .filter(|_| bytes.get(end) == Some(&b' '))
+            .ok_or_else(|| malformed(line, "missing Git destination"))?;
+        let new = if rest.starts_with(b"\"") {
+            quoted_path(rest, line)?
+        } else {
+            rest.to_vec()
+        };
+        return Ok((old, new));
+    }
+    for at in bytes
+        .windows(3)
+        .enumerate()
+        .filter_map(|(at, bytes)| (bytes == b" b/").then_some(at))
+    {
+        let old = &bytes[..at];
+        let new = &bytes[at + 1..];
+        if old.strip_prefix(b"a/") == new.strip_prefix(b"b/") {
+            return Ok((old.to_vec(), new.to_vec()));
+        }
+    }
+    Err(malformed(
+        line,
+        "ambiguous Git paths without authoritative file headers",
+    ))
 }

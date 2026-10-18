@@ -5,8 +5,8 @@
 //! [`Patch::apply_tree`] computes a stored-tree replacement and returns an [`AppliedTree`] whose
 //! generated objects are installed explicitly. Callers retain control over references, the index
 //! and working files and must validate paths for their storage destination.
-//! Git text patches and traditional unified diffs are supported. Extended operations, binary and
-//! combined diffs are explicitly refused in this initial implementation.
+//! Git text patches, mode changes, additions/deletions, renames and copies are supported, along
+//! with traditional unified diffs. Binary and combined diffs are explicitly refused.
 //!
 //! ```
 //! use girt::apply::Patch;
@@ -45,7 +45,7 @@ impl Patch {
     /// # Errors
     ///
     /// Returns [`Error`] without a partial patch for malformed syntax, count overflow, unsupported
-    /// extended operations or exhausted limits. Empty input is malformed.
+    /// operations or exhausted limits. Empty input is malformed.
     pub fn parse_with(bytes: &[u8], limits: Limits) -> Result<Self, Error> {
         parse::parse(bytes, limits)
     }
@@ -56,15 +56,54 @@ impl Patch {
     }
 }
 
-/// One file's paths and text hunks. `/dev/null` is represented by an absent side.
+/// One file's paths, declared metadata and text hunks. `/dev/null` is represented by an absent
+/// side.
 #[derive(Clone, Debug)]
 pub struct FilePatch {
     old_path: Option<Vec<u8>>,
     new_path: Option<Vec<u8>>,
     hunks: Vec<Hunk>,
+    line: usize,
+    old_mode: Option<crate::EntryMode>,
+    new_mode: Option<crate::EntryMode>,
+    operation: FileOperation,
+    similarity: Option<u8>,
+}
+
+/// How a file's source relates to its destination.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum FileOperation {
+    /// Modify, add or delete at one path.
+    #[default]
+    Edit,
+    /// Remove the source and create the destination.
+    Rename,
+    /// Retain the source and create the destination.
+    Copy,
 }
 
 impl FilePatch {
+    /// Requested file operation, independent of any content hunks.
+    pub fn operation(&self) -> FileOperation {
+        self.operation
+    }
+
+    /// Declared source mode, when present in Git metadata.
+    pub fn old_mode(&self) -> Option<crate::EntryMode> {
+        self.old_mode
+    }
+
+    /// Declared destination mode, when present in Git metadata.
+    pub fn new_mode(&self) -> Option<crate::EntryMode> {
+        self.new_mode
+    }
+
+    /// Declared rename/copy similarity percentage; it is not recomputed during application.
+    pub fn similarity(&self) -> Option<u8> {
+        self.similarity
+    }
+
     /// Preimage path, including any prefix, or `None` for a new file.
     pub fn old_path(&self) -> Option<&[u8]> {
         self.old_path.as_deref()
@@ -80,7 +119,7 @@ impl FilePatch {
         self.hunks.len()
     }
 
-    /// Applies all hunks at their declared positions using default bounds.
+    /// Applies text hunks at their declared positions, preserving content for metadata-only edits.
     ///
     /// # Errors
     ///
