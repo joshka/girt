@@ -1,6 +1,7 @@
 use rstest::rstest;
 
 use super::*;
+use crate::attributes::State;
 
 fn spec(specs: &[&str]) -> Pathspec {
     Pathspec::parse(specs, &Context::new()).unwrap()
@@ -43,6 +44,10 @@ fn normalized_pattern(#[case] raw: &str, #[case] pattern: &[u8]) {
 )]
 #[case::escapes("../..", invalid("../..", Reason::OutsideRepository))]
 #[case::absolute(":!:/x", invalid(":!:/x", Reason::OutsideRepository))]
+#[case::empty_attr(":(attr:)", invalid(":(attr:)", Reason::EmptyAttr))]
+#[case::two_attr(":(attr:a,attr:b)", invalid(":(attr:a,attr:b)", Reason::MultipleAttr))]
+#[case::attr_name(":(attr:b@d)", invalid(":(attr:b@d)", Reason::InvalidAttrName(b"b@d".to_vec())))]
+#[case::attr_escape(r":(attr:a=b\ x)", invalid(r":(attr:a=b\ x)", Reason::TrailingEscape))]
 fn rejects(#[case] raw: &str, #[case] expected: ParseError) {
     assert_eq!(Pathspec::parse([raw], &Context::new()), Err(expected));
 }
@@ -109,4 +114,32 @@ fn empty_list_selects_everything() {
     assert_eq!(all.directory(b"any"), Prune::All);
     assert!(spec(&["."]).is_all());
     assert!(!spec(&[".", ":!x"]).is_all());
+}
+
+#[rstest]
+#[case::set("a", State::Set, true)]
+#[case::set_rejects_value("a", State::Value(b"x"), false)]
+#[case::unset("-a", State::Unset, true)]
+#[case::unspecified("!a", State::Unspecified, true)]
+#[case::value("a=x", State::Value(b"x"), true)]
+#[case::other_value("a=x", State::Value(b"y"), false)]
+#[case::empty_value("a=", State::Value(b""), true)]
+#[case::escaped_comma(r"a=b\,c", State::Value(b"b,c"), true)]
+fn attribute_requirements(#[case] word: &str, #[case] state: State<'_>, #[case] expected: bool) {
+    let parsed = spec(&[&format!(":(attr:{word})")]);
+    assert!(parsed.uses_attributes());
+    let accepted = parsed
+        .matches_with(b"x", |requirement| Ok::<_, ()>(requirement.accepts(state)))
+        .unwrap();
+    assert_eq!(accepted, expected);
+}
+
+#[test]
+fn attributes_never_take_whole_directories() {
+    assert_eq!(spec(&[":(attr:a)src"]).directory(b"src"), Prune::Descend);
+    assert_eq!(spec(&[":(attr:a)src"]).directory(b"docs"), Prune::Skip);
+    assert_eq!(
+        spec(&[":(attr:a,exclude)src"]).directory(b"src"),
+        Prune::Descend
+    );
 }

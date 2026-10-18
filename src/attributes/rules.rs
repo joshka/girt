@@ -574,7 +574,7 @@ fn assignments(mut rest: &[u8]) -> Option<Vec<Assignment>> {
 }
 
 /// Git accepts ASCII letters, digits, `-`, `.` and `_`, not starting with `-`.
-fn valid_name(name: &[u8]) -> bool {
+pub(crate) fn valid_name(name: &[u8]) -> bool {
     !name.is_empty()
         && !name.starts_with(b"-")
         && name
