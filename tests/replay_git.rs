@@ -1,102 +1,19 @@
 //! Replay fixtures generated independently through the Git executable.
-use std::path::Path;
-use std::process::{Command, Output};
 use std::sync::atomic::AtomicBool;
 
 use girt::replay::{EmptyKind, EmptyPolicy, Options, Status};
-use girt::{ObjectId, Repository, Signature};
+use girt::{ObjectId, Repository};
 use rstest::rstest;
 
-fn git(root: &Path, args: &[&str]) -> Output {
-    let mut command = Command::new("git");
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            command.env_remove(key);
-        }
-    }
-    command
-        .current_dir(root)
-        .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", root.join("absent-config"))
-        .env("GIT_AUTHOR_NAME", "Original Author")
-        .env("GIT_AUTHOR_EMAIL", "author@example.com")
-        .env("GIT_AUTHOR_DATE", "1700000000 +0000")
-        .env("GIT_COMMITTER_NAME", "Replay Writer")
-        .env("GIT_COMMITTER_EMAIL", "writer@example.com")
-        .env("GIT_COMMITTER_DATE", "1700000100 +0000")
-        .output()
-        .unwrap()
-}
-fn success(root: &Path, args: &[&str]) -> Vec<u8> {
-    let output = git(root, args);
-    assert!(
-        output.status.success(),
-        "{args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output.stdout
-}
-fn head(root: &Path) -> ObjectId {
-    std::str::from_utf8(&success(root, &["rev-parse", "HEAD"]))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap()
-}
-fn writer() -> Signature {
-    Signature {
-        name: b"Replay Writer".to_vec(),
-        email: b"writer@example.com".to_vec(),
-        seconds: 1_700_000_100,
-        offset_minutes: 0,
-    }
-}
-struct Fixture {
-    root: tempfile::TempDir,
-    base: ObjectId,
-    source: ObjectId,
-    onto: ObjectId,
-}
-impl Fixture {
-    fn new(format: &str) -> Self {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path();
-        success(
-            path,
-            &[
-                "init",
-                "--template=",
-                &format!("--object-format={format}"),
-                ".",
-            ],
-        );
-        std::fs::write(path.join("file"), b"one\ntwo\nthree\n").unwrap();
-        success(path, &["add", "."]);
-        success(path, &["commit", "-m", "base"]);
-        let base = head(path);
-        std::fs::write(path.join("file"), b"ONE\ntwo\nthree\n").unwrap();
-        success(path, &["commit", "-am", "source"]);
-        let source = head(path);
-        success(path, &["checkout", "--detach", &base.to_string()]);
-        std::fs::write(path.join("other"), b"destination\n").unwrap();
-        success(path, &["add", "."]);
-        success(path, &["commit", "-m", "destination"]);
-        let onto = head(path);
-        Self {
-            root,
-            base,
-            source,
-            onto,
-        }
-    }
-}
+#[path = "support/replay_git.rs"]
+mod support;
+use support::{Fixture, conflict_destination, git, git_extra, head, success, writer};
 
 #[rstest]
-#[case::sha1("sha1", false)]
-#[case::sha256("sha256", false)]
-#[case::origin("sha1", true)]
-fn cherry_pick_matches_git_commit(#[case] format: &str, #[case] origin: bool) {
+#[case::sha1("sha1", false, "--no-edit")]
+#[case::sha256("sha256", false, "--no-edit")]
+#[case::origin("sha1", true, "-x")]
+fn cherry_pick_matches_git_commit(#[case] format: &str, #[case] origin: bool, #[case] flag: &str) {
     let fixture = Fixture::new(format);
     let repo = Repository::open(fixture.root.path()).unwrap();
     let mut options = Options::default();
@@ -113,7 +30,6 @@ fn cherry_pick_matches_git_commit(#[case] format: &str, #[case] origin: bool) {
         )
         .unwrap();
     assert_eq!(replay.status, Status::Ready);
-    let flag = if origin { "-x" } else { "--no-edit" };
     success(
         fixture.root.path(),
         &["cherry-pick", flag, &fixture.source.to_string()],
@@ -143,30 +59,15 @@ fn revert_matches_git_commit(#[case] format: &str) {
         &["checkout", "--detach", &fixture.source.to_string()],
     );
     // Revert author is the operation identity, rather than the original source author.
-    let output = {
-        let mut command = Command::new("git");
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("GIT_") {
-                command.env_remove(key);
-            }
-        }
-        command
-            .current_dir(fixture.root.path())
-            .args(["revert", "--no-edit", &fixture.source.to_string()])
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env(
-                "GIT_CONFIG_GLOBAL",
-                fixture.root.path().join("absent-config"),
-            )
-            .env("GIT_AUTHOR_NAME", "Replay Writer")
-            .env("GIT_AUTHOR_EMAIL", "writer@example.com")
-            .env("GIT_AUTHOR_DATE", "1700000100 +0000")
-            .env("GIT_COMMITTER_NAME", "Replay Writer")
-            .env("GIT_COMMITTER_EMAIL", "writer@example.com")
-            .env("GIT_COMMITTER_DATE", "1700000100 +0000")
-            .output()
-            .unwrap()
-    };
+    let output = git_extra(
+        fixture.root.path(),
+        &["revert", "--no-edit", &fixture.source.to_string()],
+        &[
+            ("GIT_AUTHOR_NAME", "Replay Writer"),
+            ("GIT_AUTHOR_EMAIL", "writer@example.com"),
+            ("GIT_AUTHOR_DATE", "1700000100 +0000"),
+        ],
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -258,9 +159,11 @@ fn conflict_retains_original_sides_without_publication() {
 }
 
 #[test]
-fn root_replay_uses_unstored_empty_base() {
+fn root_replay_retains_empty_tree_for_explicit_installation() {
     let fixture = Fixture::new("sha1");
     let repo = Repository::open(fixture.root.path()).unwrap();
+    let empty = girt::Tree::new(repo.object_format(), vec![]).unwrap().id();
+    let existed = repo.objects().unwrap().read_tree(empty).is_ok();
     let replay = repo
         .objects()
         .unwrap()
@@ -274,6 +177,16 @@ fn root_replay_uses_unstored_empty_base() {
         .unwrap();
     assert_eq!(replay.status, Status::Ready);
     assert!(replay.result.tree.entries().is_empty());
+    assert_eq!(repo.objects().unwrap().read_tree(empty).is_ok(), existed);
+    install_merge_objects(&repo, &replay.result);
+    assert!(
+        repo.objects()
+            .unwrap()
+            .read_tree(replay.result.tree.id())
+            .unwrap()
+            .entries()
+            .is_empty()
+    );
     success(
         fixture.root.path(),
         &["checkout", "--detach", &fixture.base.to_string()],
@@ -563,4 +476,399 @@ fn rebase_skips_redundant_inputs_and_bounds_the_sequence() {
         ),
         Err(girt::replay::RebaseError::Cancelled)
     ));
+}
+
+struct Hooks {
+    messages: usize,
+    commands: Vec<Vec<u8>>,
+}
+impl girt::replay::TodoHooks for Hooks {
+    fn message(
+        &mut self,
+        _: &girt::replay::todo::Instruction,
+        proposed: &[u8],
+    ) -> Result<Vec<u8>, girt::replay::HookError> {
+        self.messages += 1;
+        Ok(proposed.to_vec())
+    }
+    fn exec(&mut self, command: &[u8], _: &girt::Commit) -> Result<(), girt::replay::HookError> {
+        self.commands.push(command.to_vec());
+        Ok(())
+    }
+}
+
+#[test]
+fn todo_executes_fixup_and_plans_updates_without_publication() {
+    let fixture = Fixture::new("sha1");
+    success(
+        fixture.root.path(),
+        &["checkout", "--detach", &fixture.source.to_string()],
+    );
+    std::fs::write(fixture.root.path().join("file"), b"ONE\ntwo\nTHREE\n").unwrap();
+    success(fixture.root.path(), &["commit", "-am", "second"]);
+    let second = head(fixture.root.path());
+    let bytes = format!(
+        "pick {} source\nupdate-ref refs/heads/side\nfixup {} second\nexec check proposed tip\n",
+        fixture.source, second
+    );
+    let todo = girt::replay::todo::Todo::parse(
+        bytes.as_bytes(),
+        girt::replay::todo::TodoLimits::default(),
+    )
+    .unwrap();
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let mut hooks = Hooks {
+        messages: 0,
+        commands: vec![],
+    };
+    let run = repo
+        .objects()
+        .unwrap()
+        .execute_todo(
+            &todo,
+            fixture.onto,
+            writer(),
+            Options::default(),
+            &AtomicBool::new(false),
+            &mut hooks,
+        )
+        .unwrap();
+    assert_eq!(run.tip.parents(), &[fixture.onto]);
+    assert_eq!(run.tip.message(), b"source\n");
+    assert_eq!(run.rewritten[&fixture.source], run.tip.id());
+    assert_eq!(run.rewritten[&second], run.tip.id());
+    assert_eq!(run.updates[b"refs/heads/side".as_slice()], run.tip.id());
+    assert_eq!(hooks.commands, vec![b"check proposed tip".to_vec()]);
+    assert_eq!(head(fixture.root.path()), second);
+    let observed = std::collections::BTreeMap::from([
+        (b"refs/heads/side".to_vec(), fixture.source),
+        (b"refs/heads/current".to_vec(), second),
+    ]);
+    let excluded = std::collections::BTreeSet::from([b"refs/heads/current".to_vec()]);
+    assert_eq!(
+        run.plan_updates(&observed, &excluded).unwrap(),
+        std::collections::BTreeMap::from([(b"refs/heads/side".to_vec(), run.tip.id())])
+    );
+}
+
+#[rstest]
+#[case::merge("merge -C abcd side", true)]
+#[case::reset("reset side", false)]
+fn topology_is_refused_before_external_hooks(#[case] command: &str, #[case] merge: bool) {
+    let fixture = Fixture::new("sha1");
+    let todo = girt::replay::todo::Todo::parse(
+        format!("exec must not run\n{command}\n").as_bytes(),
+        girt::replay::todo::TodoLimits::default(),
+    )
+    .unwrap();
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let mut hooks = Hooks {
+        messages: 0,
+        commands: vec![],
+    };
+    let error = repo
+        .objects()
+        .unwrap()
+        .execute_todo(
+            &todo,
+            fixture.onto,
+            writer(),
+            Options::default(),
+            &AtomicBool::new(false),
+            &mut hooks,
+        )
+        .unwrap_err();
+    assert_eq!(
+        matches!(error, girt::replay::TodoExecutionError::MergeUnsupported),
+        merge
+    );
+    assert!(hooks.commands.is_empty());
+    assert_eq!(head(fixture.root.path()), fixture.onto);
+}
+
+#[test]
+fn autosquash_moves_fixup_after_target() {
+    let fixture = Fixture::new("sha1");
+    success(
+        fixture.root.path(),
+        &["checkout", "--detach", &fixture.source.to_string()],
+    );
+    success(
+        fixture.root.path(),
+        &["commit", "--allow-empty", "-m", "unrelated"],
+    );
+    let unrelated = head(fixture.root.path());
+    success(
+        fixture.root.path(),
+        &["commit", "--allow-empty", "-m", "fixup! source"],
+    );
+    let fixup = head(fixture.root.path());
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let todo = repo
+        .objects()
+        .unwrap()
+        .autosquash(&[fixture.source, unrelated, fixup], 10)
+        .unwrap();
+    assert!(
+        matches!(&todo.lines()[0].instruction, girt::replay::todo::Instruction::Pick(token) if token.id == fixture.source.to_string().as_bytes())
+    );
+    assert!(
+        matches!(&todo.lines()[1].instruction, girt::replay::todo::Instruction::Fixup(token, _) if token.id == fixup.to_string().as_bytes())
+    );
+    assert!(
+        matches!(&todo.lines()[2].instruction, girt::replay::todo::Instruction::Pick(token) if token.id == unrelated.to_string().as_bytes())
+    );
+}
+
+#[test]
+fn todo_fixup_matches_git_interactive_rebase() {
+    let fixture = Fixture::new("sha1");
+    success(
+        fixture.root.path(),
+        &["checkout", "--detach", &fixture.source.to_string()],
+    );
+    std::fs::write(fixture.root.path().join("file"), b"ONE\ntwo\nTHREE\n").unwrap();
+    success(fixture.root.path(), &["commit", "-am", "second"]);
+    let second = head(fixture.root.path());
+    let plan = format!("pick {} source\nfixup {} second\n", fixture.source, second);
+    let todo =
+        girt::replay::todo::Todo::parse(plan.as_bytes(), girt::replay::todo::TodoLimits::default())
+            .unwrap();
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let mut hooks = Hooks {
+        messages: 0,
+        commands: vec![],
+    };
+    let run = repo
+        .objects()
+        .unwrap()
+        .execute_todo(
+            &todo,
+            fixture.onto,
+            writer(),
+            Options::default(),
+            &AtomicBool::new(false),
+            &mut hooks,
+        )
+        .unwrap();
+    // Git runs this independently authored editor through its normal shell interface.
+    std::fs::write(fixture.root.path().join(".git/replay-todo"), plan).unwrap();
+    let editor = "cat .git/replay-todo >";
+    let output = git_extra(
+        fixture.root.path(),
+        &[
+            "rebase",
+            "-i",
+            "--onto",
+            &fixture.onto.to_string(),
+            &fixture.base.to_string(),
+        ],
+        &[("GIT_SEQUENCE_EDITOR", editor), ("GIT_EDITOR", "true")],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(run.tip.id(), head(fixture.root.path()));
+}
+
+struct ContentProbe {
+    calls: usize,
+}
+impl girt::merge::TreeDriver for ContentProbe {
+    fn merge(
+        &mut self,
+        path: &[u8],
+        _: &[u8],
+        _: &[u8],
+        _: &[u8],
+        _: girt::merge::ContentOptions,
+        _: &AtomicBool,
+    ) -> Result<girt::merge::ContentMerge, Box<dyn std::error::Error + Send + Sync>> {
+        assert_eq!(path, b"file");
+        self.calls += 1;
+        Ok(girt::merge::ContentMerge::resolved(
+            b"custom resolution\n".to_vec(),
+        ))
+    }
+}
+
+#[test]
+fn replay_uses_explicit_path_driver_without_publication() {
+    let fixture = Fixture::new("sha1");
+    let onto = conflict_destination(&fixture);
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let mut driver = ContentProbe { calls: 0 };
+    let replay = repo
+        .objects()
+        .unwrap()
+        .cherry_pick_with_driver(
+            fixture.source,
+            onto,
+            writer(),
+            Options::default(),
+            &AtomicBool::new(false),
+            &mut driver,
+        )
+        .unwrap();
+    assert_eq!(driver.calls, 1);
+    assert_eq!(replay.status, Status::Ready);
+    assert!(
+        replay
+            .result
+            .blobs
+            .iter()
+            .any(|(_, bytes)| bytes == b"custom resolution\n")
+    );
+    assert_eq!(head(fixture.root.path()), onto);
+}
+
+#[rstest]
+#[case::no_final_lf(b"subject")]
+#[case::trailer(b"subject\n\nSigned-off-by: Original Author <author@example.com>\n")]
+#[case::review(b"subject\n\nReviewed-by: Reader <reader@example.com>\n")]
+#[case::body_trailer(b"subject\n\nbody\nSigned-off-by: Original Author <author@example.com>\n")]
+#[case::body_colon(b"subject\n\nbody\nKey: value\n")]
+fn provenance_spacing_matches_git(#[case] message: &[u8]) {
+    let fixture = Fixture::new("sha1");
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let mut fields = repo
+        .objects()
+        .unwrap()
+        .read_commit(fixture.source)
+        .unwrap()
+        .to_fields()
+        .unwrap();
+    fields.message = message.to_vec();
+    let source = repo
+        .loose_objects()
+        .write_commit(&girt::Commit::new(fields).unwrap())
+        .unwrap();
+    let mut options = Options::default();
+    options.record_origin = true;
+    let replay = repo
+        .objects()
+        .unwrap()
+        .cherry_pick(
+            source,
+            fixture.onto,
+            writer(),
+            options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    success(
+        fixture.root.path(),
+        &["cherry-pick", "-x", &source.to_string()],
+    );
+    assert_eq!(replay.commit.unwrap().id(), head(fixture.root.path()));
+}
+
+#[test]
+fn autosquash_amend_message_matches_git() {
+    let fixture = Fixture::new("sha1");
+    success(
+        fixture.root.path(),
+        &["checkout", "--detach", &fixture.source.to_string()],
+    );
+    std::fs::write(fixture.root.path().join("file"), b"ONE\ntwo\nTHREE\n").unwrap();
+    success(
+        fixture.root.path(),
+        &[
+            "commit",
+            "-a",
+            &format!("--fixup=amend:{}", fixture.source),
+            "--no-edit",
+        ],
+    );
+    let amend = head(fixture.root.path());
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let todo = repo
+        .objects()
+        .unwrap()
+        .autosquash(&[fixture.source, amend], 10)
+        .unwrap();
+    let mut hooks = Hooks {
+        messages: 0,
+        commands: vec![],
+    };
+    let run = repo
+        .objects()
+        .unwrap()
+        .execute_todo(
+            &todo,
+            fixture.onto,
+            writer(),
+            Options::default(),
+            &AtomicBool::new(false),
+            &mut hooks,
+        )
+        .unwrap();
+    let output = git_extra(
+        fixture.root.path(),
+        &[
+            "rebase",
+            "-i",
+            "--autosquash",
+            "--onto",
+            &fixture.onto.to_string(),
+            &fixture.base.to_string(),
+        ],
+        &[("GIT_SEQUENCE_EDITOR", "true"), ("GIT_EDITOR", "true")],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(run.tip.id(), head(fixture.root.path()));
+}
+
+fn install_merge_objects(repo: &Repository, result: &girt::merge::TreeMerge) {
+    let loose = repo.loose_objects();
+    for (_, bytes) in &result.blobs {
+        loose.write_blob(bytes).unwrap();
+    }
+    for tree in &result.trees {
+        loose.write_tree(tree).unwrap();
+    }
+}
+
+#[test]
+fn root_cherry_pick_matches_git() {
+    let fixture = Fixture::new("sha1");
+    let repo = Repository::open(fixture.root.path()).unwrap();
+    let empty = repo
+        .loose_objects()
+        .write_tree(&girt::Tree::new(repo.object_format(), vec![]).unwrap())
+        .unwrap();
+    let destination = repo
+        .loose_objects()
+        .write_commit(
+            &girt::Commit::builder(empty, writer(), b"empty destination\n")
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let replay = repo
+        .objects()
+        .unwrap()
+        .cherry_pick(
+            fixture.base,
+            destination,
+            writer(),
+            Options::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    success(
+        fixture.root.path(),
+        &["checkout", "--detach", &destination.to_string()],
+    );
+    success(
+        fixture.root.path(),
+        &["cherry-pick", &fixture.base.to_string()],
+    );
+    assert_eq!(replay.commit.unwrap().id(), head(fixture.root.path()));
 }

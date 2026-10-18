@@ -63,16 +63,27 @@ pub use whitespace::Whitespace;
 pub(crate) struct ReplayTrees(memory::Memory);
 
 impl ReplayTrees {
-    pub(crate) fn merge(
-        &mut self,
-        objects: &crate::Objects,
+    pub(crate) fn merge<'a, 'd>(
+        &'a mut self,
+        objects: &'a crate::Objects,
         roots: [crate::ObjectId; 3],
         empty: crate::Tree,
         options: TreeMergeOptions,
-        cancel: &std::sync::atomic::AtomicBool,
+        cancel: &'a std::sync::atomic::AtomicBool,
+        driver: Option<&'a mut (dyn TreeDriver + 'd)>,
     ) -> Result<TreeMerge, RenameError> {
+        // Earlier steps own their generated objects; only this step's normalization trees need
+        // to be repeated in its result. Lookup maps remain available for later comparisons.
+        self.0.order.clear();
         self.0.trees.insert(empty.id(), empty);
-        let result = renames::merge_with_memory(objects, roots, options, cancel, &mut self.0)?;
+        let result = renames::merge_with_memory_and_driver(
+            objects,
+            roots,
+            options,
+            cancel,
+            &mut self.0,
+            driver,
+        )?;
         for tree in &result.trees {
             self.0.trees.insert(tree.id(), tree.clone());
         }

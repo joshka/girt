@@ -51,8 +51,13 @@
 use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicBool;
 
+mod autosquash;
+pub use autosquash::AutosquashError;
 mod rebase;
+pub mod todo;
+mod todo_execute;
 pub use rebase::{Rebase, RebaseError, RebaseOptions, RebasedCommit};
+pub use todo_execute::{HookError, TodoExecutionError, TodoHooks, TodoRun, TodoStop};
 
 use crate::merge::{TreeMerge, TreeMergeOptions};
 use crate::{Commit, ObjectId, Objects, Signature};
@@ -169,7 +174,14 @@ impl Objects {
         options: Options,
         cancel: &AtomicBool,
     ) -> Result<Replay, Error> {
-        self.replay(source, destination, committer, options, cancel, false)
+        self.replay(
+            [source, destination],
+            committer,
+            options,
+            cancel,
+            false,
+            None,
+        )
     }
 
     /// Computes the inverse of a commit, using the supplied identity as author and committer.
@@ -191,18 +203,81 @@ impl Objects {
         options: Options,
         cancel: &AtomicBool,
     ) -> Result<Replay, Error> {
-        self.replay(source, destination, committer, options, cancel, true)
+        self.replay(
+            [source, destination],
+            committer,
+            options,
+            cancel,
+            true,
+            None,
+        )
     }
 
-    fn replay(
+    /// Computes cherry-pick with caller-owned per-path attribute/content policy.
+    ///
+    /// Uses [`Self::cherry_pick`]'s metadata, bounds and publication contract. No attribute
+    /// snapshot or external process is selected implicitly; driver side effects remain
+    /// caller-owned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`], preserving content-driver failures through the merge error source.
+    pub fn cherry_pick_with_driver(
         &self,
         source: ObjectId,
         destination: ObjectId,
         committer: Signature,
         options: Options,
         cancel: &AtomicBool,
-        reverse: bool,
+        driver: &mut dyn crate::merge::TreeDriver,
     ) -> Result<Replay, Error> {
+        self.replay(
+            [source, destination],
+            committer,
+            options,
+            cancel,
+            false,
+            Some(driver),
+        )
+    }
+
+    /// Computes revert with caller-owned per-path attribute/content policy.
+    ///
+    /// Uses [`Self::revert`]'s metadata, bounds and publication contract. Driver inputs use the
+    /// reversed base/side roles; callback side effects remain caller-owned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`], retaining original path-driver failures as merge error sources.
+    pub fn revert_with_driver(
+        &self,
+        source: ObjectId,
+        destination: ObjectId,
+        committer: Signature,
+        options: Options,
+        cancel: &AtomicBool,
+        driver: &mut dyn crate::merge::TreeDriver,
+    ) -> Result<Replay, Error> {
+        self.replay(
+            [source, destination],
+            committer,
+            options,
+            cancel,
+            true,
+            Some(driver),
+        )
+    }
+
+    fn replay(
+        &self,
+        tips: [ObjectId; 2],
+        committer: Signature,
+        options: Options,
+        cancel: &AtomicBool,
+        reverse: bool,
+        driver: Option<&mut dyn crate::merge::TreeDriver>,
+    ) -> Result<Replay, Error> {
+        let [source, destination] = tips;
         let original = self.read_commit(source)?;
         let onto = self.read_commit(destination)?;
         let operation = Operation {
@@ -213,7 +288,12 @@ impl Objects {
             options,
             reverse,
         };
-        operation.compute(self, cancel, &mut crate::merge::ReplayTrees::default())
+        operation.compute(
+            self,
+            cancel,
+            &mut crate::merge::ReplayTrees::default(),
+            driver,
+        )
     }
 }
 
@@ -227,11 +307,12 @@ struct Operation<'a> {
 }
 
 impl Operation<'_> {
-    fn compute(
+    fn compute<'a, 'd>(
         self,
-        objects: &Objects,
-        cancel: &AtomicBool,
-        memory: &mut crate::merge::ReplayTrees,
+        objects: &'a Objects,
+        cancel: &'a AtomicBool,
+        memory: &'a mut crate::merge::ReplayTrees,
+        driver: Option<&'a mut (dyn crate::merge::TreeDriver + 'd)>,
     ) -> Result<Replay, Error> {
         let Self {
             source,
@@ -271,6 +352,7 @@ impl Operation<'_> {
             empty,
             options.trees,
             cancel,
+            driver,
         )?;
         let empty_kind = if originally_empty {
             EmptyKind::Original
@@ -348,10 +430,53 @@ fn replay_message(
             while message.last() == Some(&b'\n') {
                 message.pop();
             }
-            message.extend_from_slice(
-                format!("\n\n(cherry picked from commit {source})\n").as_bytes(),
-            );
+            let separator: &[u8] = if has_trailer_footer(&message) {
+                b"\n"
+            } else {
+                b"\n\n"
+            };
+            message.extend_from_slice(separator);
+            message.extend_from_slice(format!("(cherry picked from commit {source})\n").as_bytes());
         }
         message
     }
+}
+
+// Git's default footer convention keeps provenance beside trailers. Configuration-specific
+// trailer tokens and message cleanup remain caller policy.
+fn has_trailer_footer(message: &[u8]) -> bool {
+    let Some(start) = message.windows(2).rposition(|bytes| bytes == b"\n\n") else {
+        return false;
+    };
+    let paragraph = &message[start + 2..];
+    let mut lines = 0usize;
+    let mut trailers = 0usize;
+    let mut known = false;
+    let mut continuation = false;
+    for line in paragraph.split(|&b| b == b'\n') {
+        lines += 1;
+        if line.starts_with(b" ") || line.starts_with(b"\t") {
+            if continuation {
+                trailers += 1;
+            }
+            continue;
+        }
+        let cherry = line.starts_with(b"(cherry picked from commit ") && line.ends_with(b")");
+        let colon = line.iter().position(|&b| b == b':');
+        let trailer = colon.is_some_and(|colon| {
+            colon > 0
+                && line[..colon]
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+        });
+        continuation = trailer || cherry;
+        if continuation {
+            trailers += 1;
+        }
+        known |= cherry
+            || line
+                .get(..14)
+                .is_some_and(|token| token.eq_ignore_ascii_case(b"Signed-off-by:"));
+    }
+    trailers == lines || (known && trailers.saturating_mul(4) >= lines)
 }

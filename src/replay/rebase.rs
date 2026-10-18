@@ -93,45 +93,85 @@ impl Objects {
         options: RebaseOptions,
         cancel: &AtomicBool,
     ) -> Result<Rebase, RebaseError> {
-        if commits.len() > options.max_commits {
-            return Err(RebaseError::Limit);
-        }
-        let mut current: Commit = self.read_commit(onto)?;
-        let mut memory = crate::merge::ReplayTrees::default();
-        let mut result = Rebase {
-            onto,
-            tip: onto,
-            completed: Vec::new(),
-            stopped: None,
-        };
-        for &source in commits {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(RebaseError::Cancelled);
-            }
-            let original = self.read_commit(source)?;
-            let operation = Operation {
-                source,
-                original: &original,
-                onto: &current,
-                committer: committer.clone(),
-                options: options.replay,
-                reverse: false,
-            };
-            let replay = operation.compute(self, cancel, &mut memory)?;
-            if matches!(replay.status, Status::Conflicted | Status::Empty(_)) {
-                result.stopped = Some(replay);
-                return Ok(result);
-            }
-            if let Some(commit) = &replay.commit {
-                current = commit.clone();
-            }
-            result.tip = current.id();
-            result.completed.push(RebasedCommit {
-                source,
-                destination: result.tip,
-                replay,
-            });
-        }
-        Ok(result)
+        run_rebase(self, commits, onto, committer, options, cancel, None)
     }
+
+    /// Replays a sequence with the same caller-owned content driver at every step.
+    ///
+    /// Uses [`Self::rebase`]'s explicit range, metadata, progress and publication contracts. Driver
+    /// snapshots and side effects remain caller-owned; no attributes or processes run implicitly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RebaseError`], retaining path-driver failures in the replay error source chain.
+    pub fn rebase_with_driver(
+        &self,
+        commits: &[ObjectId],
+        onto: ObjectId,
+        committer: Signature,
+        options: RebaseOptions,
+        cancel: &AtomicBool,
+        driver: &mut dyn crate::merge::TreeDriver,
+    ) -> Result<Rebase, RebaseError> {
+        run_rebase(
+            self,
+            commits,
+            onto,
+            committer,
+            options,
+            cancel,
+            Some(driver),
+        )
+    }
+}
+
+fn run_rebase<'a, 'd>(
+    objects: &'a Objects,
+    commits: &[ObjectId],
+    onto: ObjectId,
+    committer: Signature,
+    options: RebaseOptions,
+    cancel: &'a AtomicBool,
+    mut driver: Option<&'a mut (dyn crate::merge::TreeDriver + 'd)>,
+) -> Result<Rebase, RebaseError> {
+    if commits.len() > options.max_commits {
+        return Err(RebaseError::Limit);
+    }
+    let mut current: Commit = objects.read_commit(onto)?;
+    let mut memory = crate::merge::ReplayTrees::default();
+    let mut result = Rebase {
+        onto,
+        tip: onto,
+        completed: Vec::new(),
+        stopped: None,
+    };
+    for &source in commits {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(RebaseError::Cancelled);
+        }
+        let original = objects.read_commit(source)?;
+        let operation = Operation {
+            source,
+            original: &original,
+            onto: &current,
+            committer: committer.clone(),
+            options: options.replay,
+            reverse: false,
+        };
+        let replay = operation.compute(objects, cancel, &mut memory, driver.as_deref_mut())?;
+        if matches!(replay.status, Status::Conflicted | Status::Empty(_)) {
+            result.stopped = Some(replay);
+            return Ok(result);
+        }
+        if let Some(commit) = &replay.commit {
+            current = commit.clone();
+        }
+        result.tip = current.id();
+        result.completed.push(RebasedCommit {
+            source,
+            destination: result.tip,
+            replay,
+        });
+    }
+    Ok(result)
 }
