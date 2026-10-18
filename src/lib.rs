@@ -171,6 +171,7 @@ extern crate self as girt;
 mod pack_git;
 
 pub mod attributes;
+pub mod bitmap;
 pub mod blame;
 mod bytes;
 pub mod checkout;
