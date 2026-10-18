@@ -47,6 +47,7 @@ pub struct MultiPackIndex<'a> {
     offsets: &'a [u8],
     large: Option<&'a [u8]>,
     bases: usize,
+    order: Option<&'a [u8]>,
 }
 
 /// Input and derived-allocation bounds checked before parsing tables.
@@ -230,6 +231,7 @@ impl<'a> MultiPackIndex<'a> {
             offsets,
             large,
             bases: usize::from(bytes[7]),
+            order: chunks.get(b"RIDX").copied(),
         };
         index.validate_objects(fanout)?;
         if let Some(order) = chunks.get(b"RIDX") {
@@ -302,6 +304,23 @@ impl<'a> MultiPackIndex<'a> {
         None
     }
 
+    pub(crate) fn bitmap_inventory(&self) -> Option<(Vec<ObjectId>, Option<Vec<usize>>)> {
+        let ids = self
+            .ids
+            .chunks(self.format.digest_len())
+            .map(|bytes| ObjectId::from_bytes(self.format, bytes).ok())
+            .collect::<Option<Vec<_>>>()?;
+        let positions = self.order.map(|order| {
+            order
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|row| u32::from_be_bytes(*row) as usize)
+                .collect()
+        });
+        Some((ids, positions))
+    }
+
     pub(crate) fn verify_entries(
         &self,
         packs: &[&std::sync::Arc<crate::pack::FilePack>],
@@ -320,7 +339,7 @@ impl<'a> MultiPackIndex<'a> {
         Ok(())
     }
 
-    fn location(&self, position: usize) -> Result<Location, Error> {
+    pub(crate) fn location(&self, position: usize) -> Result<Location, Error> {
         let row = position * 8;
         let pack = word(self.offsets, row)?;
         let offset = word(self.offsets, row + 4)?;

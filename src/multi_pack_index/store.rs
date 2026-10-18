@@ -130,6 +130,7 @@ impl Layer {
 
     pub(crate) fn find(&self, id: ObjectId, packs: &[Arc<FilePack>]) -> Option<(usize, usize)> {
         let parsed = MultiPackIndex {
+            order: None,
             format: self.format,
             names: Vec::new(),
             ids: self.bytes.get(self.ids.clone())?,

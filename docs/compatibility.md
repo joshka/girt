@@ -46,8 +46,16 @@ multi-pack indexes. Git CLI fixtures compare decoded type maps and selected-comm
 index order. Git-written optional name-hash caches and lookup tables are accepted. XOR dependencies
 are decoded under an expansion budget. Unsupported pseudo-merge extensions are refused explicitly.
 
+`Objects::reachable_difference` compares include-minus-exclude object sets with Git for branched
+SHA-1 and SHA-256 histories, pack bitmaps, and MIDX bitmaps spanning multiple packs. Zero walk-byte
+fixtures prove covered roots use bitmaps. Corrupt sidecars, zero metadata-work budgets, uncovered
+loose tips, missing roots, independent closure limits, tag/tree/blob roots, skipped gitlinks and
+shallow boundaries are covered by `tests/bitmaps.rs`. Packed file handles remain pinned in results.
+
 Checksums and structure establish association with an inventory, not the truth of graph
-reachability claims. Repository queries and bitmap writing remain tracked in
+reachability claims. Forced walking provides an independent graph result. Reusing verified bindings
+across queries is tracked in [the bitmap cache issue](https://github.com/joshka/girt/issues/717). Incremental MIDX and
+alternate-store bitmap acceleration, pseudo-merges and bitmap writing remain tracked in
 [the bitmap issue](https://github.com/joshka/girt/issues/518). See [the reader guide](bitmaps.md).
 
 ## Multi-pack indexes
