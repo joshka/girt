@@ -4184,3 +4184,12 @@ Addition/deletion cases exercise null identities; exhausted delta work produces 
 blocks. A small literal fixture compares encoded bytes with Git at a fixed compression level. Base85
 vectors and cancellation checks cover the encoder independently. Compression and delta selection are
 not promised to match Git for every input or compression backend version.
+
+### Patch mail framing
+
+`tests/format_patch.rs` compares complete mail bytes with isolated Git at fixed dates in both object
+formats. Cases cover quoted author names, multiline and long subjects, RFC 2047 UTF-8 encoding and
+folding, signatures, numbering, prefixes, explicit bases and positive/negative time-zone offsets.
+The formatter takes caller-prepared patch and diffstat artifacts; commit selection, cover letters
+and storage composition are separate operations. Unit tests check metadata/output admission, header
+injection, invalid positions and cancellation without returning a partial artifact.
