@@ -47,6 +47,10 @@ pub struct CloneOptions {
     /// activation policy is honored; unlike Git's CLI, this never appends
     /// `submodule.active=.`.
     pub submodules: Option<crate::submodule::RecursionOptions>,
+
+    /// Object filter for a partial clone, like `git clone --filter`; `None` clones every object.
+    /// See [`Self::with_filter`].
+    pub filter: Option<crate::fetch::ObjectFilter>,
 }
 
 impl Default for CloneOptions {
@@ -60,6 +64,7 @@ impl Default for CloneOptions {
             checkout_limits: crate::checkout::Limits::default(),
             filter_commands: Some(crate::filter::Commands::Run),
             submodules: None,
+            filter: None,
         }
     }
 }
@@ -96,6 +101,41 @@ impl CloneOptions {
         submodules: Option<crate::submodule::RecursionOptions>,
     ) -> Self {
         self.submodules = submodules;
+        self
+    }
+
+    /// Makes a partial clone that leaves out the objects `filter` matches, like
+    /// `git clone --filter`.
+    ///
+    /// The clone records `origin` as a promisor remote; see [`CloneRequest::with_filter`] for the
+    /// configuration and `.promisor` markers it writes. [`CloneOutcome::filter_applied`] reports
+    /// whether the server applied the filter. Local paths and `file://` URLs are read directly
+    /// and send every object, so the filter never applies to them. Git ignores `--filter` for a
+    /// local path too, but applies it to a `file://` URL.
+    ///
+    /// Object reads never fetch. When a checkout is requested, [`clone_with`] therefore takes an
+    /// explicit extra step before checking out: it lists the blobs the selected commit's tree
+    /// needs that the clone lacks, and fetches them in one batch with [`fetch_promised`], into a
+    /// second promisor pack. Git fetches the same blobs during its checkout.
+    /// [`CloneOutcome::promised`] reports that fetch. Bare and no-checkout clones fetch nothing
+    /// more. Afterwards every library read, including a later checkout, still treats a promised
+    /// object as absent; call [`fetch_promised`] for the objects an operation needs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::fetch::ObjectFilter;
+    /// use girt::workflow::CloneOptions;
+    ///
+    /// // Commits and trees now; only the checked-out files' contents later.
+    /// let blobless = CloneOptions::default().with_filter(ObjectFilter::BlobNone);
+    /// # let _ = blobless;
+    /// ```
+    ///
+    /// [`fetch_promised`]: super::fetch_promised
+    #[must_use]
+    pub fn with_filter(mut self, filter: crate::fetch::ObjectFilter) -> Self {
+        self.filter = Some(filter);
         self
     }
 
@@ -140,6 +180,15 @@ pub struct CloneOutcome {
 
     /// Completed recursive child population when explicitly requested.
     pub submodules: Option<crate::submodule::RecursiveReport>,
+
+    /// The server applied [`CloneOptions::filter`], so the clone is missing promised objects.
+    /// `false` without a filter, for local sources, and when the server doesn't support filters;
+    /// Git warns "filtering not recognized by server, ignoring" there.
+    pub filter_applied: bool,
+
+    /// Blobs fetched for checkout after a filtered clone; see [`CloneOptions::with_filter`].
+    /// `None` when no filter was set or no checkout ran.
+    pub promised: Option<super::PromisorFetch>,
 }
 
 /// Clone failure, preserving core publication and checkout effects for recovery.
@@ -201,6 +250,17 @@ pub enum CloneError {
         /// Checkout effects and failure stage. No automatic rollback or deletion occurs.
         #[source]
         source: Box<crate::checkout::Failure>,
+    },
+    /// A filtered clone completed, but fetching the blobs its checkout needs failed. No files
+    /// were checked out; packs fetched before the failure stay installed.
+    #[error("clone completed but fetching the files to check out failed")]
+    FetchPromised {
+        /// Completed clone, with HEAD and promisor configuration already published.
+        report: Box<CloneReport>,
+
+        /// Fetch failure.
+        #[source]
+        source: Box<TransferError>,
     },
 }
 
@@ -337,6 +397,10 @@ pub fn clone_with(
             options.selection.clone(),
             Reflog::Preserve,
         )
+        .map(|request| match &options.filter {
+            Some(filter) => request.with_filter(filter.clone()),
+            None => request,
+        })
     };
     // Check collisions before connecting, including in the HTTP retry path.
     let prepared = request()?;
@@ -445,6 +509,7 @@ pub fn clone_with(
                 })
         }
     }?;
+    let filter_applied = ready.received().filter_applied();
     let integrity = ready
         .received()
         .enforce_fsck(&config, crate::fsck::Scope::Fetch, &base, &cancel)
@@ -464,6 +529,21 @@ pub fn clone_with(
             });
         }
     }
+    let promised = match fetch_checkout_blobs(&report, options, environment, callbacks) {
+        Ok(promised) => promised,
+        Err(PrefetchError::Read(source)) => {
+            return Err(CloneError::Read {
+                report: Box::new(report),
+                source,
+            });
+        }
+        Err(PrefetchError::Fetch(source)) => {
+            return Err(CloneError::FetchPromised {
+                report: Box::new(report),
+                source: Box::new(source),
+            });
+        }
+    };
     let checkout = checkout(&report, options, environment, &cancel, callbacks);
     match checkout {
         Ok(checkout) => {
@@ -471,6 +551,8 @@ pub fn clone_with(
                 clone: report,
                 checkout,
                 submodules: None,
+                filter_applied,
+                promised,
             };
             if let Some(policy) = &options.submodules {
                 // An unborn remote has no checked-out index or submodules to traverse.
@@ -512,6 +594,95 @@ pub fn clone_with(
 enum CheckoutError {
     Read(crate::Error),
     Checkout(crate::checkout::Failure),
+}
+
+enum PrefetchError {
+    Read(crate::Error),
+    Fetch(TransferError),
+}
+
+/// The commit a checkout of this clone would materialize, if any.
+fn checkout_commit(report: &CloneReport, options: &CloneOptions) -> Option<crate::ObjectId> {
+    if !options.checkout || matches!(options.kind, InitKind::Bare) {
+        return None;
+    }
+    match report.head {
+        CloneHead::Branch { id, .. } | CloneHead::Detached(id) => Some(id),
+        _ => None,
+    }
+}
+
+/// Fetches, in explicit batches, the trees and blobs a filtered clone's checkout reads but lacks.
+///
+/// Missing trees are fetched first, a level at a time, because a blob list needs them; with a
+/// `blob:none` filter there are none, and the blobs go in one batch. Gitlinks name commits in
+/// other repositories and are skipped.
+fn fetch_checkout_blobs(
+    report: &CloneReport,
+    options: &CloneOptions,
+    environment: &Environment,
+    callbacks: &mut dyn TransferCallbacks,
+) -> Result<Option<super::PromisorFetch>, PrefetchError> {
+    if options.filter.is_none() {
+        return Ok(None);
+    }
+    let Some(commit) = checkout_commit(report, options) else {
+        return Ok(None);
+    };
+    let repository = report
+        .repository
+        .as_ref()
+        .ok_or_else(|| read(std::io::Error::other("completed clone has no repository")))?;
+    let mut fetched = super::PromisorFetch::default();
+    fn read(error: impl Into<crate::Error>) -> PrefetchError {
+        PrefetchError::Read(error.into())
+    }
+    let root = repository
+        .objects()
+        .map_err(read)?
+        .read_commit(commit)
+        .map_err(read)?
+        .tree();
+    let mut trees = vec![root];
+    let mut blobs = Vec::new();
+    while !trees.is_empty() {
+        let objects = repository.objects().map_err(read)?;
+        let mut missing = Vec::new();
+        for &id in &trees {
+            if !objects.contains(id).map_err(read)? {
+                missing.push(id);
+            }
+        }
+        if !missing.is_empty() {
+            let report = super::fetch_promised(repository, &missing, environment, callbacks)
+                .map_err(PrefetchError::Fetch)?;
+            fetched.fetched.extend(report.fetched);
+            continue;
+        }
+        let mut next = Vec::new();
+        for id in trees.drain(..) {
+            let tree = objects.read_tree(id).map_err(read)?;
+            for entry in tree.entries() {
+                match entry.mode {
+                    crate::EntryMode::Tree => next.push(entry.id),
+                    crate::EntryMode::Gitlink => {}
+                    _ => {
+                        if !objects.contains(entry.id).map_err(read)? {
+                            blobs.push(entry.id);
+                        }
+                    }
+                }
+            }
+        }
+        trees = next;
+    }
+    if !blobs.is_empty() {
+        let report = super::fetch_promised(repository, &blobs, environment, callbacks)
+            .map_err(PrefetchError::Fetch)?;
+        fetched.fetched.extend(report.fetched);
+        fetched.already_present.extend(report.already_present);
+    }
+    Ok(Some(fetched))
 }
 
 fn checkout(

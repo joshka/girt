@@ -36,6 +36,17 @@ HEAD -> refs/heads/main 7ed7a0cc68995713f52d973e6adfd3d9e667324f
 If the transfer succeeds and the checkout fails, the clone is kept and girt says so, so you can fix
 the cause and run `girt -C <dir> checkout HEAD` instead of downloading again.
 
+`--filter=<spec>` makes a partial clone, as in Git: `--filter=blob:none` downloads commits and trees
+but no file contents, and records `origin` as a promisor. Before checking out, girt fetches the
+checked-out files' contents in one batch; with `--no-checkout` it fetches nothing more. Afterwards,
+only the `girt object` commands fetch a missing object when they read it, as Git's commands do.
+Other commands, such as a later `girt checkout` of a `--no-checkout` partial clone, fail on missing
+objects. A server that doesn't allow filters sends everything, with Git's warning
+`filtering not recognized by server, ignoring`. Git ignores `--filter` for a plain local path and
+says so; girt does the same. Unlike Git, girt also reads `file://` URLs directly, so they send every
+object too. Repeated `--filter` values combine, so `--filter=blob:none --filter=tree:0` records
+`combine:blob:none+tree:0`, and `--no-filter` discards earlier `--filter` values.
+
 ## Download from a remote (`girt fetch`)
 
 <Example cmd="fetch">
@@ -53,6 +64,10 @@ $ girt fetch
 ```
 
 </Example>
+
+In a partial clone, fetch keeps using the remote's `partialclonefilter`. `--filter=<spec>` sets a
+filter and, like Git, makes the remote a promisor if it wasn't; `--no-filter` fetches every object
+for this fetch and leaves the configuration alone.
 
 Unlike Git, fetch doesn't follow tags automatically. A non-fast-forward update is refused unless the
 refspec allows it with a leading `+`. Interactive password and SSH prompts aren't available, and

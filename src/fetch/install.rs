@@ -89,6 +89,9 @@ pub struct ReceivedFetch {
     /// The pack came from a promisor remote, so installation publishes a `.promisor` marker even
     /// when no filter applied.
     promisor: bool,
+    /// The `.promisor` marker lists the advertised tips as `<id> <name>` lines, as Git's clone
+    /// writes them.
+    promisor_refs: bool,
 }
 
 pub(crate) enum PackInput<'a> {
@@ -163,6 +166,7 @@ impl ReceivedFetch {
             verified: Default::default(),
             filter_applied: false,
             promisor: false,
+            promisor_refs: false,
         }
     }
 
@@ -186,6 +190,7 @@ impl ReceivedFetch {
             verified: Default::default(),
             filter_applied: false,
             promisor: false,
+            promisor_refs: false,
         }
     }
 
@@ -357,6 +362,7 @@ impl ReceivedFetch {
             limits,
             filter_applied: filter.is_some(),
             promisor: explicit_wants,
+            promisor_refs: false,
         };
         observer.complete();
         Ok(received)
@@ -415,6 +421,30 @@ impl ReceivedFetch {
     /// marker.
     pub fn filter_applied(&self) -> bool {
         self.filter_applied
+    }
+
+    /// Marks a filtered clone's pack as a promisor pack, even when the server ignored the filter,
+    /// and lists the advertised tips in its marker, as `git clone --filter` does.
+    pub(crate) fn mark_clone_promisor(&mut self) {
+        self.promisor = true;
+        self.promisor_refs = true;
+    }
+
+    /// The `.promisor` marker's contents: empty, or one `<id> <name>` line per advertised tip.
+    fn promisor_lines(&self) -> Vec<u8> {
+        let mut lines = Vec::new();
+        if !self.promisor_refs {
+            return lines;
+        }
+        for reference in &self.advertisement.refs {
+            if reference.kind == super::AdvertisementKind::Tip {
+                lines.extend_from_slice(reference.id.to_string().as_bytes());
+                lines.push(b' ');
+                lines.extend_from_slice(reference.name.as_bytes());
+                lines.push(b'\n');
+            }
+        }
+        lines
     }
 
     /// Publishes the validated pack and index without replacing any existing artifact.
@@ -639,7 +669,7 @@ impl ReceivedFetch {
             if self.filter_applied || self.promisor {
                 // Readers treat objects missing from a promisor pack's closure as promised, so the
                 // marker must exist before the pack becomes visible.
-                publish_promisor(&basename.with_extension("promisor"))?;
+                publish_promisor(&basename.with_extension("promisor"), &self.promisor_lines())?;
             }
             publish(
                 pack,
@@ -700,14 +730,18 @@ pub struct FetchInstalled {
     pub objects: usize,
 }
 
-/// Creates an empty `.promisor` marker, or keeps an existing one from an identical earlier pack.
-fn publish_promisor(path: &Path) -> Result<(), FetchError> {
+/// Creates a `.promisor` marker holding `contents`, or keeps an existing one from an identical
+/// earlier pack.
+fn publish_promisor(path: &Path, contents: &[u8]) -> Result<(), FetchError> {
     match fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
     {
-        Ok(file) => Ok(file.sync_all()?),
+        Ok(mut file) => {
+            file.write_all(contents)?;
+            Ok(file.sync_all()?)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             if fs::symlink_metadata(path)?.is_file() {
                 Ok(())

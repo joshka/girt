@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{self, Write};
 
 use super::CloneHead;
+use crate::fetch::ObjectFilter;
 use crate::repository::initial_config;
 use crate::{InitKind, ObjectFormat, Repository};
 
@@ -10,13 +11,35 @@ pub(super) fn contents(
     format: ObjectFormat,
     url: &[u8],
     head: &CloneHead,
+    filter: Option<&ObjectFilter>,
 ) -> Vec<u8> {
     let mut bytes = initial_config(kind, format);
+    if filter.is_some() {
+        // A partial clone needs version 1 so older Git refuses it rather than misreading it.
+        let version = b"repositoryformatversion = 0";
+        if let Some(at) = bytes.windows(version.len()).position(|w| w == version) {
+            bytes[at + version.len() - 1] = b'1';
+        }
+    }
     bytes.extend_from_slice(b"[remote \"origin\"]\n\turl = ");
     quoted(&mut bytes, url);
     bytes.extend_from_slice(
         b"\n\tfetch = refs/heads/*:refs/remotes/origin/*\n\tfetch = refs/tags/*:refs/tags/*\n",
     );
+    if let Some(filter) = filter {
+        bytes.extend_from_slice(b"\tpromisor = true\n\tpartialclonefilter = ");
+        let spec = filter.to_string();
+        // Specs are usually plain, as Git writes them; quote anything a reader could misparse.
+        if spec
+            .bytes()
+            .all(|b| b.is_ascii_graphic() && !b"\"\\#;".contains(&b))
+        {
+            bytes.extend_from_slice(spec.as_bytes());
+        } else {
+            quoted(&mut bytes, spec.as_bytes());
+        }
+        bytes.push(b'\n');
+    }
     if let CloneHead::Branch { name, .. } | CloneHead::Unborn(name) = head {
         bytes.extend_from_slice(b"[branch ");
         quoted(&mut bytes, &name.as_bytes()[b"refs/heads/".len()..]);
@@ -83,11 +106,37 @@ mod tests {
     fn preserves_quoted_url_bytes_and_branch_configuration() {
         let url = b" /repo/\"quote\\tab\tline\n\xff ";
         let head = CloneHead::Unborn(RefName::new("refs/heads/topic").unwrap());
-        let bytes = contents(InitKind::Worktree, ObjectFormat::Sha1, url, &head);
+        let bytes = contents(InitKind::Worktree, ObjectFormat::Sha1, url, &head, None);
         let config = Config::parse(&bytes).unwrap();
         let remote = Remote::find(&config, b"origin").unwrap().unwrap();
         assert_eq!(remote.fetch_url(), Some(url.as_slice()));
         assert_eq!(remote.fetch_refspecs().specs().len(), 2);
+    }
+
+    #[test]
+    fn filter_records_a_promisor_remote() {
+        let head = CloneHead::Unborn(RefName::new("refs/heads/main").unwrap());
+        let filter = ObjectFilter::BlobNone;
+        let bytes = contents(
+            InitKind::Worktree,
+            ObjectFormat::Sha1,
+            b"/repo",
+            &head,
+            Some(&filter),
+        );
+        let config = Config::parse(&bytes).unwrap();
+        assert_eq!(
+            config.integer("core", None, "repositoryformatversion"),
+            Ok(Some(1))
+        );
+        assert_eq!(
+            config.boolean("remote", Some(b"origin"), "promisor"),
+            Ok(Some(true))
+        );
+        assert_eq!(
+            config.string("remote", Some(b"origin"), "partialclonefilter"),
+            Some(b"blob:none".as_slice())
+        );
     }
 
     #[test]

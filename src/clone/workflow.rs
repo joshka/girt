@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::{BranchSelection, CloneHead, ClonePlan, ClonePlanError, config, plan};
 use crate::fetch::{
     Advertisement, FetchError, FetchFinishError, FetchLimits, FetchPlanError, FetchReady,
-    FetchReport, FetchRequest, FetchUpdateLimits, ReceivedFetch,
+    FetchReport, FetchRequest, FetchUpdateLimits, ObjectFilter, ReceivedFetch,
 };
 use crate::refs::{Expected, RefEdit, RefEditOutcome, RefName, Reflog, Target};
 use crate::transport::TransportControl;
@@ -88,6 +88,7 @@ pub struct CloneRequest {
     url: Vec<u8>,
     pub(super) selection: BranchSelection,
     reflog: Reflog,
+    pub(super) filter: Option<ObjectFilter>,
 }
 
 impl std::fmt::Debug for CloneRequest {
@@ -96,6 +97,7 @@ impl std::fmt::Debug for CloneRequest {
             .field("destination", &self.destination)
             .field("kind", &self.kind)
             .field("selection", &self.selection)
+            .field("filter", &self.filter)
             .finish_non_exhaustive()
     }
 }
@@ -137,7 +139,55 @@ impl CloneRequest {
             url: url.to_vec(),
             selection,
             reflog,
+            filter: None,
         })
+    }
+
+    /// Asks the remote to leave out the objects `filter` matches, like `git clone --filter`.
+    ///
+    /// [`CloneReady::finish`] records `origin` as a promisor remote whatever the transfer did, as
+    /// Git does: it writes `remote.origin.promisor = true` and
+    /// `remote.origin.partialclonefilter = <spec>`, and sets `core.repositoryformatversion` to 1.
+    /// A pack received over upload-pack (the custom, HTTP and SSH receive paths) gets a
+    /// `.promisor` marker listing the advertised tips, even when the server ignored the filter.
+    /// [`ReceivedFetch::filter_applied`] reports whether it applied it.
+    ///
+    /// Local receives ([`Self::receive_local`]) and bundles read every object directly, so they
+    /// ignore the filter and the pack is complete. Git also ignores `--filter` for a plain local
+    /// path, but applies it to a `file://` URL, which girt reads directly too.
+    ///
+    /// No objects are written to a working tree here. A filtered clone's checkout needs the blobs
+    /// the filter left out; [`crate::workflow::clone_with`] fetches them explicitly first.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::InitKind;
+    /// use girt::clone::{BranchSelection, CloneRequest};
+    /// use girt::fetch::ObjectFilter;
+    /// use girt::refs::Reflog;
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let request = CloneRequest::prepare_tracking(
+    ///     directory.path().join("clone"),
+    ///     InitKind::Bare,
+    ///     b"https://example.com/project.git",
+    ///     BranchSelection::Default,
+    ///     Reflog::Preserve,
+    /// )?
+    /// .with_filter(ObjectFilter::BlobNone);
+    /// assert_eq!(request.filter(), Some(&ObjectFilter::BlobNone));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn with_filter(mut self, filter: ObjectFilter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
+    /// The object filter set with [`Self::with_filter`], if any.
+    pub fn filter(&self) -> Option<&ObjectFilter> {
+        self.filter.as_ref()
     }
 
     /// Previews HEAD and mappings without I/O. Receive always replans from its own advertisement.
@@ -441,6 +491,7 @@ impl CloneReady {
             repo.object_format(),
             &self.request.url,
             &self.head,
+            self.request.filter.as_ref(),
         );
         config::publish(&repo, self.request.kind, &bytes).map_err(CloneFailure::Configuration)?;
         report.configured = true;
