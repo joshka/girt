@@ -95,17 +95,33 @@ impl CommitGraph {
                 commit_time: time,
                 generation: 0,
                 corrected_commit_date: None,
-                bloom: None,
             });
             index += 1;
         }
         set_generations(&mut commits, &positions)?;
         commits.sort_unstable_by_key(|record| record.id);
-        Ok(Self {
-            commits,
-            format: objects.object_format(),
-            history: super::history::HistoryIndex::default(),
-        })
+
+        // Graphs are read from file bytes, so encode the records and check them like a file.
+        let format = objects.object_format();
+        let positions: IdMap<u32> = commits
+            .iter()
+            .enumerate()
+            .map(|(position, record)| {
+                u32::try_from(position)
+                    .ok()
+                    .filter(|position| *position < 0x70000000)
+                    .map(|position| (record.id, position))
+                    .ok_or(bad("commit positions"))
+            })
+            .collect::<Result<_, _>>()?;
+        let records: Vec<_> = commits.iter().collect();
+        let bytes = encode_records(format, &records, &positions, &[])?;
+        let limits = GraphLimits {
+            max_commits: usize::MAX,
+            max_parents: usize::MAX,
+            ..GraphLimits::default()
+        };
+        Ok(Self::parse_owned(bytes, format, limits)?)
     }
 
     /// Encodes a standalone graph with generation v1/v2 and no Bloom filters.
@@ -155,7 +171,7 @@ impl CommitGraph {
             hashes.extend_from_slice(&bytes[bytes.len() - self.format.digest_len()..]);
         }
         let mut new = Vec::new();
-        for record in &self.commits {
+        for record in self.commits() {
             if let Some(old) = base.get(record.id) {
                 if old.tree != record.tree
                     || old.parents != record.parents
@@ -246,7 +262,7 @@ fn set_generations(
     Ok(())
 }
 
-fn encode_records(
+pub(super) fn encode_records(
     format: ObjectFormat,
     commits: &[&GraphCommit],
     positions: &IdMap<u32>,

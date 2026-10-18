@@ -25,6 +25,8 @@ def main():
     parser.add_argument("base")
     parser.add_argument("--rounds", type=int, default=5)
     parser.add_argument("--before", type=Path, help="compare indexed before/after harnesses")
+    parser.add_argument("--max-load", type=float, default=12,
+                        help="refuse to start at or above this one-minute load; rows record load")
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error("rounds must be positive")
@@ -69,14 +71,14 @@ def main():
         metadata["before_harness_sha256"] = hashlib.sha256(args.before.read_bytes()).hexdigest()
         metadata["A"] = "indexed before"
         metadata["B"] = "indexed after"
-    if os.getloadavg()[0] >= 12:
-        raise SystemExit("one-minute load is not below 12; no lock taken")
+    if os.getloadavg()[0] >= args.max_load:
+        raise SystemExit(f"one-minute load is not below {args.max_load}; no lock taken")
     lock = Path("/tmp/girt-timing.lock")
     acquired = subprocess.run(["shlock", "-f", str(lock), "-p", str(os.getpid())])
     if acquired.returncode:
         raise SystemExit("timing lock is busy")
     try:
-        if os.getloadavg()[0] >= 12:
+        if os.getloadavg()[0] >= args.max_load:
             raise SystemExit("load rose before timing; releasing lock")
         print(json.dumps(dict(metadata, load_start=os.getloadavg())), flush=True)
         rows = []

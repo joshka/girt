@@ -66,7 +66,7 @@ impl CommitGraph {
     ) -> Result<Option<Self>, GraphLoadError> {
         let info = object_dir.join("info");
         if let Some(bytes) = read_optional(&info.join("commit-graph"), limits.max_bytes)? {
-            return Ok(Some(Self::parse_with(&bytes, format, limits)?));
+            return Ok(Some(Self::parse_owned(bytes, format, limits)?));
         }
         let directory = info.join("commit-graphs");
         let manifest_limit = 256 * (format.digest_len() * 2 + 1);
@@ -101,8 +101,7 @@ impl CommitGraph {
         if layers.is_empty() {
             return Err(bad("empty chain").into());
         }
-        let slices: Vec<_> = layers.iter().map(Vec::as_slice).collect();
-        Ok(Some(Self::parse_chain_with(&slices, format, limits)?))
+        Ok(Some(Self::parse_chain_owned(layers, format, limits)?))
     }
 
     /// Checks each indexed tree, ordered parent list and committer date against verified objects.
