@@ -1,6 +1,6 @@
 ---
 title: Working with submodules
-description: Read submodule definitions and inspect existing checkouts without fetching or changing them.
+description: Inspect submodules and plan initialization or updates without fetching or changing checkouts.
 ---
 
 A submodule stores a commit ID as a gitlink (tree mode `160000`) in its parent repository. The
@@ -110,5 +110,52 @@ as clean; [issue 688](https://github.com/joshka/girt/issues/688) tracks an expli
 Regular-file replacements are type changes, subject to `ignore=all`. Symlink replacements are
 refused, as Git itself refuses them.
 
-Initialization, checkout updates and clone recursion remain unsupported. Track those operations in
+## Plan initialization and updates
+
+Select definitions corresponding to the parent's gitlinks. `Definition::plan_init` compares one
+selected definition against an explicit effective config snapshot and proposes local assignments.
+Pass the chosen superproject remote; the planner does not select a default remote or read ambient
+configuration. Existing URL/update settings survive, explicit metadata update settings are copied,
+and an inactive definition receives `active=true`, including one with an existing URL.
+
+```rust
+use girt::{Config, config::Document, submodule::Modules};
+
+let modules = Modules::parse(
+    b"[submodule \"math\"]\npath = vendor/math\nurl = ../math.git\nupdate = checkout\n",
+)?;
+let effective = Config::parse(b"")?;
+let plan = modules.get(b"math").unwrap().plan_init(
+    &effective, b"https://example.com/team/parent.git",
+)?;
+let mut draft = Document::parse(b"")?;
+for (key, value) in plan.settings() {
+    draft.append("submodule", Some(plan.name()), key, value)?;
+}
+assert_eq!(draft.config().string("submodule", Some(b"math"), "update"), Some(b"checkout".as_slice()));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The example changes an in-memory document. For a repository write, acquire
+`Repository::edit_config`, recheck effective settings under caller exclusion, append to its
+document, commit, and reopen the repository. Plans are observations rather than publication
+preconditions; they do not provide a multi-source configuration transaction. Attribute-dependent
+activation pathspecs are explicitly refused because this pure planner performs no attribute lookup;
+[issue 695](https://github.com/joshka/girt/issues/695) tracks an explicit lookup input.
+
+`Definition::plan_update` requires an initialized effective URL and the recorded commit selected
+from the parent index. It preserves that target and selects checkout, rebase, merge, none, or an
+explicit external command. Checkout means detached HEAD; branch-following updates are separate. The
+planner does not fetch, check object availability, validate child cleanliness or write files.
+
+External `!command` methods in `.gitmodules` are always rejected during parsing, regardless of
+permission. User-supplied methods require resolved configuration provenance and separate
+`submodule::Commands::Run` permission. System/global/local/worktree/environment/command scopes are
+eligible only because the caller explicitly selected them. Parsed bytes without provenance return
+`PlanError::UntrustedCommand`, while denied permission returns `PlanError::CommandRefused`. Choosing
+a config source is a trust decision; assigning a scope does not prove a file is trusted. Plans
+execute no shell command. Avoid logging URLs and command text, which can contain credentials.
+
+Initialization execution, checkout updates and clone recursion remain unsupported. Track those
+operations in
 [the submodules issue](https://github.com/joshka/girt/issues/507).

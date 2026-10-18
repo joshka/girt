@@ -129,6 +129,17 @@ supplies recorded IDs; it does not depend on or recheck the parent HEAD. Configu
 retains its index and HEAD rechecks after nested inspection. File/configuration observations are not
 atomic.
 
+`tests/submodule_plans.rs` compares proposed init assignments with Git init in both object formats,
+including explicit/default update methods, existing URL/update values, false/true activation and
+activation pathspecs. Isolated Git invocations execute custom update methods from local, global,
+command-line and environment configuration, while rejecting `.gitmodules` commands with exit 128.
+Separate tests check library-only acceptance of system/worktree command provenance,
+missing-provenance refusal, independent command permission and preservation of the caller's recorded
+target. System/worktree command execution has not been compared with Git. Attribute-dependent
+activation is explicitly refused. Plans do not execute initialization, transport or checkout; those
+operations remain tracked in
+[issue 507](https://github.com/joshka/girt/issues/507).
+
 ## Mailmap
 
 `tests/mailmap_git.rs` compares original temporary maps with the installed Git executable's
