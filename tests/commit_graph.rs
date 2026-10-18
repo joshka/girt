@@ -203,3 +203,152 @@ fn dated_commit(
         .parse()
         .unwrap()
 }
+
+#[rstest]
+fn indexed_history_matches_git_and_keeps_budgets(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(
+        &[vec![], vec![0], vec![0], vec![1, 2], vec![2, 1]],
+        false,
+        format,
+    );
+    let graph = CommitGraph::parse(&graph(&h, "2"), format).unwrap();
+    let objects = h.objects().with_commit_graph(graph).unwrap();
+    let mut walked = objects.walk(&[h.ids[3], h.ids[4]]).unwrap();
+    walked.sort();
+    assert_eq!(walked, h.query("rev-list", &[h.ids[3], h.ids[4]]));
+    assert_eq!(
+        objects.merge_bases(h.ids[3], h.ids[4]).unwrap(),
+        h.query("merge-base", &[h.ids[3], h.ids[4]])
+    );
+    assert!(objects.is_ancestor(h.ids[0], h.ids[3]).unwrap());
+    assert!(!objects.is_ancestor(h.ids[3], h.ids[4]).unwrap());
+    assert!(
+        objects
+            .walk_with(
+                &[h.ids[3]],
+                girt::HistoryLimits::default().with_max_commits(1)
+            )
+            .is_err()
+    );
+    assert!(
+        objects
+            .walk_with(
+                &[h.ids[3]],
+                girt::HistoryLimits::default().with_max_parents(0)
+            )
+            .is_err()
+    );
+    let mut range = objects.walk_range(&[h.ids[3]], &[h.ids[1]]).unwrap();
+    range.sort();
+    assert_eq!(
+        range,
+        vec![h.ids[2], h.ids[3]]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+    );
+}
+
+#[rstest]
+fn partial_index_falls_back_to_objects(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![], vec![0], vec![1]], false, format);
+    git(
+        h.root.path(),
+        &["commit-graph", "write", "--stdin-commits"],
+        format!("{}\n", h.ids[0]).as_bytes(),
+    );
+    let graph = CommitGraph::open(&h.root.path().join("objects"), format)
+        .unwrap()
+        .unwrap();
+    assert_eq!(graph.commits().len(), 1);
+    assert_eq!(
+        h.objects()
+            .with_commit_graph(graph)
+            .unwrap()
+            .walk(&[h.ids[2]])
+            .unwrap(),
+        vec![h.ids[2], h.ids[1], h.ids[0]]
+    );
+}
+
+#[rstest]
+#[case::tip_excluded(vec![4], vec![4])]
+#[case::near_tip(vec![4], vec![3])]
+#[case::side_branch(vec![3], vec![2])]
+#[case::multiple_roots(vec![3,4], vec![1])]
+#[case::duplicate_roots(vec![4,4], vec![2,2])]
+#[case::no_excludes(vec![4], vec![])]
+fn indexed_range_matches_git(
+    #[case] include: Vec<usize>,
+    #[case] exclude: Vec<usize>,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("1", "2")] version: &str,
+) {
+    let h = History::with_format(
+        &[vec![], vec![0], vec![0], vec![1, 2], vec![3]],
+        false,
+        format,
+    );
+    let graph = CommitGraph::parse(&graph(&h, version), format).unwrap();
+    let objects = h.objects().with_commit_graph(graph).unwrap();
+    let include: Vec<_> = include.iter().map(|i| h.ids[*i]).collect();
+    let exclude: Vec<_> = exclude.iter().map(|i| h.ids[*i]).collect();
+    let mut actual = objects.walk_range(&include, &exclude).unwrap();
+    actual.sort();
+    let mut args = vec!["rev-list".to_owned()];
+    args.extend(include.iter().map(ToString::to_string));
+    args.extend(exclude.iter().map(|id| format!("^{id}")));
+    let args: Vec<_> = args.iter().map(String::as_str).collect();
+    let output = git(h.root.path(), &args, b"");
+    let mut expected: Vec<girt::ObjectId> = std::str::from_utf8(&output)
+        .unwrap()
+        .lines()
+        .map(|s| s.parse().unwrap())
+        .collect();
+    expected.sort();
+    assert_eq!(actual, expected);
+}
+
+#[rstest]
+fn indexed_near_tip_queries_stop_before_old_history(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![], vec![0], vec![1], vec![2], vec![3]], false, format);
+    let graph = CommitGraph::parse(&graph(&h, "2"), format).unwrap();
+    let objects = h.objects().with_commit_graph(graph).unwrap();
+    let limits = girt::HistoryLimits::default()
+        .with_max_commits(2)
+        .with_max_parents(1);
+    assert_eq!(
+        objects
+            .walk_range_with(&[h.ids[4]], &[h.ids[3]], limits)
+            .unwrap(),
+        vec![h.ids[4]]
+    );
+    assert!(
+        objects
+            .is_ancestor_with(h.ids[3], h.ids[4], limits)
+            .unwrap()
+    );
+}
+
+#[rstest]
+fn indexed_shallow_boundaries_override_parents(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![], vec![0], vec![1]], false, format);
+    let graph = CommitGraph::parse(&graph(&h, "2"), format).unwrap();
+    std::fs::write(h.root.path().join("shallow"), format!("{}\n", h.ids[1])).unwrap();
+    let objects = h.objects().with_commit_graph(graph).unwrap();
+    assert_eq!(objects.walk(&[h.ids[2]]).unwrap(), vec![h.ids[2], h.ids[1]]);
+    assert!(!objects.is_ancestor(h.ids[0], h.ids[2]).unwrap());
+    assert_eq!(
+        objects.walk_range(&[h.ids[2]], &[h.ids[1]]).unwrap(),
+        vec![h.ids[2]]
+    );
+}

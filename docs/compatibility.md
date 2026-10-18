@@ -249,8 +249,12 @@ Unknown chunks are ignored. Split chains resolve global parent positions against
 identities and reject missing, reordered or duplicate layers. Repository loading honors
 `core.commitGraph`; malformed indexes return errors so callers can use objects instead. Explicit
 `CommitGraph::verify` checks trees, ordered parents and committer dates against object reads. It
-does not validate generation equations. History queries do not yet consume this metadata, and Bloom
-filters are not used.
+does not validate generation equations. Callers can explicitly attach a graph to `Objects` to reuse
+metadata for walks and merge bases. Attachment checks closed, acyclic ancestry; range and ancestry
+pruning additionally require a strict corrected-date or topological-generation order. Unknown
+coverage or generation order uses full traversal. Indexed queries preserve shallow boundaries and
+commit/parent bounds; per-object read limits apply to fallback reads. Repository object readers do
+not enable this trust policy automatically. Bloom filters are not used.
 
 `tests/commit_graph.rs` generates original histories using the installed Git executable, writes both
 generation versions with `git commit-graph write --reachable`, runs `git commit-graph verify`, and
