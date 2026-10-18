@@ -828,3 +828,176 @@ fn distinguishes_worktree_and_file_byte_limits(
         None => assert!(result.unwrap().unstaged.is_empty()),
     }
 }
+
+/// Git accepts Unicode paths on macOS where raw status and checkout explicitly refuse them.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_unicode_worktree_paths_are_explicitly_refused() {
+    let (_root, repo) = fixture_in(ObjectFormat::Sha1);
+    let root = repo.worktree().unwrap();
+    fs::write(root.join("café.txt"), b"unicode path\n").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-m", "unicode audit"]);
+    assert!(git(root, &["status", "--porcelain=v1", "-z"]).is_empty());
+    let result = repo.raw_status_with(
+        Baseline::Head,
+        Untracked::RawFilesWithoutIgnores,
+        Limits::default(),
+        &AtomicBool::new(false),
+    );
+    assert!(matches!(
+        result,
+        Err(girt::status::Error::Unsupported { .. })
+    ));
+    let tree: ObjectId = std::str::from_utf8(&git(root, &["rev-parse", "HEAD^{tree}"]))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    git(root, &["read-tree", "-m", "-u", "HEAD", "HEAD"]);
+    assert!(
+        repo.checkout_tree_with(
+            Some(tree),
+            Some(tree),
+            girt::checkout::Limits::default(),
+            &AtomicBool::new(false)
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(root.join("café.txt")).unwrap(), b"unicode path\n");
+}
+
+/// Git reports intent-to-add as an unstaged addition; girt currently refuses the index flag.
+#[test]
+fn intent_to_add_status_is_explicitly_refused() {
+    let (_root, repo) = fixture_in(ObjectFormat::Sha1);
+    let root = repo.worktree().unwrap();
+    fs::write(root.join("intent"), b"intent audit\n").unwrap();
+    git(root, &["add", "--intent-to-add", "intent"]);
+    assert_eq!(
+        git(root, &["status", "--porcelain=v1", "-z"]),
+        b" A intent\0"
+    );
+    assert!(matches!(
+        repo.raw_status_with(
+            Baseline::Head,
+            Untracked::RawFilesWithoutIgnores,
+            Limits::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::status::Error::Unsupported { .. })
+    ));
+}
+
+/// Raw status does not apply Git's configured executable-bit override.
+#[test]
+fn configured_filemode_override_is_not_applied() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_root, repo) = fixture_in(ObjectFormat::Sha1);
+    seed(&repo, Some(b"same"), Some(b"same"), Some(b"same"));
+    let root = repo.worktree().unwrap();
+    fs::set_permissions(root.join("file"), fs::Permissions::from_mode(0o755)).unwrap();
+    git(root, &["config", "core.filemode", "false"]);
+    let repo = Repository::open(root).unwrap();
+    assert!(
+        git(
+            root,
+            &[
+                "-c",
+                "core.filemode=false",
+                "status",
+                "--porcelain=v1",
+                "-z"
+            ]
+        )
+        .is_empty()
+    );
+    assert_eq!(status(&repo).unstaged.len(), 1);
+}
+
+/// Git can represent a symlink as an ordinary file when core.symlinks is false.
+#[test]
+fn configured_symlink_override_is_not_applied() {
+    let (_root, repo) = fixture_in(ObjectFormat::Sha1);
+    let root = repo.worktree().unwrap();
+    symlink("target", root.join("file")).unwrap();
+    git(root, &["add", "file"]);
+    git(root, &["commit", "-m", "symlink policy audit"]);
+    fs::remove_file(root.join("file")).unwrap();
+    fs::write(root.join("file"), b"target").unwrap();
+    git(root, &["config", "core.symlinks", "false"]);
+    let repo = Repository::open(root).unwrap();
+    assert!(
+        git(
+            root,
+            &[
+                "-c",
+                "core.symlinks=false",
+                "status",
+                "--porcelain=v1",
+                "-z"
+            ]
+        )
+        .is_empty()
+    );
+    assert_eq!(status(&repo).unstaged.len(), 1);
+}
+
+/// Git treats an unambiguous case alias as the same path when core.ignoreCase is true.
+#[cfg(target_os = "macos")]
+#[test]
+fn case_alias_status_requires_git_policy() {
+    let (_root, repo) = fixture_in(ObjectFormat::Sha1);
+    seed(&repo, Some(b"same"), Some(b"same"), Some(b"same"));
+    let root = repo.worktree().unwrap();
+    fs::rename(root.join("file"), root.join("FILE")).unwrap();
+    if !root.join("file").exists() {
+        return;
+    }
+    assert!(
+        git(
+            root,
+            &[
+                "-c",
+                "core.ignorecase=true",
+                "status",
+                "--porcelain=v1",
+                "-z"
+            ]
+        )
+        .is_empty()
+    );
+    git(root, &["config", "core.ignorecase", "true"]);
+    let repo = Repository::open(root).unwrap();
+    let observation = repo.raw_status_with(
+        Baseline::Head,
+        Untracked::RawFilesWithoutIgnores,
+        Limits::default(),
+        &AtomicBool::new(false),
+    );
+    let observation = observation.unwrap();
+    assert_eq!(observation.unstaged.len(), 1);
+    assert_eq!(observation.raw_untracked, [b"FILE".to_vec()]);
+}
+
+/// These names are valid POSIX/Git paths but raw traversal refuses their portable ambiguity.
+#[rstest]
+#[case::colon("colon:name")]
+#[case::backslash("back\\slash")]
+fn valid_posix_path_characters_are_explicitly_refused(#[case] path: &str) {
+    let (_root, repo) = fixture_in(ObjectFormat::Sha1);
+    let root = repo.worktree().unwrap();
+    fs::write(root.join(path), b"path audit\n").unwrap();
+    git(root, &["add", "--", path]);
+    git(root, &["commit", "-m", "path audit"]);
+    assert!(git(root, &["status", "--porcelain=v1", "-z"]).is_empty());
+    assert!(matches!(
+        repo.raw_status_with(
+            Baseline::Head,
+            Untracked::RawFilesWithoutIgnores,
+            Limits::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::status::Error::Unsupported { .. })
+    ));
+}

@@ -50,7 +50,7 @@ where you work on a thousand, the index stays small.
 Some operations need every path, such as a merge that touches skipped directories. They **expand**
 the sparse entries back into full entries by reading the trees first.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/500">Sparse directory entries can be read and expanded; no sparse-checkout patterns, and checkout refuses skip-worktree entries.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/500">Sparse directory entries can be read and expanded; no sparse-checkout patterns, and status/checkout refuse skip-worktree entries.</GirtStatus>
 
 ## Status
 
@@ -70,7 +70,7 @@ A full status also has to apply the same [filters](/girt/how-git-works/combining
 checkout used, such as line-ending conversion, before comparing contents, or every converted file
 looks modified.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">No attributes, filters or line-ending conversion (#496), no pathspec limiting ([#495](https://github.com/joshka/girt/issues/495)), and no untracked cache or fsmonitor ([#519](https://github.com/joshka/girt/issues/519)); macOS and Linux only.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/534">macOS/Linux only. No filters, pathspecs or monitor caches; refuses sparse/intent-to-add flags and some valid paths, and lacks Git policy for assume-unchanged, executable bits, symlink placeholders and path-case identity. The tracker links each gap.</GirtStatus>
 
 ## Ignore rules
 
@@ -88,7 +88,7 @@ surprises people: a file inside an excluded directory can't be re-included, beca
 inside excluded directories at all. Ignore rules only affect untracked files; a tracked file stays
 tracked whatever `.gitignore` says. `git check-ignore -v path` shows which rule matched.
 
-<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/ignore/index.html" />
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/555">Patterns and precedence match Git; named-user home paths in `core.excludesFile` are refused.</GirtStatus>
 
 ## Checkout of a tree
 
@@ -102,4 +102,4 @@ its work so a failure halfway, such as a full disk or a file another program hol
 state that can be recovered rather than a mix of two commits. Directory and file swaps (`a` was a
 file, now it is a directory), symbolic links and executable bits add more cases.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/501">macOS and Linux only; no filters; refuses skip-worktree and intent-to-add entries.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/501">macOS and Linux only; no filters; refuses skip-worktree and intent-to-add entries, non-ASCII macOS paths ([#556](https://github.com/joshka/girt/issues/556)) and some valid POSIX names ([#583](https://github.com/joshka/girt/issues/583)); no symlink placeholders ([#578](https://github.com/joshka/girt/issues/578)).</GirtStatus>

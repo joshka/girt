@@ -101,6 +101,53 @@ histories. Merge bases and ancestry remain Supported. History walks remain parti
 `rev-list --topo-order` emits the child first. The current eager walk offers neither date nor
 topological ordering; range exclusion can traverse the whole excluded history.
 
+## Git Capability Audit: Working Tree
+
+`tests/index.rs` compares Git-generated index versions, conflict stages, cache-tree, split-index,
+resolve-undo and sparse-directory entries. `sparse_pattern_modes_preserve_git_skip_flags` adds cone
+and non-cone patterns in both formats: girt preserves Git's skip-worktree flags and leaves excluded
+files absent. Index format support remains Supported; applying sparse policy remains partial under
+[issue 500](https://github.com/joshka/girt/issues/500).
+
+`tests/status.rs` compares staged/unstaged changes, symlink changes and racy stat data with Git.
+`tests/status_ignore.rs` compares per-directory rules, configured sources, parent exclusion and case
+folding; `tests/ignore.rs` compares individual glob decisions with `check-ignore`.
+`tests/checkout.rs` compares written files, modes, index and subsequent Git operations. Existing
+filter, pathspec, monitor-cache and checkout restrictions remain tracked by
+[issue 496](https://github.com/joshka/girt/issues/496),
+[issue 495](https://github.com/joshka/girt/issues/495),
+[issue 519](https://github.com/joshka/girt/issues/519) and
+[issue 501](https://github.com/joshka/girt/issues/501).
+
+The status summary also needs Git-compatible index and configuration policy. The new
+`intent_to_add_status_is_explicitly_refused` comparison records Git's unstaged-addition result
+versus girt's refusal ([issue 576](https://github.com/joshka/girt/issues/576)). Cone and non-cone
+fixtures produce clean Git status but are refused by girt because of skip-worktree flags
+([issue 500](https://github.com/joshka/girt/issues/500)). Existing
+`assume_valid_does_not_claim_unverified_content_is_clean` records Git omitting a change that girt
+reports ([issue 579](https://github.com/joshka/girt/issues/579)). New configured comparisons show
+executable-bit differences under `core.fileMode=false`
+([issue 577](https://github.com/joshka/girt/issues/577)) and placeholder symlinks under
+`core.symlinks=false` ([issue 578](https://github.com/joshka/girt/issues/578)); the checkout
+comparison also verifies Git writing a regular placeholder where girt writes a real symlink.
+
+`case_alias_status_requires_git_policy` records a clean Git result under `core.ignoreCase=true`
+where girt reports a deletion and untracked case alias on the same case-insensitive filesystem
+([issue 584](https://github.com/joshka/girt/issues/584)).
+`valid_posix_path_characters_are_explicitly_refused` records clean Git status for colon/backslash
+names where girt refuses traversal ([issue 583](https://github.com/joshka/girt/issues/583)). These
+comparisons distinguish the raw API's documented policy from a future Git-compatible workflow; they
+do not authorize changing its existing contract implicitly.
+
+Two additional comparisons use Git 2.56.0 on macOS.
+`existing_user_home_excludes_are_a_git_compatibility_gap` shows that Git expands a real named user's
+home for `core.excludesFile` even when `HOME` differs, while girt refuses it
+([issue 555](https://github.com/joshka/girt/issues/555)); ignore rules are therefore Partial.
+`macos_unicode_worktree_paths_are_explicitly_refused` shows clean Git status and successful tree
+checkout for a Unicode filename where girt refuses both operations without changing content
+([issue 556](https://github.com/joshka/girt/issues/556)). Status and checkout remain Partial, with
+this filesystem restriction added to their stated gaps.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger
