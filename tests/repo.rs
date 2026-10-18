@@ -639,3 +639,59 @@ fn status_uses_captured_environment_ignores_and_collapsed_directories() {
     assert!(raw.raw_untracked.contains(&b"locally-ignored".to_vec()));
     assert!(raw.raw_untracked.contains(&b"globally-ignored".to_vec()));
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn status_and_switch_run_filter_programs_unless_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "filter.up.clean", "tr a-z A-Z"]);
+    git(root, &["config", "filter.up.smudge", "tr A-Z a-z"]);
+    git(root, &["config", "core.attributesFile", "absent"]);
+    std::fs::write(root.join(".gitattributes"), "*.u filter=up\n").unwrap();
+    std::fs::write(root.join("a.u"), b"one\n").unwrap();
+    git(root, &["add", "."]);
+    git(
+        root,
+        &[
+            "-c",
+            "user.name=W",
+            "-c",
+            "user.email=w@e",
+            "commit",
+            "-q",
+            "-m",
+            "one",
+        ],
+    );
+    git(root, &["branch", "next"]);
+    std::fs::write(root.join("a.u"), b"two\n").unwrap();
+    git(root, &["add", "."]);
+    git(
+        root,
+        &[
+            "-c",
+            "user.name=W",
+            "-c",
+            "user.email=w@e",
+            "commit",
+            "-q",
+            "-m",
+            "two",
+        ],
+    );
+    // Stored content is upper case; the working file is lower case.
+    let open = || {
+        Repo::new(Repository::open(root).unwrap())
+            .with_environment(environment().with("GIT_ATTR_NOSYSTEM", "1"))
+    };
+    let mut repo = open();
+    repo.switch("next").unwrap();
+    assert_eq!(std::fs::read(root.join("a.u")).unwrap(), b"one\n");
+    assert!(repo.status().unwrap().unstaged.is_empty());
+
+    let refused = open().with_filter_commands(girt::filter::Commands::Refuse);
+    let error = refused.status().unwrap_err();
+    assert!(format!("{error:?}").contains("Refused"), "{error:?}");
+}

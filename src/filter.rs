@@ -578,6 +578,14 @@ impl Pipeline {
         self.settings
     }
 
+    /// Replaces the configuration, for example to hash content without `core.safecrlf` as
+    /// `git hash-object` does when it does not write the object.
+    #[must_use]
+    pub fn with_settings(mut self, settings: Settings) -> Self {
+        self.settings = settings;
+        self
+    }
+
     fn get(&mut self, path: &[u8], name: &[u8]) -> Result<State<'_>, Error> {
         match &mut self.rules {
             Rules::Lookup(lookup) => Ok(lookup.get(path, name)?),

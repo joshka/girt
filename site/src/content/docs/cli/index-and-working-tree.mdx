@@ -52,10 +52,13 @@ A  new.txt
 
 </Example>
 
-Status compares raw bytes. It applies no clean or smudge filters, no line-ending conversion, no
-`core.filemode` or `core.symlinks` policy and no rename detection, so a repository that relies on
-any of those can show changes Git wouldn't. On macOS, non-ASCII working-tree paths are refused for
-now.
+Status converts working files as Git does before comparing them: line endings, `ident`,
+`working-tree-encoding` and filter programs such as Git LFS, configured in local or global config
+and chosen per path by `.gitattributes`. `--refuse-filter-commands` fails instead of running a
+filter program, and `--raw` compares literal bytes; see
+[Line endings and filters](/girt/guides/filters/). It applies no `core.filemode` or `core.symlinks`
+policy and no rename detection, so a repository that relies on those can show changes Git wouldn't.
+On macOS, non-ASCII working-tree paths are refused for now.
 
 ## Explain ignore rules (`girt ignore check`)
 
@@ -97,10 +100,10 @@ installed 1, removed 0, created 0 directories, removed 0 directories
 Checkout updates the working tree from a known starting point, `--from`, which defaults to `HEAD`.
 That baseline must match the index and working tree exactly: girt refuses to run over dirty, staged
 or conflicted paths rather than overwrite them. After a `clone --no-checkout`, where there is no
-index yet, the baseline is empty. Content is written raw, without filters or line-ending conversion,
-and on macOS non-ASCII paths are refused, as in status. Split and sparse indexes, resolve-undo data
-and unknown index extensions are refused; the derived caches (`TREE`, `FSMN`, `UNTR`, `EOIE`,
-`IEOT`) are dropped for Git to rebuild.
+index yet, the baseline is empty. Files are converted as in status, with the same `--raw` and
+`--refuse-filter-commands` options, and on macOS non-ASCII paths are refused, as in status. Split
+and sparse indexes, resolve-undo data and unknown index extensions are refused; the derived caches
+(`TREE`, `FSMN`, `UNTR`, `EOIE`, `IEOT`) are dropped for Git to rebuild.
 
 ## Manage linked worktrees (`girt worktree`)
 

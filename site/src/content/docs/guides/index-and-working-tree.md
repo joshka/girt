@@ -13,8 +13,9 @@ writing a file does not stage it, and changing the index does not write a workin
 Use girt's raw operations when your application decides how bytes are normalized and how the
 filesystem is treated. They preserve literal content and POSIX modes, and they do not apply
 attributes, clean/smudge filters, EOL conversion, ignore rules, or configuration overrides for
-executable bits and symlinks. Status and checkout support Linux and macOS; macOS requires ASCII
-paths. Windows traversal is unsupported.
+executable bits and symlinks; [Line endings and filters](/girt/guides/filters/) covers the
+converting variants. Status and checkout support Linux and macOS; macOS requires ASCII paths.
+Windows traversal is unsupported.
 
 ## Stage bytes deliberately
 
