@@ -1460,9 +1460,10 @@ as Git refuses it. A mixed reset keeps the cached stat data of unchanged entries
 
 Deliberate differences: girt locks HEAD's branch before writing anything, so a locked branch fails
 with nothing written, where Git has already published `ORIG_HEAD` and the index; and a failure to
-write `ORIG_HEAD` stops the reset before anything else changes, where Git warns and continues.
-Commit resets refuse reftable repositories for now, because Git keeps `ORIG_HEAD` and `AUTO_MERGE`
-in the reference table there.
+write `ORIG_HEAD` stops the reset before HEAD moves, where Git warns and continues. girt writes
+`ORIG_HEAD` after the index and working files, so a refused or failed working-tree update leaves it
+unchanged. Commit resets refuse reftable repositories for now, because Git keeps `ORIG_HEAD` and
+`AUTO_MERGE` in the reference table there.
 
 Observed with the Git CLI and matched: every commit reset, including one to the current commit,
 writes `ORIG_HEAD` and a `reset: moving to <revision>` reflog entry; path resets write neither and
@@ -1476,10 +1477,25 @@ replacing an untracked file where the target has a file or needs a directory, ke
 whose attributes change while its blob does not, a hard reset on a branch with no commits
 (`Repository::reset_unborn`), and resetting out of a conflicted merge to a commit with a mode
 change. Hard resets go through checkout's discard policy, so they share its path, symlink and
-platform rules (Linux and macOS). Two deliberate differences: Git deletes an untracked directory,
-with its contents, where the target has a file, while girt refuses before changing any working file;
-and girt leaves directories emptied by removed files in place, as its checkout does, where Git
-removes them.
+platform rules (Linux and macOS). Directories that removing tracked files leaves empty are removed,
+as Git removes them, and a directory that still holds an untracked file stays. One deliberate
+difference remains: where the target has a file and the working tree has an untracked directory, Git
+deletes the directory with its contents, while girt replaces it only when it holds nothing but empty
+directories and otherwise refuses, naming an untracked file inside, before changing any working
+file. An explicit opt-in could add Git's behaviour later; it is never the default.
+
+`ResetMode::Keep` and `ResetMode::Merge` are compared with `git reset --keep` and
+`git reset --merge`, case by case: a clean tree, a deleted file (restored), an unstaged edit, a
+staged change equal to the target (with and without a later edit, which stays), a different staged
+change, an untracked file in the way, an intent-to-add entry and an unrelated conflict. When Git
+refuses, girt refuses with nothing written; otherwise every observable matches. Keep rewrites the
+files that differ between HEAD and the target and whose staged version differs from the target,
+refusing a staged change, a modified file or any conflict; merge rewrites every file whose staged
+version differs from the target, discarding staged changes and resetting conflicted files, refusing
+a modified file. Both refuse untracked files in the way. Whether a file is clean is decided by the
+checkout from the same observation it later rechecks before writing, so an edit racing the reset is
+refused rather than overwritten. On a branch with no commits a keep reset is refused and a merge
+reset removes the tracked files unless one has unstaged changes, as Git does.
 
 ## Describe
 

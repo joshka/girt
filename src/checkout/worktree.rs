@@ -21,14 +21,32 @@ use crate::{EntryMode, ObjectId, ObjectKind, Repository, TreeValue, index};
 
 type Leaves = BTreeMap<Vec<u8>, TreeValue>;
 
+/// The refusal reason for a file whose local changes a selective discard would overwrite.
+pub(crate) const LOCAL_CHANGES: &str = "local changes would be overwritten";
+
+/// A discarding checkout limited to some paths, as `git reset --keep` and `--merge` need.
+pub(crate) struct Selection<'a> {
+    /// The only paths read or written; every other file is left alone.
+    pub(crate) paths: &'a BTreeSet<Vec<u8>>,
+    /// Paths whose working file must still match its index entry, checked against the files
+    /// this checkout observes; a modified one is refused with [`LOCAL_CHANGES`]. A missing file
+    /// is restored.
+    pub(crate) clean: &'a BTreeSet<Vec<u8>>,
+    /// The index to publish, for the whole target.
+    pub(crate) replacement: &'a [index::Entry],
+}
+
 /// What checkout does with local changes to tracked paths.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Local {
     /// Refuse staged, conflicted or modified tracked paths; the baseline must match exactly.
     Refuse,
     /// Discard them, as `git reset --hard` does: every path in the current index, at any stage,
-    /// is replaced or removed whatever its content, missing tracked files are restored, and an
-    /// untracked file where the target needs a file is replaced. The baseline tree is unused.
+    /// is replaced or removed whatever its content, missing tracked files are restored, an
+    /// untracked file where the target needs a file or a directory is replaced, and directories
+    /// left empty are removed. An untracked directory where the target needs a file is replaced
+    /// only when it holds nothing but empty directories; Git deletes untracked contents too. The
+    /// baseline tree is unused.
     Discard,
 }
 type Hook<'a> = dyn FnMut(&str, &[u8]) -> Result<(), Error> + 'a;
@@ -72,6 +90,7 @@ pub(super) fn run_observed(
         None,
         filters,
         Local::Refuse,
+        None,
         limits,
         cancel,
         hook,
@@ -94,6 +113,7 @@ pub(crate) fn run_with_index(
         Some(entries),
         None,
         Local::Refuse,
+        None,
         limits,
         cancel,
         &mut |_, _| Ok(()),
@@ -116,6 +136,7 @@ pub(super) fn run_configured(
         None,
         None,
         Local::Refuse,
+        None,
         limits,
         cancel,
         &mut |_, _| Ok(()),
@@ -125,10 +146,14 @@ pub(super) fn run_configured(
 
 /// Checks out `target` over whatever the index and tracked files hold, as `git reset --hard`
 /// does; see [`Local::Discard`].
+///
+/// With a [`Selection`], files outside its paths are neither read nor written, untracked files
+/// in the way are refused rather than replaced, and the index is set to its replacement.
 pub(crate) fn run_discarding(
     repo: &Repository,
     target: Option<ObjectId>,
     filters: Option<&mut crate::filter::Pipeline>,
+    selection: Option<&Selection<'_>>,
     limits: Limits,
     cancel: &AtomicBool,
 ) -> Result<Report, Failure> {
@@ -141,9 +166,10 @@ pub(crate) fn run_discarding(
         repo,
         [None, target],
         symlinks,
-        None,
+        selection.map(|selection| selection.replacement),
         filters,
         Local::Discard,
+        selection,
         limits,
         cancel,
         &mut |_, _| Ok(()),
@@ -173,6 +199,7 @@ fn run_inner(
     replacement: Option<&[index::Entry]>,
     filters: Option<Filters<'_>>,
     local: Local,
+    selection: Option<&Selection<'_>>,
     limits: Limits,
     cancel: &AtomicBool,
     hook: &mut Hook<'_>,
@@ -205,6 +232,7 @@ fn run_inner(
             edit,
             filters,
             local,
+            selection,
             limits,
             cancel,
         )?;
@@ -309,6 +337,10 @@ struct Plan<'a> {
     /// With [`Local::Discard`], kept files holding the blob's raw bytes rather than the bytes the
     /// target's attributes would write; publication accepts them as they are.
     kept_raw: BTreeSet<Vec<u8>>,
+    /// Whether a [`Selection`] limits this discard.
+    selective: bool,
+    /// A selective discard's paths that must still match their index entries.
+    clean: BTreeSet<Vec<u8>>,
 }
 
 impl<'a> Plan<'a> {
@@ -321,17 +353,30 @@ impl<'a> Plan<'a> {
         edit: &mut index::IndexEdit,
         filters: Option<Filters<'_>>,
         local: Local,
+        selection: Option<&Selection<'_>>,
         mut limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
         let [baseline, target] = roots;
         let objects = repo.objects_with(limits.packs)?;
-        let target = flatten(&objects, target, limits, cancel)?;
+        let mut target = flatten(&objects, target, limits, cancel)?;
         let entries = edit.index().entries();
-        let old = match local {
+        let mut old = match local {
             Local::Refuse => flatten(&objects, baseline, limits, cancel)?,
             Local::Discard => tracked(entries, cancel)?,
         };
+        // A discarding checkout limited to some paths leaves every other file alone.
+        if let Some(selection) = selection {
+            old.retain(|path, _| selection.paths.contains(path));
+            target.retain(|path, _| selection.paths.contains(path));
+        }
+        // Old content is read only where a selective discard must prove a file clean.
+        let clean_old: Option<Leaves> = selection.map(|selection| {
+            old.iter()
+                .filter(|(path, _)| selection.clean.contains(*path))
+                .map(|(path, leaf)| (path.clone(), *leaf))
+                .collect()
+        });
         if local == Local::Refuse && entries.len() != old.len() {
             return Err(refused(b"", "index differs from explicit baseline"));
         }
@@ -406,12 +451,11 @@ impl<'a> Plan<'a> {
             }
         }
         let mut blobs = BTreeMap::new();
-        // Discarding never compares old content, so old blobs, which may be absent (as for
+        // A full discard never compares old content, so old blobs, which may be absent (as for
         // intent-to-add entries), are not read.
-        let compared = if local == Local::Refuse {
-            Some(&old)
-        } else {
-            None
+        let compared = match local {
+            Local::Refuse => Some(&old),
+            Local::Discard => clean_old.as_ref(),
         };
         for leaf in compared
             .into_iter()
@@ -461,35 +505,43 @@ impl<'a> Plan<'a> {
         let mut converted = [BTreeMap::new(), BTreeMap::new()];
         let mut unfiltered = Vec::new();
         if let Some(filters) = filters {
-            let sides = [
-                (Side::Baseline, &old, filters.baseline),
-                (Side::Target, &target, Some(filters.target)),
-            ];
+            // A selective discard proves old files clean with the target's conversion, as it has
+            // no baseline attributes.
+            let selective_old = clean_old.as_ref().filter(|_| local == Local::Discard);
+            let mut sides: Vec<(Side, &Leaves, &mut crate::filter::Pipeline)> = Vec::new();
+            if let (Local::Refuse, Some(baseline)) = (local, filters.baseline) {
+                sides.push((Side::Baseline, &old, baseline));
+            }
+            sides.push((Side::Target, &target, filters.target));
             for (side, leaves, pipeline) in sides {
-                let Some(pipeline) =
-                    pipeline.filter(|_| local == Local::Refuse || side == Side::Target)
-                else {
-                    continue;
-                };
-                for (path, leaf) in leaves {
-                    check(cancel)?;
-                    if leaf.mode == EntryMode::Symlink {
-                        continue;
-                    }
-                    let written = pipeline
-                        .to_worktree(path, &blobs[&leaf.id], leaf.id)
-                        .map_err(|source| Error::Filter {
-                            path: path.clone(),
-                            source: Box::new(source),
-                        })?;
-                    if (written.skipped.is_some() || written.unencoded) && side == Side::Target {
-                        unfiltered.push(path.clone());
-                    }
-                    if let std::borrow::Cow::Owned(bytes) = written.bytes {
-                        if bytes.len() > limits.max_file_bytes {
-                            return Err(Error::Limit("file bytes"));
+                let mut pass = vec![(side, leaves)];
+                if side == Side::Target
+                    && let Some(clean_old) = selective_old
+                {
+                    pass.push((Side::Baseline, clean_old));
+                }
+                for (side, leaves) in pass {
+                    for (path, leaf) in leaves {
+                        check(cancel)?;
+                        if leaf.mode == EntryMode::Symlink {
+                            continue;
                         }
-                        converted[side as usize].insert((path.clone(), leaf.id), bytes);
+                        let written = pipeline
+                            .to_worktree(path, &blobs[&leaf.id], leaf.id)
+                            .map_err(|source| Error::Filter {
+                                path: path.clone(),
+                                source: Box::new(source),
+                            })?;
+                        if (written.skipped.is_some() || written.unencoded) && side == Side::Target
+                        {
+                            unfiltered.push(path.clone());
+                        }
+                        if let std::borrow::Cow::Owned(bytes) = written.bytes {
+                            if bytes.len() > limits.max_file_bytes {
+                                return Err(Error::Limit("file bytes"));
+                            }
+                            converted[side as usize].insert((path.clone(), leaf.id), bytes);
+                        }
                     }
                 }
             }
@@ -549,6 +601,10 @@ impl<'a> Plan<'a> {
             dirty: BTreeSet::new(),
             missing: BTreeSet::new(),
             kept_raw: BTreeSet::new(),
+            selective: selection.is_some(),
+            clean: selection
+                .map(|selection| selection.clean.clone())
+                .unwrap_or_default(),
         };
         for path in paths {
             check(cancel)?;
@@ -609,26 +665,30 @@ impl<'a> Plan<'a> {
     /// untracked files where the target needs a file so they are replaced.
     fn observe_discarded(&mut self, cancel: &AtomicBool) -> Result<(), Error> {
         // Untracked files where the target needs a file or a directory are replaced, as Git
-        // replaces them; their adopted value is never compared.
-        let blocked: Vec<(Vec<u8>, TreeValue)> = self
-            .target
-            .iter()
-            .flat_map(|(path, leaf)| {
-                prefixes(path)
-                    .map(|prefix| prefix.to_vec())
-                    .map(move |prefix| (prefix, *leaf))
-            })
-            .filter(|(path, _)| !self.old.contains_key(path))
-            .filter(|(path, _)| {
-                self.expected
-                    .get(path)
-                    .copied()
-                    .flatten()
-                    .is_some_and(|stat| {
-                        matches!(kind(&stat), FileType::RegularFile | FileType::Symlink)
-                    })
-            })
-            .collect();
+        // replaces them in a hard reset; their adopted value is never compared. A selective
+        // discard refuses them instead, as Git's keep and merge resets do.
+        let blocked: Vec<(Vec<u8>, TreeValue)> = if self.selective {
+            Vec::new()
+        } else {
+            self.target
+                .iter()
+                .flat_map(|(path, leaf)| {
+                    prefixes(path)
+                        .map(|prefix| prefix.to_vec())
+                        .map(move |prefix| (prefix, *leaf))
+                })
+                .filter(|(path, _)| !self.old.contains_key(path))
+                .filter(|(path, _)| {
+                    self.expected
+                        .get(path)
+                        .copied()
+                        .flatten()
+                        .is_some_and(|stat| {
+                            matches!(kind(&stat), FileType::RegularFile | FileType::Symlink)
+                        })
+                })
+                .collect()
+        };
         for (path, leaf) in blocked {
             let value = TreeValue {
                 id: leaf.id,
@@ -648,6 +708,16 @@ impl<'a> Plan<'a> {
             match kind(&stat) {
                 FileType::RegularFile | FileType::Symlink => {}
                 _ => return Err(refused(&path, "tracked path is not a file or symlink")),
+            }
+            // This observation authorizes the overwrite: later steps recheck the same identity.
+            if self.clean.contains(&path) {
+                let parent = self.parent(&path, cancel)?;
+                if self
+                    .verify_leaf(Side::Baseline, &parent, &path, leaf, &mut budget, cancel)
+                    .is_err()
+                {
+                    return Err(refused(&path, LOCAL_CHANGES));
+                }
             }
             if self.dirty.contains(&path) || !self.target.contains_key(&path) {
                 continue;
@@ -697,8 +767,31 @@ impl<'a> Plan<'a> {
                 Some(stat) if kind(stat) == FileType::Directory && old_dirs.contains(path) => {
                     self.check_removable(path, &old_dirs, &mut remove_dirs, cancel)?;
                 }
+                // Discarding replaces an untracked directory in the way only when it holds
+                // nothing but empty directories; Git would delete untracked files too.
+                Some(stat)
+                    if kind(stat) == FileType::Directory
+                        && self.local == Local::Discard
+                        && !self.selective =>
+                {
+                    let mut empty = Vec::new();
+                    if let Some(untracked) = self.untracked_content(path, &mut empty, cancel)? {
+                        return Err(refused(
+                            &untracked,
+                            "untracked file in a directory where the target has a file",
+                        ));
+                    }
+                    for (directory, stat) in empty {
+                        self.expected.insert(directory.clone(), Some(stat));
+                        remove_dirs.insert(directory);
+                    }
+                    remove_dirs.insert(path.clone());
+                }
                 Some(_) => return Err(refused(path, "untracked obstruction")),
             }
+        }
+        if self.local == Local::Discard {
+            self.plan_emptied_directories(&old_dirs, &target_dirs, &mut remove_dirs, cancel)?;
         }
         let mut remove_dirs: Vec<_> = remove_dirs.into_iter().collect();
         remove_dirs.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
@@ -781,6 +874,117 @@ impl<'a> Plan<'a> {
             }
         }
         Ok(())
+    }
+
+    /// With [`Local::Discard`], removes directories that removing old files leaves empty, as
+    /// `git reset --hard` does. A directory holding anything else, such as an untracked file,
+    /// stays.
+    fn plan_emptied_directories(
+        &self,
+        old_dirs: &BTreeSet<Vec<u8>>,
+        target_dirs: &BTreeSet<Vec<u8>>,
+        remove: &mut BTreeSet<Vec<u8>>,
+        cancel: &AtomicBool,
+    ) -> Result<(), Error> {
+        let gone: BTreeSet<&[u8]> = self
+            .old
+            .keys()
+            .filter(|path| !self.target.contains_key(*path) && !self.missing.contains(*path))
+            .map(Vec::as_slice)
+            .collect();
+        let candidate = |dir: &[u8]| {
+            !target_dirs.contains(dir)
+                && !self.target.contains_key(dir)
+                && self
+                    .expected
+                    .get(dir)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|stat| kind(&stat) == FileType::Directory)
+        };
+        for dir in old_dirs {
+            check(cancel)?;
+            let parent = parent_path(dir);
+            if !candidate(dir) || (!parent.is_empty() && candidate(parent)) {
+                continue;
+            }
+            self.emptied(dir, &gone, old_dirs, remove, cancel)?;
+        }
+        Ok(())
+    }
+
+    /// Whether removing `gone` leaves `dir` empty; every directory it empties is added to
+    /// `remove`, even when `dir` itself keeps other content.
+    fn emptied(
+        &self,
+        dir: &[u8],
+        gone: &BTreeSet<&[u8]>,
+        old_dirs: &BTreeSet<Vec<u8>>,
+        remove: &mut BTreeSet<Vec<u8>>,
+        cancel: &AtomicBool,
+    ) -> Result<bool, Error> {
+        let parent = self.parent(dir, cancel)?;
+        let fd = open_directory(&parent, name(dir), dir)?;
+        self.guard_directory(&fd, dir)?;
+        let mut budget = self.limits.max_directory_entries;
+        let mut empty = true;
+        for child in names(&fd, dir, &mut budget, cancel)? {
+            let child_path = joined(dir, &child);
+            let child_empty = if old_dirs.contains(&child_path) {
+                self.emptied(&child_path, gone, old_dirs, remove, cancel)?
+            } else {
+                gone.contains(child_path.as_slice())
+            };
+            empty &= child_empty;
+        }
+        if empty {
+            remove.insert(dir.to_vec());
+        }
+        Ok(empty)
+    }
+
+    /// The first entry under the untracked directory `dir` that is not a directory, or `None`
+    /// when it holds only empty directories, which are then added to `empty` with their
+    /// identities so their removal is checked like any planned path.
+    fn untracked_content(
+        &self,
+        dir: &[u8],
+        empty: &mut Vec<(Vec<u8>, Stat)>,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Vec<u8>>, Error> {
+        let parent = self.parent(dir, cancel)?;
+        let fd = open_directory(&parent, name(dir), dir)?;
+        self.untracked_content_in(&fd, dir, empty, cancel)
+    }
+
+    fn untracked_content_in(
+        &self,
+        fd: &OwnedFd,
+        dir: &[u8],
+        empty: &mut Vec<(Vec<u8>, Stat)>,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Vec<u8>>, Error> {
+        self.guard_directory(fd, dir)?;
+        let mut budget = self.limits.max_directory_entries;
+        for child in names(fd, dir, &mut budget, cancel)? {
+            check(cancel)?;
+            let child_path = joined(dir, &child);
+            let stat = optional_stat(fd, &child, &child_path)?;
+            let Some(stat) = stat.filter(|stat| kind(stat) == FileType::Directory) else {
+                return Ok(Some(child_path));
+            };
+            let child_fd = open_directory(fd, &child, &child_path)?;
+            identity(
+                &child_path,
+                &stat,
+                &fstat(&child_fd).map_err(|e| io(&child_path, e))?,
+            )?;
+            if let Some(found) = self.untracked_content_in(&child_fd, &child_path, empty, cancel)? {
+                return Ok(Some(found));
+            }
+            empty.push((child_path, stat));
+        }
+        Ok(None)
     }
 
     fn check_removable(

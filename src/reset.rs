@@ -73,15 +73,18 @@
 //!
 //! # Limits
 //!
-//! [`ResetMode::Hard`] runs on Linux and macOS, with checkout's path and platform rules. Unlike
-//! Git, it refuses an untracked directory where the commit has a file, rather than deleting the
-//! directory with its contents, and it leaves directories emptied by removed files in place. Keep
-//! and merge resets are not available yet. Indexes with skip-worktree entries or sparse
+//! [`ResetMode::Hard`], [`ResetMode::Keep`] and [`ResetMode::Merge`] run on Linux and macOS, with
+//! checkout's path and platform rules. Like Git, they remove directories that removing tracked
+//! files leaves empty. Where the commit has a file and the working tree has an untracked
+//! directory, girt replaces the directory only when it holds nothing but empty directories;
+//! otherwise it refuses, naming an untracked file inside, before changing any working file. Git
+//! deletes the directory with its untracked contents. Indexes with skip-worktree entries or sparse
 //! directories (sparse checkout) are refused rather than reset partially, and commit resets refuse
 //! reftable repositories, where Git keeps `ORIG_HEAD` and `AUTO_MERGE` in the reference table.
 //! Callers must exclude other writers of HEAD, the index and operation files for the duration of a
 //! call; the index lock and the conditional reference update detect cooperating writers.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -99,12 +102,31 @@ pub enum ResetMode {
     Soft,
     /// Move the branch and replace the index with the commit's tree, as `git reset --mixed`.
     Mixed,
+    /// Like [`Self::Mixed`], and update the working files that differ between HEAD and the
+    /// commit, as `git reset --keep`.
+    ///
+    /// A file whose staged version already matches the commit keeps its working content. Refused
+    /// with [`ResetError::LocalChanges`], changing nothing, when a file to update has a staged
+    /// change, a modified working file, or an untracked file in its way; a deleted working file
+    /// is restored. Refused with [`ResetError::MergeInProgress`] when the index has conflicts.
+    /// Local changes to other files are kept as unstaged changes.
+    Keep,
+    /// Like [`Self::Mixed`], and update the working files whose index entry differs from the
+    /// commit, as `git reset --merge`; this is how a conflicted merge is aborted.
+    ///
+    /// Staged changes to those files are discarded, conflicted files are reset and deleted ones
+    /// restored. Refused with [`ResetError::LocalChanges`], changing nothing, when one of them
+    /// also has unstaged changes or an untracked file is in the way. Unstaged changes to other
+    /// files are kept.
+    Merge,
     /// Also make the tracked working files match the commit, as `git reset --hard`.
     ///
     /// Local changes to tracked files are lost: every path in the index, at any stage, is
     /// rewritten or removed, files deleted locally are restored, and an untracked file where the
-    /// commit has a file is replaced. Other untracked files stay. Files are written raw; use
-    /// [`Repository::reset_hard_with_filters`] to convert them as checkout does.
+    /// commit has a file or needs a directory is replaced. Other untracked files stay; an untracked
+    /// directory where the commit has a file is replaced only when it holds nothing but empty
+    /// directories, and is refused otherwise, where Git would delete its contents. Files are
+    /// written raw; use [`Repository::reset_with_filters`] to convert them as checkout does.
     Hard,
 }
 
@@ -145,13 +167,14 @@ impl ResetOptions {
 
 /// A reset was refused or failed.
 ///
-/// Refusals and read failures leave the repository unchanged. girt locks HEAD's branch before
-/// writing anything, so a locked branch fails with [`Self::Reference`] and nothing written; Git
-/// instead publishes `ORIG_HEAD` and the index before failing on the branch. `ORIG_HEAD` is
-/// written next, before the index and HEAD; if that fails, nothing else changes, where Git warns
-/// and continues. A failure after `ORIG_HEAD` (including an [`Self::IndexStorage`] error while
-/// publishing the index) leaves `ORIG_HEAD` updated, and [`Self::Reference`] and
-/// [`Self::OperationFile`] also report what else was written.
+/// Refusals and read failures leave the repository unchanged, including keep and merge refusals,
+/// which the checkout makes before writing any file. girt locks HEAD's branch before writing
+/// anything, so a locked branch fails with [`Self::Reference`] and nothing written; Git instead
+/// publishes `ORIG_HEAD` and the index before failing on the branch. The index and working files
+/// are written next, then `ORIG_HEAD`, then HEAD. An [`Self::IndexStorage`] or [`Self::Checkout`]
+/// failure leaves `ORIG_HEAD` and HEAD unchanged; a failure to write `ORIG_HEAD` stops before HEAD
+/// moves, where Git warns and continues; [`Self::Reference`] and [`Self::OperationFile`] report
+/// what was already written.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ResetError {
@@ -162,11 +185,24 @@ pub enum ResetError {
     /// middle of a merge.
     #[error("cannot do a soft reset in the middle of a merge")]
     MergeInProgress,
-    /// Updating working files for a hard reset failed. `ORIG_HEAD` was written and HEAD has not
-    /// moved; the failure's report lists the files already changed, and the index is unchanged
-    /// unless the report says it was published.
+    /// Updating working files for a hard, keep or merge reset failed. `ORIG_HEAD` and HEAD are
+    /// unchanged; the failure's report lists the files already changed, and the index is
+    /// unchanged unless the report says it was published.
     #[error("updating working files: {0}")]
     Checkout(#[source] Box<crate::checkout::Failure>),
+    /// A keep reset on a branch with no commits has nothing to compare with, as Git refuses it.
+    #[error("a keep reset needs a commit on HEAD")]
+    NoCommit,
+    /// A keep or merge reset would overwrite local changes to `path`, or an untracked file there;
+    /// nothing was changed.
+    #[error(
+        "{} has local changes that the reset would overwrite",
+        String::from_utf8_lossy(path)
+    )]
+    LocalChanges {
+        /// The first path with conflicting local changes.
+        path: Vec<u8>,
+    },
     /// The index uses a feature reset does not handle yet.
     #[error("reset does not support {0} yet")]
     Unsupported(&'static str),
@@ -188,10 +224,13 @@ pub enum ResetError {
     /// HEAD could not be read.
     #[error(transparent)]
     Head(#[from] crate::refs::ReferenceError),
-    /// Writing `ORIG_HEAD` failed; nothing else was changed.
+    /// Writing `ORIG_HEAD` failed after the index and working files were updated; HEAD has not
+    /// moved.
     #[error("writing ORIG_HEAD: {0}")]
     OrigHead(#[source] std::io::Error),
-    /// Moving HEAD's branch failed. `ORIG_HEAD` was written, and with `index_updated` the index
+    /// Moving HEAD's branch failed. Its lock is taken before anything is written, so a lock
+    /// failure changes nothing; a later publication failure leaves `ORIG_HEAD` written, and with
+    /// `index_updated` the index
     /// already holds the target tree.
     #[error("moving HEAD (index updated: {index_updated}): {source}")]
     Reference {
@@ -210,6 +249,23 @@ pub enum ResetError {
         #[source]
         source: std::io::Error,
     },
+}
+
+/// A keep or merge reset's paths, those that must be clean, and the index it publishes.
+struct Selected {
+    paths: BTreeSet<Vec<u8>>,
+    clean: BTreeSet<Vec<u8>>,
+    replacement: Vec<Entry>,
+}
+
+impl Selected {
+    fn selection(&self) -> crate::checkout::Selection<'_> {
+        crate::checkout::Selection {
+            paths: &self.paths,
+            clean: &self.clean,
+            replacement: &self.replacement,
+        }
+    }
 }
 
 /// Files that record an interrupted operation and that any commit reset removes, as Git does.
@@ -247,23 +303,25 @@ impl Repository {
         self.reset_with(commit, mode, options, None)
     }
 
-    /// Resets hard as [`Self::reset`] with [`ResetMode::Hard`] does, writing files through
-    /// `filters`.
+    /// Resets as [`Self::reset`] does, converting working files through `filters` for the modes
+    /// that write them ([`ResetMode::Keep`], [`ResetMode::Merge`] and [`ResetMode::Hard`]).
     ///
     /// Load `filters` with [`Self::filters_for_checkout`] for the target commit, so the commit's
-    /// own `.gitattributes` decide line endings and filter drivers, as Git reads them.
+    /// own `.gitattributes` decide line endings and filter drivers, as Git reads them. Keep and
+    /// merge resets also compare files through `filters` when proving them clean.
     ///
     /// # Errors
     ///
     /// Returns the errors of [`Self::reset`], with filter failures inside
     /// [`ResetError::Checkout`].
-    pub fn reset_hard_with_filters(
+    pub fn reset_with_filters(
         &self,
         commit: ObjectId,
+        mode: ResetMode,
         options: &ResetOptions,
         filters: &mut crate::filter::Pipeline,
     ) -> Result<Option<ObjectId>, ResetError> {
-        self.reset_with(commit, ResetMode::Hard, options, Some(filters))
+        self.reset_with(commit, mode, options, Some(filters))
     }
 
     fn reset_with(
@@ -298,8 +356,15 @@ impl Repository {
             return Err(ResetError::MergeInProgress);
         }
 
+        let selected = match mode {
+            ResetMode::Keep | ResetMode::Merge => {
+                Some(self.select_local(&objects, Some(tree), mode, options)?)
+            }
+            _ => None,
+        };
+
         let mut edit = match mode {
-            ResetMode::Soft | ResetMode::Hard => None,
+            ResetMode::Soft | ResetMode::Hard | ResetMode::Keep | ResetMode::Merge => None,
             ResetMode::Mixed => {
                 let mut edit = self.edit_index(options.index)?;
                 refuse_sparse(edit.index().entries())?;
@@ -346,16 +411,18 @@ impl Repository {
                 source,
             })?;
 
-        if let Some(previous) = previous {
-            write_orig_head(self.git_dir(), previous).map_err(ResetError::OrigHead)?;
-        }
         let mut index_updated = edit.is_some();
         if let Some(edit) = edit.take() {
             edit.commit()?;
         }
-        if mode == ResetMode::Hard {
-            hard(self, tree, filters, options)?;
+        // The working files go first, so a refused keep or merge reset changes nothing.
+        if mode == ResetMode::Hard || selected.is_some() {
+            let selection = selected.as_ref().map(Selected::selection);
+            hard(self, tree, filters, selection.as_ref(), options)?;
             index_updated = true;
+        }
+        if let Some(previous) = previous {
+            write_orig_head(self.git_dir(), previous).map_err(ResetError::OrigHead)?;
         }
         prepared.publish().map_err(|source| ResetError::Reference {
             index_updated,
@@ -365,11 +432,94 @@ impl Repository {
         Ok(previous)
     }
 
+    /// The paths a keep or merge reset rewrites, the subset that must still be clean, and the
+    /// index it publishes, after refusing what Git refuses from the index alone. Whether working
+    /// files are clean is checked by the checkout itself, against the files it then rewrites.
+    fn select_local(
+        &self,
+        objects: &crate::Objects,
+        tree: Option<ObjectId>,
+        mode: ResetMode,
+        options: &ResetOptions,
+    ) -> Result<Selected, ResetError> {
+        let current = self
+            .read_index(options.index)?
+            .map(|index| index.entries().to_vec())
+            .unwrap_or_default();
+        refuse_sparse(&current)?;
+        let unmerged: BTreeSet<Vec<u8>> = current
+            .iter()
+            .filter(|entry| entry.stage != Stage::Normal)
+            .map(|entry| entry.path.clone())
+            .collect();
+        // Git refuses a keep reset with any conflict in the index.
+        if mode == ResetMode::Keep && !unmerged.is_empty() {
+            return Err(ResetError::MergeInProgress);
+        }
+        let target = tree_entries(objects, tree, &Pathspec::all(), options.trees)?;
+        let leaves = |entries: &[Entry]| -> BTreeMap<Vec<u8>, (Mode, ObjectId)> {
+            entries
+                .iter()
+                .filter(|entry| entry.stage == Stage::Normal)
+                .map(|entry| (entry.path.clone(), (entry.mode, entry.id)))
+                .collect()
+        };
+        let index_leaves = leaves(&current);
+        let target_leaves = leaves(&target);
+        // Files whose index entry already matches the target keep their working content.
+        let mut paths: BTreeSet<Vec<u8>> = index_leaves
+            .keys()
+            .chain(target_leaves.keys())
+            .filter(|path| index_leaves.get(*path) != target_leaves.get(*path))
+            .cloned()
+            .collect();
+        paths.extend(unmerged.iter().cloned());
+        if mode == ResetMode::Keep {
+            // Keep rewrites only files whose index entry still matches HEAD.
+            let head_tree = match self.head()?.id {
+                Some(commit) => Some(objects.read_commit(commit)?.tree()),
+                None => None,
+            };
+            let head_leaves = leaves(&tree_entries(
+                objects,
+                head_tree,
+                &Pathspec::all(),
+                options.trees,
+            )?);
+            // Files HEAD and the target agree on keep their working content; their index entry is
+            // simply reset.
+            paths.retain(|path| head_leaves.get(path) != target_leaves.get(path));
+            if let Some(path) = paths
+                .iter()
+                .find(|path| index_leaves.get(*path) != head_leaves.get(*path))
+            {
+                return Err(ResetError::LocalChanges { path: path.clone() });
+            }
+        }
+        // An intent-to-add entry has no staged content to compare a working file with.
+        if let Some(entry) = current
+            .iter()
+            .find(|entry| entry.intent_to_add && paths.contains(&entry.path))
+        {
+            return Err(ResetError::LocalChanges {
+                path: entry.path.clone(),
+            });
+        }
+        let clean = paths.difference(&unmerged).cloned().collect();
+        let replacement = keep_unchanged(&current, target);
+        Ok(Selected {
+            paths,
+            clean,
+            replacement,
+        })
+    }
+
     /// Resets on a branch with no commits, as `git reset` without a revision does there.
     ///
     /// Nothing moves and no `ORIG_HEAD` is written. [`ResetMode::Soft`] changes nothing,
-    /// [`ResetMode::Mixed`] empties the index, and [`ResetMode::Hard`] also removes every file
-    /// the index tracks, keeping untracked files.
+    /// [`ResetMode::Mixed`] empties the index, and [`ResetMode::Hard`] and [`ResetMode::Merge`]
+    /// also remove every file the index tracks, keeping untracked files. [`ResetMode::Keep`] is
+    /// refused with [`ResetError::NoCommit`].
     ///
     /// # Errors
     ///
@@ -380,13 +530,38 @@ impl Repository {
         match mode {
             ResetMode::Soft => Ok(()),
             ResetMode::Mixed => self.reset_paths(None, &Pathspec::all(), limits),
+            // As in Git, a merge reset removes the tracked files like a hard one, and a keep reset
+            // needs a commit to compare with.
             ResetMode::Hard => {
                 if self.worktree().is_none() {
                     return Err(ResetError::Bare);
                 }
-                let limits = crate::checkout::Limits::default().with_index(*limits);
-                hard_to(self, None, None, limits)
+                let checkout = crate::checkout::Limits::default().with_index(*limits);
+                hard_to(self, None, None, None, checkout)
             }
+            ResetMode::Merge => {
+                if self.worktree().is_none() {
+                    return Err(ResetError::Bare);
+                }
+                let objects = self
+                    .objects()
+                    .map_err(|source| ResetError::Commit(crate::ReadCommitError::Read(source)))?;
+                let options = ResetOptions {
+                    committer: Signature {
+                        name: Vec::new(),
+                        email: Vec::new(),
+                        seconds: 0,
+                        offset_minutes: 0,
+                    },
+                    target: Vec::new(),
+                    index: *limits,
+                    trees: TreeCompareLimits::default(),
+                };
+                let selected = self.select_local(&objects, None, ResetMode::Merge, &options)?;
+                let checkout = crate::checkout::Limits::default().with_index(*limits);
+                hard_to(self, None, None, Some(&selected.selection()), checkout)
+            }
+            ResetMode::Keep => Err(ResetError::NoCommit),
         }
     }
 
@@ -481,12 +656,13 @@ fn hard(
     repository: &Repository,
     tree: ObjectId,
     filters: Option<&mut crate::filter::Pipeline>,
+    selection: Option<&crate::checkout::Selection<'_>>,
     options: &ResetOptions,
 ) -> Result<(), ResetError> {
     let limits = crate::checkout::Limits::default()
         .with_index(options.index)
         .with_trees(options.trees);
-    hard_to(repository, Some(tree), filters, limits)
+    hard_to(repository, Some(tree), filters, selection, limits)
 }
 
 /// Rewrites tracked files and the index to `tree`, or removes them all for `None`.
@@ -495,11 +671,32 @@ fn hard_to(
     repository: &Repository,
     tree: Option<ObjectId>,
     filters: Option<&mut crate::filter::Pipeline>,
+    selection: Option<&crate::checkout::Selection<'_>>,
     limits: crate::checkout::Limits,
 ) -> Result<(), ResetError> {
-    crate::checkout::run_discarding(repository, tree, filters, limits, &AtomicBool::new(false))
-        .map(drop)
-        .map_err(|failure| ResetError::Checkout(Box::new(failure)))
+    crate::checkout::run_discarding(
+        repository,
+        tree,
+        filters,
+        selection,
+        limits,
+        &AtomicBool::new(false),
+    )
+    .map(drop)
+    .map_err(|failure| match &*failure.cause {
+        crate::checkout::Error::Refused { path, reason }
+            if selection.is_some()
+                && [
+                    crate::checkout::LOCAL_CHANGES,
+                    "untracked obstruction",
+                    "untracked ancestor obstruction",
+                ]
+                .contains(reason) =>
+        {
+            ResetError::LocalChanges { path: path.clone() }
+        }
+        _ => ResetError::Checkout(Box::new(failure)),
+    })
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -507,6 +704,7 @@ fn hard(
     _: &Repository,
     _: ObjectId,
     _: Option<&mut crate::filter::Pipeline>,
+    _: Option<&crate::checkout::Selection<'_>>,
     _: &ResetOptions,
 ) -> Result<(), ResetError> {
     Err(ResetError::Unsupported("hard reset on this platform"))
@@ -517,6 +715,7 @@ fn hard_to(
     _: &Repository,
     _: Option<ObjectId>,
     _: Option<&mut crate::filter::Pipeline>,
+    _: Option<&crate::checkout::Selection<'_>>,
     _: crate::checkout::Limits,
 ) -> Result<(), ResetError> {
     Err(ResetError::Unsupported("hard reset on this platform"))

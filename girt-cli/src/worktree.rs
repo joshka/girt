@@ -129,20 +129,31 @@ pub struct CheckoutArgs {
 /// Without paths, moves the branch HEAD names (or a detached HEAD) to the revision, records the old
 /// commit in `ORIG_HEAD` and appends `reset: moving to <revision>` to the reflogs. `--soft` keeps
 /// the index; the default, `--mixed`, replaces it with the revision's tree; `--hard` also rewrites
-/// tracked working files, discarding local changes, and converts them as `girt checkout` does. With
-/// paths after `--`, only those index entries are reset from the revision, which
-/// unstages them; no reference moves.
+/// tracked working files, discarding local changes, and converts them as `girt checkout` does.
+/// `--keep` and `--merge` rewrite only some files and refuse to overwrite local changes. With
+/// paths after `--`, only those index entries are reset from the revision, which unstages them;
+/// no reference moves.
 #[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("mode").args(["soft", "mixed", "hard", "keep", "merge"])))]
 pub struct ResetArgs {
     /// Move the branch only; keep the index.
-    #[arg(long, conflicts_with = "mixed")]
+    #[arg(long)]
     soft: bool,
     /// Also replace the index with the revision's tree (the default).
-    #[arg(long, conflicts_with = "hard")]
+    #[arg(long)]
     mixed: bool,
     /// Also make tracked working files match the revision, discarding local changes.
-    #[arg(long, conflicts_with = "soft")]
+    #[arg(long)]
     hard: bool,
+    /// Like `--mixed`, and update the files that differ between HEAD and the revision; refuse if
+    /// any of them has local changes.
+    #[arg(long)]
+    keep: bool,
+    /// Like `--mixed`, and update the files whose index entry differs from the revision,
+    /// discarding staged changes to them; refuse if any of them has unstaged changes. Aborts a
+    /// conflicted merge.
+    #[arg(long)]
+    merge: bool,
     #[command(flatten)]
     filters: FilterArgs,
     /// Revision to reset to; `HEAD` when omitted.
@@ -158,26 +169,26 @@ pub fn reset(args: ResetArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let objects = repository.objects()?;
     let revision = args.revision.as_deref().unwrap_or("HEAD");
-    // `git reset` on an unborn branch empties the index instead of moving anything.
+    let mode = match (args.soft, args.hard, args.keep, args.merge) {
+        (true, ..) => ResetMode::Soft,
+        (_, true, ..) => ResetMode::Hard,
+        (_, _, true, _) => ResetMode::Keep,
+        (.., true) => ResetMode::Merge,
+        _ => ResetMode::Mixed,
+    };
+    // `git reset` on an unborn branch moves nothing: soft keeps the index, mixed empties it, and
+    // hard and merge also remove its files.
     let unborn =
         args.revision.is_none() && repository.head().wrap_err("reading HEAD")?.id.is_none();
     if unborn && args.pathspecs.is_empty() {
-        // Nothing to move: soft keeps the index, mixed empties it, hard also removes its files.
-        let mode = if args.soft {
-            ResetMode::Soft
-        } else if args.hard {
-            ResetMode::Hard
-        } else {
-            ResetMode::Mixed
-        };
         repository
             .reset_unborn(mode, &Default::default())
             .wrap_err("resetting")?;
         return Ok(ExitCode::SUCCESS);
     }
     if !args.pathspecs.is_empty() || unborn {
-        if args.soft || args.hard {
-            bail!("--soft and --hard cannot reset paths");
+        if mode != ResetMode::Mixed {
+            bail!("only a mixed reset can reset paths");
         }
         let paths = if args.pathspecs.is_empty() {
             girt::pathspec::Pathspec::all()
@@ -205,28 +216,18 @@ pub fn reset(args: ResetArgs, context: &Context) -> Result<ExitCode> {
             "building reflog committer: set user.name/user.email or GIT_COMMITTER_NAME/EMAIL",
         )?;
     let options = ResetOptions::new(committer, revision);
-    if args.hard {
-        match args.filters.commands() {
-            None => repository.reset(commit, ResetMode::Hard, &options),
-            Some(commands) => {
-                let tree = objects.read_commit(commit)?.tree();
-                let mut filters = repository
-                    .filters_for_checkout(&context.environment, tree, commands)
-                    .wrap_err("loading attributes")?;
-                repository.reset_hard_with_filters(commit, &options, &mut filters)
-            }
+    let writes_files = matches!(mode, ResetMode::Hard | ResetMode::Keep | ResetMode::Merge);
+    match args.filters.commands().filter(|_| writes_files) {
+        None => repository.reset(commit, mode, &options),
+        Some(commands) => {
+            let tree = objects.read_commit(commit)?.tree();
+            let mut filters = repository
+                .filters_for_checkout(&context.environment, tree, commands)
+                .wrap_err("loading attributes")?;
+            repository.reset_with_filters(commit, mode, &options, &mut filters)
         }
-        .wrap_err("resetting")?;
-        return Ok(ExitCode::SUCCESS);
     }
-    let mode = if args.soft {
-        ResetMode::Soft
-    } else {
-        ResetMode::Mixed
-    };
-    repository
-        .reset(commit, mode, &options)
-        .wrap_err("resetting")?;
+    .wrap_err("resetting")?;
     Ok(ExitCode::SUCCESS)
 }
 
