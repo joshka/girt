@@ -1,0 +1,30 @@
+{
+  "taken_under_load": true,
+  "rows": [
+    {
+      "block": 0,
+      "command": [
+        "bitmap_repack_timing",
+        "DISPOSABLE_BARE_REPOSITORY",
+        "true"
+      ],
+      "load_before": [
+        32.94580078125,
+        26.9814453125,
+        27.41357421875
+      ],
+      "wall_seconds": 47.68119229200238,
+      "exit": 0,
+      "load_after": [
+        32.92822265625,
+        28.11474609375,
+        27.826171875
+      ],
+      "stderr": "profile graph_decode_ns=10747234476 graph_assembly_ns=17845168149 graph_edges=58693073 graph_bytes=8221290377\nprofile traversal_ns=9117882794 artifacts_other_ns=9126289\n",
+      "stdout": "{\"bitmaps\":true,\"elapsed_ns\":47405126708,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":2036560}\n",
+      "sidecar_bytes": 2036560
+    }
+  ],
+  "writer_revision": "94b5976d4319",
+  "method": "Temporary Instant timers around each verified object read, remaining Graph::read work, selected closure traversals, and remaining artifact work; instrumentation removed after release build."
+}

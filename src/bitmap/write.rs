@@ -30,6 +30,7 @@ impl Default for WriteOptions {
 #[non_exhaustive]
 pub struct WriteLimits {
     /// Maximum inventory object occurrences, including MIDX duplicates (5 million).
+    /// Also bounds the graph's ID-position lookup table.
     pub max_objects: usize,
     /// Maximum primary packs in a MIDX (4096).
     pub max_packs: usize,
