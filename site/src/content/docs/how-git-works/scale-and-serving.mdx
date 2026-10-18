@@ -31,14 +31,15 @@ explicit commit-graph task. Reading an existing graph is enough to benefit. Girt
 graphs to repository object readers by default, honoring `core.commitGraph=false`; unusable graphs
 fall back to object reads, and object verification is available explicitly.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/492">Single/split reading and writing, explicit verification, default indexed history and first-parent Bloom queries; measured opening cost and automatic GC writing remain.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/492">Single/split reading and writing, explicit verification, default indexed history and first-parent Bloom queries; opening overhead and automatic GC writing remain.</GirtStatus>
 
-A quiet-window measurement on 82,500 commits found a 351-commit range taking 111 ms with the index,
-versus 913 ms with object reads and 16 ms for Git log. Ancestry took 114 ms indexed versus 907 ms
-with objects and 10.5 ms for Git. Opening dominates the indexed totals; query phases alone were 1.37
-ms and 0.075 ms. These warm process measurements show progress, with a remaining opening cost. The
-[timing issue](https://github.com/joshka/girt/issues/569) links the complete evidence and memory
-measurements.
+A quiet-window comparison on 82,500 commits found a 351-commit range taking 28.7 ms after opening
+validation improvements, versus 113.8 ms before and 16.1 ms for Git log. Ancestry took 27.0 ms
+versus 118.8 ms before and 9.54 ms for Git. These warm process totals are 1.78 and 2.83 times Git;
+opening still dominates at about 19–20 ms. The
+[timing issue](https://github.com/joshka/girt/issues/569) and
+[opening-cost follow-up](https://github.com/joshka/girt/issues/625) link raw measurements and memory
+evidence. This is progress, with remaining opening cost, rather than Git parity.
 
 ## Multi-pack index
 
