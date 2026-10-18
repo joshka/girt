@@ -510,9 +510,9 @@ impl TrailerConfig {
         valid.then(|| (key, trim(&line[at + 1..])))
     }
 
-    /// Whether Git counts a line toward the 25% rule: a `Signed-off-by: ` line, a cherry-pick note
-    /// or a trailer whose key, exactly as written before the separator, abbreviates a configured
-    /// section.
+    /// Whether Git counts a line toward the 25% rule: a line starting `Signed-off-by:` and a space,
+    /// a cherry-pick note or a trailer whose key, exactly as written before the separator,
+    /// abbreviates a configured section.
     fn recognized(&self, line: &[u8], is_trailer: bool) -> bool {
         let configured = || {
             line.iter()
@@ -629,7 +629,7 @@ impl TrailerConfig {
 /// The trailer block is the last paragraph before any scissors line, `---` divider (unless turned
 /// off with [`TrailerConfig::with_divider`]), trailing comment lines and blank lines. It is never
 /// the first paragraph. It counts as trailers when every line is a trailer, or when at least a
-/// quarter of its lines are trailers and one is a `Signed-off-by: ` line, a
+/// quarter of its lines are trailers and one is a line starting `Signed-off-by:` and a space, a
 /// `(cherry picked from commit …` note or uses a configured key. Comment lines are skipped.
 /// Continuation lines start with a space or tab and belong to the trailer directly above, with no
 /// comment line between them; they are joined to its value with single spaces.

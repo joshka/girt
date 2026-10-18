@@ -75,6 +75,19 @@ const CASES: &[Case] = &[
     ),
     case(&["index", "list"], &["ls-files"]),
     case(&["index", "list", "--stage"], &["ls-files", "-s"]),
+    case(&["history", "describe"], &["describe"]),
+    case(
+        &["history", "describe", "--tags", "first"],
+        &["describe", "--tags", "first"],
+    ),
+    case(
+        &["history", "describe", "--long", "--abbrev=12"],
+        &["describe", "--long", "--abbrev=12"],
+    ),
+    case(
+        &["history", "describe", "--all", "first"],
+        &["describe", "--all", "first"],
+    ),
     case(&["status", "--untracked"], &["status", "--porcelain"]),
     case(&["status"], &["status", "--porcelain", "-uno"]),
     case(

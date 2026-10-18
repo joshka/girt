@@ -83,6 +83,7 @@ const ENTRIES: &[Entry] = &[
     commands(&["check-ignore"], use_(&[("check-ignore -v", "ignore check")])),
     commands(&["count-objects"], use_(&[("count-objects -v", "object count")])),
     commands(&["diff-files", "diff-index"], use_(&[("diff-index / diff-files", "status")])),
+    commands(&["describe"], use_(&[("describe", "history describe")])),
     commands(&["diff-tree"], use_(&[("diff-tree", "diff")])),
     commands(&["fetch-pack"], use_(&[("fetch-pack", "fetch")])),
     commands(&["for-each-ref"], use_(&[("for-each-ref", "ref list")])),
@@ -124,7 +125,7 @@ const ENTRIES: &[Entry] = &[
         "write-tree",
     ], STAGING),
     commands(&[
-        "branch", "check-ref-format", "describe", "name-rev", "notes", "pack-refs", "replace",
+        "branch", "check-ref-format", "name-rev", "notes", "pack-refs", "replace",
         "symbolic-ref", "tag",
     ], REFS),
     commands(&[
