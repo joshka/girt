@@ -109,10 +109,11 @@ unreachable ("dangling") objects.
 
 `git grep` searches file contents in the working tree, the index, or any commit's tree, limited by
 pathspecs. By default it searches tracked files, including tracked files that match `.gitignore`;
-[ignore rules](/girt/how-git-works/working-tree/#ignore-rules) only matter with `--untracked`.
-Searching a commit reads blobs straight from the object database, without a checkout.
+[ignore rules](/girt/how-git-works/working-tree/#ignore-rules) only matter with `--untracked`, which
+then hides tracked files that match them too. Searching a commit reads blobs straight from the
+object database, without a checkout.
 
-<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/525" />
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/525">Searches the working tree, the index, trees and plain directories with `git grep`'s output; no `-P`, `--textconv` or submodules.</GirtStatus>
 
 ## archive
 

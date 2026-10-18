@@ -340,6 +340,30 @@ impl Pathspec {
             .any(|item| !item.attributes.is_empty())
     }
 
+    /// Whether `path` is at most `levels` directories below an include spec that selects it, as
+    /// `git grep --max-depth` counts: below the spec's directory for a spec without wildcards,
+    /// and without limit for a spec with them. With no include specs, depth counts from the root.
+    pub(crate) fn within_depth(&self, path: &[u8], levels: usize) -> bool {
+        let deep = |rest: &[u8]| rest.iter().filter(|&&byte| byte == b'/').count() > levels;
+        if self.includes.is_empty() {
+            return !deep(path);
+        }
+        self.includes.iter().any(|item| {
+            if item.literal_len < item.pattern.len() {
+                return item.matches_pattern(path);
+            }
+            let base = item.pattern.strip_suffix(b"/").unwrap_or(&item.pattern);
+            if base.is_empty() {
+                return !deep(path);
+            }
+            path == base
+                || path
+                    .strip_prefix(base)
+                    .and_then(|rest| rest.strip_prefix(b"/"))
+                    .is_some_and(|rest| !deep(rest))
+        })
+    }
+
     /// Classifies a repository-relative directory for pruning a walk.
     ///
     /// [`Prune::Skip`] guarantees [`Self::matches`] is false for every path below `directory`, and

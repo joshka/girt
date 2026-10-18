@@ -171,6 +171,14 @@ export const calls: Record<string, CliCalls> = {
     git: 'git blame',
     api: [method('Repo', 'repo/struct.Repo.html', 'blame')],
   },
+  grep: {
+    git: 'git grep',
+    api: [
+      unreleased('Repository::grep', 525),
+      unreleased('Searcher::search', 525),
+      unreleased('GitFormat::write', 525),
+    ],
+  },
 
   // Index and working tree.
   'index list': {
