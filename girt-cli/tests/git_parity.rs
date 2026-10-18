@@ -356,6 +356,11 @@ fn run(command: &mut Command, home: &Path, repository: &Path, stdin: Option<&str
     use std::io::Write;
     use std::process::Stdio;
 
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
     command
         .current_dir(repository)
         .env("HOME", home)
@@ -935,4 +940,92 @@ fn describe_dirty_exceptions_match_git() {
     git(&["config", "filter.probe.required", "true"]);
     fs::write(repository.join("a.txt"), "a much longer replacement line\n").unwrap();
     compare("failing filter, size changed");
+}
+
+/// Replace references and grafts change `log`, `history` and `object` output as they change Git's,
+/// and `--no-replace-objects` restores stored history.
+#[test]
+fn replace_refs_and_grafts_match_git() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path();
+    let repository = home.join("repo");
+    fs::create_dir_all(&repository).unwrap();
+    let git = |args: &[&str]| {
+        let output = run(Command::new("git").args(args), home, &repository, None);
+        assert!(output.status.success(), "git {args:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let girt = |args: &[&str]| {
+        let output = run(
+            Command::new(env!("CARGO_BIN_EXE_girt")).args(args),
+            home,
+            &repository,
+            None,
+        );
+        assert!(
+            output.status.success(),
+            "girt {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["init", "--quiet", "--initial-branch=main"]);
+    for message in ["c1", "c2", "c3"] {
+        git(&["commit", "--quiet", "--allow-empty", "-m", message]);
+    }
+    git(&["checkout", "--quiet", "--orphan", "old"]);
+    git(&["commit", "--quiet", "--allow-empty", "-m", "o1"]);
+    git(&["checkout", "--quiet", "main"]);
+    git(&["replace", "--graft", "main~1", "old"]);
+    let c2 = git(&["--no-replace-objects", "rev-parse", "main~1"]);
+    let c2 = c2.trim();
+
+    for args in [
+        &["log"][..],
+        &["--no-replace-objects", "log", "--oneline"],
+        &["cat-file", "-p", c2],
+        &["log", "--oneline", "main~2"],
+        &["cat-file", "-p", "main~2"],
+    ] {
+        let girt_args = match args {
+            ["cat-file", _, id] => vec!["--git", "object", "show", id],
+            _ => [&["--git"][..], args].concat(),
+        };
+        assert_eq!(girt(&girt_args), git(args), "{args:?}");
+    }
+    assert_eq!(girt(&["history", "count", "main"]), "3\n");
+    assert_eq!(
+        girt(&["history", "count", "main...old"]),
+        git(&["rev-list", "--count", "main...old"])
+    );
+    assert_eq!(
+        girt(&["--no-replace-objects", "history", "count", "main"]),
+        "3\n"
+    );
+    assert_eq!(
+        girt(&["history", "merge-base", "main", "old"]),
+        git(&["merge-base", "main", "old"])
+    );
+    let batch = run(
+        Command::new("git").args(["cat-file", "--batch-check"]),
+        home,
+        &repository,
+        Some(&format!("{c2}\n")),
+    );
+    assert_eq!(girt(&["object", "info", c2]).as_bytes(), batch.stdout);
+
+    fs::write(repository.join(".git/info/grafts"), format!("{c2}\n")).unwrap();
+    let mut no_advice = Command::new("git");
+    no_advice.args([
+        "-c",
+        "advice.graftFileDeprecated=false",
+        "--no-replace-objects",
+        "log",
+        "--oneline",
+    ]);
+    let expected = run(&mut no_advice, home, &repository, None).stdout;
+    assert_eq!(
+        girt(&["--git", "--no-replace-objects", "log", "--oneline"]).as_bytes(),
+        expected
+    );
 }

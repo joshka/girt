@@ -60,6 +60,17 @@ impl<'r> Resolver<'r> {
         })
     }
 
+    /// Resolves through replace references and grafts, as Git's revision syntax does.
+    ///
+    /// Parent steps (`~`, `^`), peeling, paths and the merge bases of `A...B` then read through
+    /// `replaced` and follow its grafted parents; reference names and abbreviated IDs still name
+    /// stored objects. Use the same view for the history walk that follows.
+    #[must_use]
+    pub fn with_replacements(mut self, replaced: &'r crate::replace::ReplacedObjects) -> Self {
+        self.objects = replaced.view();
+        self
+    }
+
     /// Sets the read limits used for commits, trees and tags; the default allows 1 GiB objects.
     pub fn with_read_limits(mut self, limits: ReadLimits) -> Self {
         self.read_limits = limits;
@@ -258,7 +269,16 @@ impl<'r> Resolver<'r> {
             return Err(no_parent);
         }
         let parsed = self.commit(commit)?;
-        parsed.parents().get(n - 1).copied().ok_or(no_parent)
+        let parents = match self
+            .objects
+            .replacements
+            .as_ref()
+            .and_then(|r| r.graft(commit))
+        {
+            Some(grafted) => grafted,
+            None => parsed.parents(),
+        };
+        parents.get(n - 1).copied().ok_or(no_parent)
     }
 
     /// Peels tags, then a commit to its tree when a tree is wanted. A tag is wanted only when

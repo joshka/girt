@@ -56,6 +56,10 @@ struct Cli {
     #[arg(short, long, global = true)]
     quiet: bool,
 
+    /// Read stored objects as they are, ignoring `refs/replace/` (grafts still apply, as in Git).
+    #[arg(long, global = true)]
+    no_replace_objects: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -217,6 +221,7 @@ fn main() -> ExitCode {
     let mut context = Context::new(cli.git);
     context.color = cli.color.stdout() && !cli.git;
     context.progress = !cli.quiet && !cli.git;
+    context.replace_objects = !cli.no_replace_objects;
     match run(cli.command, &context) {
         Ok(code) => code,
         Err(error) if is_broken_pipe(&error) => ExitCode::SUCCESS,

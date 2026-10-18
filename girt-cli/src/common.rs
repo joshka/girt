@@ -24,6 +24,8 @@ pub struct Context {
     pub progress: bool,
     /// The process environment, captured once; every configuration lookup reads this.
     pub environment: Environment,
+    /// Substitute replace references, unless `--no-replace-objects` was given.
+    pub replace_objects: bool,
 }
 
 impl Context {
@@ -36,7 +38,29 @@ impl Context {
             color: false,
             progress: !git,
             environment: Environment::from_process(),
+            replace_objects: true,
         }
+    }
+
+    /// Wraps `objects` in the replacement view Git's history and object commands read through:
+    /// `core.useReplaceRefs`, `GIT_NO_REPLACE_OBJECTS`, `GIT_REPLACE_REF_BASE`,
+    /// `--no-replace-objects` and grafts.
+    pub fn replaced_objects(
+        &self,
+        repository: &Repository,
+        objects: girt::Objects,
+    ) -> Result<girt::replace::ReplacedObjects> {
+        let settings = girt::replace::Settings::from_config(repository.config())?
+            .with_environment(&self.environment)?;
+        let settings = if self.replace_objects {
+            settings
+        } else {
+            settings.with_replace_refs(false)
+        };
+        let replacements = repository
+            .replacements(&settings)
+            .wrap_err("reading replace references")?;
+        Ok(girt::replace::ReplacedObjects::new(objects, replacements))
     }
 
     /// The directory the command runs in.
@@ -110,6 +134,42 @@ pub fn resolve(repository: &Repository, revision: &str) -> Result<ObjectId> {
     resolve_with(repository, &objects, revision, None)
 }
 
+/// Resolves a revision through replace references and grafts, as Git's history and object
+/// commands do; `kind` peels the result.
+pub fn resolve_replaced(
+    repository: &Repository,
+    replaced: &girt::replace::ReplacedObjects,
+    revision: &str,
+    kind: Option<ObjectKind>,
+) -> Result<ObjectId> {
+    let parsed: Revision = revision.parse()?;
+    let resolver = Resolver::new(repository, replaced.raw())?.with_replacements(replaced);
+    let id = match kind {
+        Some(kind) => resolver.resolve_to(&parsed, kind),
+        None => resolver.resolve(&parsed),
+    };
+    id.wrap_err_with(|| format!("resolving `{revision}`"))
+}
+
+/// Resolves revision and range arguments (`A..B`, `A...B`, `^A`) to the commits to walk, through
+/// replace references and grafts as Git does; no arguments select `HEAD`.
+pub fn select(
+    repository: &Repository,
+    replaced: &girt::replace::ReplacedObjects,
+    ranges: &[String],
+) -> Result<Selection> {
+    let parsed = if ranges.is_empty() {
+        vec![Range::Include(Revision::head())]
+    } else {
+        ranges
+            .iter()
+            .map(|range| range.parse())
+            .collect::<Result<Vec<Range>, _>>()?
+    };
+    let resolver = Resolver::new(repository, replaced.raw())?.with_replacements(replaced);
+    Ok(resolver.select(&parsed)?)
+}
+
 /// Resolves a full ref name through symbolic refs; `None` when absent or unborn.
 pub fn resolve_ref(references: &References<'_>, name: &RefName) -> Result<Option<ObjectId>> {
     let resolution = references
@@ -142,21 +202,6 @@ fn resolve_with(
         None => resolver.resolve(&parsed),
     };
     id.wrap_err_with(|| format!("resolving `{revision}`"))
-}
-
-/// Resolves revision and range arguments (`A..B`, `A...B`, `^A`) to the commits to walk;
-/// no arguments means `HEAD`.
-pub fn select(repository: &Repository, objects: &Objects, ranges: &[String]) -> Result<Selection> {
-    let parsed = if ranges.is_empty() {
-        vec![Range::Include(Revision::head())]
-    } else {
-        ranges
-            .iter()
-            .map(|range| range.parse())
-            .collect::<Result<Vec<Range>, _>>()?
-    };
-    let resolver = Resolver::new(repository, objects)?;
-    Ok(resolver.select(&parsed)?)
 }
 
 /// Resolves a revision to a commit.

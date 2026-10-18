@@ -557,7 +557,11 @@ impl Graph {
                         }
                         let commit = Commit::parse(object.object_format(), object.data())
                             .map_err(|source| HistoryError::Parse { id, source })?;
-                        commit.parents().to_vec()
+                        // A graft on the requested ID wins over the replacement's parents.
+                        match objects.replacements.as_ref().and_then(|r| r.graft(id)) {
+                            Some(parents) => parents.to_vec(),
+                            None => commit.parents().to_vec(),
+                        }
                     }
                 };
                 if stop == Some(id) {
