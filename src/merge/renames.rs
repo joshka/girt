@@ -408,6 +408,16 @@ fn relocate_additions(
     Ok(())
 }
 
+pub(super) fn flatten(
+    objects: &Objects,
+    root: ObjectId,
+    options: TreeMergeOptions,
+    cancel: &AtomicBool,
+    memory: &Memory,
+) -> Result<Leaves, RenameError> {
+    FlatReader::new(objects, options, cancel, memory).read(root, &[], 0)
+}
+
 struct FlatReader<'a> {
     objects: &'a Objects,
     memory: &'a Memory,

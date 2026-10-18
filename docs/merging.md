@@ -126,3 +126,33 @@ new object; updating a reference is a separate caller-owned transaction. The
 [`Objects::merge_commits` example](https://github.com/joshka/girt/issues/545) describes this
 boundary; the operation's Rustdoc contains a runnable object-installation and ordered-parent
 example.
+
+## Publish Conflict Files and Stages
+
+`TreeMerge::prepare_checkout` derives an immutable `MergeCheckout` plan without writing objects or
+files. It renders content conflicts into marker blobs and builds an index that retains the original
+conflict entries in stages 1–3. Markers never replace those original stage IDs. Binary and
+structural conflicts keep provisional working content. Directory conflicts and stored empty
+subdirectories are refused. Explicit preparation limits bound traversal, index validation and
+conservative marker output size before rendering.
+
+`Repository::checkout_merge` installs generated objects, then uses the guarded checkout engine to
+validate a clean baseline, write working files and publish the staged index under one index lock.
+Supply the tree currently represented by the index, or `None` for an empty/absent index. A dirty,
+staged or conflicted starting index is refused. Untracked obstructions, metadata paths and foreign
+index locks are preserved. No temporary stage-zero index represents conflict resolution. HEAD and
+references remain unchanged.
+
+The existing checkout platform and path restrictions apply: Linux/macOS only, with gitlinks and
+unsupported path layouts refused. Callers must exclude concurrent working-tree/metadata writers
+throughout publication. Object installation is additive and may leave unreachable generated objects
+after a later failure. Working-file changes are not rolled back. Inspect the checkout report inside
+`PublicationError::Checkout` for completed operations, index publication and cleanup failures before
+recovering; only success proves the staged index was published.
+
+For an index-only workflow, first call `MergeCheckout::install_objects`, then clone
+`MergeCheckout::index` and explicitly publish it with `IndexEdit::replace_index` and
+`IndexEdit::commit`, applying the caller's baseline/exclusion policy. For a checkout workflow, use
+`checkout_merge` so baseline validation and conflict stages share the same held index guard. Resolve
+conflicts later by replacing their stages with a normal entry; merge computation itself never
+declares a conflict resolved merely because marker files exist.
