@@ -3,7 +3,10 @@
 use std::io::{Read, Write};
 use std::sync::atomic::AtomicBool;
 
-use super::{Band, FetchRequest, SIDEBAND_DATA, UploadPack, WantPolicy, number, shallow, trim};
+use super::{
+    Band, FetchRequest, FilterPolicy, SIDEBAND_DATA, UploadPack, WantPolicy, number, parse_filter,
+    shallow, trim,
+};
 use crate::packet::{self, Frame, Wire};
 use crate::serve::ServeError;
 use crate::{IdSet, ObjectFormat, ObjectId};
@@ -74,6 +77,9 @@ impl UploadPack<'_> {
             capabilities.extend_from_slice(b" symref=HEAD:");
             capabilities.extend_from_slice(target.as_bytes());
         }
+        if self.filters == FilterPolicy::Allow {
+            capabilities.extend_from_slice(b" filter");
+        }
         capabilities.extend_from_slice(
             format!(
                 " object-format={} agent=girt/{}",
@@ -136,6 +142,8 @@ impl UploadPack<'_> {
         // Unlike v2, a v0 client that names no object format accepts the advertised one.
         let mut format = None;
         let mut deepen_not = Vec::new();
+        // Like Git, a `filter` line needs the `filter` capability, which needs filtering allowed.
+        let mut filtering = false;
         loop {
             let line = match wire.frame_or_end()? {
                 None => return Ok(()),
@@ -166,6 +174,7 @@ impl UploadPack<'_> {
                             b"ofs-delta" => request.ofs_delta = true,
                             b"include-tag" => request.include_tag = true,
                             b"deepen-relative" => request.deepen.relative = true,
+                            b"filter" => filtering = self.filters == FilterPolicy::Allow,
                             b"object-format=sha1" => format = Some(ObjectFormat::Sha1),
                             b"object-format=sha256" => format = Some(ObjectFormat::Sha256),
                             capability if capability.starts_with(b"object-format=") => {
@@ -201,6 +210,11 @@ impl UploadPack<'_> {
                     return Err(ServeError::Limit("deepen-not"));
                 }
                 deepen_not.push(name.to_vec());
+            } else if let Some(spec) = line.strip_prefix(b"filter ") {
+                if !filtering {
+                    return Err(ServeError::Protocol("filtering capability not negotiated"));
+                }
+                request.filter = Some(parse_filter(spec)?);
             } else {
                 return Err(ServeError::Unsupported("upload-pack request line"));
             }

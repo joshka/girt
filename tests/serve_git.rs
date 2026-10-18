@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;
 
 use girt::Repository;
-use girt::serve::{Protocol, UploadPack, WantPolicy};
+use girt::serve::{FilterPolicy, Protocol, UploadPack, WantPolicy};
 use pack_git::git;
 
 fn pkt(line: &str) -> Vec<u8> {
@@ -876,5 +876,371 @@ fn receive_hooks_see_the_supplied_old_value() {
     assert_eq!(
         std::fs::read(by_girt.join("seen")).unwrap(),
         std::fs::read(by_git.join("seen")).unwrap()
+    );
+}
+
+/// Blobs of 1, 4 and 5 bytes at levels 1 to 4 below the root tree, one blob at two levels, an
+/// annotated tag on the first commit and a second commit that adds a blob under `a`.
+fn filter_fixture(root: &Path, format: &str) -> std::path::PathBuf {
+    let repo = root.join("repo");
+    git(
+        root,
+        &[
+            "init",
+            "-q",
+            "-b",
+            "main",
+            &format!("--object-format={format}"),
+            "repo",
+        ],
+        b"",
+    );
+    std::fs::create_dir_all(repo.join("a/b/c")).unwrap();
+    for (path, content) in [
+        ("small", "x"),
+        ("five", "12345"),
+        ("four", "1234"),
+        ("same-as-deep", "deep\n"),
+        ("a/top", "top\n"),
+        ("a/b/mid", "mid\n"),
+        ("a/b/c/deep", "deep\n"),
+    ] {
+        std::fs::write(repo.join(path), content).unwrap();
+    }
+    git(&repo, &["add", "."], b"");
+    git(&repo, &["commit", "-q", "--no-gpg-sign", "-m", "one"], b"");
+    git(&repo, &["tag", "-a", "--no-sign", "-m", "t", "v1"], b"");
+    std::fs::write(repo.join("a/two"), "two\n").unwrap();
+    git(&repo, &["add", "."], b"");
+    git(&repo, &["commit", "-q", "--no-gpg-sign", "-m", "two"], b"");
+    git(&repo, &["config", "uploadpack.allowFilter", "true"], b"");
+    repo
+}
+
+/// The pack bytes of a v2 `fetch` response.
+fn v2_pack(response: &[u8]) -> Vec<u8> {
+    let start = response
+        .windows(13)
+        .position(|window| window == b"000dpackfile\n")
+        .unwrap_or_else(|| panic!("no pack in {}", String::from_utf8_lossy(response)))
+        + 13;
+    let mut rest = &response[start..];
+    let mut pack = Vec::new();
+    while rest.len() >= 4 {
+        let length = usize::from_str_radix(std::str::from_utf8(&rest[..4]).unwrap(), 16).unwrap();
+        if length < 4 {
+            break;
+        }
+        if rest[4] == 1 {
+            pack.extend_from_slice(&rest[5..length]);
+        }
+        rest = &rest[length..];
+    }
+    pack
+}
+
+/// The type and name of every object in `pack`, sorted, as Git's `index-pack` reads them.
+fn pack_objects(root: &Path, format: &str, pack: &[u8]) -> Vec<String> {
+    let store = tempfile::tempdir_in(root).unwrap();
+    git(
+        store.path(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            &format!("--object-format={format}"),
+            ".",
+        ],
+        b"",
+    );
+    git(store.path(), &["index-pack", "--stdin"], pack);
+    let listing = git(
+        store.path(),
+        &[
+            "cat-file",
+            "--batch-all-objects",
+            "--batch-check=%(objecttype) %(objectname)",
+        ],
+        b"",
+    );
+    let mut objects: Vec<String> = String::from_utf8(listing)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    objects.sort();
+    objects
+}
+
+/// Girt's v2 pack holds the same objects as Git's for each filter, want and have.
+#[rstest::rstest]
+#[case::blob_none("blob:none", &["main"], &[], &[])]
+#[case::blob_limit_at_size("blob:limit=5", &["main"], &[], &[])]
+#[case::blob_limit_below_size("blob:limit=4", &["main"], &[], &[])]
+#[case::tree_0("tree:0", &["main"], &[], &[])]
+#[case::tree_1("tree:1", &["main"], &[], &[])]
+#[case::tree_2_keeps_shallowest_path("tree:2", &["main", "v1"], &[], &[])]
+#[case::tree_3("tree:3", &["main"], &[], &[])]
+#[case::commits_only("object:type=commit", &["main"], &[], &[])]
+#[case::tags_only_keeps_wants("object:type=tag", &["main"], &[], &["include-tag"])]
+#[case::trees_only("object:type=tree", &["v1"], &[], &[])]
+#[case::blobs_only("object:type=blob", &["main"], &[], &["include-tag"])]
+#[case::combine("combine:blob:limit=5+tree:2", &["main"], &[], &[])]
+#[case::combine_types("combine:object:type=tree+object:type=blob", &["main"], &[], &[])]
+#[case::wanted_blob("blob:none", &["main:a/top"], &[], &[])]
+#[case::wanted_tree("tree:0", &["main:a"], &[], &[])]
+#[case::wanted_tree_blobs("object:type=blob", &["main:a"], &[], &[])]
+#[case::with_have("blob:none", &["main"], &["main~1"], &[])]
+#[case::shallow("blob:none", &["main"], &[], &["deepen 1"])]
+fn filtered_packs_match_git(
+    #[case] filter: &str,
+    #[case] wants: &[&str],
+    #[case] haves: &[&str],
+    #[case] extra: &[&str],
+    #[values("sha1", "sha256")] format: &str,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = filter_fixture(root.path(), format);
+    let mut request = pkt("command=fetch\n");
+    request.extend(pkt(&format!("object-format={format}\n")));
+    request.extend_from_slice(b"0001");
+    let mut lines = vec!["ofs-delta".to_owned(), format!("filter {filter}")];
+    lines.extend(extra.iter().map(|line| (*line).to_owned()));
+    lines.extend(
+        wants
+            .iter()
+            .map(|w| format!("want {}", rev_parse(&repo, w))),
+    );
+    lines.extend(
+        haves
+            .iter()
+            .map(|h| format!("have {}", rev_parse(&repo, h))),
+    );
+    lines.push("done".to_owned());
+    for line in &lines {
+        request.extend(pkt(&format!("{line}\n")));
+    }
+    request.extend_from_slice(b"0000");
+    let by_girt = girt_respond(&repo, &request);
+    let by_git = git_upload_pack(&repo, &request);
+    assert_eq!(before_pack(&by_girt), before_pack(&by_git));
+    assert_eq!(
+        pack_objects(root.path(), format, &v2_pack(&by_girt)),
+        pack_objects(root.path(), format, &v2_pack(&by_git)),
+    );
+}
+
+/// A filtered client may lack its own commits' trees and blobs, so girt sends no thin deltas to
+/// it. Git does, which leaves its pack with a delta against the client's tree.
+#[test]
+fn filtered_thin_pack_is_self_contained() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = filter_fixture(root.path(), "sha1");
+    let lines = [
+        "ofs-delta".to_owned(),
+        "thin-pack".to_owned(),
+        "filter blob:limit=5".to_owned(),
+        format!("want {}", rev_parse(&repo, "main")),
+        format!("have {}", rev_parse(&repo, "main~1")),
+        "done".to_owned(),
+    ];
+    let response = girt_respond(&repo, &fetch_request(&lines));
+    let objects = pack_objects(root.path(), "sha1", &v2_pack(&response));
+    assert_eq!(objects.len(), 4, "{objects:?}");
+}
+
+/// Without `uploadpack.allowFilter`, neither server advertises `filter` or accepts one, and an
+/// unparsable or `sparse:oid` filter is refused.
+#[test]
+fn filters_follow_allow_filter() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = filter_fixture(root.path(), "sha1");
+    let advertisement = |repo: &Path| {
+        let repository = Repository::open(repo).unwrap();
+        let mut output = Vec::new();
+        UploadPack::new(&repository)
+            .unwrap()
+            .advertise(Protocol::V2, &mut output, &AtomicBool::new(false))
+            .unwrap();
+        String::from_utf8(output).unwrap()
+    };
+    assert!(advertisement(&repo).contains("fetch=shallow wait-for-done filter\n"));
+    let request = |spec: &str| {
+        let mut request = pkt("command=fetch\n");
+        request.extend_from_slice(b"0001");
+        request.extend(pkt(&format!("filter {spec}\n")));
+        request.extend(pkt(&format!("want {}\n", rev_parse(&repo, "main"))));
+        request.extend(pkt("done\n"));
+        request.extend_from_slice(b"0000");
+        request
+    };
+    let refused = |spec: &str| {
+        let repository = Repository::open(&repo).unwrap();
+        let mut response = Vec::new();
+        let error = UploadPack::new(&repository)
+            .unwrap()
+            .respond(
+                &mut &request(spec)[..],
+                &mut response,
+                &AtomicBool::new(false),
+            )
+            .unwrap_err();
+        (error, String::from_utf8_lossy(&response).into_owned())
+    };
+    let (error, response) = refused("bogus");
+    assert!(
+        matches!(error, girt::serve::ServeError::Filter(_)),
+        "{error}"
+    );
+    assert!(response.contains("ERR upload-pack: invalid filter-spec 'bogus'"));
+    let (error, _) = refused("sparse:oid=main:small");
+    assert!(matches!(error, girt::serve::ServeError::Unsupported(_)));
+
+    git(&repo, &["config", "uploadpack.allowFilter", "false"], b"");
+    assert!(advertisement(&repo).contains("fetch=shallow wait-for-done\n"));
+    // Git's server stops without a response.
+    assert!(git_upload_pack_output(&repo, &request("blob:none")).is_empty());
+    let (error, response) = refused("blob:none");
+    assert!(matches!(error, girt::serve::ServeError::Unsupported(_)));
+    assert!(response.contains("ERR upload-pack: unsupported client request"));
+
+    // A caller's policy replaces the configuration.
+    let repository = Repository::open(&repo).unwrap();
+    let mut response = Vec::new();
+    UploadPack::new(&repository)
+        .unwrap()
+        .with_filter_policy(FilterPolicy::Allow)
+        .respond(
+            &mut &request("blob:none")[..],
+            &mut response,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(
+        pack_objects(root.path(), "sha1", &v2_pack(&response)).len(),
+        8
+    );
+}
+
+/// A v0 `filter` line needs the `filter` capability, which only an allowed filter advertises.
+#[test]
+fn v0_filter_needs_the_capability() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = filter_fixture(root.path(), "sha1");
+    let main = rev_parse(&repo, "main");
+    for (capabilities, allowed) in [("side-band-64k filter", false), ("side-band-64k", true)] {
+        let config = if allowed { "true" } else { "false" };
+        git(&repo, &["config", "uploadpack.allowFilter", config], b"");
+        let request = v0_request(&[
+            Some(format!("want {main} {capabilities}")),
+            Some("filter blob:none".to_owned()),
+            None,
+            Some("done".to_owned()),
+        ]);
+        let by_git = String::from_utf8_lossy(&git_upload_pack_v0(&repo, &request)).into_owned();
+        let by_girt = String::from_utf8_lossy(&girt_serve_v0(&repo, &request)).into_owned();
+        assert_eq!(by_git.contains(" filter "), allowed, "{by_git}");
+        assert_eq!(by_girt.contains(" filter "), allowed, "{by_girt}");
+        assert!(!by_git.contains("PACK"));
+        assert!(
+            by_girt.contains(
+                "ERR upload-pack: invalid client request: filtering capability not negotiated"
+            ),
+            "{by_girt}"
+        );
+    }
+}
+
+/// Like [`git_upload_pack`], without requiring success.
+fn git_upload_pack_output(repo: &Path, request: &[u8]) -> Vec<u8> {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", repo.join("absent-config"))
+        .env("GIT_PROTOCOL", "version=2")
+        .args(["upload-pack", "--stateless-rpc"])
+        .arg(repo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child.stdin.take().unwrap().write_all(request)?;
+            child.wait_with_output()
+        })
+        .unwrap()
+        .stdout
+}
+
+/// A deeply nested `combine:` filter in an otherwise valid request is refused with an error, not
+/// a stack overflow.
+#[test]
+fn deeply_nested_filter_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = filter_fixture(root.path(), "sha1");
+    let spec = format!("{}blob:none", "combine:".repeat(8000));
+    let lines = [
+        format!("filter {spec}"),
+        format!("want {}", rev_parse(&repo, "main")),
+        "done".to_owned(),
+    ];
+    let repository = Repository::open(&repo).unwrap();
+    let mut response = Vec::new();
+    let error = UploadPack::new(&repository)
+        .unwrap()
+        .respond(
+            &mut &fetch_request(&lines)[..],
+            &mut response,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, girt::serve::ServeError::Filter(_)),
+        "{error}"
+    );
+    assert!(String::from_utf8_lossy(&response).contains("ERR upload-pack: combined filter-spec"));
+}
+
+/// `blob:limit` leaves out a blob larger than the per-object read bound without reading it, as
+/// Git's server does.
+#[test]
+fn blob_limit_omits_blobs_beyond_the_read_bound() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = filter_fixture(root.path(), "sha1");
+    std::fs::write(repo.join("large"), vec![b'z'; 1024]).unwrap();
+    git(&repo, &["add", "large"], b"");
+    git(
+        &repo,
+        &["commit", "-q", "--no-gpg-sign", "-m", "large"],
+        b"",
+    );
+    let lines = [
+        "filter blob:limit=1".to_owned(),
+        format!("want {}", rev_parse(&repo, "main")),
+        "done".to_owned(),
+    ];
+    let request = fetch_request(&lines);
+    let repository = Repository::open(&repo).unwrap();
+    let limits = girt::serve::UploadLimits::default()
+        .with_read(girt::ReadLimits::default().with_max_object_bytes(512));
+    let mut response = Vec::new();
+    UploadPack::new(&repository)
+        .unwrap()
+        .with_limits(limits)
+        .respond(&mut &request[..], &mut response, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(
+        pack_objects(root.path(), "sha1", &v2_pack(&response)),
+        pack_objects(
+            root.path(),
+            "sha1",
+            &v2_pack(&git_upload_pack(&repo, &request))
+        ),
     );
 }

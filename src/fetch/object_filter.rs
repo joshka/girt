@@ -14,6 +14,10 @@ use crate::ObjectKind;
 /// `blob:limit=1024`, as Git writes it. Git sends the parts of a `combine:` spec as written;
 /// girt writes each part in the same canonical form and percent-encodes it again.
 ///
+/// Parsing accepts `combine:` specs nested at most [`Self::MAX_NESTING`] levels deep. Git accepts
+/// deeper nesting, but each level costs stack while parsing, matching, writing and dropping, so a
+/// spec from an untrusted peer could otherwise exhaust it. Values built directly are not bounded.
+///
 /// Values built directly must be valid specs: a [`Self::Combine`] with no parts or a
 /// [`Self::SparseOid`] with an empty name writes a spec that does not parse.
 ///
@@ -79,12 +83,49 @@ pub enum ObjectFilterParseError {
     /// A `combine:` part decodes to bytes that are not UTF-8.
     #[error("combined filter-spec part '{0}' does not decode to UTF-8")]
     Escape(String),
+    /// `combine:` specs are nested more than [`ObjectFilter::MAX_NESTING`] levels deep.
+    #[error(
+        "combined filter-spec nested more than {} levels deep",
+        ObjectFilter::MAX_NESTING
+    )]
+    TooDeep,
+}
+
+impl ObjectFilter {
+    /// The deepest `combine:` nesting that parsing accepts; `combine:blob:none` is one level.
+    pub const MAX_NESTING: usize = 16;
+
+    fn parse_nested(spec: &str, depth: usize) -> Result<Self, ObjectFilterParseError> {
+        if let Some(parts) = spec.strip_prefix("combine:") {
+            if depth == Self::MAX_NESTING {
+                return Err(ObjectFilterParseError::TooDeep);
+            }
+            return parts
+                .split('+')
+                .map(|part| {
+                    if part.is_empty() {
+                        return Err(ObjectFilterParseError::EmptyCombinePart(spec.to_owned()));
+                    }
+                    Self::parse_nested(&decode_part(part)?, depth + 1)
+                })
+                .collect::<Result<_, _>>()
+                .map(Self::Combine);
+        }
+        Self::parse_simple(spec)
+    }
 }
 
 impl FromStr for ObjectFilter {
     type Err = ObjectFilterParseError;
 
     fn from_str(spec: &str) -> Result<Self, Self::Err> {
+        Self::parse_nested(spec, 0)
+    }
+}
+
+impl ObjectFilter {
+    /// Parses every form except `combine:`.
+    fn parse_simple(spec: &str) -> Result<Self, ObjectFilterParseError> {
         if spec == "blob:none" {
             return Ok(Self::BlobNone);
         }
@@ -113,18 +154,6 @@ impl FromStr for ObjectFilter {
                 return Err(ObjectFilterParseError::SparseOid);
             }
             return Ok(Self::SparseOid(name.to_owned()));
-        }
-        if let Some(parts) = spec.strip_prefix("combine:") {
-            return parts
-                .split('+')
-                .map(|part| {
-                    if part.is_empty() {
-                        return Err(ObjectFilterParseError::EmptyCombinePart(spec.to_owned()));
-                    }
-                    decode_part(part)?.parse()
-                })
-                .collect::<Result<_, _>>()
-                .map(Self::Combine);
         }
         Err(ObjectFilterParseError::Unknown(spec.to_owned()))
     }
@@ -354,6 +383,35 @@ mod tests {
             );
             assert_eq!(parse(&filter.to_string()), Ok(filter));
         }
+    }
+
+    /// Git accepts nested `combine:` specs such as `combine:combine%3Ablob%3Anone`; girt accepts
+    /// them up to [`ObjectFilter::MAX_NESTING`] levels and refuses deeper ones without recursing
+    /// further.
+    #[test]
+    fn bounds_combine_nesting() {
+        let nested = |levels: usize| {
+            let mut spec = "blob:none".to_owned();
+            for _ in 0..levels {
+                spec = format!("combine:{}", spec.replace('%', "%25").replace(':', "%3a"));
+            }
+            spec
+        };
+        let mut filter = parse(&nested(ObjectFilter::MAX_NESTING)).unwrap();
+        for _ in 0..ObjectFilter::MAX_NESTING {
+            let ObjectFilter::Combine(mut parts) = filter else {
+                panic!("expected combine");
+            };
+            filter = parts.remove(0);
+        }
+        assert_eq!(filter, ObjectFilter::BlobNone);
+        assert_eq!(
+            parse(&nested(ObjectFilter::MAX_NESTING + 1)),
+            Err(ObjectFilterParseError::TooDeep)
+        );
+        // Unescaped nesting, as an attacker may send it, stops at the same depth.
+        let raw = format!("{}blob:none", "combine:".repeat(8000));
+        assert_eq!(parse(&raw), Err(ObjectFilterParseError::TooDeep));
     }
 
     #[test]

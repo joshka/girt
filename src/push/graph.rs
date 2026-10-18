@@ -35,6 +35,84 @@ pub(crate) struct Selection {
     pub delta_bases: Vec<(ObjectId, ObjectKind, ObjectId)>,
 }
 
+/// What a partial-clone filter leaves out of an upload-pack selection.
+///
+/// Objects that a want names, directly or through the tags it peels, are always sent. The default
+/// leaves nothing out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Omit {
+    /// Blobs of at least this many bytes are left out; `Some(0)` leaves out every blob.
+    pub blob_limit: Option<u64>,
+    /// Trees and blobs this many levels or more below a root tree are left out, where a commit's
+    /// root tree and a wanted tree or blob are level 0. An object is kept when any path to it is
+    /// shallow enough.
+    pub tree_depth: Option<u64>,
+    /// Which of commits, trees, blobs and tags are kept, in [`Omit::slot`] order.
+    pub kinds: [bool; 4],
+}
+
+impl Default for Omit {
+    fn default() -> Self {
+        Self {
+            blob_limit: None,
+            tree_depth: None,
+            kinds: [true; 4],
+        }
+    }
+}
+
+impl Omit {
+    /// Leaves out what either filter leaves out.
+    pub fn and(self, other: Self) -> Self {
+        let min = |a: Option<u64>, b: Option<u64>| match (a, b) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let mut kinds = self.kinds;
+        for (kept, other) in kinds.iter_mut().zip(other.kinds) {
+            *kept &= other;
+        }
+        Self {
+            blob_limit: min(self.blob_limit, other.blob_limit),
+            tree_depth: min(self.tree_depth, other.tree_depth),
+            kinds,
+        }
+    }
+
+    /// Keeps only objects of `kind`.
+    pub fn only(kind: ObjectKind) -> Self {
+        let mut kinds = [false; 4];
+        kinds[Self::slot(kind)] = true;
+        Self {
+            kinds,
+            ..Self::default()
+        }
+    }
+
+    fn slot(kind: ObjectKind) -> usize {
+        match kind {
+            ObjectKind::Commit => 0,
+            ObjectKind::Tree => 1,
+            ObjectKind::Blob => 2,
+            ObjectKind::Tag => 3,
+        }
+    }
+
+    fn keeps(&self, kind: ObjectKind) -> bool {
+        self.kinds[Self::slot(kind)] && (kind != ObjectKind::Blob || self.blob_limit != Some(0))
+    }
+
+    /// Whether objects at `depth` below a root tree are left out whatever their kind.
+    fn too_deep(&self, depth: u64) -> bool {
+        self.tree_depth.is_some_and(|limit| depth >= limit)
+    }
+
+    /// Whether anything below a tree could be sent, so the tree's entries need walking.
+    fn walks_trees(&self) -> bool {
+        self.keeps(ObjectKind::Tree) || self.keeps(ObjectKind::Blob)
+    }
+}
+
 /// Selects objects reachable from the non-deleting commands' tips that are not proven to be in the
 /// closure of a locally present receiver root, then proves branch fast-forwards.
 ///
@@ -77,7 +155,7 @@ pub(super) fn select(
 ///
 /// Uses [`select`]'s walk and bounds without any fast-forward proof. For a shallow client,
 /// `known_cut` holds its boundary commits, whose parents it lacks, and `send_cut` the commits
-/// whose parents aren't sent.
+/// whose parents aren't sent. `omit` leaves out the objects a partial-clone filter excludes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn select_wants(
     store: &Objects,
@@ -85,6 +163,7 @@ pub(crate) fn select_wants(
     haves: &[ObjectId],
     known_cut: IdSet,
     send_cut: IdSet,
+    omit: Omit,
     limits: PushLimits,
     cancel: &AtomicBool,
     observe: impl FnMut(u64),
@@ -95,6 +174,7 @@ pub(crate) fn select_wants(
     let mut walk = Walk::new(store, limits, cancel, observe);
     walk.known_cut = known_cut;
     walk.send_cut = send_cut;
+    walk.omit = omit;
     walk.mark_roots(haves)?;
     walk.resolve_tips(wants.iter().map(|&id| (id, None)))?;
     walk.walk_commits()?;
@@ -175,6 +255,10 @@ struct Walk<'a, F> {
     known_cut: IdSet,
     /// Commits whose parents aren't sent.
     send_cut: IdSet,
+    /// Objects a partial-clone filter leaves out.
+    omit: Omit,
+    /// Objects named by the tips or the tags they peel, which `omit` never leaves out.
+    explicit: IdSet,
 }
 
 impl<'a, F: FnMut(u64)> Walk<'a, F> {
@@ -203,6 +287,8 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             ancestry_steps: limits.max_ancestry_steps,
             known_cut: IdSet::default(),
             send_cut: IdSet::default(),
+            omit: Omit::default(),
+            explicit: IdSet::default(),
         }
     }
 
@@ -447,6 +533,7 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
         }
         while let Some(id) = pending.pop_front() {
             check_cancelled(self.cancel)?;
+            self.explicit.insert(id);
             if matches!(
                 self.expected[&id],
                 Some(ObjectKind::Tree | ObjectKind::Blob)
@@ -633,20 +720,29 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
         Ok(())
     }
 
-    /// Walks trees of sent commits and tip trees/blobs, skipping known objects.
+    /// Walks trees of sent commits and tip trees/blobs, skipping known objects and those the
+    /// filter leaves out.
+    ///
+    /// The walk is breadth first from level 0, so an object is first discovered at its shallowest
+    /// level, which is the one a tree depth filter judges.
     fn select_trees(&mut self) -> Result<(), Error> {
-        let mut pending: VecDeque<_> = std::mem::take(&mut self.later).into();
+        let mut pending: VecDeque<_> = std::mem::take(&mut self.later)
+            .into_iter()
+            .map(|id| (id, 0))
+            .collect();
         for index in 0..self.processed.len() {
             let id = self.processed[index];
             if self.known.contains_key(&id) {
                 continue;
             }
             let tree = self.commits[&id].tree;
-            if self.discover(tree, Some(ObjectKind::Tree))? {
-                pending.push_back(tree);
+            if self.admits(tree, ObjectKind::Tree, 0)?
+                && self.discover(tree, Some(ObjectKind::Tree))?
+            {
+                pending.push_back((tree, 0));
             }
         }
-        while let Some(id) = pending.pop_front() {
+        while let Some((id, depth)) = pending.pop_front() {
             check_cancelled(self.cancel)?;
             if self.rely_on(id) {
                 continue;
@@ -654,14 +750,48 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             if self.read_candidate(id)?.ok_or(Error::Missing(id))? != ObjectKind::Tree {
                 continue;
             }
+            if !self.omit.walks_trees() {
+                continue;
+            }
+            let depth = depth + 1;
             for (target, kind) in edges(id, &self.selected[&id])? {
                 self.charge_edge()?;
-                if self.discover(target, Some(kind))? {
-                    pending.push_back(target);
+                if self.admits(target, kind, depth)? && self.discover(target, Some(kind))? {
+                    pending.push_back((target, depth));
                 }
             }
         }
         Ok(())
+    }
+
+    /// Whether the filter lets a tree or blob at `depth` be sent or, for a tree, walked.
+    fn admits(&mut self, id: ObjectId, kind: ObjectKind, depth: u64) -> Result<bool, Error> {
+        if self.omit.too_deep(depth) {
+            return Ok(false);
+        }
+        if kind != ObjectKind::Blob {
+            return Ok(self.omit.walks_trees());
+        }
+        if !self.omit.keeps(ObjectKind::Blob) {
+            return Ok(false);
+        }
+        let Some(limit) = self.omit.blob_limit else {
+            return Ok(true);
+        };
+        // Known and already selected blobs need no size check.
+        if self.known.contains_key(&id) || self.expected.contains_key(&id) {
+            return Ok(true);
+        }
+        check_cancelled(self.cancel)?;
+        // The size alone is read here, so the payload bound doesn't apply: a blob too large to
+        // send is exactly what the filter leaves out. Sent objects keep every decoding bound.
+        let mut limits = self.limits.read;
+        limits.max_object_bytes = usize::MAX;
+        let header = self
+            .store
+            .header(id, limits)
+            .map_err(|source| Error::Read { id, source })?;
+        Ok(header.is_none_or(|header| header.size() < limit))
     }
 
     fn finish(mut self) -> Selection {
@@ -684,6 +814,11 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
         for id in omitted_blobs {
             self.rely_on(id);
         }
+        // Commits and trees walked only to reach other objects are dropped here.
+        let omit = self.omit;
+        let explicit = &self.explicit;
+        self.selected
+            .retain(|id, object| omit.keeps(object.kind()) || explicit.contains(id));
         let search = matches!(self.limits.compression,
             crate::PackCompression::Delta(options)
                 if options.max_depth > 0 && options.window > 0

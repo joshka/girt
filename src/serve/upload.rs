@@ -7,8 +7,10 @@ mod v0;
 
 use super::shallow::{self, Deepen};
 use super::{Protocol, ServeError};
+use crate::fetch::ObjectFilter;
 use crate::hide_refs::HideRules;
 use crate::packet::{self, Frame, Wire};
+use crate::push::graph::Omit;
 use crate::refs::{RefName, Target};
 use crate::{
     IdSet, ObjectFormat, ObjectId, ObjectKind, Objects, PackCompression, PackLimits,
@@ -177,10 +179,26 @@ pub enum WantPolicy {
     Any,
 }
 
+/// Whether clients may send a partial-clone `filter`.
+///
+/// Git refuses filters unless `uploadpack.allowFilter` is true, which [`UploadPack::new`] reads.
+/// An allowed filter is advertised and honored in both protocols, except `sparse:oid`, which
+/// girt refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum FilterPolicy {
+    /// Don't advertise filtering, and refuse requests that send a filter (Git's default).
+    #[default]
+    Refuse,
+    /// Advertise filtering and leave out the objects each request's filter excludes.
+    Allow,
+}
+
 /// Serves fetches from one repository, as `git upload-pack` does.
 ///
 /// Hidden references follow `uploadpack.hideRefs` and `transfer.hideRefs`. Clients may only
-/// want objects that a visible reference names directly or by peeling a tag.
+/// want objects that a visible reference names directly or by peeling a tag. Partial-clone
+/// filters follow `uploadpack.allowFilter`; see [`FilterPolicy`].
 pub struct UploadPack<'r> {
     repository: &'r Repository,
     hide: HideRules,
@@ -190,6 +208,7 @@ pub struct UploadPack<'r> {
     wants: Option<WantPolicy>,
     /// Whether the v2 `object-info` command is offered.
     object_info: bool,
+    filters: FilterPolicy,
     limits: UploadLimits,
 }
 
@@ -199,6 +218,7 @@ impl std::fmt::Debug for UploadPack<'_> {
             .field("git_dir", &self.repository.git_dir())
             .field("configured_wants", &self.configured_wants)
             .field("wants", &self.wants)
+            .field("filters", &self.filters)
             .field("limits", &self.limits)
             .finish_non_exhaustive()
     }
@@ -234,6 +254,8 @@ struct FetchRequest {
     deepen: Deepen,
     /// `deepen-not` names, resolved after parsing.
     deepen_not: Vec<Vec<u8>>,
+    /// The partial-clone filter, when the client sent one.
+    filter: Option<ObjectFilter>,
 }
 
 impl<'r> UploadPack<'r> {
@@ -241,7 +263,8 @@ impl<'r> UploadPack<'r> {
     ///
     /// # Errors
     ///
-    /// Returns [`ServeError::Config`] when a hide rule is implicit or empty.
+    /// Returns [`ServeError::Config`] when a hide rule is implicit or empty, or an `uploadpack`
+    /// boolean isn't one.
     pub fn new(repository: &'r Repository) -> Result<Self, ServeError> {
         let mut configured_wants = WantPolicy::Advertised;
         for (name, policy) in [
@@ -257,6 +280,10 @@ impl<'r> UploadPack<'r> {
             Some(false) => configured_wants = WantPolicy::Advertised,
             None => {}
         }
+        let filters = match config_boolean(repository, "allowfilter")? {
+            Some(true) => FilterPolicy::Allow,
+            _ => FilterPolicy::Refuse,
+        };
         Ok(Self {
             repository,
             hide: HideRules::parse(repository, "uploadpack").map_err(ServeError::Config)?,
@@ -264,6 +291,7 @@ impl<'r> UploadPack<'r> {
             wants: None,
             object_info: section_boolean(repository, "transfer", "advertiseobjectinfo")?
                 .unwrap_or(false),
+            filters,
             limits: UploadLimits::default(),
         })
     }
@@ -274,6 +302,13 @@ impl<'r> UploadPack<'r> {
     #[must_use]
     pub fn with_want_policy(mut self, wants: WantPolicy) -> Self {
         self.wants = Some(wants);
+        self
+    }
+
+    /// Sets whether clients may send a partial-clone filter, replacing `uploadpack.allowFilter`.
+    #[must_use]
+    pub fn with_filter_policy(mut self, filters: FilterPolicy) -> Self {
+        self.filters = filters;
         self
     }
 
@@ -337,11 +372,15 @@ impl<'r> UploadPack<'r> {
             return self.advertise_v0(output, cancel);
         }
         let format = self.repository.object_format();
+        let fetch = match self.filters {
+            FilterPolicy::Allow => "fetch=shallow wait-for-done filter",
+            FilterPolicy::Refuse => "fetch=shallow wait-for-done",
+        };
         let mut lines = vec![
             "version 2".to_owned(),
             format!("agent=girt/{}", env!("CARGO_PKG_VERSION")),
             "ls-refs=unborn".to_owned(),
-            "fetch=shallow wait-for-done".to_owned(),
+            fetch.to_owned(),
             "server-option".to_owned(),
             format!("object-format={format}"),
         ];
@@ -689,6 +728,10 @@ impl<'r> UploadPack<'r> {
                             return Err(ServeError::Limit("deepen-not"));
                         }
                         request.deepen_not.push(name.to_vec());
+                    } else if let Some(spec) = argument.strip_prefix(b"filter ")
+                        && self.filters == FilterPolicy::Allow
+                    {
+                        request.filter = Some(parse_filter(spec)?);
                     } else {
                         return Err(ServeError::Unsupported("fetch argument"));
                     }
@@ -1027,12 +1070,17 @@ impl<'r> UploadPack<'r> {
         if request.deepen.requested() {
             known.extend(&request.shallow);
         }
+        let omit = request
+            .filter
+            .as_ref()
+            .map_or(Ok(Omit::default()), omission)?;
         let mut selection = crate::push::graph::select_wants(
             objects,
             &wants,
             &known,
             request.shallow_seen.clone(),
             send_cut,
+            omit,
             limits,
             cancel,
             |_| {},
@@ -1061,8 +1109,9 @@ impl<'r> UploadPack<'r> {
             buffer: Vec::new(),
             cancel,
         };
-        // A thin pack may delta against objects the client is known to have.
-        let bases: Vec<_> = if request.thin_pack {
+        // A thin pack may delta against objects the client is known to have. A filtered client
+        // may lack the trees and blobs of its own commits, so it gets no external bases.
+        let bases: Vec<_> = if request.thin_pack && request.filter.is_none() {
             selection
                 .delta_bases
                 .iter()
@@ -1119,6 +1168,41 @@ fn number<T: std::str::FromStr>(digits: &[u8]) -> Result<T, ServeError> {
         .ok_or(ServeError::Protocol("number"))
 }
 
+/// Parses a `filter` argument's spec.
+fn parse_filter(spec: &[u8]) -> Result<ObjectFilter, ServeError> {
+    std::str::from_utf8(spec)
+        .map_err(|_| ServeError::Protocol("filter spec is not UTF-8"))?
+        .parse()
+        .map_err(|error| ServeError::Filter(Box::new(error)))
+}
+
+/// What the selection leaves out for `filter`.
+fn omission(filter: &ObjectFilter) -> Result<Omit, ServeError> {
+    Ok(match filter {
+        ObjectFilter::BlobNone => Omit {
+            blob_limit: Some(0),
+            ..Omit::default()
+        },
+        &ObjectFilter::BlobLimit(limit) => Omit {
+            blob_limit: Some(limit),
+            ..Omit::default()
+        },
+        &ObjectFilter::TreeDepth(depth) => Omit {
+            tree_depth: Some(depth),
+            ..Omit::default()
+        },
+        &ObjectFilter::ObjectType(kind) => Omit::only(kind),
+        ObjectFilter::Combine(parts) => {
+            let mut omit = Omit::default();
+            for part in parts {
+                omit = omit.and(omission(part)?);
+            }
+            omit
+        }
+        ObjectFilter::SparseOid(_) => return Err(ServeError::Unsupported("sparse:oid filter")),
+    })
+}
+
 /// Reads an `uploadpack` boolean, `None` when unset.
 fn config_boolean(repository: &Repository, name: &str) -> Result<Option<bool>, ServeError> {
     section_boolean(repository, "uploadpack", name)
@@ -1147,6 +1231,7 @@ fn report(error: &ServeError, output: &mut impl Write, cancel: &AtomicBool) {
         ServeError::Protocol(_) | ServeError::Unsupported(_) | ServeError::Limit(_) => {
             format!("upload-pack: {error}")
         }
+        ServeError::Filter(source) => format!("upload-pack: {source}"),
         _ => return,
     };
     let _ = packet::packet(output, format!("ERR {message}\n").as_bytes(), cancel);

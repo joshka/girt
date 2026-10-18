@@ -47,8 +47,17 @@
 //! full-duplex streams. Both support `include-tag`, thin packs and shallow requests (`deepen`,
 //! `deepen-relative`, `deepen-since` and `deepen-not`). v2 also supports `wait-for-done`, and
 //! `object-info` when `transfer.advertiseObjectInfo` or [`UploadPack::with_object_info`] enables
-//! it. `filter` and stateless v0 (HTTP) aren't supported yet, and a shallow repository can't be
-//! served; see [#520](https://github.com/joshka/girt/issues/520).
+//! it.
+//!
+//! When `uploadpack.allowFilter` is true or the caller sets [`FilterPolicy::Allow`], both
+//! protocols serve partial clones: a `filter` of `blob:none`, `blob:limit`, `tree:<depth>`,
+//! `object:type` or `combine:` leaves out objects as Git's server does, while an object that a
+//! want names, directly or through the tags it peels, is always sent. Lazy fetches of missing
+//! blobs rely on that. `sparse:oid` filters are refused, and a filtered fetch never gets thin
+//! deltas, because the client may lack the trees and blobs they would build on.
+//!
+//! Stateless v0 (HTTP) isn't supported yet, and a shallow repository can't be served; see
+//! [#520](https://github.com/joshka/girt/issues/520).
 
 #![warn(
     clippy::unwrap_used,
@@ -67,7 +76,7 @@ mod upload;
 mod tests;
 
 pub use receive::ReceivePack;
-pub use upload::{UploadLimits, UploadPack, WantPolicy};
+pub use upload::{FilterPolicy, UploadLimits, UploadPack, WantPolicy};
 
 use crate::ObjectId;
 
@@ -156,6 +165,9 @@ pub enum ServeError {
     /// Opening the served repository failed.
     #[error("opening the repository")]
     Open(#[source] Box<crate::OpenError>),
+    /// The client's partial-clone filter spec doesn't parse.
+    #[error("invalid filter")]
+    Filter(#[source] Box<crate::fetch::ObjectFilterParseError>),
 }
 
 impl From<crate::packet::Error> for ServeError {
