@@ -84,6 +84,7 @@
 //! Callers must exclude other writers of HEAD, the index and operation files for the duration of a
 //! call; the index lock and the conditional reference update detect cooperating writers.
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -252,12 +253,14 @@ pub enum ResetError {
 }
 
 /// A keep or merge reset's paths, those that must be clean, and the index it publishes.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct Selected {
     paths: BTreeSet<Vec<u8>>,
     clean: BTreeSet<Vec<u8>>,
     replacement: Vec<Entry>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Selected {
     fn selection(&self) -> crate::checkout::Selection<'_> {
         crate::checkout::Selection {
@@ -331,6 +334,14 @@ impl Repository {
         options: &ResetOptions,
         filters: Option<&mut crate::filter::Pipeline>,
     ) -> Result<Option<ObjectId>, ResetError> {
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = filters;
+            if matches!(mode, ResetMode::Hard | ResetMode::Keep | ResetMode::Merge) {
+                return Err(ResetError::Unsupported("hard reset on this platform"));
+            }
+        }
+
         if self.reference_backend() == crate::refs::Backend::Reftable {
             // Reftable keeps ORIG_HEAD and AUTO_MERGE in the table, not as files.
             return Err(ResetError::Unsupported("reftable repositories"));
@@ -356,6 +367,7 @@ impl Repository {
             return Err(ResetError::MergeInProgress);
         }
 
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let selected = match mode {
             ResetMode::Keep | ResetMode::Merge => {
                 Some(self.select_local(&objects, Some(tree), mode, options)?)
@@ -411,16 +423,19 @@ impl Repository {
                 source,
             })?;
 
-        let mut index_updated = edit.is_some();
+        let index_updated = edit.is_some();
         if let Some(edit) = edit.take() {
             edit.commit()?;
         }
         // The working files go first, so a refused keep or merge reset changes nothing.
-        if mode == ResetMode::Hard || selected.is_some() {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let index_updated = if mode == ResetMode::Hard || selected.is_some() {
             let selection = selected.as_ref().map(Selected::selection);
             hard(self, tree, filters, selection.as_ref(), options)?;
-            index_updated = true;
-        }
+            true
+        } else {
+            index_updated
+        };
         if let Some(previous) = previous {
             write_orig_head(self.git_dir(), previous).map_err(ResetError::OrigHead)?;
         }
@@ -435,6 +450,7 @@ impl Repository {
     /// The paths a keep or merge reset rewrites, the subset that must still be clean, and the
     /// index it publishes, after refusing what Git refuses from the index alone. Whether working
     /// files are clean is checked by the checkout itself, against the files it then rewrites.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn select_local(
         &self,
         objects: &crate::Objects,
@@ -532,6 +548,7 @@ impl Repository {
             ResetMode::Mixed => self.reset_paths(None, &Pathspec::all(), limits),
             // As in Git, a merge reset removes the tracked files like a hard one, and a keep reset
             // needs a commit to compare with.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             ResetMode::Hard => {
                 if self.worktree().is_none() {
                     return Err(ResetError::Bare);
@@ -539,6 +556,7 @@ impl Repository {
                 let checkout = crate::checkout::Limits::default().with_index(*limits);
                 hard_to(self, None, None, None, checkout)
             }
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             ResetMode::Merge => {
                 if self.worktree().is_none() {
                     return Err(ResetError::Bare);
@@ -560,6 +578,10 @@ impl Repository {
                 let selected = self.select_local(&objects, None, ResetMode::Merge, &options)?;
                 let checkout = crate::checkout::Limits::default().with_index(*limits);
                 hard_to(self, None, None, Some(&selected.selection()), checkout)
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            ResetMode::Hard | ResetMode::Merge => {
+                Err(ResetError::Unsupported("hard reset on this platform"))
             }
             ResetMode::Keep => Err(ResetError::NoCommit),
         }
@@ -697,28 +719,6 @@ fn hard_to(
         }
         _ => ResetError::Checkout(Box::new(failure)),
     })
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn hard(
-    _: &Repository,
-    _: ObjectId,
-    _: Option<&mut crate::filter::Pipeline>,
-    _: Option<&crate::checkout::Selection<'_>>,
-    _: &ResetOptions,
-) -> Result<(), ResetError> {
-    Err(ResetError::Unsupported("hard reset on this platform"))
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn hard_to(
-    _: &Repository,
-    _: Option<ObjectId>,
-    _: Option<&mut crate::filter::Pipeline>,
-    _: Option<&crate::checkout::Selection<'_>>,
-    _: crate::checkout::Limits,
-) -> Result<(), ResetError> {
-    Err(ResetError::Unsupported("hard reset on this platform"))
 }
 
 fn refuse_sparse(entries: &[Entry]) -> Result<(), ResetError> {
