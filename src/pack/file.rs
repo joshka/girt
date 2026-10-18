@@ -2753,7 +2753,7 @@ mod publication_tests {
     }
 
     #[test]
-    fn content_window_serves_ascending_reads_and_skips_scattered_ones() {
+    fn content_windows_bound_reads_and_isolate_artifacts() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("bytes.pack");
         let bytes: Vec<_> = (0..512 * 1024).map(|i| (i % 251) as u8).collect();
@@ -2767,19 +2767,19 @@ mod publication_tests {
             );
             counters::OS_READS.with(|reads| reads.get())
         };
-        // A first read has no predecessor; the next ascending one fills the 16 KiB window.
+        // The first miss reads directly; a second nearby miss admits its block.
         assert_eq!(reads(1000, 1300), 1);
         assert_eq!(reads(1300, 1700), 1);
         assert_eq!(reads(1700, 2100), 0);
         assert_eq!(reads(15_000, 16_300), 0);
-        // A scattered read uses one small read and leaves the window in place.
+        // A separate region retains its own block.
         assert_eq!(reads(400_000, 400_100), 1);
         assert_eq!(reads(2100, 2500), 0);
-        // Past the window, an ascending read refills it.
-        assert_eq!(reads(18_000, 18_200), 1);
+        // The original region remains cached after revisiting it.
+        assert_eq!(reads(18_000, 18_200), 0);
         assert_eq!(reads(18_200, 20_000), 0);
         // A read larger than the window is read directly.
-        assert_eq!(reads(20_000, 60_000), 1);
+        assert_eq!(reads(20_000, 100_000), 1);
         // A fill near the end of the file is clipped to it.
         assert_eq!(reads(500_000, 500_100), 1);
         assert_eq!(reads(510_000, 511_000), 1);
@@ -2795,6 +2795,110 @@ mod publication_tests {
     }
 
     #[test]
+    fn reopening_artifact_does_not_reuse_content_windows() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bytes.pack");
+        fs::write(&path, vec![3; 100_000]).unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+        for _ in 0..2 {
+            assert_eq!(super::window::bytes(&artifact, 0, 8).unwrap(), [3; 8]);
+        }
+
+        let reopened = super::Artifact::open(&path).unwrap();
+        counters::reset();
+        assert_eq!(super::window::bytes(&reopened, 0, 8).unwrap(), [3; 8]);
+        assert_eq!(counters::OS_READS.with(|reads| reads.get()), 1);
+    }
+
+    #[test]
+    fn content_windows_retain_separate_history_regions() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bytes.pack");
+        let bytes: Vec<_> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
+        fs::write(&path, &bytes).unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+
+        for start in [1000, 2000, 200_000, 201_000] {
+            assert_eq!(
+                super::window::bytes(&artifact, start, start + 100).unwrap(),
+                bytes[start..start + 100]
+            );
+        }
+
+        counters::reset();
+        for start in [500, 200_500] {
+            assert_eq!(
+                super::window::bytes(&artifact, start, start + 100).unwrap(),
+                bytes[start..start + 100]
+            );
+        }
+        assert_eq!(counters::OS_READS.with(|reads| reads.get()), 0);
+        assert!(super::window::content_allocated() <= super::window::CONTENT_BUDGET);
+    }
+
+    #[test]
+    fn content_window_collisions_and_total_allocation_are_bounded() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bytes.pack");
+        let bytes: Vec<_> = (0..9 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+        fs::write(&path, &bytes).unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+
+        for start in (0..bytes.len()).step_by(64 * 1024) {
+            for _ in 0..2 {
+                assert_eq!(
+                    super::window::bytes(&artifact, start, start + 100).unwrap(),
+                    bytes[start..start + 100]
+                );
+            }
+        }
+        assert_eq!(
+            super::window::content_allocated(),
+            super::window::CONTENT_BUDGET
+        );
+
+        // Colliding blocks must not return the earlier block's bytes.
+        for start in [1000, 4 * 1024 * 1024 + 1000, 1000] {
+            assert_eq!(
+                super::window::bytes(&artifact, start, start + 100).unwrap(),
+                bytes[start..start + 100]
+            );
+        }
+        // A cross-block request bypasses the cache and preserves exact bytes.
+        let start = 64 * 1024 - 2;
+        assert_eq!(
+            super::window::bytes(&artifact, start, start + 8).unwrap(),
+            bytes[start..start + 8]
+        );
+    }
+
+    #[test]
+    fn failed_content_window_fill_does_not_publish_partial_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bytes.pack");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(5 * 1024 * 1024).unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+        assert_eq!(super::window::bytes(&artifact, 0, 8).unwrap(), [0; 8]);
+
+        assert_eq!(super::window::bytes(&artifact, 0, 8).unwrap(), [0; 8]);
+        assert_eq!(
+            super::window::bytes(&artifact, 4 * 1024 * 1024, 4 * 1024 * 1024 + 8).unwrap(),
+            [0; 8]
+        );
+
+        file.set_len(0).unwrap();
+        // This block collides with the earlier successful fill. After failure, even the old
+        // region must be read again rather than exposing its stale or partially overwritten slot.
+        assert!(super::window::bytes(&artifact, 4 * 1024 * 1024, 4 * 1024 * 1024 + 8).is_err());
+        assert!(super::window::bytes(&artifact, 0, 8).is_err());
+
+        fs::write(&path, b"restored").unwrap();
+        // The pinned artifact still declares its original size, so a short fill remains an error.
+        assert!(super::window::bytes(&artifact, 0, 8).is_err());
+    }
+
+    #[test]
     fn content_window_allocation_stays_bounded_after_a_clipped_fill() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("bytes.pack");
@@ -2804,7 +2908,11 @@ mod publication_tests {
         for start in [89_000, 90_000, 1000, 2000] {
             super::window::bytes(&artifact, start, start + 100).unwrap();
         }
-        assert_eq!(super::window::content_allocated(), 16 * 1024);
+        assert!(super::window::content_allocated() <= super::window::CONTENT_BUDGET);
+        assert_eq!(
+            super::window::content_max_slot_capacity(),
+            super::window::CONTENT_CAPACITY
+        );
     }
 
     #[test]

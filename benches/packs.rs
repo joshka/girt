@@ -182,9 +182,52 @@ fn store_open(c: &mut Criterion) {
     });
 }
 
+// A caller-supplied repository keeps large-history fixture construction outside measurements.
+fn packed_history(c: &mut Criterion) {
+    let Ok(path) = std::env::var("GIRT_HISTORY_WORKLOAD") else {
+        return;
+    };
+    let repository = girt::Repository::open(&path).unwrap();
+    let output = std::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(repository.git_dir())
+        .args(["rev-list", "--max-count=200000", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let ids: Vec<girt::ObjectId> = std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| line.parse().unwrap())
+        .collect();
+    assert!(!ids.is_empty());
+
+    let mut group = c.benchmark_group("packed-history");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(20));
+    group.throughput(criterion::Throughput::Elements(ids.len() as u64));
+    group.bench_function("read-commits-fresh-reader", |b| {
+        b.iter_batched_ref(
+            || repository.objects_with(PackLimits::trusted()).unwrap(),
+            |objects| {
+                for id in &ids {
+                    let object = objects
+                        .read_with(black_box(*id), ReadLimits::trusted())
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(object.kind(), girt::ObjectKind::Commit);
+                    black_box(object);
+                }
+            },
+            criterion::BatchSize::PerIteration,
+        );
+    });
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(30).warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(2));
-    targets = packs, large_storage, store_open
+    targets = packs, large_storage, store_open, packed_history
 }
 criterion_main!(benches);

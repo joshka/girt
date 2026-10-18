@@ -329,6 +329,14 @@ justify adding caching before its invalidation contract is defined.
 
 ## Pack Read Baseline
 
+For a real packed history, set `GIRT_HISTORY_WORKLOAD` to a repository path and run
+`cargo bench --bench packs -- packed-history`. Git selects up to 200,000 commits in traversal order
+before measurement. Each iteration opens a fresh object reader outside timing, then reads the commit
+payloads with identity verification and trusted decode limits. Fresh pinned artifact identities keep
+the compressed-byte cache cold; filesystem pages can remain warm. Criterion uses ten samples and a
+20-second measurement target. Filesystem caches remain uncontrolled; run on a disposable fixture
+copy under the shared timing lock and record the repository revision and load.
+
 Run `cargo bench --bench packs` with the checked-in lockfile. Criterion uses 30 samples, one-second
 warmup, and two-second measurement targets. Git fixture creation is outside timing. The shared
 `tests/support/pack_git.rs` workload builds 16 or 256 similar 35 KiB blobs plus one tree, commit,
