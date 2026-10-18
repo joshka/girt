@@ -126,7 +126,8 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
         &repository,
         prepared.options.clone(),
         prepared.limits.max_status_bytes,
-    );
+    )
+    .map_err(PushError::NotSent)?;
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     if ["pre-receive", "update", "post-receive", "post-update"]
         .iter()

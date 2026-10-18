@@ -199,6 +199,7 @@ pub mod fsmonitor;
 #[doc(hidden)]
 pub mod fuzzing;
 pub mod history;
+pub mod hooks;
 pub mod ignore;
 pub mod index;
 pub mod locks;

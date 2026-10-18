@@ -10,9 +10,6 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-mod process;
-
 use super::PushFailure;
 use crate::refs::RefName;
 use crate::transport::TransportControl;
@@ -27,7 +24,7 @@ pub(super) struct HookUpdate<'a> {
 
 /// The receive hooks of a destination repository.
 pub(super) struct ReceiveHooks {
-    directory: PathBuf,
+    hooks: crate::hooks::Hooks,
     git_dir: PathBuf,
     push_options: Vec<Vec<u8>>,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -41,24 +38,20 @@ impl ReceiveHooks {
         repository: &Repository,
         push_options: Vec<Vec<u8>>,
         output_limit: usize,
-    ) -> Self {
+    ) -> Result<Self, PushFailure> {
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let _ = output_limit;
-        let base = repository.worktree().unwrap_or(repository.git_dir());
-        let directory = match repository.config().string("core", None, "hookspath") {
-            Some(path) => {
-                let path = PathBuf::from(String::from_utf8_lossy(path).into_owned());
-                base.join(path)
-            }
-            None => repository.common_dir().join("hooks"),
-        };
-        Self {
-            directory,
+        // Receive hooks run as Git's receive-pack runs them, with their own environment below.
+        let hooks = crate::hooks::Hooks::new(repository, &Default::default()).map_err(|_| {
+            PushFailure::Unsupported("core.hooksPath with ~ expansion in the receiving repository")
+        })?;
+        Ok(Self {
+            hooks,
             git_dir: repository.git_dir().to_owned(),
             push_options,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             output_remaining: Cell::new(output_limit),
-        }
+        })
     }
 
     /// Returns whether the named hook exists and is executable.
@@ -67,8 +60,10 @@ impl ReceiveHooks {
     }
 
     fn path(&self, name: &str) -> Option<PathBuf> {
-        let path = self.directory.join(name);
-        is_executable(&path).then_some(path)
+        match self.hooks.find(name) {
+            crate::hooks::Found::Executable(path) => Some(path),
+            crate::hooks::Found::Absent | crate::hooks::Found::NotExecutable(_) => None,
+        }
     }
 
     /// Runs a hook if present, returning whether it succeeded (or is absent) and its output.
@@ -114,8 +109,14 @@ impl ReceiveHooks {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let output = process::run(&mut command, &input, control, self.output_remaining.get())
-                .map_err(PushFailure::from)?;
+            let (status, output) = crate::hooks::process::run(
+                &mut command,
+                &input,
+                control,
+                self.output_remaining.get(),
+            )
+            .map_err(PushFailure::from)?;
+            let output = (status.success(), output);
             self.output_remaining
                 .set(self.output_remaining.get() - output.1.len());
             Ok(output)
@@ -139,16 +140,4 @@ fn os_string(bytes: &[u8]) -> OsString {
 #[cfg(not(unix))]
 fn os_string(bytes: &[u8]) -> OsString {
     String::from_utf8_lossy(bytes).into_owned().into()
-}
-
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
-    path.metadata()
-        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
 }
