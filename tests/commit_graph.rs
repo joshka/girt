@@ -352,3 +352,232 @@ fn indexed_shallow_boundaries_override_parents(
         vec![h.ids[2]]
     );
 }
+
+#[rstest]
+fn bloom_filters_never_exclude_changed_paths(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("1", "2")] version: &str,
+) {
+    let (h, changed, unchanged) = path_fixture(format);
+    git(
+        h.root.path(),
+        &[
+            "-c",
+            &format!("commitGraph.changedPathsVersion={version}"),
+            "commit-graph",
+            "write",
+            "--reachable",
+            "--changed-paths",
+        ],
+        b"",
+    );
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+    let graph = CommitGraph::open(&h.root.path().join("objects"), format)
+        .unwrap()
+        .unwrap();
+    assert_eq!(graph.might_change_path(changed, b"notes"), Some(true));
+    assert_eq!(graph.might_change_path(unchanged, b"notes"), Some(false));
+    assert_eq!(graph.might_change_path(h.ids[0], b"notes"), Some(false));
+    let objects = h.objects().with_commit_graph(graph).unwrap();
+    assert_eq!(
+        objects.walk_path_first_parent(unchanged, b"notes").unwrap(),
+        vec![changed]
+    );
+    assert_eq!(
+        objects.blame(unchanged, b"notes").unwrap()[0].commit,
+        changed
+    );
+    let git_paths = git(
+        h.root.path(),
+        &[
+            "log",
+            "--first-parent",
+            "--format=%H",
+            &unchanged.to_string(),
+            "--",
+            "notes",
+        ],
+        b"",
+    );
+    assert_eq!(
+        std::str::from_utf8(&git_paths).unwrap().trim(),
+        changed.to_string()
+    );
+}
+
+fn path_fixture(format: ObjectFormat) -> (History, girt::ObjectId, girt::ObjectId) {
+    let h = History::with_format(&[vec![]], false, format);
+    let blob = git(h.root.path(), &["hash-object", "-w", "--stdin"], b"line\n");
+    let blob = std::str::from_utf8(&blob).unwrap().trim();
+    let first = git(
+        h.root.path(),
+        &["mktree"],
+        format!("100644 blob {blob}\tnotes\n").as_bytes(),
+    );
+    let first = std::str::from_utf8(&first).unwrap().trim().parse().unwrap();
+    let changed = dated_commit(&h, first, &[h.ids[0]], 1700000200);
+    let second = git(
+        h.root.path(),
+        &["mktree"],
+        format!("100644 blob {blob}\tnotes\n100644 blob {blob}\tother\n").as_bytes(),
+    );
+    let second = std::str::from_utf8(&second)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let unchanged = dated_commit(&h, second, &[changed], 1700000300);
+    git(
+        h.root.path(),
+        &["update-ref", "refs/heads/paths", &unchanged.to_string()],
+        b"",
+    );
+    (h, changed, unchanged)
+}
+
+#[rstest]
+#[case::utf8(b"dir/\xc3\xa9file".to_vec())]
+#[case::raw_high_byte(b"dir/\xfffile".to_vec())]
+#[case::long_path([vec![b'a'; 200], vec![b'b'; 200], vec![b'c'; 200], b"notes".to_vec()].join(&b'/'))]
+fn bloom_changed_paths_and_directory_prefixes(
+    #[case] path: Vec<u8>,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("1", "2")] version: &str,
+) {
+    let h = History::with_format(&[vec![]], false, format);
+    let tree = nested_tree(&h, &path);
+    let changed = dated_commit(&h, tree, &[], 1700000200);
+    git(
+        h.root.path(),
+        &["update-ref", "refs/heads/paths", &changed.to_string()],
+        b"",
+    );
+    write_blooms(&h, version);
+    let graph = CommitGraph::open(&h.root.path().join("objects"), format)
+        .unwrap()
+        .unwrap();
+    assert!(path_prefixes(&path).iter().all(|prefix| {
+        let expected = if version == "1" && !prefix.is_ascii() {
+            None
+        } else {
+            Some(true)
+        };
+        graph.might_change_path(changed, prefix) == expected
+    }));
+    assert_eq!(
+        h.objects()
+            .with_commit_graph(graph)
+            .unwrap()
+            .walk_path_first_parent(changed, &path)
+            .unwrap(),
+        vec![changed]
+    );
+}
+
+fn path_prefixes(path: &[u8]) -> Vec<&[u8]> {
+    path.iter()
+        .enumerate()
+        .filter_map(|(i, b)| (*b == b'/').then_some(&path[..i]))
+        .chain(std::iter::once(path))
+        .collect()
+}
+
+fn nested_tree(h: &History, path: &[u8]) -> girt::ObjectId {
+    let output = git(
+        h.root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"original\n",
+    );
+    let mut id: girt::ObjectId = std::str::from_utf8(&output)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let mut mode = "100644 blob";
+    for name in path.split(|b| *b == b'/').rev() {
+        let mut entry = format!("{mode} {id}\t").into_bytes();
+        entry.extend_from_slice(name);
+        entry.push(0);
+        let output = git(h.root.path(), &["mktree", "-z"], &entry);
+        id = std::str::from_utf8(&output)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        mode = "040000 tree";
+    }
+    id
+}
+
+fn write_blooms(h: &History, version: &str) {
+    git(
+        h.root.path(),
+        &[
+            "-c",
+            &format!("commitGraph.changedPathsVersion={version}"),
+            "commit-graph",
+            "write",
+            "--reachable",
+            "--changed-paths",
+        ],
+        b"",
+    );
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+}
+
+#[rstest]
+fn bloom_merge_filter_describes_only_first_parent(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("1", "2")] version: &str,
+) {
+    let (h, changed, _) = path_fixture(format);
+    let tree = h.objects().read_commit(changed).unwrap().tree();
+    let merge = dated_commit(&h, tree, &[changed, h.ids[0]], 1700000400);
+    git(
+        h.root.path(),
+        &["update-ref", "refs/heads/merge", &merge.to_string()],
+        b"",
+    );
+    write_blooms(&h, version);
+    let graph = CommitGraph::open(&h.root.path().join("objects"), format)
+        .unwrap()
+        .unwrap();
+    assert_eq!(graph.might_change_path(merge, b"notes"), Some(false));
+    let objects = h.objects().with_commit_graph(graph).unwrap();
+    assert_eq!(
+        objects.walk_path_first_parent(merge, b"notes").unwrap(),
+        vec![changed]
+    );
+    assert_eq!(objects.blame(merge, b"notes").unwrap()[0].commit, changed);
+}
+
+#[rstest]
+fn bloom_large_change_filter_is_always_conservative(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("1", "2")] version: &str,
+) {
+    let h = History::with_format(&[vec![]], false, format);
+    let output = git(h.root.path(), &["hash-object", "-w", "--stdin"], b"one\n");
+    let blob = std::str::from_utf8(&output).unwrap().trim();
+    let entries: String = (0..600)
+        .map(|i| format!("100644 blob {blob}\tfile-{i:04}\n"))
+        .collect();
+    let output = git(h.root.path(), &["mktree"], entries.as_bytes());
+    let tree = std::str::from_utf8(&output)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let large = dated_commit(&h, tree, &[h.ids[0]], 1700000500);
+    git(
+        h.root.path(),
+        &["update-ref", "refs/heads/large", &large.to_string()],
+        b"",
+    );
+    write_blooms(&h, version);
+    let graph = CommitGraph::open(&h.root.path().join("objects"), format)
+        .unwrap()
+        .unwrap();
+    assert_eq!(graph.might_change_path(large, b"file-0000"), Some(true));
+    assert_eq!(graph.might_change_path(large, b"not-present"), Some(true));
+}

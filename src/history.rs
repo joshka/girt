@@ -79,6 +79,8 @@
 //! requires an explicit budget decision; a missing ancestor may mean incomplete storage. Declared
 //! shallow boundaries are the supported way to stop traversal, not a blanket permission to ignore
 //! missing parents. History parsing does not impose author/date construction rules.
+mod path;
+pub use path::PathHistoryError;
 mod range;
 
 use std::collections::VecDeque;

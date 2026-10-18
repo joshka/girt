@@ -20,9 +20,11 @@
 //! ```
 //!
 //! Parsing follows the `git help gitformat-commit-graph` format documentation. Unknown chunks are
-//! ignored. Bloom filters are not interpreted by this parser. Split files require their base
+//! ignored. Changed-path Bloom filters provide conservative first-parent membership.
+//! Split files require their base
 //! layers through [`CommitGraph::parse_chain`].
 
+mod bloom;
 mod history;
 mod store;
 use std::collections::BTreeMap;
@@ -54,6 +56,7 @@ pub struct GraphCommit {
     pub generation: u32,
     /// Generation v2, the commit time plus its corrected-date offset, when present.
     pub corrected_commit_date: Option<u64>,
+    bloom: Option<bloom::BloomFilter>,
 }
 
 /// Resource bounds applied before allocating decoded records.
@@ -239,6 +242,7 @@ fn parse_layer(
     if generation.is_some_and(|g| g.len() != count * 4) {
         return Err(bad("generation table length"));
     }
+    let blooms = bloom::BloomData::parse(&chunks, count);
     let mut commits = Vec::with_capacity(count);
     for (index, record) in data.chunks_exact(width + 16).enumerate() {
         let positions = parent_positions(record, width, &chunks, parents_left)?;
@@ -268,6 +272,7 @@ fn parse_layer(
             commit_time,
             generation: high >> 2,
             corrected_commit_date,
+            bloom: blooms.as_ref().and_then(|data| data.filter(index)),
         });
     }
     Ok(commits)
