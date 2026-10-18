@@ -116,6 +116,28 @@ checksums and framing catch damaged bytes, but only the hash catches an index en
 another object's intact bytes, as a buggy writer could produce. Returning that content would hand jj
 a wrong object instead of an error.
 
+This is stricter than Git, which does not hash objects on normal reads. Git checks at boundaries
+instead: `fsck`, recomputing every ID when indexing a received pack, and the optional
+`transfer.fsckObjects`. girt matches Git at those boundaries and also hashes on every normal read.
+The check turns intact bytes filed under the wrong ID into an error. Causes include a writer bug (a
+wrong index offset, a bad repack or delta reuse), a loose file copied onto another object's path and
+a malicious repository. Without it, display commands such as log, show and diff print wrong output;
+rebase and duplicate build commits on wrong parents or trees, and push sends wrong objects;
+retention and gc compute reachability from a wrong graph, which risks deleting live objects. A
+consumer such as jj would get the wrong content silently.
+
+The measured cost, as the share of instructions saved with hashing off, is 2.5–4.1 % on walk-heavy
+jj rows (`log` ancestry, `file annotate`, `log` large), 1.5 % or less on other jj rows, 4.3–6.5 % on
+`girt log` and `girt history count`, and nothing measurable on tree diff. No jj row moves from above
+to below 1.2× of stock jj by skipping it. Two alternatives were rejected: an opt-in skip of commit
+hash checks for jj saves less than those totals and lets a wrong commit feed rebase or push, and a
+general trusted mode lets wrong objects reach every caller silently, with exceptions needed for
+retention, gc and push. Both would add public API that is hard to remove before 1.0, while keeping
+the check leaves a skip addable later. Revisit if a jj row sits above 1.2× of stock jj and profiling
+shows hashing as a material share of what remains, or if another implementation's default or a
+consumer's needs change the comparison. See the
+[decision](https://github.com/joshka/girt/issues/599#issuecomment-6256375776).
+
 A walk that consumes only structure (identities, kinds and edges) and never returns content may read
 through `Objects::read_unverified`, which skips that one hash and keeps every other check. Its
 `UnverifiedObject` cannot become an `Object`. The walk still fails on malformed commit, tree or tag
