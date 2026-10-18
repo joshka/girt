@@ -113,4 +113,5 @@ It speaks protocol v2, which Git clients request by default, and protocol v0 for
 listed. As with Git's server, a v2 client may still fetch any object by ID, so keep private data in
 a separate repository. In v0, `uploadpack.allowTipSHA1InWant`, `allowReachableSHA1InWant` and
 `allowAnySHA1InWant` decide which unlisted objects can be fetched. Shallow clones and fetches are
-served; partial-clone filters aren't yet.
+served, and so is `object-info` when `transfer.advertiseObjectInfo` is set; partial-clone filters
+aren't yet.

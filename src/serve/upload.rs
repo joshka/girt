@@ -188,6 +188,8 @@ pub struct UploadPack<'r> {
     configured_wants: WantPolicy,
     /// A caller's policy, applied to every protocol.
     wants: Option<WantPolicy>,
+    /// Whether the v2 `object-info` command is offered.
+    object_info: bool,
     limits: UploadLimits,
 }
 
@@ -260,6 +262,8 @@ impl<'r> UploadPack<'r> {
             hide: HideRules::parse(repository, "uploadpack").map_err(ServeError::Config)?,
             configured_wants,
             wants: None,
+            object_info: section_boolean(repository, "transfer", "advertiseobjectinfo")?
+                .unwrap_or(false),
             limits: UploadLimits::default(),
         })
     }
@@ -333,14 +337,18 @@ impl<'r> UploadPack<'r> {
             return self.advertise_v0(output, cancel);
         }
         let format = self.repository.object_format();
-        for line in [
+        let mut lines = vec![
             "version 2".to_owned(),
             format!("agent=girt/{}", env!("CARGO_PKG_VERSION")),
             "ls-refs=unborn".to_owned(),
             "fetch=shallow wait-for-done".to_owned(),
             "server-option".to_owned(),
             format!("object-format={format}"),
-        ] {
+        ];
+        if self.object_info {
+            lines.push("object-info=size type".to_owned());
+        }
+        for line in lines {
             packet::packet(output, format!("{line}\n").as_bytes(), cancel)?;
         }
         packet::put(output, b"0000", cancel)?;
@@ -431,6 +439,7 @@ impl<'r> UploadPack<'r> {
         }
         match command.as_slice() {
             b"ls-refs" => self.ls_refs(&arguments, output, cancel)?,
+            b"object-info" if self.object_info => self.object_info(&arguments, output, cancel)?,
             b"fetch" => self.fetch(&arguments, output, cancel)?,
             _ => return Err(ServeError::Unsupported("unknown command")),
         }
@@ -504,6 +513,78 @@ impl<'r> UploadPack<'r> {
             advertised.push(entry(reference.name, id, symref, hidden)?);
         }
         Ok((advertised, unborn))
+    }
+
+    /// Sets whether the v2 `object-info` command is offered, replacing
+    /// `transfer.advertiseObjectInfo`.
+    #[must_use]
+    pub fn with_object_info(mut self, object_info: bool) -> Self {
+        self.object_info = object_info;
+        self
+    }
+
+    /// Answers `object-info` with the requested `size` and `type` of each object, as Git does.
+    ///
+    /// The reply names the attributes, then has one line per object. A missing object's line has
+    /// no values. A request without objects gets an empty reply.
+    fn object_info(
+        &self,
+        arguments: &[Vec<u8>],
+        output: &mut impl Write,
+        cancel: &AtomicBool,
+    ) -> Result<(), ServeError> {
+        // Like Git, each attribute is reported once, in a fixed order.
+        let (mut size, mut kind) = (false, false);
+        let mut ids = Vec::new();
+        for argument in arguments {
+            match argument.as_slice() {
+                b"size" => size = true,
+                b"type" => kind = true,
+                argument => {
+                    let hex = argument
+                        .strip_prefix(b"oid ")
+                        .ok_or(ServeError::Unsupported("object-info argument"))?;
+                    if ids.len() == self.limits.max_wants {
+                        return Err(ServeError::Limit("object-info objects"));
+                    }
+                    ids.push(hex);
+                }
+            }
+        }
+        if !ids.is_empty() {
+            if size {
+                packet::packet(output, b"size", cancel)?;
+            }
+            if kind {
+                packet::packet(output, b"type", cancel)?;
+            }
+            let objects = self.objects()?;
+            let format = self.repository.object_format();
+            for hex in ids {
+                let id = std::str::from_utf8(hex)
+                    .ok()
+                    .and_then(|hex| ObjectId::from_hex(format, hex).ok())
+                    .ok_or(ServeError::Protocol("object-info expected an object ID"))?;
+                // Git echoes the ID as the client spelled it.
+                let mut line = hex.to_vec();
+                match objects.header(id, self.limits.read)? {
+                    Some(header) => {
+                        if size {
+                            line.extend_from_slice(format!(" {}", header.size()).as_bytes());
+                        }
+                        if kind {
+                            line.push(b' ');
+                            line.extend_from_slice(header.kind().as_str().as_bytes());
+                        }
+                    }
+                    // Like Git, a missing object's line ends in one space.
+                    None => line.push(b' '),
+                }
+                packet::packet(output, &line, cancel)?;
+            }
+        }
+        packet::put(output, b"0000", cancel)?;
+        Ok(())
     }
 
     fn ls_refs(
@@ -1040,12 +1121,21 @@ fn number<T: std::str::FromStr>(digits: &[u8]) -> Result<T, ServeError> {
 
 /// Reads an `uploadpack` boolean, `None` when unset.
 fn config_boolean(repository: &Repository, name: &str) -> Result<Option<bool>, ServeError> {
-    match repository.config().value("uploadpack", None, name) {
+    section_boolean(repository, "uploadpack", name)
+}
+
+/// Reads a boolean from `section`, `None` when unset.
+fn section_boolean(
+    repository: &Repository,
+    section: &str,
+    name: &str,
+) -> Result<Option<bool>, ServeError> {
+    match repository.config().value(section, None, name) {
         None => Ok(None),
         Some(None) => Ok(Some(true)),
         Some(Some(value)) => crate::config::boolean(Some(value))
             .map(Some)
-            .ok_or(ServeError::Config("uploadpack boolean")),
+            .ok_or(ServeError::Config("boolean setting")),
     }
 }
 

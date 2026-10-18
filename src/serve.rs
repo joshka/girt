@@ -41,10 +41,10 @@
 //! Protocol v2 `ls-refs` and `fetch`, and the protocol v0 advertisement and negotiation
 //! (`multi_ack`, `multi_ack_detailed`, `side-band` and `side-band-64k`), are served over
 //! full-duplex streams. Both support `include-tag`, thin packs and shallow requests (`deepen`,
-//! `deepen-relative`, `deepen-since` and `deepen-not`), and v2 supports `wait-for-done`. `filter`,
-//! `object-info` and stateless v0 (HTTP) aren't supported yet, and a shallow repository can't be
-//! served; see
-//! [#520](https://github.com/joshka/girt/issues/520).
+//! `deepen-relative`, `deepen-since` and `deepen-not`). v2 also supports `wait-for-done`, and
+//! `object-info` when `transfer.advertiseObjectInfo` or [`UploadPack::with_object_info`] enables
+//! it. `filter` and stateless v0 (HTTP) aren't supported yet, and a shallow repository can't be
+//! served; see [#520](https://github.com/joshka/girt/issues/520).
 
 #![warn(
     clippy::unwrap_used,

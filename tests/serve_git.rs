@@ -624,3 +624,94 @@ fn v0_flushes_share_one_readiness_budget() {
         );
     assert!(result.is_ok(), "{result:?}");
 }
+
+#[rstest::rstest]
+#[case::size(&["size"], &["main", "main^{tree}", "U"])]
+#[case::size_and_type(&["size", "type"], &["main", "main:one", "U"])]
+#[case::type_only(&["type"], &["main"])]
+#[case::no_attributes(&[], &["main"])]
+#[case::no_objects(&["size"], &[])]
+#[case::reversed(&["type", "size"], &["main", "U"])]
+#[case::repeated(&["type", "type", "size", "type"], &["main"])]
+#[case::missing_without_attributes(&[], &["U"])]
+fn object_info_matches_git(
+    #[case] attributes: &[&str],
+    #[case] revisions: &[&str],
+    #[values("sha1", "sha256")] format: &str,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = merge_fixture(root.path(), format);
+    git(
+        &repo,
+        &["config", "transfer.advertiseObjectInfo", "true"],
+        b"",
+    );
+    // Older Git answers only `size`, and writes a missing object without the trailing space
+    // that current Git and girt write when no attribute was asked for.
+    let newer_behaviour =
+        attributes.contains(&"type") || attributes.is_empty() && revisions.contains(&"U");
+    if newer_behaviour && !git_object_info_has_type(&repo) {
+        eprintln!("skipping: this Git's object-info predates the `type` attribute");
+        return;
+    }
+    let mut request = pkt("command=object-info\n");
+    request.extend(pkt(&format!("object-format={format}\n")));
+    request.extend_from_slice(b"0001");
+    for attribute in attributes {
+        request.extend(pkt(&format!("{attribute}\n")));
+    }
+    for revision in revisions {
+        let id = if *revision == "U" {
+            "1".repeat(if format == "sha1" { 40 } else { 64 })
+        } else {
+            rev_parse(&repo, revision)
+        };
+        request.extend(pkt(&format!("oid {id}\n")));
+    }
+    request.extend_from_slice(b"0000");
+    assert_eq!(
+        String::from_utf8(girt_respond(&repo, &request)).unwrap(),
+        String::from_utf8(git_upload_pack(&repo, &request)).unwrap(),
+    );
+}
+
+/// Whether the oracle Git advertises the `type` attribute; older versions answer only `size`.
+fn git_object_info_has_type(repo: &Path) -> bool {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let output = command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", repo.join("absent-config"))
+        .env("GIT_PROTOCOL", "version=2")
+        .args(["upload-pack", "--advertise-refs"])
+        .arg(repo)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).contains("object-info=size type")
+}
+
+#[test]
+fn object_info_is_advertised_only_when_configured() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = merge_fixture(root.path(), "sha1");
+    let advertise = || {
+        let repository = Repository::open(&repo).unwrap();
+        let mut advertisement = Vec::new();
+        UploadPack::new(&repository)
+            .unwrap()
+            .advertise(Protocol::V2, &mut advertisement, &AtomicBool::new(false))
+            .unwrap();
+        String::from_utf8(advertisement).unwrap()
+    };
+    assert!(!advertise().contains("object-info"));
+    git(
+        &repo,
+        &["config", "transfer.advertiseObjectInfo", "true"],
+        b"",
+    );
+    assert!(advertise().contains("001aobject-info=size type\n"));
+}
