@@ -38,10 +38,12 @@
 //!
 //! # Status
 //!
-//! Protocol v2 `ls-refs` and `fetch` are served, with `include-tag`, thin packs, `wait-for-done`
-//! and shallow requests (`deepen`, `deepen-relative`, `deepen-since` and `deepen-not`).
-//! Negotiation sends the pack as soon as one common object is found. `filter`, `object-info` and
-//! protocol v0 aren't supported yet, and a shallow repository can't be served; see
+//! Protocol v2 `ls-refs` and `fetch`, and the protocol v0 advertisement and negotiation
+//! (`multi_ack`, `multi_ack_detailed`, `side-band` and `side-band-64k`), are served over
+//! full-duplex streams. Both support `include-tag`, thin packs and shallow requests (`deepen`,
+//! `deepen-relative`, `deepen-since` and `deepen-not`), and v2 supports `wait-for-done`. `filter`,
+//! `object-info` and stateless v0 (HTTP) aren't supported yet, and a shallow repository can't be
+//! served; see
 //! [#520](https://github.com/joshka/girt/issues/520).
 
 #![warn(

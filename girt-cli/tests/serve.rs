@@ -63,8 +63,12 @@ fn refs(repo: &Path) -> String {
 
 /// Clones `origin` into `name`, through girt's server when `girt` is set.
 fn clone(root: &Path, origin: &Path, name: &str, girt: bool) {
+    clone_with(root, origin, name, girt, "protocol.version=2");
+}
+
+fn clone_with(root: &Path, origin: &Path, name: &str, girt: bool, protocol: &str) {
     let origin = origin.to_str().unwrap();
-    let mut args = vec!["-c", "protocol.version=2", "clone", "-q"];
+    let mut args = vec!["-c", protocol, "clone", "-q"];
     let server = upload_pack();
     if girt {
         args.push(&server);
@@ -74,9 +78,9 @@ fn clone(root: &Path, origin: &Path, name: &str, girt: bool) {
     git(&root.join(name), &["fsck", "--strict"], b"");
 }
 
-fn fetch(repo: &Path, girt: bool) {
+fn fetch_with(repo: &Path, girt: bool, protocol: &str) {
     let server = upload_pack();
-    let mut args = vec!["-c", "protocol.version=2", "fetch", "-q"];
+    let mut args = vec!["-c", protocol, "fetch", "-q"];
     if girt {
         args.push(&server);
     }
@@ -95,11 +99,25 @@ fn sha256_clone_and_fetch_match_git() {
     clone_and_fetch_match_git("sha256");
 }
 
+#[test]
+fn sha1_v0_clone_and_fetch_match_git() {
+    clone_and_fetch_match_git_with("sha1", "protocol.version=0");
+}
+
+#[test]
+fn sha256_v0_clone_and_fetch_match_git() {
+    clone_and_fetch_match_git_with("sha256", "protocol.version=0");
+}
+
 fn clone_and_fetch_match_git(format: &str) {
+    clone_and_fetch_match_git_with(format, "protocol.version=2");
+}
+
+fn clone_and_fetch_match_git_with(format: &str, protocol: &str) {
     let root = tempfile::tempdir().unwrap();
     let origin = origin(root.path(), format);
-    clone(root.path(), &origin, "by-girt", true);
-    clone(root.path(), &origin, "by-git", false);
+    clone_with(root.path(), &origin, "by-girt", true, protocol);
+    clone_with(root.path(), &origin, "by-git", false, protocol);
     assert_eq!(
         refs(&root.path().join("by-girt")),
         refs(&root.path().join("by-git"))
@@ -111,8 +129,8 @@ fn clone_and_fetch_match_git(format: &str) {
         &["tag", "-a", "--no-sign", "-m", "new", "new"],
         b"",
     );
-    fetch(&root.path().join("by-girt"), true);
-    fetch(&root.path().join("by-git"), false);
+    fetch_with(&root.path().join("by-girt"), true, protocol);
+    fetch_with(&root.path().join("by-git"), false, protocol);
     assert_eq!(
         refs(&root.path().join("by-girt")),
         refs(&root.path().join("by-git"))
@@ -230,9 +248,9 @@ fn shape(repo: &Path) -> (String, String) {
 }
 
 /// Runs `git <args>` in `repo` through girt's server or Git's, checking connectivity after.
-fn run(repo: &Path, args: &[&str], girt: bool) {
+fn run(repo: &Path, args: &[&str], girt: bool, protocol: &str) {
     let server = upload_pack();
-    let mut full = vec!["-c", "protocol.version=2"];
+    let mut full = vec!["-c", protocol];
     full.push(args[0]);
     if girt {
         full.push(&server);
@@ -288,6 +306,12 @@ fn shallow_exclude_matches_git() {
 }
 
 fn shallow_requests_match_git(clone_args: &[&str], fetches: &[&[&str]]) {
+    for protocol in ["protocol.version=2", "protocol.version=0"] {
+        shallow_requests_match_git_with(clone_args, fetches, protocol);
+    }
+}
+
+fn shallow_requests_match_git_with(clone_args: &[&str], fetches: &[&[&str]], protocol: &str) {
     let root = tempfile::tempdir().unwrap();
     let origin = deep_origin(root.path());
     let url = format!("file://{}", origin.display());
@@ -295,7 +319,7 @@ fn shallow_requests_match_git(clone_args: &[&str], fetches: &[&[&str]]) {
         let mut args = vec!["clone", "-q"];
         args.extend(clone_args);
         args.extend([url.as_str(), name]);
-        run(root.path(), &args, girt);
+        run(root.path(), &args, girt, protocol);
     }
     let compare = |step: &str| {
         let by_girt = root.path().join("by-girt");
@@ -308,8 +332,63 @@ fn shallow_requests_match_git(clone_args: &[&str], fetches: &[&[&str]]) {
     };
     compare("clone");
     for fetch in fetches {
-        run(&root.path().join("by-girt"), fetch, true);
-        run(&root.path().join("by-git"), fetch, false);
+        run(&root.path().join("by-girt"), fetch, true, protocol);
+        run(&root.path().join("by-git"), fetch, false, protocol);
         compare(&fetch.join(" "));
+    }
+}
+
+/// Protocol v0 follows `uploadpack.allow*SHA1InWant`, as Git's server does.
+#[test]
+fn v0_wants_match_git_under_every_policy() {
+    let root = tempfile::tempdir().unwrap();
+    let origin = origin(root.path(), "sha1");
+    git(
+        &origin,
+        &["config", "uploadpack.hideRefs", "refs/heads/side"],
+        b"",
+    );
+    commit(&origin, "untagged");
+    commit(&origin, "tip");
+    let hidden_tip = rev_parse(&origin, "side");
+    let reachable = rev_parse(&origin, "main~1");
+    let blob = String::from_utf8(git(&origin, &["hash-object", "-w", "--stdin"], b"loose\n"))
+        .unwrap()
+        .trim()
+        .to_owned();
+    let settings = [
+        None,
+        Some("allowTipSHA1InWant"),
+        Some("allowReachableSHA1InWant"),
+        Some("allowAnySHA1InWant"),
+    ];
+    for (index, setting) in settings.into_iter().enumerate() {
+        if let Some(setting) = setting {
+            git(
+                &origin,
+                &["config", &format!("uploadpack.{setting}"), "true"],
+                b"",
+            );
+        }
+        for want in [&hidden_tip, &reachable, &blob] {
+            let fetch = |name: &str, girt: bool| {
+                git(root.path(), &["init", "-q", name], b"");
+                let server = upload_pack();
+                let mut args = vec!["-c", "protocol.version=0", "fetch"];
+                if girt {
+                    args.push(&server);
+                }
+                args.extend([origin.to_str().unwrap(), want.as_str()]);
+                let output = git_output(&root.path().join(name), &args, b"");
+                (
+                    output.status.success(),
+                    String::from_utf8_lossy(&output.stderr).into_owned(),
+                )
+            };
+            let name = format!("v0-{index}-{want}");
+            let (by_girt, stderr) = fetch(&name, true);
+            let (by_git, _) = fetch(&format!("{name}-git"), false);
+            assert_eq!(by_girt, by_git, "{setting:?} {want}: {stderr}");
+        }
     }
 }

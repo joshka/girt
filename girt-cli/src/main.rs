@@ -160,8 +160,8 @@ enum Command {
     Push(transfer::PushArgs),
     /// Serve a fetch on stdin and stdout, as the `--upload-pack` command of a Git client.
     ///
-    /// Speaks protocol v2, which Git clients request through `GIT_PROTOCOL`. Use it over SSH, or
-    /// locally with `git clone --upload-pack='girt upload-pack' <directory>`.
+    /// Speaks protocol v2 when `GIT_PROTOCOL` asks for it, as Git clients do, and v0 otherwise.
+    /// Use it over SSH, or locally with `git clone --upload-pack='girt upload-pack' <directory>`.
     UploadPack(transfer::UploadPackArgs),
 
     /// Check repository objects and connectivity; optionally export dangling objects.

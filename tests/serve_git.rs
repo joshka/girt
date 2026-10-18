@@ -366,3 +366,261 @@ fn shallow_boundaries_match_git(#[case] client_shallow: &[&str], #[case] deepen:
     assert_eq!(before_pack(&by_girt), before_pack(&by_git));
     assert_eq!(pack_object_count(&by_girt), pack_object_count(&by_git));
 }
+
+/// A full-duplex v0 session against Git's server, which reads the request as a client would
+/// send it.
+fn git_upload_pack_v0(repo: &Path, request: &[u8]) -> Vec<u8> {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let output = command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", repo.join("absent-config"))
+        .arg("upload-pack")
+        .arg(repo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child.stdin.take().unwrap().write_all(request)?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    output.stdout
+}
+
+fn girt_serve_v0(repo: &Path, request: &[u8]) -> Vec<u8> {
+    let repository = Repository::open(repo).unwrap();
+    let mut response = Vec::new();
+    let _ = UploadPack::new(&repository).unwrap().serve(
+        Protocol::V0,
+        &mut &request[..],
+        &mut response,
+        &AtomicBool::new(false),
+    );
+    response
+}
+
+/// Packets up to the first pack data, with the agent capability and progress removed.
+fn v0_transcript(response: &[u8]) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut rest = response;
+    while rest.len() >= 4 {
+        let length = usize::from_str_radix(std::str::from_utf8(&rest[..4]).unwrap_or("x"), 16);
+        let Ok(length) = length else {
+            lines.push("<raw pack>".to_owned());
+            break;
+        };
+        if length == 0 {
+            lines.push("0000".to_owned());
+            rest = &rest[4..];
+            continue;
+        }
+        let payload = &rest[4..length];
+        rest = &rest[length..];
+        match payload.first() {
+            Some(1) => {
+                lines.push("<pack>".to_owned());
+                break;
+            }
+            Some(2) => continue,
+            _ => {}
+        }
+        let text = String::from_utf8_lossy(payload);
+        let text = match text.find(" agent=") {
+            Some(start) => text[..start].to_owned(),
+            None => text.into_owned(),
+        };
+        lines.push(text);
+    }
+    lines
+}
+
+/// Builds a v0 request: each `None` is a flush.
+fn v0_request(lines: &[Option<String>]) -> Vec<u8> {
+    lines
+        .iter()
+        .flat_map(|line| match line {
+            Some(line) => pkt(&format!("{line}\n")),
+            None => b"0000".to_vec(),
+        })
+        .collect()
+}
+
+#[rstest::rstest]
+#[case::list_only("", "")]
+#[case::clone("", "multi_ack_detailed side-band-64k")]
+#[case::detailed("main~3 | main~4 ! U ! main~6", "multi_ack_detailed side-band-64k")]
+#[case::detailed_single("main~3", "multi_ack_detailed side-band-64k")]
+#[case::continue_acks("U ! main~3 | main~4 ! U", "multi_ack side-band-64k")]
+#[case::plain("U | main~3 | main~4 ! U", "side-band-64k")]
+#[case::no_common("U", "multi_ack_detailed side-band-64k")]
+#[case::small_sideband("main~3", "multi_ack_detailed side-band")]
+#[case::no_sideband("main~3", "multi_ack_detailed")]
+#[case::no_done_is_ignored("main~3", "multi_ack_detailed side-band-64k no-done")]
+fn v0_negotiation_matches_git(
+    #[case] haves: &str,
+    #[case] capabilities: &str,
+    #[values("sha1", "sha256")] format: &str,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = merge_fixture(root.path(), format);
+    let unknown = "0".repeat(if format == "sha1" { 40 } else { 64 });
+    let mut lines = Vec::new();
+    if !capabilities.is_empty() {
+        let mut capabilities = capabilities.to_owned();
+        if format == "sha256" {
+            capabilities.push_str(" object-format=sha256");
+        }
+        lines.push(Some(format!(
+            "want {} {capabilities}",
+            rev_parse(&repo, "main")
+        )));
+        lines.push(Some(format!("want {}", rev_parse(&repo, "side"))));
+    }
+    lines.push(None);
+    if !capabilities.is_empty() {
+        // `|` separates haves within a round and `!` ends a round with a flush.
+        for round in haves.split('!').filter(|round| !round.trim().is_empty()) {
+            for have in round.split('|').map(str::trim) {
+                let id = if have == "U" {
+                    unknown.clone()
+                } else {
+                    rev_parse(&repo, have)
+                };
+                lines.push(Some(format!("have {id}")));
+            }
+            lines.push(None);
+        }
+        if !capabilities.contains("no-done") {
+            lines.push(Some("done".to_owned()));
+        }
+    }
+    let request = v0_request(&lines);
+    assert_eq!(
+        v0_transcript(&girt_serve_v0(&repo, &request)),
+        v0_transcript(&git_upload_pack_v0(&repo, &request)),
+    );
+}
+
+#[rstest::rstest]
+#[case::depth(&["deepen 2"], "")]
+#[case::relative(&["shallow main~3", "shallow side", "deepen 1"], " deepen-relative")]
+#[case::since(&["deepen-since 1700000000"], "")]
+#[case::not(&["deepen-not tagged"], "")]
+fn v0_shallow_matches_git(#[case] extra: &[&str], #[case] capability: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = merge_fixture(root.path(), "sha1");
+    let mut lines = vec![Some(format!(
+        "want {} multi_ack_detailed side-band-64k shallow{capability}",
+        rev_parse(&repo, "main")
+    ))];
+    for line in extra {
+        lines.push(Some(match line.strip_prefix("shallow ") {
+            Some(revision) => format!("shallow {}", rev_parse(&repo, revision)),
+            None => (*line).to_owned(),
+        }));
+    }
+    lines.extend([
+        None,
+        Some(format!("have {}", rev_parse(&repo, "main~3"))),
+        None,
+    ]);
+    lines.push(Some("done".to_owned()));
+    let request = v0_request(&lines);
+    assert_eq!(
+        v0_transcript(&girt_serve_v0(&repo, &request)),
+        v0_transcript(&git_upload_pack_v0(&repo, &request)),
+    );
+}
+
+#[rstest::rstest]
+#[case::empty(None)]
+#[case::hidden(Some(("uploadpack.hideRefs", "refs/tags")))]
+#[case::tip(Some(("uploadpack.allowTipSHA1InWant", "true")))]
+#[case::reachable(Some(("uploadpack.allowReachableSHA1InWant", "true")))]
+#[case::any(Some(("uploadpack.allowAnySHA1InWant", "true")))]
+fn v0_advertisement_matches_git(#[case] setting: Option<(&str, &str)>) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = match setting {
+        None => {
+            git(root.path(), &["init", "-q", "repo"], b"");
+            root.path().join("repo")
+        }
+        Some((key, value)) => {
+            let repo = merge_fixture(root.path(), "sha1");
+            git(&repo, &["config", key, value], b"");
+            repo
+        }
+    };
+    let request = b"0000";
+    assert_eq!(
+        v0_transcript(&girt_serve_v0(&repo, request)),
+        v0_transcript(&git_upload_pack_v0(&repo, request)),
+    );
+}
+
+#[rstest::rstest]
+#[case::one_want_one_common(&["main"], &["main~3"])]
+#[case::two_wants_far_common(&["main", "side"], &["main~3"])]
+#[case::two_wants_near_common(&["main", "side"], &["main~3", "main~4"])]
+#[case::unknown_only(&["main"], &["U"])]
+#[case::no_haves_without_done(&["main"], &[])]
+fn v2_negotiation_matches_git(#[case] wants: &[&str], #[case] haves: &[&str]) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = merge_fixture(root.path(), "sha1");
+    let mut lines: Vec<String> = wants
+        .iter()
+        .map(|want| format!("want {}", rev_parse(&repo, want)))
+        .collect();
+    for have in haves {
+        let id = if *have == "U" {
+            "1".repeat(40)
+        } else {
+            rev_parse(&repo, have)
+        };
+        lines.push(format!("have {id}"));
+    }
+    let request = fetch_request(&lines);
+    assert_eq!(
+        before_pack(&girt_respond(&repo, &request)),
+        before_pack(&git_upload_pack(&repo, &request)),
+    );
+}
+
+/// Repeated flushes after an unhelpful common commit don't repeat the readiness walk, so a small
+/// session budget still covers them.
+#[test]
+fn v0_flushes_share_one_readiness_budget() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = orphan_fixture(root.path());
+    let mut lines = vec![
+        Some(format!(
+            "want {} multi_ack_detailed side-band-64k",
+            rev_parse(&repo, "main")
+        )),
+        None,
+        Some(format!("have {}", rev_parse(&repo, "other"))),
+    ];
+    lines.extend(std::iter::repeat_n(None, 200));
+    lines.push(Some("done".to_owned()));
+    let request = v0_request(&lines);
+    let repository = Repository::open(&repo).unwrap();
+    let limits = girt::serve::UploadLimits::default()
+        .with_history(girt::HistoryLimits::default().with_max_commits(40));
+    let result = UploadPack::new(&repository)
+        .unwrap()
+        .with_limits(limits)
+        .serve(
+            Protocol::V0,
+            &mut &request[..],
+            &mut Vec::new(),
+            &AtomicBool::new(false),
+        );
+    assert!(result.is_ok(), "{result:?}");
+}
