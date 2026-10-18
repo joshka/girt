@@ -851,6 +851,17 @@ pub trait TransferCallbacks {
     fn credential(&mut self, _url: &str, _prompt: CredentialPrompt) -> Option<Vec<u8>> {
         None
     }
+
+    /// Returns the check that decides whether HTTPS server certificates are acceptable.
+    ///
+    /// Called once per HTTPS transfer, before connecting. The default, `None`, keeps girt's own
+    /// verification. See [`CertificateCheck`](crate::transport::http::CertificateCheck).
+    #[cfg(feature = "http")]
+    fn certificate_check(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::transport::http::CertificateCheck>> {
+        None
+    }
 }
 
 /// Callbacks that discard all messages and decline every credential prompt.
@@ -1608,6 +1619,7 @@ fn http_environment(
         proxy_credentials: None,
         allow_insecure_tls: true,
         user_agent: environment.string("GIT_HTTP_USER_AGENT"),
+        certificate_check: None,
     })
 }
 
@@ -1713,6 +1725,7 @@ fn configured_endpoint(
     direction: Direction,
     base: &Path,
     environment: &Environment,
+    #[cfg_attr(not(feature = "http"), expect(unused_variables))] callbacks: &dyn TransferCallbacks,
 ) -> Result<(Endpoint, Destination), TransferError> {
     let protocol_environment =
         ProtocolEnvironment::from_environment(|name| environment.bytes(name))
@@ -1746,7 +1759,8 @@ fn configured_endpoint(
         }
         #[cfg(feature = "http")]
         Protocol::Http | Protocol::Https => Endpoint::Http(Box::new(Http {
-            environment: http_environment(config, &destination, environment)?,
+            environment: http_environment(config, &destination, environment)?
+                .with_certificate_check(callbacks.certificate_check()),
             protocol: requested_protocol(config)?,
             helpers: credential_helpers(config, environment),
             display_url: redacted_url(destination.bytes()),
@@ -1770,6 +1784,7 @@ impl Repository {
         remote_name: &str,
         direction: Direction,
         environment: &Environment,
+        callbacks: &dyn TransferCallbacks,
     ) -> Result<(Endpoint, Destination), TransferError> {
         let config = self.config();
         let remote = Remote::find(config, remote_name.as_bytes())
@@ -1782,6 +1797,7 @@ impl Repository {
             direction,
             self.worktree().unwrap_or(self.git_dir()),
             environment,
+            callbacks,
         )
     }
 
@@ -1791,7 +1807,8 @@ impl Repository {
         environment: &Environment,
         callbacks: &mut dyn TransferCallbacks,
     ) -> Result<RemoteHead, TransferError> {
-        let (endpoint, _) = self.endpoint(remote_name, Direction::Fetch, environment)?;
+        let (endpoint, _) =
+            self.endpoint(remote_name, Direction::Fetch, environment, &*callbacks)?;
         let cancel = AtomicBool::new(false);
         let control = TransportControl::new(&cancel);
         let limits = FetchLimits::trusted();
@@ -1834,7 +1851,8 @@ impl Repository {
         environment: &Environment,
         callbacks: &mut dyn TransferCallbacks,
     ) -> Result<FetchOutcome, TransferError> {
-        let (endpoint, _) = self.endpoint(remote_name, Direction::Fetch, environment)?;
+        let (endpoint, _) =
+            self.endpoint(remote_name, Direction::Fetch, environment, &*callbacks)?;
         let objects = self
             .objects_with(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;
@@ -2089,7 +2107,8 @@ impl Repository {
         callbacks: &mut dyn TransferCallbacks,
         before_prepare: &dyn Fn(),
     ) -> Result<PushReport, TransferError> {
-        let (endpoint, _) = self.endpoint(remote_name, Direction::Push, environment)?;
+        let (endpoint, _) =
+            self.endpoint(remote_name, Direction::Push, environment, &*callbacks)?;
         let objects = self
             .objects_with(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;

@@ -2106,6 +2106,13 @@ with isolated configuration, empty `credential.helper` and `core.askPass`, and
 has no key; girt fails the connection instead. Evidence: macOS arm64, Git 2.56.0 with libcurl 8.7.1
 (LibreSSL 3.3.6), 2026-10-18.
 
+The certificate check has no Git counterpart, so `tests/http_tls.rs` tests it against the same
+fixture without a Git comparison. A check pins an otherwise untrusted server certificate, rejects a
+trusted one, keeps girt's verdict with `UseDefault`, and overrides an unknown issuer with `Accept`.
+Further cases check that a client certificate and `GIT_SSL_NO_VERIFY` still apply when a check is
+installed. The check sees `localhost`, no intermediates and girt's verdict. A fetch confirms the
+check runs once per connection; with session resumption left on, only the first of three did.
+
 ## SSH Transport
 
 The optional `ssh` feature adds one OpenSSH process per v0 upload-pack/receive-pack exchange on

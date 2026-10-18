@@ -720,6 +720,8 @@ dependencies = [
  "reqwest",
  "rstest",
  "rustix",
+ "rustls",
+ "rustls-platform-verifier",
  "serde_json",
  "sha1",
  "sha2",

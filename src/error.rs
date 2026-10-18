@@ -256,6 +256,8 @@ from_domain_errors! {
     crate::status::Error,
     crate::TagError,
     #[cfg(feature = "http")]
+    crate::transport::http::CertificateError,
+    #[cfg(feature = "http")]
     crate::transport::http::HttpError,
     #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
     crate::transport::ssh::SshError,

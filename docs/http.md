@@ -149,6 +149,17 @@ prompts for the password through its credential machinery. `http.sslCAPath` is r
 matches OpenSSL's subject-hash lookup ([issue 705](https://github.com/joshka/girt/issues/705)).
 `workflow` performs this selection and these reads from its `Environment`.
 
+An application decides about server certificates with a `CertificateCheck` in
+`HttpEnvironment::certificate_check`, or through `TransferCallbacks::certificate_check` in
+`workflow`. The check sees the host, the end-entity and intermediate certificates (DER) and girt's
+own verdict, then returns `Accept`, `Reject` or `UseDefault`. `Accept` skips chain and hostname
+verification for that handshake; the server must still prove it holds the certificate's key. TLS
+session resumption is off while a check is installed, so every connection reaches it, and an
+installed rustls `CryptoProvider` is used as reqwest would. With a check installed girt builds the
+rustls configuration itself from the same trust sources (configured roots, platform trust plus
+additional roots, or disabled verification) and client certificate. Git has no equivalent hook; its
+nearest settings are `http.sslVerify` and `http.pinnedPubkey`, which girt does not support.
+
 Proxy precedence is `remote.<name>.proxy`, URL-scoped/global `http.proxy`, then the proxy selected
 from environment by the caller. An empty configured proxy disables proxying. HTTP proxies support
 HTTPS CONNECT; HTTPS proxies, SOCKS and proxy URL userinfo are rejected. The caller supplies
