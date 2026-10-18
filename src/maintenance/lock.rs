@@ -99,8 +99,13 @@ impl Repository {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn try_lock_maintenance(&self) -> Result<MaintenanceLock, LockError> {
+        MaintenanceLock::acquire(self.object_dir().join("maintenance.lock"))
+    }
+}
+
+impl MaintenanceLock {
+    pub(super) fn acquire(path: PathBuf) -> Result<Self, LockError> {
         let _operation = crate::locks::operation();
-        let path = self.object_dir().join("maintenance.lock");
         let file = crate::locks::unreplaceable_lock_options()
             .open(&path)
             .map_err(|error| {
@@ -110,6 +115,11 @@ impl Repository {
                     LockError::Io(error)
                 }
             })?;
+        Self::from_file(path, file)
+    }
+
+    pub(super) fn from_file(path: PathBuf, file: std::fs::File) -> Result<Self, LockError> {
+        let _operation = crate::locks::operation();
         let file = crate::locks::SharedFile::from(file);
         let identity = crate::locks::capture_identity(&path, &file).map_err(LockError::Io)?;
         let registration = crate::locks::Guard::new(&path, &file, identity);

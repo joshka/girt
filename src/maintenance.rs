@@ -22,6 +22,7 @@
 //! assert_eq!(decision, AutoGc::NotDue);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+mod gc;
 mod lock;
 mod policy;
 
@@ -29,6 +30,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, io};
 
+pub use gc::{GcCoordinationError, GcLock, GcLog};
 pub use lock::{LockError, MaintenanceLock};
 pub use policy::PolicyError;
 
