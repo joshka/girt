@@ -137,9 +137,10 @@ selections are deduplicated and must fit that cap. This policy is deterministic;
 Git's commit-selection heuristic.
 
 Selected traversals may reuse complete closures already computed from the same verified graph and
-bit order. Each unioned word consumes the shared work budget. Retained closure words have a separate
-cap equal to `WriteLimits::max_bytes`; a full cache walks instead, and closures cheaper to walk than
-union are not cached. This does not consume existing file bitmap claims.
+bit order. Targets already present in the current closure are not queued again; every inspected edge
+still consumes the shared work budget, as does each cached word union. Retained closure words have a
+separate cap equal to `WriteLimits::max_bytes`; a full cache walks instead, and closures cheaper to
+walk than union are not cached. This does not consume existing file bitmap claims.
 
 Output uses EWAH runs and literals, independent commit records and a lookup table. XOR search is not
 performed. MIDX output includes zero pathname-hash hints for unknown names; those hints affect delta
