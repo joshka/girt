@@ -1,5 +1,5 @@
 ---
-import { COMMIT_URL, provenance } from '../data/jj-performance';
+import { COMMIT_URL, matrixSpan, provenance } from '../data/jj-performance';
 
 const short = (sha: string) => sha.slice(0, 12);
 const current = provenance.current_main_rebuild;
@@ -39,6 +39,10 @@ const load = provenance.load_1m;
       </li>
     )
   }
-  <li>Each cell records the girt release it was measured on; cells measured on a different release are marked.</li>
+  <li>
+    Cells span {matrixSpan.versions ? `girt ${matrixSpan.versions}` : 'one girt release'}, measured{' '}
+    {matrixSpan.dates ?? provenance.dates}. Each cell records its release; cells measured on a different release
+    than {provenance.girt_release ?? 'the headline'} are marked.
+  </li>
   {provenance.notes?.map((note) => <li>{note}</li>)}
 </ul>

@@ -270,40 +270,40 @@
     "variant": "list",
     "girt_samples": 6,
     "girt_attempts": 6,
-    "girt_ms": 17500.08616699961,
-    "girt_rss_mb": 315.53125,
+    "girt_ms": 7075.44806250371,
+    "girt_rss_mb": 305.609375,
     "stock_samples": 6,
     "stock_attempts": 6,
-    "stock_ms": 8206.216437500188,
-    "stock_rss_mb": 293.984375,
+    "stock_ms": 7751.3945210084785,
+    "stock_rss_mb": 294.0,
     "git_samples": 6,
     "git_attempts": 6,
-    "git_ms": 20.594978999724844,
-    "git_rss_mb": 9.84375,
-    "ratio_vs_stock": 2.132540166382762,
-    "sample_policy": "fixed-six",
-    "stock_vs_git_ratio": 398.4571403355073,
+    "git_ms": 17.585708003025502,
+    "git_rss_mb": 9.828125,
+    "ratio_vs_stock": 0.9127967933159947,
+    "sample_policy": "adaptive",
+    "stock_vs_git_ratio": 440.77807499561027,
     "jj_level_gap": true,
-    "notes": "girt n=6 range=16870.047..19114.750ms; stock n=6 range=8054.185..8813.232ms; git n=6 range=18.705..21.779ms",
+    "notes": "girt n=6 range=6995.018..7219.608ms; stock n=6 range=7688.893..7978.451ms; git n=6 range=16.932..20.402ms",
     "harness_op": "bookmark-list",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        16870.047041997168,
-        19114.75020800208
+        6995.017749999533,
+        7219.608041996253
       ],
       "stock": [
-        8054.185417000554,
-        8813.232000000426
+        7688.89258299896,
+        7978.4505420102505
       ],
       "git": [
-        18.704624999372754,
-        21.779041999252513
+        16.931874997681007,
+        20.401625006343238
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+        "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -315,27 +315,19 @@
       "stock": "ok",
       "git": "ok"
     },
-    "profiles": [
-      {
-        "tool": "girt",
-        "path": "/Users/joshka/tmp/girt-bench/matrix-0.11.1/jj-matrix-profiles/git-git-bookmark-list.json.gz",
-        "binary_sha256": "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
-      }
-    ],
+    "profiles": [],
     "run_epochs": [
-      "2026-10-17T06:58:53-0700"
+      "2026-10-17T19:14:29-0700"
     ],
-    "girt_version": "0.11.1",
-    "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-    "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
+    "girt_version": "0.14.0",
+    "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
+    "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
     "measured_on": "2026-10-17",
     "load_1m_range": [
-      10.4,
-      20.8
+      2.7,
+      6.1
     ],
-    "issues": [
-      221
-    ]
+    "issues": []
   },
   {
     "repo": "git-git",
@@ -408,42 +400,42 @@
     "size": "medium",
     "op": "git clone",
     "variant": "local-full-checkout",
-    "girt_samples": 6,
-    "girt_attempts": 6,
-    "girt_ms": 17953.409187502984,
-    "girt_rss_mb": 617.859375,
-    "stock_samples": 6,
-    "stock_attempts": 6,
-    "stock_ms": 13837.092895504611,
-    "stock_rss_mb": 643.15625,
-    "git_samples": 6,
-    "git_attempts": 6,
-    "git_ms": 9153.05695799907,
-    "git_rss_mb": 341.34375,
-    "ratio_vs_stock": 1.2974841842202043,
-    "sample_policy": "fixed-six",
-    "stock_vs_git_ratio": 1.5117455249103473,
+    "girt_samples": 3,
+    "girt_attempts": 3,
+    "girt_ms": 18191.289458001847,
+    "girt_rss_mb": 631.140625,
+    "stock_samples": 3,
+    "stock_attempts": 3,
+    "stock_ms": 14045.636082999408,
+    "stock_rss_mb": 630.640625,
+    "git_samples": 3,
+    "git_attempts": 3,
+    "git_ms": 9219.185542009654,
+    "git_rss_mb": 340.84375,
+    "ratio_vs_stock": 1.2951559723251171,
+    "sample_policy": "adaptive",
+    "stock_vs_git_ratio": 1.523522443386865,
     "jj_level_gap": false,
-    "notes": "local-path pack transfer; full checkout; girt n=6 range=17782.869..23225.094ms; stock n=6 range=13727.015..15534.496ms; git n=6 range=9115.220..9627.207ms",
+    "notes": "local-path pack transfer; full checkout; girt n=3 range=18031.313..18217.085ms; stock n=3 range=14041.128..14411.324ms; git n=3 range=9152.865..9368.373ms",
     "harness_op": "clone",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        17782.869000002393,
-        23225.09424999589
+        18031.312582999817,
+        18217.084916992462
       ],
       "stock": [
-        13727.015000011306,
-        15534.496457999921
+        14041.127625008812,
+        14411.324082990177
       ],
       "git": [
-        9115.219665996847,
-        9627.206999997725
+        9152.864542003954,
+        9368.373416000395
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+        "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -458,20 +450,20 @@
     "profiles": [
       {
         "tool": "girt",
-        "path": "/Users/joshka/tmp/girt-bench/matrix-0.13.1/jj-matrix-profiles/git-git-clone.json.gz",
-        "binary_sha256": "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+        "path": "/Users/joshka/tmp/girt-bench/matrix-0.14.0/jj-matrix-profiles/git-git-clone.json.gz",
+        "binary_sha256": "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
       }
     ],
     "run_epochs": [
-      "2026-10-17T18:29:36-0700"
+      "2026-10-17T19:14:29-0700"
     ],
-    "girt_version": "0.13.1",
-    "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-    "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
+    "girt_version": "0.14.0",
+    "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
+    "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
     "measured_on": "2026-10-17",
     "load_1m_range": [
-      17.1,
-      28.8
+      11.3,
+      24.2
     ],
     "issues": [
       218
@@ -1563,49 +1555,51 @@
       24.3,
       34.2
     ],
-    "issues": []
+    "issues": [],
+    "comparable": false,
+    "comparability_note": "Not like-for-like: girt's gc packs loose objects and prunes, but doesn't rewrite existing packs as `git gc` does."
   },
   {
     "repo": "git-git",
     "size": "medium",
     "op": "util gc",
     "variant": "garbage",
-    "girt_samples": 6,
-    "girt_attempts": 6,
-    "girt_ms": 19177.276854499723,
-    "girt_rss_mb": 531.9375,
-    "stock_samples": 6,
-    "stock_attempts": 6,
-    "stock_ms": 12030.018561999896,
-    "stock_rss_mb": 900.015625,
-    "git_samples": 6,
-    "git_attempts": 6,
-    "git_ms": 10283.549291498275,
-    "git_rss_mb": 905.421875,
-    "ratio_vs_stock": 1.5941186421005533,
-    "sample_policy": "fixed-six",
-    "stock_vs_git_ratio": 1.1698313705702252,
+    "girt_samples": 3,
+    "girt_attempts": 3,
+    "girt_ms": 11377.171999993152,
+    "girt_rss_mb": 337.390625,
+    "stock_samples": 3,
+    "stock_attempts": 3,
+    "stock_ms": 9669.533708001836,
+    "stock_rss_mb": 856.25,
+    "git_samples": 3,
+    "git_attempts": 3,
+    "git_ms": 8930.183457996463,
+    "git_rss_mb": 902.125,
+    "ratio_vs_stock": 1.1765998592650018,
+    "sample_policy": "adaptive",
+    "stock_vs_git_ratio": 1.0827922800783367,
     "jj_level_gap": false,
-    "notes": "2000 unreachable loose blobs (8 MiB), aged 30 days; verify collection; girt n=6 range=16664.984..31307.203ms; stock n=6 range=10858.144..17580.199ms; git n=6 range=9645.106..10915.010ms",
+    "notes": "2000 unreachable loose blobs (8 MiB), aged 30 days; verify collection; girt n=3 range=11165.416..11587.425ms; stock n=3 range=9649.468..9727.062ms; git n=3 range=8908.264..8931.551ms",
     "harness_op": "gc-garbage",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        16664.984125000046,
-        31307.202542000596
+        11165.415540992399,
+        11587.425124991569
       ],
       "stock": [
-        10858.14437499721,
-        17580.199125000945
+        9649.468083007378,
+        9727.061625002534
       ],
       "git": [
-        9645.106374999159,
-        10915.009874999669
+        8908.263958990574,
+        8931.550709006842
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+        "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -1617,27 +1611,21 @@
       "stock": "ok",
       "git": "ok"
     },
-    "profiles": [
-      {
-        "tool": "girt",
-        "path": "/Users/joshka/tmp/girt-bench/matrix-0.11.1/jj-matrix-profiles/git-git-gc-garbage.json.gz",
-        "binary_sha256": "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
-      }
-    ],
+    "profiles": [],
     "run_epochs": [
-      "2026-10-17T06:58:53-0700"
+      "2026-10-17T19:14:29-0700"
     ],
-    "girt_version": "0.11.1",
-    "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-    "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
+    "girt_version": "0.14.0",
+    "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
+    "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
     "measured_on": "2026-10-17",
     "load_1m_range": [
-      24.0,
-      50.0
+      5.6,
+      17.8
     ],
-    "issues": [
-      66
-    ]
+    "issues": [],
+    "comparable": false,
+    "comparability_note": "Not like-for-like: girt's gc packs loose objects and prunes, but doesn't rewrite existing packs as `git gc` does."
   },
   {
     "repo": "git-git",
@@ -1716,36 +1704,36 @@
     "variant": "colocate",
     "girt_samples": 6,
     "girt_attempts": 6,
-    "girt_ms": 2907.554354496824,
-    "girt_rss_mb": 291.90625,
+    "girt_ms": 2921.8275620005443,
+    "girt_rss_mb": 292.265625,
     "stock_samples": 6,
     "stock_attempts": 6,
-    "stock_ms": 2491.022250498645,
-    "stock_rss_mb": 242.703125,
+    "stock_ms": 2513.0390414924477,
+    "stock_rss_mb": 237.46875,
     "git_samples": 0,
     "git_attempts": 0,
     "git_ms": null,
     "git_rss_mb": null,
-    "ratio_vs_stock": 1.1672133213241267,
-    "sample_policy": "fixed-six",
+    "ratio_vs_stock": 1.1626669995008612,
+    "sample_policy": "adaptive",
     "stock_vs_git_ratio": null,
     "jj_level_gap": false,
-    "notes": "Git has no equivalent: existing Git worktree already initialized; girt n=6 range=2771.339..2991.996ms; stock n=6 range=2468.662..2590.558ms",
+    "notes": "Git has no equivalent: existing Git worktree already initialized; girt n=6 range=2835.793..3068.750ms; stock n=6 range=2481.851..2624.123ms",
     "harness_op": "init-colocate",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        2771.3393329904648,
-        2991.9959580001887
+        2835.7925839954987,
+        3068.7496250029653
       ],
       "stock": [
-        2468.662207989837,
-        2590.5579999962356
+        2481.850874988595,
+        2624.122916997294
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+        "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -1759,15 +1747,15 @@
     },
     "profiles": [],
     "run_epochs": [
-      "2026-10-17T18:29:36-0700"
+      "2026-10-17T19:14:29-0700"
     ],
-    "girt_version": "0.13.1",
-    "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-    "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
+    "girt_version": "0.14.0",
+    "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
+    "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
     "measured_on": "2026-10-17",
     "load_1m_range": [
-      17.7,
-      22.6
+      11.0,
+      23.4
     ],
     "issues": []
   },
@@ -1776,42 +1764,42 @@
     "size": "medium",
     "op": "log",
     "variant": "ancestry",
-    "girt_samples": 6,
-    "girt_attempts": 6,
-    "girt_ms": 165656.2175625004,
-    "girt_rss_mb": 403.9375,
-    "stock_samples": 6,
-    "stock_attempts": 6,
-    "stock_ms": 73374.06520849981,
-    "stock_rss_mb": 549.1875,
-    "git_samples": 6,
-    "git_attempts": 6,
-    "git_ms": 1080.655146000936,
-    "git_rss_mb": 141.3125,
-    "ratio_vs_stock": 2.257694419571432,
-    "sample_policy": "fixed-six",
-    "stock_vs_git_ratio": 67.89776135340429,
+    "girt_samples": 1,
+    "girt_attempts": 1,
+    "girt_ms": 86577.56495800277,
+    "girt_rss_mb": 386.28125,
+    "stock_samples": 1,
+    "stock_attempts": 1,
+    "stock_ms": 64955.51629099646,
+    "stock_rss_mb": 520.140625,
+    "git_samples": 1,
+    "git_attempts": 1,
+    "git_ms": 1102.4487910035532,
+    "git_rss_mb": 139.359375,
+    "ratio_vs_stock": 1.3328747102885141,
+    "sample_policy": "adaptive",
+    "stock_vs_git_ratio": 58.91930475234845,
     "jj_level_gap": true,
-    "notes": "full output consumed to /dev/null; girt n=6 range=146301.870..195520.536ms; stock n=6 range=63269.139..101811.266ms; git n=6 range=1053.884..1352.509ms",
+    "notes": "full output consumed to /dev/null; girt n=1 range=86577.565..86577.565ms; stock n=1 range=64955.516..64955.516ms; git n=1 range=1102.449..1102.449ms",
     "harness_op": "log-ancestry",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        146301.87008400026,
-        195520.53616600097
+        86577.56495800277,
+        86577.56495800277
       ],
       "stock": [
-        63269.138958999974,
-        101811.26575000235
+        64955.51629099646,
+        64955.51629099646
       ],
       "git": [
-        1053.8840830013214,
-        1352.5092499985476
+        1102.4487910035532,
+        1102.4487910035532
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+        "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -1826,20 +1814,20 @@
     "profiles": [
       {
         "tool": "girt",
-        "path": "/Users/joshka/tmp/girt-bench/matrix-0.11.1/jj-matrix-profiles/git-git-log-ancestry.json.gz",
-        "binary_sha256": "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+        "path": "/Users/joshka/tmp/girt-bench/matrix-0.14.0/jj-matrix-profiles/git-git-log-ancestry.json.gz",
+        "binary_sha256": "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
       }
     ],
     "run_epochs": [
-      "2026-10-17T04:49:39-0700"
+      "2026-10-17T19:14:29-0700"
     ],
-    "girt_version": "0.11.1",
-    "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-    "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
+    "girt_version": "0.14.0",
+    "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
+    "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
     "measured_on": "2026-10-17",
     "load_1m_range": [
-      12.5,
-      37.0
+      6.5,
+      11.3
     ],
     "issues": [
       221
@@ -5125,7 +5113,9 @@
       25.0,
       26.0
     ],
-    "issues": []
+    "issues": [],
+    "comparable": false,
+    "comparability_note": "Not like-for-like: girt's gc packs loose objects and prunes, but doesn't rewrite existing packs as `git gc` does."
   },
   {
     "repo": "jj-historic",
@@ -5191,7 +5181,9 @@
       23.8,
       25.8
     ],
-    "issues": []
+    "issues": [],
+    "comparable": false,
+    "comparability_note": "Not like-for-like: girt's gc packs loose objects and prunes, but doesn't rewrite existing packs as `git gc` does."
   },
   {
     "repo": "jj-historic",
@@ -8728,7 +8720,9 @@
       16.5,
       27.1
     ],
-    "issues": []
+    "issues": [],
+    "comparable": false,
+    "comparability_note": "Not like-for-like: girt's gc packs loose objects and prunes, but doesn't rewrite existing packs as `git gc` does."
   },
   {
     "repo": "linux-v6.1",
@@ -8802,7 +8796,9 @@
     ],
     "issues": [
       66
-    ]
+    ],
+    "comparable": false,
+    "comparability_note": "Not like-for-like: girt's gc packs loose objects and prunes, but doesn't rewrite existing packs as `git gc` does."
   },
   {
     "repo": "linux-v6.1",

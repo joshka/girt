@@ -73,7 +73,7 @@ const times = (ratio: number) => {
     less than 20% slower than stock jj (or faster) in {parity.atMost20PercentSlower} of the{' '}
     {parity.compared} cells where both finished
     {parity.unfinished > 0 && <>; {parity.unfinished} more did not finish with girt</>}. {measured.machine},{' '}
-    {measured.dates}.{' '}
+    {measured.versions && <>girt {measured.versions}, </>}measured {measured.dates}.{' '}
     <a href={`${base}/performance/jj-benchmark/`}>All results</a>
   </p>
 </div>

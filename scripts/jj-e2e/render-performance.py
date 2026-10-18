@@ -32,6 +32,8 @@ def cell(row, release=None):
     older = f' (girt {stamp})' if stamp and release and stamp != release else ''
     if status != 'ok' or ratio is None:
         return f'❌ {status if status != "ok" else "unavailable"}{older} {links}'.strip()
+    if row.get('comparable') is False:
+        return f'⚪ {ratio:.2f}× (n={row.get("girt_samples", "?")}){older} not like-for-like {links}'.strip()
     band = '🔴' if ratio > 2 else '🟠' if ratio > 1.2 else '🟢'
     n = row.get('girt_samples', '?')
     shown = f'{ratio:.3f}' if abs(ratio - 1.2) < 0.005 or abs(ratio - 2) < 0.005 else f'{ratio:.2f}'
@@ -91,15 +93,18 @@ def render(rows, meta):
         operations.add(key[:2])
         if (row.get('status', 'ok') != 'ok' and row.get('ratio_vs_stock') is not None):
             raise ValueError(f'failure has a successful ratio: {key}')
-        if ((row.get('ratio_vs_stock') or 0) > 1.2
+        if (((row.get('ratio_vs_stock') or 0) > 1.2 and row.get('comparable') is not False)
                 or row.get('status', 'ok') != 'ok') and not row.get('issues'):
             raise ValueError(f'gap or failure needs an issue link: {key}')
 
     def severity(op):
         cells = [by_key.get((*op, size)) for size in SIZES]
         failed = any(r is None or r.get('status', 'ok') != 'ok' for r in cells)
-        worst = max((r.get('ratio_vs_stock') or 0 for r in cells if r), default=0)
-        return (-int(failed), -worst, op)
+        # Rows that aren't like-for-like sort after every compared row, by name.
+        neutral = all(r is not None and r.get('comparable') is False for r in cells)
+        worst = max((r.get('ratio_vs_stock') or 0 for r in cells
+                     if r and r.get('comparable') is not False), default=0)
+        return (-int(failed), int(neutral), -worst, op)
 
     lines = [
         '# jj performance', '',
@@ -107,7 +112,7 @@ def render(rows, meta):
         'Compare jj on girt with stock jj at the same base revision. Lower ratios are better.',
         'Failures and missing results sort first, followed by the worst measured ratio across sizes.',
         'These are warm-cache measurements; provenance below names the release of each cell.', '',
-        '🟢 ≤1.20×; 🟠 >1.20–2.00×; 🔴 >2.00×; ❌ failure/refusal; ⏳ pending.',
+        '🟢 ≤1.20×; 🟠 >1.20–2.00×; 🔴 >2.00×; ⚪ not like-for-like; ❌ failure/refusal; ⏳ pending.',
         '`n` is the number of successful girt samples; JSON records each tool separately.', '',
         '| Operation / workload | Small | Medium | Large |',
         '| --- | --- | --- | --- |',
@@ -134,8 +139,9 @@ def render(rows, meta):
         'evolution and operation history but contain different records.',
         'Ranges, peak RSS, sample counts, per-row load, issue mappings, and limitations are in',
         '[the results JSON](benchmarks/jj-matrix.json).',
-        'Clean GC measures backend policy as well as speed: the backends can choose different',
-        'packing work when nothing needs collection. Its ratio is not equal-work repack throughput.',
+        '`util gc` rows are not like-for-like: girt\'s gc packs loose objects and prunes, but',
+        'doesn\'t rewrite existing packs as `git gc` does. They stay timed as a collection-cost',
+        'signal but are marked ⚪, are never shown as a girt win, and carry `comparable: false`.',
         'Peak RSS counts resident pages of memory-mapped pack and index files, so it is not heap',
         'use alone.', '',
     ]
@@ -191,8 +197,9 @@ def render(rows, meta):
         'setup verifies that every unstaged path is such an alias and marks only those paths',
         'assume-unchanged before timing. Other unstaged edits fail setup. This platform limitation',
         'means the checkout cannot represent both versions of those files faithfully.', '',
-        'Small and medium cells take six samples per tool in Git, girt, stock, stock, girt, Git',
-        'blocks. Linux cells use adaptive calibration in Git, stock, girt order: if the slowest',
+        'Full runs take six samples per tool on small and medium cells in Git, girt, stock, stock,',
+        'girt, Git blocks. Linux cells, and targeted refreshes that release the timing lock between',
+        'samples, use adaptive calibration in Git, stock, girt order: if the slowest',
         'first sample exceeds 60 seconds, take one sample per tool; if it exceeds 10 seconds, take',
         'three; otherwise take six. Further samples alternate girt and stock positions, so',
         'slow-cell ratios have lower precision. Counts in the JSON describe the samples retained.',

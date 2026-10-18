@@ -724,6 +724,72 @@
         "jj-historic/undo/default",
         "jj-historic/workspace add/full-checkout"
       ]
+    },
+    {
+      "girt_version": "0.14.0",
+      "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
+      "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
+      "binaries": {
+        "girt": "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75",
+        "stock": "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
+      },
+      "run_epochs": [
+        {
+          "started": "2026-10-17T19:14:29-0700",
+          "argv": [
+            "--matrix",
+            "--resume",
+            "--fsck-scope",
+            "operation-type",
+            "--girt-jj",
+            "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.14.0",
+            "--stock-jj",
+            "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+            "--girt-rev",
+            "a52cb07a55e1d2646b272e3806d072fd0233a588",
+            "--jj-rev",
+            "51a0c97702c43a821a08e92f2c1ec21280400290",
+            "--stock-rev",
+            "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+            "--repo",
+            "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+            "--runs",
+            "6",
+            "--ops",
+            "log-ancestry,bookmark-list,gc-garbage,clone,init-colocate",
+            "--adaptive",
+            "--bounded-disk",
+            "--work",
+            "/Users/joshka/tmp/girt-bench/matrix-0.14.0/run",
+            "--out",
+            "/Users/joshka/tmp/girt-bench/matrix-0.14.0/jj-bench-matrix.json"
+          ],
+          "adaptive": true,
+          "load_average_at_start": [
+            3.37646484375,
+            7.076171875,
+            11.55908203125
+          ]
+        }
+      ],
+      "load_1m": {
+        "min": 2.7,
+        "median": 11.1,
+        "max": 24.2,
+        "cores": 12
+      },
+      "fsck": {
+        "scope": "operation-type",
+        "checks": 5,
+        "failures": 0
+      },
+      "cells": [
+        "git-git/bookmark/list",
+        "git-git/git clone/local-full-checkout",
+        "git-git/git init/colocate",
+        "git-git/log/ancestry",
+        "git-git/util gc/garbage"
+      ]
     }
   ]
 }
