@@ -6,7 +6,7 @@
 //! paths, including both sides of renames and copies. This module does not inspect repositories.
 //!
 //! ```
-//! use girt::diffstat::{Counts, Diffstat, FileStat, Limits};
+//! use girt::diffstat::{Counts, Diffstat, FileStat, Limits, StatLayout};
 //!
 //! let stat = Diffstat::new(
 //!     vec![FileStat {
@@ -20,6 +20,10 @@
 //!     Limits::default(),
 //! )?;
 //! assert_eq!(stat.numstat(false)?, b"3\t1\tsrc/main.rs\n");
+//! assert_eq!(
+//!     stat.stat(StatLayout::default())?,
+//!     b" src/main.rs | 4 +++-\n 1 file changed, 3 insertions(+), 1 deletion(-)\n"
+//! );
 //! # Ok::<(), girt::diffstat::Error>(())
 //! ```
 
@@ -62,6 +66,108 @@ impl Diffstat {
     #[must_use]
     pub fn files(&self) -> &[FileStat] {
         &self.files
+    }
+
+    /// Renders Git's human-readable `--stat` rows and summary at an explicit width.
+    ///
+    /// The layout is deterministic and does not read `COLUMNS` or terminal state. Command-line
+    /// callers resolve those inputs and pass the resulting width. Rename and copy paths use Git's
+    /// compact path notation. Binary rows show old and new byte lengths.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Limit`] before returning any artifact when the output exceeds the byte
+    /// budget. Widths are capped to prevent an accidental oversized padding allocation.
+    pub fn stat(&self, layout: StatLayout) -> Result<Vec<u8>, Error> {
+        if layout.width > self.limits.max_layout_width {
+            return Err(Error::Limit("layout width"));
+        }
+        if self.files.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut output = Output {
+            bytes: Vec::new(),
+            limit: self.limits.max_output_bytes,
+        };
+        let paths = self.files.iter().map(text_path).collect::<Vec<_>>();
+        let longest = paths.iter().map(String::len).max().unwrap_or_default();
+        let requested_name_width = layout.width.saturating_mul(2).div_ceil(3);
+        let available_name_width = layout.width.saturating_sub(13).max(12);
+        let minimum_name_width = longest.saturating_add(2).min(12);
+        let name_width = longest
+            .saturating_add(2)
+            .min(requested_name_width)
+            .min(available_name_width)
+            .max(minimum_name_width);
+        let name_width = name_width.min(self.limits.max_layout_width);
+        let has_binary = self
+            .files
+            .iter()
+            .any(|file| matches!(file.counts, Counts::Binary { .. }));
+        let max_changes = self
+            .files
+            .iter()
+            .filter_map(|file| match file.counts {
+                Counts::Text { added, removed } => Some(added.saturating_add(removed)),
+                Counts::Binary { .. } => None,
+            })
+            .max()
+            .unwrap_or_default();
+        let count_width = max_changes
+            .to_string()
+            .len()
+            .max(if has_binary { 3 } else { 1 });
+        let graph_width = layout.width.saturating_sub(1 + name_width + 6).max(6);
+
+        for (file, path) in self.files.iter().zip(paths) {
+            output.append(b" ")?;
+            let name_capacity = name_width.saturating_sub(2);
+            let shown = truncate_path(&path, name_capacity);
+            output.append(shown.as_bytes())?;
+            if shown.len() < name_capacity {
+                append_spaces(&mut output, name_capacity - shown.len())?;
+            }
+            output.append(b" | ")?;
+            match file.counts {
+                Counts::Binary {
+                    old_bytes,
+                    new_bytes,
+                } => {
+                    output.append(format!("Bin {old_bytes} -> {new_bytes} bytes").as_bytes())?;
+                }
+                Counts::Text { added, removed } => {
+                    let count = added.saturating_add(removed);
+                    if count == 0 {
+                        output.append(format!("{count:>count_width$}").as_bytes())?;
+                    } else {
+                        output.append(format!("{count:>count_width$} ").as_bytes())?;
+                        let graph_len = if max_changes <= graph_width as u64 {
+                            usize::try_from(count)
+                                .unwrap_or(usize::MAX)
+                                .min(graph_width)
+                        } else {
+                            let scaled = u128::from(count) * graph_width as u128;
+                            let scaled = usize::try_from(
+                                (scaled + u128::from(max_changes) / 2) / u128::from(max_changes),
+                            )
+                            .unwrap_or(graph_width)
+                            .clamp(1, graph_width);
+                            if added > 0 && removed > 0 {
+                                scaled.max(2).min(graph_width)
+                            } else {
+                                scaled
+                            }
+                        };
+                        let plus = graph_added(added, removed, graph_len, count)?;
+                        append_repeat(&mut output, b'+', plus)?;
+                        append_repeat(&mut output, b'-', graph_len.saturating_sub(plus))?;
+                    }
+                }
+            }
+            output.append(b"\n")?;
+        }
+        append_summary(&mut output, &self.files)?;
+        Ok(output.bytes)
     }
 
     /// Renders Git's `--numstat` format, optionally with NUL record terminators (`-z`).
@@ -150,9 +256,18 @@ pub struct Limits {
     pub max_path_bytes: usize,
     /// Maximum bytes in each returned artifact; default 64 MiB.
     pub max_output_bytes: usize,
+    /// Maximum requested human-stat width; default 4096 columns.
+    pub max_layout_width: usize,
 }
 
 impl Limits {
+    /// Sets [`Self::max_layout_width`].
+    #[must_use]
+    pub fn with_max_layout_width(mut self, max_layout_width: usize) -> Self {
+        self.max_layout_width = max_layout_width;
+        self
+    }
+
     /// Sets [`Self::max_files`].
     #[must_use]
     pub fn with_max_files(mut self, max_files: usize) -> Self {
@@ -181,7 +296,21 @@ impl Default for Limits {
             max_files: 100_000,
             max_path_bytes: 16 * 1024 * 1024,
             max_output_bytes: 64 * 1024 * 1024,
+            max_layout_width: 4096,
         }
+    }
+}
+
+/// Explicit width for [`Diffstat::stat`]. The default matches Git's 80-column layout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StatLayout {
+    /// Requested row width in columns; very narrow layouts retain Git's minimum readable width.
+    pub width: usize,
+}
+
+impl Default for StatLayout {
+    fn default() -> Self {
+        Self { width: 80 }
     }
 }
 
@@ -195,6 +324,117 @@ pub enum Error {
     /// A path is empty or contains NUL, which cannot represent a Git path.
     #[error("diffstat paths must be nonempty and contain no NUL")]
     InvalidPath,
+}
+
+fn truncate_path(path: &str, capacity: usize) -> String {
+    if path.len() <= capacity {
+        return path.to_owned();
+    }
+    let Some((_, basename)) = path.rsplit_once('/') else {
+        return format!(
+            "...{}",
+            path.chars()
+                .rev()
+                .take(capacity.saturating_sub(3))
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>()
+        );
+    };
+    let suffix = format!(".../{basename}");
+    if suffix.len() <= capacity {
+        return suffix;
+    }
+    let basename_only = format!("...{basename}");
+    if basename_only.len() <= capacity.saturating_add(1) {
+        return basename_only;
+    }
+    let tail = path
+        .chars()
+        .rev()
+        .take(capacity.saturating_sub(3))
+        .collect::<String>();
+    format!("...{}", tail.chars().rev().collect::<String>())
+}
+
+fn graph_added(added: u64, removed: u64, width: usize, count: u64) -> Result<usize, Error> {
+    if count <= width as u64 {
+        return Ok(usize::try_from(added).unwrap_or(usize::MAX).min(width));
+    }
+    let scaled = (u128::from(added) * width as u128 + u128::from(count / 2)) / u128::from(count);
+    let mut plus = usize::try_from(scaled).unwrap_or(width).min(width);
+    if added > 0 && plus == 0 {
+        plus = 1;
+    }
+    if removed > 0 && plus == width {
+        plus = width.saturating_sub(1);
+    }
+    Ok(plus)
+}
+
+fn append_spaces(output: &mut Output, count: usize) -> Result<(), Error> {
+    const SPACES: &[u8] = b"                                                                ";
+    let mut remaining = count;
+    while remaining != 0 {
+        let chunk = remaining.min(SPACES.len());
+        output.append(&SPACES[..chunk])?;
+        remaining -= chunk;
+    }
+    Ok(())
+}
+
+fn append_repeat(output: &mut Output, byte: u8, count: usize) -> Result<(), Error> {
+    let repeats = [byte; 64];
+    let mut remaining = count;
+    while remaining != 0 {
+        let chunk = remaining.min(repeats.len());
+        output.append(&repeats[..chunk])?;
+        remaining -= chunk;
+    }
+    Ok(())
+}
+
+fn append_summary(output: &mut Output, files: &[FileStat]) -> Result<(), Error> {
+    let mut added = 0u64;
+    let mut removed = 0u64;
+    for file in files {
+        if let Counts::Text {
+            added: file_added,
+            removed: file_removed,
+        } = file.counts
+        {
+            added = added.saturating_add(file_added);
+            removed = removed.saturating_add(file_removed);
+        }
+    }
+    let count = files.len();
+    output
+        .append(format!(" {count} file{} changed", if count == 1 { "" } else { "s" }).as_bytes())?;
+    if added == 0 && removed == 0 {
+        output.append(b", 0 insertions(+), 0 deletions(-)\n")?;
+    } else {
+        if added > 0 {
+            output.append(
+                format!(
+                    ", {added} insertion{}(+)",
+                    if added == 1 { "" } else { "s" }
+                )
+                .as_bytes(),
+            )?;
+        }
+        if removed > 0 {
+            output.append(
+                format!(
+                    ", {removed} deletion{}(-)",
+                    if removed == 1 { "" } else { "s" }
+                )
+                .as_bytes(),
+            )?;
+        }
+        output.append(b"\n")?;
+    }
+    Ok(())
 }
 
 struct Output {

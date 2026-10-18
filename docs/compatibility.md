@@ -40,12 +40,14 @@ including the selected Windows scope and exact tested revision.
 
 ## Numeric diff summaries
 
-`girt::diffstat` renders caller-supplied text counts and binary lengths as Git numstat records.
+`girt::diffstat` renders caller-supplied text counts and binary lengths as Git `--numstat` records.
 `tests/diffstat.rs` compares bytes with isolated `git diff --cached --numstat`, including NUL
 termination, empty additions, binary files, quoted paths, and renamed paths with shared directory
 components. Escaped rename paths retain separately quoted source and destination names. File count,
-aggregate path bytes, and output bytes have independent limits. Counts and ordering remain the
-caller's responsibility; repository collection and human-readable graph layout are not yet provided.
+aggregate path bytes, output bytes, and requested stat width have independent limits. `stat` formats
+caller-supplied line counts and binary lengths with Git's path truncation and graph scaling. Counts
+and ordering remain the caller's responsibility; repository collection and command-line width
+selection are not yet provided.
 
 ## Reachability bitmap files
 
@@ -510,7 +512,7 @@ outcome and every question asked. Cases: `GIT_ASKPASS` before `core.askPass` and
 `core.askPass` before `SSH_ASKPASS`, `SSH_ASKPASS` alone, an empty `GIT_ASKPASS` or `core.askPass`
 turning askpass off, an empty answer, a failing program, a configured `credential.username`, and
 `credential.useHttpPath`, which adds the repository path to the question. Both ask
-`Username for '<scheme>://<host>':` and then `Password for '<scheme>://<user>@<host>': `, dropping
+`Username for '<scheme>://<host>':` and then `Password for '<scheme>://<user>@<host>':` , dropping
 `<user>@` for an empty username. A failing program leaves the question to the next prompt: Git's
 terminal, girt's `TransferCallbacks::credential`. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
 
@@ -4139,6 +4141,7 @@ for SHA-1/SHA-256 binary literals/deltas, additions/deletions, empty files and m
 text rename preserves missing final newlines, and reversing twice restores forward application.
 Reverse copies exchange paths and retain copy behavior; both implementations refuse an occupied
 reversed destination, and Git leaves its index unchanged. Missing reverse binary blocks are refused.
+
 The existing directory-to-file limitation also applies to reversed patches.
 
 ### Working-file patch preparation
@@ -4166,3 +4169,9 @@ deletion are retained. This differs from a transactional filesystem batch and is
 Review follow-ups cover publication scan-cost admission: a patch whose read-only preflight fits but
 whose repeated mutation checks exceed the directory budget is refused with no mutations. Mode tests
 pin owner-only executable detection and explicit no-write refusal of `core.fileMode=false`.
+
+### Diffstat rendering
+
+`tests/diffstat.rs` compares human `--stat` and `--numstat` output byte for byte with isolated Git.
+Fixtures cover width scaling across files with different change sizes, combined insertion/deletion
+counts, zero-side summary omission, binary rows and renamed paths.

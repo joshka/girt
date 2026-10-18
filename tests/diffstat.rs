@@ -128,6 +128,13 @@ fn renamed_paths_match_git() {
                 oracle::git(root, &args, b""),
                 "{old} -> {new}, nul={nul}"
             );
+            if !nul {
+                assert_eq!(
+                    stat.stat(girt::diffstat::StatLayout::default()).unwrap(),
+                    oracle::git(root, &["diff", "--cached", "-M", "--stat"], b""),
+                    "stat: {old} -> {new}"
+                );
+            }
         }
     }
 }
@@ -175,4 +182,235 @@ fn file(path: &[u8], source: Option<&[u8]>, counts: Counts) -> FileStat {
         source_path: source.map(<[u8]>::to_vec),
         counts,
     }
+}
+
+#[test]
+fn human_stat_matches_git_width_scaling() {
+    use girt::diffstat::StatLayout;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    oracle::git(root, &["init", "-q"], b"");
+    std::fs::create_dir_all(root.join("very-long-directory")).unwrap();
+    let path = "very-long-directory/a-change.txt";
+    let old = (0..200)
+        .map(|line| format!("old{line}\n"))
+        .collect::<String>();
+    std::fs::write(root.join(path), old.clone()).unwrap();
+    let short_old = (0..12).map(|line| format!("s{line}\n")).collect::<String>();
+    std::fs::write(root.join("short.txt"), short_old).unwrap();
+    let sum_old = (0..100)
+        .map(|line| format!("t{line}\n"))
+        .collect::<String>();
+    std::fs::write(root.join("sum.txt"), sum_old).unwrap();
+    oracle::git(root, &["add", "."], b"");
+    oracle::git(
+        root,
+        &["-c", "commit.gpgsign=false", "commit", "-qm", "base"],
+        b"",
+    );
+    let new = (0..200)
+        .map(|line| format!("new{line}\n"))
+        .collect::<String>();
+    std::fs::write(root.join(path), new).unwrap();
+    let short_new = (6..12)
+        .map(|line| format!("s{line}\n"))
+        .chain((0..6).map(|line| format!("added{line}\n")))
+        .collect::<String>();
+    std::fs::write(root.join("short.txt"), short_new).unwrap();
+    let sum_new = (50..100)
+        .map(|line| format!("t{line}\n"))
+        .chain((0..60).map(|line| format!("added{line}\n")))
+        .collect::<String>();
+    std::fs::write(root.join("sum.txt"), sum_new).unwrap();
+    oracle::git(root, &["add", "."], b"");
+    let stat = Diffstat::new(
+        vec![
+            file(
+                b"short.txt",
+                None,
+                Counts::Text {
+                    added: 6,
+                    removed: 6,
+                },
+            ),
+            file(
+                b"sum.txt",
+                None,
+                Counts::Text {
+                    added: 60,
+                    removed: 50,
+                },
+            ),
+            file(
+                path.as_bytes(),
+                None,
+                Counts::Text {
+                    added: 200,
+                    removed: 200,
+                },
+            ),
+        ],
+        Limits::default(),
+    )
+    .unwrap();
+    for width in [10, 20, 25, 30] {
+        let actual = stat.stat(StatLayout { width }).unwrap();
+        let expected = oracle::git(root, &["diff", "--cached", &format!("--stat={width}")], b"");
+        assert_eq!(
+            String::from_utf8_lossy(&actual),
+            String::from_utf8_lossy(&expected),
+            "width={width}"
+        );
+    }
+}
+
+#[test]
+fn human_stat_aligns_combined_counts_that_are_wider_than_either_side() {
+    use girt::diffstat::StatLayout;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    oracle::git(root, &["init", "-q"], b"");
+    std::fs::write(root.join("b"), "old\n".repeat(4)).unwrap();
+    oracle::git(root, &["add", "."], b"");
+    oracle::git(
+        root,
+        &["-c", "commit.gpgsign=false", "commit", "-qm", "base"],
+        b"",
+    );
+    std::fs::write(root.join("a"), "new\n".repeat(9)).unwrap();
+    std::fs::write(root.join("b"), "new\n".repeat(6)).unwrap();
+    oracle::git(root, &["add", "."], b"");
+    let stat = Diffstat::new(
+        vec![
+            file(
+                b"a",
+                None,
+                Counts::Text {
+                    added: 9,
+                    removed: 0,
+                },
+            ),
+            file(
+                b"b",
+                None,
+                Counts::Text {
+                    added: 6,
+                    removed: 4,
+                },
+            ),
+        ],
+        Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        stat.stat(StatLayout::default()).unwrap(),
+        oracle::git(root, &["diff", "--cached", "--stat"], b"")
+    );
+}
+
+#[test]
+fn human_stat_omits_zero_summary_sides_like_git() {
+    use girt::diffstat::StatLayout;
+
+    for (path, data, counts) in [
+        (
+            "added",
+            b"one\ntwo\n".as_slice(),
+            Counts::Text {
+                added: 2,
+                removed: 0,
+            },
+        ),
+        (
+            "deleted",
+            b"".as_slice(),
+            Counts::Text {
+                added: 0,
+                removed: 2,
+            },
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        oracle::git(root, &["init", "-q"], b"");
+        if path == "deleted" {
+            std::fs::write(root.join(path), b"one\ntwo\n").unwrap();
+        }
+        oracle::git(root, &["add", "."], b"");
+        let mut commit = vec!["-c", "commit.gpgsign=false", "commit", "-qm", "base"];
+        if path == "added" {
+            commit.push("--allow-empty");
+        }
+        oracle::git(root, &commit, b"");
+        if path == "added" {
+            std::fs::write(root.join(path), data).unwrap();
+        } else {
+            std::fs::remove_file(root.join(path)).unwrap();
+        }
+        oracle::git(root, &["add", "-A"], b"");
+        let stat =
+            Diffstat::new(vec![file(path.as_bytes(), None, counts)], Limits::default()).unwrap();
+        assert_eq!(
+            stat.stat(StatLayout::default()).unwrap(),
+            oracle::git(root, &["diff", "--cached", "--stat"], b""),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn human_stat_matches_git_binary_rows() {
+    use girt::diffstat::StatLayout;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    oracle::git(root, &["init", "-q"], b"");
+    std::fs::write(root.join("binary"), b"\0abc").unwrap();
+    std::fs::write(root.join("empty"), b"").unwrap();
+    oracle::git(root, &["add", "."], b"");
+    oracle::git(
+        root,
+        &["-c", "commit.gpgsign=false", "commit", "-qm", "base"],
+        b"",
+    );
+    std::fs::write(root.join("binary"), b"\0xyz12").unwrap();
+    std::fs::remove_file(root.join("empty")).unwrap();
+    std::fs::write(root.join("added"), b"\0newlong").unwrap();
+    oracle::git(root, &["add", "-A"], b"");
+    let stat = Diffstat::new(
+        vec![
+            file(
+                b"added",
+                None,
+                Counts::Binary {
+                    old_bytes: 0,
+                    new_bytes: 8,
+                },
+            ),
+            file(
+                b"binary",
+                None,
+                Counts::Binary {
+                    old_bytes: 4,
+                    new_bytes: 6,
+                },
+            ),
+            file(
+                b"empty",
+                None,
+                Counts::Text {
+                    added: 0,
+                    removed: 0,
+                },
+            ),
+        ],
+        Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        stat.stat(StatLayout::default()).unwrap(),
+        oracle::git(root, &["diff", "--cached", "--stat"], b"")
+    );
 }
