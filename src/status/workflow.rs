@@ -377,7 +377,7 @@ mod supported {
         let mut gitlinks = Vec::new();
         for entry in entries {
             check(cancel)?;
-            if !paths.matches(&entry.path) {
+            if !paths.matches_unchecked(&entry.path) {
                 continue;
             }
             if entry.stage != index::Stage::Normal {
@@ -408,7 +408,7 @@ mod supported {
             None => flattened_staged(&objects, tree, entries, limits, cancel)?,
         };
         let mut staged = staged;
-        staged.retain(|change| paths.matches(&change.path));
+        staged.retain(|change| paths.matches_unchecked(&change.path));
         let (untracked_policy, untracked_files) = match &listing {
             Listing::Raw(policy) => (*policy, None),
             Listing::Ignoring(_, files) => (Untracked::Omit, Some(*files)),
@@ -442,7 +442,7 @@ mod supported {
             unstaged: observed
                 .changes
                 .into_iter()
-                .filter(|change| paths.matches(&change.path))
+                .filter(|change| paths.matches_unchecked(&change.path))
                 .collect(),
             unmerged,
             unchecked_gitlinks: gitlinks,

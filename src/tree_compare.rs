@@ -609,7 +609,7 @@ impl Objects {
                 }
                 let old = old.filter(|value| value.mode != EntryMode::Tree);
                 let new = new.filter(|value| value.mode != EntryMode::Tree);
-                if old != new && (directory.selected || paths.matches(&path)) {
+                if old != new && (directory.selected || paths.matches_unchecked(&path)) {
                     charge(&mut budget.remaining.max_changes, 1, "changes")?;
                     changes.push(TreeChange { path, old, new });
                 }

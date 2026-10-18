@@ -3,12 +3,16 @@
 use std::collections::{BinaryHeap, HashSet};
 use std::io::Write;
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
 
 use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _, eyre};
 use girt::display::DateFormat;
 use girt::revision::Selection;
-use girt::{Commit, HistoryLimits, IdentityDate, IdentityRef, ObjectId, Objects, ReadLimits};
+use girt::{
+    Commit, HistoryLimits, IdentityDate, IdentityRef, ObjectId, Objects, ReadLimits,
+    TreeCompareLimits,
+};
 
 use crate::common::{self, display_bytes};
 use crate::{Context, complete};
@@ -66,6 +70,11 @@ pub struct LogArgs {
     /// One line per commit: ID and subject.
     #[arg(long)]
     oneline: bool,
+    /// Show only commits that change these pathspecs, with Git's default history
+    /// simplification: merges that left the paths as one parent had them are hidden and only
+    /// that parent is followed.
+    #[arg(last = true, value_name = "PATHSPEC")]
+    pathspecs: Vec<std::ffi::OsString>,
 }
 
 pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
@@ -134,10 +143,33 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
     let width = common::abbrev_len(&repository, &objects)?;
     let short = |id: ObjectId| objects.abbreviate(id, width).map(|p| p.to_string());
     let mut out = common::stdout();
+    let paths = context.pathspec(&repository, &args.pathspecs)?;
     let mut walk = DateOrder::new(&objects, &selection.include, hidden)?;
     let mut first = true;
+    let mut shown = 0;
+    let cancel = AtomicBool::new(false);
+    let limits = TreeCompareLimits::default().with_read(ReadLimits::trusted());
     while let Some((id, commit)) = walk.next_commit()? {
-        if args.limit.is_some_and(|limit| walk.emitted > limit) {
+        let parents = if objects.shallow_roots().contains(id) {
+            &[][..]
+        } else {
+            commit.parents()
+        };
+        // Even `-- .` simplifies history (it hides commits that change nothing), so only a log
+        // without pathspecs skips the comparison.
+        if args.pathspecs.is_empty() {
+            walk.push_all(parents)?;
+        } else {
+            let step = objects
+                .simplify_commit(&commit, parents, &paths, limits, &cancel)
+                .wrap_err_with(|| format!("comparing {id} with its parents"))?;
+            walk.push_all(&step.follow)?;
+            if !step.shown {
+                continue;
+            }
+        }
+        shown += 1;
+        if args.limit.is_some_and(|limit| shown > limit) {
             break;
         }
         let message = commit.message();
@@ -230,7 +262,6 @@ struct DateOrder<'a> {
     heap: BinaryHeap<(i64, std::cmp::Reverse<usize>, ObjectId)>,
     seen: HashSet<ObjectId>,
     pushed: usize,
-    emitted: usize,
 }
 
 impl<'a> DateOrder<'a> {
@@ -241,7 +272,6 @@ impl<'a> DateOrder<'a> {
             heap: BinaryHeap::new(),
             seen: hidden,
             pushed: 0,
-            emitted: 0,
         };
         for root in roots {
             walk.push(*root)?;
@@ -268,6 +298,14 @@ impl<'a> DateOrder<'a> {
         Ok(())
     }
 
+    fn push_all(&mut self, ids: &[ObjectId]) -> Result<()> {
+        for id in ids {
+            self.push(*id)?;
+        }
+        Ok(())
+    }
+
+    /// Pops the newest queued commit; the caller pushes the parents to continue through.
     fn next_commit(&mut self) -> Result<Option<(ObjectId, Commit)>> {
         let Some((_, _, id)) = self.heap.pop() else {
             return Ok(None);
@@ -276,12 +314,6 @@ impl<'a> DateOrder<'a> {
             .objects
             .read_commit_with(id, ReadLimits::trusted())
             .wrap_err_with(|| format!("reading commit {id}"))?;
-        if !self.objects.shallow_roots().contains(id) {
-            for parent in commit.parents() {
-                self.push(*parent)?;
-            }
-        }
-        self.emitted += 1;
         Ok(Some((id, commit)))
     }
 }

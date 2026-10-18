@@ -156,7 +156,11 @@ A spec without wildcards names a path and everything under it on component bound
 selects `src/a.rs` but `sr` selects nothing. Without `:(glob)` magic, `*` matches `/` too: `*.rs`
 selects `src/sub/b.rs`. With it, `*` stops at `/` and `**` spans directories.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/495">Parsing and matching, including `attr:` magic, are in `girt::pathspec`, and status and tree diff take pathspecs; log does not yet, and status and diff refuse `attr:`.</GirtStatus>
+`git log -- <pathspec>` shows the commits that change a selected path. A merge that left those paths
+exactly as one of its parents had them is skipped, and the walk follows only that parent, so side
+branches that never touched the paths are not listed.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/495">Parsing and matching are in `girt::pathspec`; status, tree diff and log take pathspecs but refuse `attr:` magic, and log has only Git's default merge simplification.</GirtStatus>
 
 ## Commit message cleanup and trailers
 

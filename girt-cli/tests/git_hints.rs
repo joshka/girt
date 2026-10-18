@@ -72,7 +72,7 @@ fn renamed_flag_points_at_girt_flag() {
 
   tip: for 'git log --max-count', use 'girt log --limit'
 
-Usage: girt log [OPTIONS] [REVS]...
+Usage: girt log [OPTIONS] [REVS]... [-- <PATHSPEC>...]
 
 For more information, try '--help'.
 "

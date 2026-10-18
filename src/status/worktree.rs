@@ -273,6 +273,12 @@ struct Scan<'a> {
 }
 
 impl Scan<'_> {
+    /// Whether the pathspec selects a directory itself, written with its trailing `/`, which is
+    /// how Git decides to list an untracked directory or nested repository as one entry.
+    fn selects_directory(&self, path: &[u8]) -> bool {
+        self.paths.matches_unchecked(&[path, b"/"].concat())
+    }
+
     /// Whether untracked paths are listed at all.
     fn lists_untracked(&self) -> bool {
         match self.policy {
@@ -456,7 +462,7 @@ impl Scan<'_> {
             // Validate bytes before constructing an OS string or opening a directory entry.
             validate_path(&child)?;
             // Nothing at or below a path outside the pathspec is reported, so it is not examined.
-            let selected = self.paths.matches(&child);
+            let selected = self.paths.matches_unchecked(&child);
             if !selected && self.paths.directory(&child) == Prune::Skip {
                 continue;
             }
@@ -478,6 +484,10 @@ impl Scan<'_> {
             let kind = FileType::from_raw_mode(stat.st_mode);
             if kind != FileType::Directory {
                 if !selected {
+                    // A selected tracked path below this one is still obstructed by it.
+                    if slot.directory.is_some() {
+                        found.observe(slot, Observed::Blocked);
+                    }
                     continue;
                 }
                 self.leaf(
@@ -511,10 +521,7 @@ impl Scan<'_> {
                     // Under a pathspec Git collapses a directory only when the spec matches the
                     // directory itself, written with its trailing slash; otherwise it lists the
                     // matching paths inside.
-                    if collapsed
-                        && inner.collapse.is_none()
-                        && self.paths.matches(&[&child[..], b"/"].concat())
-                    {
+                    if collapsed && inner.collapse.is_none() && self.selects_directory(&child) {
                         inner.collapse = Some(found.listed.len());
                     }
                 }
@@ -566,6 +573,7 @@ impl Scan<'_> {
         inner: Walk,
     ) {
         let kind = match visited {
+            Visited::Repository if !self.selects_directory(&path) => return,
             Visited::Repository => UntrackedKind::Repository,
             Visited::Metadata => return,
             Visited::Directory => {

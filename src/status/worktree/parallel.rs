@@ -203,7 +203,7 @@ impl Scan<'_> {
             Open::Child { parent, name, stat } => {
                 let visited =
                     self.child_directory(found, &parent, &name, &path, &stat, depth, walk, rules)?;
-                if listed && visited == Visited::Repository {
+                if listed && visited == Visited::Repository && self.selects_directory(&path) {
                     found.listed.push(UntrackedPath {
                         path,
                         kind: UntrackedKind::Repository,

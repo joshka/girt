@@ -108,7 +108,7 @@ fn prunes(#[case] specs: &[&str], #[case] directory: &[u8], #[case] expected: Pr
 #[test]
 fn empty_list_selects_everything() {
     let all = Pathspec::all();
-    assert!(all.is_all() && all.matches(b"any/path"));
+    assert!(all.is_all() && all.matches(b"any/path").unwrap());
     assert_eq!(all.directory(b"any"), Prune::All);
     assert!(spec(&["."]).is_all());
     assert!(!spec(&[".", ":!x"]).is_all());
@@ -146,8 +146,8 @@ fn attributes_never_take_whole_directories() {
 fn exclude_only_lists_start_from_prefix_or_root() {
     let context = Context::new().with_prefix(b"src");
     let local = Pathspec::parse([":!gen"], &context).unwrap();
-    assert!(local.matches(b"src/a.rs") && !local.matches(b"README"));
+    assert!(local.matches(b"src/a.rs").unwrap() && !local.matches(b"README").unwrap());
     let whole = Pathspec::parse([":!gen"], &context.with_excludes_from_root(true)).unwrap();
-    assert!(whole.matches(b"src/a.rs") && whole.matches(b"README"));
-    assert!(!whole.matches(b"src/gen/out.rs"));
+    assert!(whole.matches(b"src/a.rs").unwrap() && whole.matches(b"README").unwrap());
+    assert!(!whole.matches(b"src/gen/out.rs").unwrap());
 }

@@ -30,6 +30,8 @@ const PATHS: &[&str] = &[
     "sub/deep/g",
     "sub/f",
     ".hidden/h",
+    "a[b]/x.rs",
+    "SRC/up.rs",
 ];
 
 const SPECS: &[&[&str]] = &[
@@ -145,6 +147,8 @@ fn git(directory: &Path, args: &[&str], envs: &[(&str, &str)]) -> (bool, Vec<u8>
 fn repository() -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     assert!(git(root.path(), &["init", "-q", "--template=", "."], &[]).0);
+    // Attribute matching follows core.ignoreCase, which Git sets on case-insensitive filesystems.
+    assert!(git(root.path(), &["config", "core.ignoreCase", "false"], &[]).0);
     let (_, blob) = git(root.path(), &["hash-object", "-w", "--stdin"], &[]);
     let blob = String::from_utf8(blob).unwrap();
     for path in PATHS {
@@ -159,6 +163,7 @@ fn repository() -> tempfile::TempDir {
         );
     }
     std::fs::create_dir_all(root.path().join("src/sub")).unwrap();
+    std::fs::create_dir_all(root.path().join("a[b]")).unwrap();
     root
 }
 
@@ -188,7 +193,7 @@ fn girt_selection(specs: &[&str], context: &Context) -> Result<Vec<Vec<u8>>, Par
     let mut paths: Vec<_> = PATHS
         .iter()
         .map(|path| path.as_bytes())
-        .filter(|path| spec.matches(path))
+        .filter(|path| spec.matches(path).unwrap())
         .map(<[u8]>::to_vec)
         .collect();
     paths.sort();
@@ -217,7 +222,7 @@ fn compare(root: &Path, prefix: &str, specs: &[&str], context: &Context, envs: &
     if let Ok(spec) = Pathspec::parse(specs, context) {
         for path in PATHS {
             let path = path.as_bytes();
-            let selected = spec.matches(path);
+            let selected = spec.matches(path).unwrap();
             for (index, _) in path.iter().enumerate().filter(|(_, byte)| **byte == b'/') {
                 match spec.directory(&path[..index]) {
                     girt::pathspec::Prune::Skip => assert!(!selected, "{specs:?} skipped {path:?}"),
@@ -237,6 +242,29 @@ fn matches_git_ls_files() {
     }
     let context = Context::new().with_prefix(b"src");
     for specs in PREFIXED {
+        compare(root.path(), "src", specs, &context, &[]);
+    }
+    // The current directory is literal and keeps its case, whatever the spec's magic.
+    for specs in [
+        &["*.rs"][..],
+        &[":(icase)*.RS"],
+        &["."],
+        &["x*"],
+        &[":(glob)*"],
+    ] {
+        compare(
+            root.path(),
+            "a[b]",
+            specs,
+            &Context::new().with_prefix(b"a[b]"),
+            &[],
+        );
+    }
+    for specs in [
+        &[":(icase)*.rs"][..],
+        &[":(icase)UP.RS"],
+        &[":(icase)../src/A.RS"],
+    ] {
         compare(root.path(), "src", specs, &context, &[]);
     }
 }

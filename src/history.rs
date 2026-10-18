@@ -83,9 +83,11 @@
 mod path;
 pub use path::PathHistoryError;
 mod range;
-
+mod simplify;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+pub use simplify::{Simplification, SimplifyError};
 
 use crate::{
     Commit, CommitError, IdMap, ObjectId, ObjectKind, ObjectReadError, Objects, ReadLimits,
