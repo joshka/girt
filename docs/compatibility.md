@@ -61,6 +61,23 @@ formats. Git removes the old unreachable blob for `now`; girt preserves it until
 a cutoff. Pack retirement also deliberately preserves whole recent or protected packs. Partial
 clones are refused. Auxiliary indexes and bitmaps remain separate capabilities.
 
+## Git Capability Audit: References
+
+Git 2.56.0 comparisons in `tests/references.rs` cover loose and packed precedence, non-UTF-8 names,
+symbolic chains, linked private refs, conditional writers and transactions. The portable reference
+tests compare Git writers against girt's locks. `tests/reftable.rs` compares both-format reads,
+publication, reflogs and compaction with Git, including case-distinct names on macOS.
+`tests/imported_reflogs.rs` and `tests/reflog_policy.rs` compare imported records and automatic
+logging policy; `tests/reflog_expiry.rs` compares configured expiry interpretation.
+
+Refs are partial under [issue 550](https://github.com/joshka/girt/issues/550). The new
+`cross_worktree_reference_aliases_are_not_representable` comparison demonstrates that Git resolves
+`main-worktree/HEAD` and `worktrees/linked/HEAD`, while `RefName` refuses these spellings, in both
+object formats. Ordinary shared and current-worktree private refs remain supported. Reftable,
+reflogs and conditional precondition checks retain their Supported classification. Files-backed
+publication still reports partial I/O effects; this audit does not claim atomic reader visibility
+across separate files or worktree stacks.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger

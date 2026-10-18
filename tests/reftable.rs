@@ -641,3 +641,36 @@ fn reads_and_extends_tables_with_earlier_girt_names(#[case] format: ObjectFormat
     assert!(!directory.join(legacy[0]).exists());
     git(&worktree, &["fsck", "--strict", "--no-dangling"]);
 }
+
+/// Reftable retains distinct case spellings even on case-insensitive filesystems.
+#[rstest]
+#[case::sha1("sha1", ObjectFormat::Sha1)]
+#[case::sha256("sha256", ObjectFormat::Sha256)]
+fn case_distinct_reference_names_match_git(#[case] spelling: &str, #[case] format: ObjectFormat) {
+    let root = fixture(spelling);
+    let repo = Repository::open(root.path()).unwrap();
+    let id = tip(root.path(), format);
+    let refs = repo.references().unwrap();
+    for reference in [b"refs/tags/Audit".as_slice(), b"refs/tags/audit".as_slice()] {
+        refs.transaction(&[RefEdit::new(
+            name(reference),
+            Some(Target::Direct(id)),
+            Expected::Absent,
+            log(),
+        )])
+        .unwrap();
+    }
+    for reference in ["refs/tags/Audit", "refs/tags/audit"] {
+        assert_eq!(
+            git(root.path(), &["rev-parse", "--verify", reference]),
+            format!("{id}\n").as_bytes()
+        );
+        assert_eq!(
+            refs.resolve_with(&name(reference.as_bytes()), 32)
+                .unwrap()
+                .id,
+            Some(id)
+        );
+    }
+    git(root.path(), &["refs", "verify"]);
+}
