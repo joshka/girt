@@ -39,18 +39,18 @@ is `girt object show`, not `cat-file -p`; listing references is `girt ref list`,
 Where Git's name is unclear or overloaded, girt picks a plainer one, and options follow the same
 rule. Each command's help names its nearest Git counterpart.
 
-| Area          | girt commands                                                  | Page                                                              |
-| ------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Repository    | `init`, `repo info`                                            | [Repositories and objects](/girt/cli/objects/)                    |
-| Objects       | `object id`, `show`, `info`, `cat`, `hash`, `batch`, `list`, … | [Repositories and objects](/girt/cli/objects/)                    |
-| Trees         | `tree list`                                                    | [Repositories and objects](/girt/cli/objects/)                    |
-| References    | `ref list`, `show`, `set`, `delete`, `log`                     | [References](/girt/cli/references/)                               |
-| History       | `log`, `history count`, `merge-base`, `contains`, `blame`      | [History and blame](/girt/cli/history/)                           |
-| Diffs         | `diff`                                                         | [Diffs](/girt/cli/diffs/)                                         |
-| Working tree  | `index list`, `status`, `ignore check`, `checkout`, `worktree` | [Index and working tree](/girt/cli/index-and-working-tree/)       |
-| Configuration | `config get`, `list`, `set`, `unset`, `remote`                 | [Configuration and remotes](/girt/cli/configuration-and-remotes/) |
-| Transfer      | `clone`, `fetch`, `push`                                       | [Fetch, push and clone](/girt/cli/fetch-push-clone/)              |
-| Storage       | `pack list`, `verify`, `reindex`, `maintenance`                | [Packs and maintenance](/girt/cli/storage-and-maintenance/)       |
+| Area          | girt commands                                                                   | Page                                                              |
+| ------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Repository    | `init`, `repo info`                                                             | [Repositories and objects](/girt/cli/objects/)                    |
+| Objects       | `object id`, `show`, `info`, `cat`, `hash`, `batch`, `list`, …                  | [Repositories and objects](/girt/cli/objects/)                    |
+| Trees         | `tree list`                                                                     | [Repositories and objects](/girt/cli/objects/)                    |
+| References    | `ref list`, `show`, `set`, `delete`, `log`                                      | [References](/girt/cli/references/)                               |
+| History       | `log`, `history count`, `merge-base`, `contains`, `blame`                       | [History and blame](/girt/cli/history/)                           |
+| Diffs         | `diff`                                                                          | [Diffs](/girt/cli/diffs/)                                         |
+| Working tree  | `index list`, `index refresh`, `status`, `ignore check`, `checkout`, `worktree` | [Index and working tree](/girt/cli/index-and-working-tree/)       |
+| Configuration | `config get`, `list`, `set`, `unset`, `remote`                                  | [Configuration and remotes](/girt/cli/configuration-and-remotes/) |
+| Transfer      | `clone`, `fetch`, `push`                                                        | [Fetch, push and clone](/girt/cli/fetch-push-clone/)              |
+| Storage       | `pack list`, `verify`, `reindex`, `maintenance`                                 | [Packs and maintenance](/girt/cli/storage-and-maintenance/)       |
 
 `girt help <command>` and `girt <command> --help` give the full option list.
 

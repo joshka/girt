@@ -34,6 +34,17 @@ pub enum IndexCommand {
         #[arg(short, long)]
         stage: bool,
     },
+    /// Record fresh stat data for unchanged files (like `git update-index --refresh`).
+    ///
+    /// Status never writes the index, so files whose timestamps changed without their content
+    /// changing are read again by every `girt status`. This rereads them once under `index.lock`
+    /// and records their current stat data, so later status runs trust them. Files that differ
+    /// from the index print `<path>: needs update` and the command exits 1; their stat data is
+    /// left as it was. The index is not written when nothing needs recording.
+    Refresh {
+        #[command(flatten)]
+        filters: FilterArgs,
+    },
 }
 
 /// Show raw differences between HEAD, the index and the working tree.
@@ -273,7 +284,10 @@ pub enum WorktreeCommand {
 }
 
 pub fn index(command: IndexCommand, context: &Context) -> Result<ExitCode> {
-    let IndexCommand::List { stage } = command;
+    let stage = match command {
+        IndexCommand::List { stage } => stage,
+        IndexCommand::Refresh { filters } => return refresh(&filters, context),
+    };
     let repository = context.repository()?;
     let index = repository
         .read_index(Default::default())
@@ -291,6 +305,33 @@ pub fn index(command: IndexCommand, context: &Context) -> Result<ExitCode> {
     }
     out.flush()?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn refresh(filters: &FilterArgs, context: &Context) -> Result<ExitCode> {
+    let repository = context.repository()?;
+    let mut pipeline = filters
+        .commands()
+        .map(|commands| repository.filters(&context.environment, commands))
+        .transpose()
+        .wrap_err("loading attributes")?;
+    let refresh = repository
+        .refresh_index_with(
+            pipeline.as_mut(),
+            Limits::default(),
+            &AtomicBool::new(false),
+        )
+        .wrap_err("refreshing the index")?;
+    let mut out = stdout();
+    for change in &refresh.changes {
+        out.write_all(&change.path)?;
+        writeln!(out, ": needs update")?;
+    }
+    out.flush()?;
+    Ok(if refresh.changes.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {

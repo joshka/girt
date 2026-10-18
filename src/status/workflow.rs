@@ -155,6 +155,10 @@ impl Repository {
     /// differences. `core.fileMode=false` ignores executable-bit differences on regular files.
     /// With `core.symlinks=false`, a regular file containing a symlink target represents the
     /// indexed symlink; native symlinks still compare by their target bytes.
+    /// `core.checkStat=minimal` trusts a file whose size and whole-second mtime (and ctime) match
+    /// its cached stat words, ignoring nanoseconds, inode, device, uid and gid, and
+    /// `core.trustCtime=false` never compares the ctime, as in Git. Other `core.checkStat`
+    /// values are refused with [`Error::Unsupported`].
     /// Content bytes remain literal; use [`Self::raw_status_with`] to inspect modes and content
     /// without these policies. Configuration comes from this repository handle, including layers
     /// supplied to [`Self::open_with_config`].
@@ -380,7 +384,7 @@ impl Repository {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-mod supported {
+pub(super) mod supported {
     use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
@@ -389,7 +393,9 @@ mod supported {
     use crate::{Commit, ObjectId, ObjectKind, Objects, TreeChange, TreeValue, index, refs};
 
     /// Git's `core.ignoreCase` and `core.precomposeUnicode` for name comparison; unset is false.
-    pub(super) fn git_names(repo: &Repository) -> Result<super::super::worktree::GitNames, Error> {
+    pub(in crate::status) fn git_names(
+        repo: &Repository,
+    ) -> Result<super::super::worktree::GitNames, Error> {
         let config = repo.config();
         let setting = |name: &str, reason: &'static str| {
             config

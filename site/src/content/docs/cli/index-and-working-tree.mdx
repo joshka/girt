@@ -1,6 +1,6 @@
 ---
 title: Index and working tree
-description: List the index, show status, explain ignore rules, check out trees and manage linked worktrees with girt.
+description: List and refresh the index, show status, explain ignore rules, check out trees and manage linked worktrees with girt.
 ---
 
 import CliNotice from '../../../components/CliNotice.astro';
@@ -26,6 +26,27 @@ $ girt index list --stage
 100644 2f7896d1d1365eafb0da03d9fe456fac81408487 0	.gitignore
 100644 94954abda49de8615a048f8d2e64b5de848e27a1 0	README.md
 100644 f328e4d9d04c31d0d70d16d21a07d1613be9d577 0	src/main.rs
+```
+
+</Example>
+
+## Refresh stat data (`girt index refresh`)
+
+<Example cmd="index refresh">
+
+The index caches each file's size, times and inode, so status can skip reading a file whose cached
+data still matches. `girt status` never writes the index, so after something touches files without
+changing them (a build tool, a branch switch, `touch`) every status rereads them. `girt index
+refresh` rereads them once while holding `index.lock` and records their current stat data, as
+`git update-index --refresh` does. Files that differ from the index are listed as needing an update
+and the command exits 1. It converts files as status does; `--raw` and `--refuse-filter-commands`
+work the same way.
+
+```console
+$ touch README.md src/main.rs
+$ printf 'more\n' >> README.md
+$ girt index refresh
+README.md: needs update
 ```
 
 </Example>

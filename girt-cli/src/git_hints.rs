@@ -117,9 +117,9 @@ const ENTRIES: &[Entry] = &[
     commands(&["version"], use_(&[("version", "--version")])),
     commands(&[
         "add", "checkout-index", "clean", "commit", "commit-tree", "interpret-trailers", "mktag",
-        "mktree", "mv", "read-tree", "restore", "rm", "stripspace", "update-index",
-        "write-tree",
+        "mktree", "mv", "read-tree", "restore", "rm", "stripspace", "write-tree",
     ], STAGING),
+    commands(&["update-index"], use_(&[("update-index --refresh", "index refresh")])),
     commands(&[
         "branch", "check-ref-format", "name-rev", "notes", "pack-refs", "replace",
         "symbolic-ref", "tag",

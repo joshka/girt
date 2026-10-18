@@ -232,6 +232,9 @@ pub struct IndexEdit {
     index: Index,
     limits: Limits,
     published: bool,
+    /// Positions, sorted, whose stat words were verified against the working tree under this
+    /// lock; publication applies their own racy rule instead of the carried-over one.
+    verified: Vec<usize>,
 }
 
 /// Synchronous index storage failure, retaining path and underlying causes.
@@ -695,6 +698,7 @@ impl IndexEdit {
                 index: Index::empty(format),
                 limits,
                 published: false,
+                verified: Vec::new(),
             };
             let result = (|| {
                 if options.follow_symlink {
@@ -1248,6 +1252,39 @@ impl IndexEdit {
         result
     }
 
+    /// When the lock was taken, by the filesystem's clock, or now if that is earlier.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn locked_at(&self) -> std::time::SystemTime {
+        let now = std::time::SystemTime::now();
+        self.lock_identity
+            .modified()
+            .map_or(now, |locked| locked.min(now))
+    }
+
+    /// Records stat words read from the working tree for the entries at the given positions,
+    /// then publishes as [`Self::commit`] does.
+    ///
+    /// The caller must have read each entry's file content under this lock, found it equal to the
+    /// entry's identity and mode, and taken `stat` before the read and confirmed it after. Such
+    /// words describe the hashed bytes, so the carried-over racy rule of [`Self::commit`], which
+    /// would smudge exactly the files whose stat had gone stale, does not apply to them. Instead
+    /// an entry is smudged when its mtime falls in or after the whole second `started`,
+    /// when the scan began: a later write within the second of the read could leave every word
+    /// equal. Whole seconds keep coarse-timestamp filesystems safe.
+    ///
+    /// Positions must be sorted, unique and refer to stage-zero entries of [`Self::index`].
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn commit_verified_stat(
+        mut self,
+        verified: &[(usize, super::Stat)],
+        started: u32,
+    ) -> Result<(), StorageError> {
+        debug_assert!(verified.is_sorted_by(|a, b| a.0 < b.0));
+        self.index.record_stat(verified, started);
+        self.verified = verified.iter().map(|(position, _)| *position).collect();
+        self.commit()
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn discard_checkout_caches(&mut self) {
         self.index.discard_checkout_caches();
@@ -1303,7 +1340,7 @@ impl IndexEdit {
                 nanoseconds: duration.subsec_nanos(),
             },
         );
-        self.index.smudge_racy_entries(threshold);
+        self.index.smudge_racy_entries(threshold, &self.verified);
         let bytes = self
             .index
             .encode(self.limits)
