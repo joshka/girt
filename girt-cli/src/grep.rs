@@ -35,30 +35,11 @@ pub struct Args {
 }
 
 impl Args {
-    /// Replaces the parsed arguments with those [`split_raw_args`] took before clap ran.
+    /// Replaces the parsed arguments with those
+    /// [`common::split_raw_args`](crate::common::split_raw_args) took before clap ran.
     pub fn set_raw(&mut self, raw: Vec<OsString>) {
         self.raw = Some(raw);
     }
-}
-
-/// Removes and returns the arguments after a `grep` subcommand, so clap sees no grep options.
-///
-/// The subcommand is the first argument that is neither a global option nor the value of one.
-pub fn split_raw_args(args: &mut Vec<OsString>) -> Option<Vec<OsString>> {
-    let mut index = 1;
-    while let Some(arg) = args.get(index) {
-        let text = arg.to_str().unwrap_or_default();
-        if text == "-C" || text == "--color" {
-            index += 2;
-        } else if text.starts_with('-') && text != "-" {
-            index += 1;
-        } else if text == "grep" {
-            return Some(args.split_off(index + 1));
-        } else {
-            return None;
-        }
-    }
-    None
 }
 
 /// Everything the command line chose.

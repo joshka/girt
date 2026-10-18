@@ -31,4 +31,6 @@ tracing-error = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
+# Inflates zip entries in the archive parity test; already a girt dependency.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 tempfile = "3"

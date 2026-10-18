@@ -127,6 +127,30 @@ impl Context {
     }
 }
 
+/// Commands that take Git's options verbatim: their `-v`, `-q`, `-h` and `-C` collide with girt's
+/// global options, so their arguments bypass clap.
+pub const RAW_COMMANDS: &[&str] = &["archive", "grep"];
+
+/// Removes and returns the arguments after a [`RAW_COMMANDS`] subcommand.
+///
+/// The subcommand is the first argument that is neither a global option nor the value of one.
+pub fn split_raw_args(args: &mut Vec<OsString>) -> Option<Vec<OsString>> {
+    let mut index = 1;
+    while let Some(arg) = args.get(index) {
+        let text = arg.to_str().unwrap_or_default();
+        if text == "-C" || text == "--color" {
+            index += 2;
+        } else if text.starts_with('-') && text != "-" {
+            index += 1;
+        } else if RAW_COMMANDS.contains(&text) {
+            return Some(args.split_off(index + 1));
+        } else {
+            return None;
+        }
+    }
+    None
+}
+
 /// Resolves a revision expression such as `main~2`, `v1.0^{tree}` or `HEAD:path`; see
 /// [`girt::revision`] for the syntax.
 pub fn resolve(repository: &Repository, revision: &str) -> Result<ObjectId> {

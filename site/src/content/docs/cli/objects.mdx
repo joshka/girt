@@ -162,3 +162,28 @@ $ girt tree list -r HEAD
 
 Paths are printed as raw bytes. With `--git`, unusual paths are quoted as Git quotes them under the
 default `core.quotePath`.
+
+## Export a tree (`girt archive`)
+
+<Example cmd="archive">
+
+`girt archive` takes `git archive`'s options and writes a commit or tree as a tar (the default),
+tar.gz or zip archive on standard output, or to the file `-o` names. Tar output is byte-identical to
+Git's. Entries carry the commit time, and tar records the commit ID for `git get-tar-commit-id`.
+
+```console
+$ girt archive --prefix=demo/ main | tar tf -
+demo/
+demo/.gitignore
+demo/README.md
+demo/src/
+demo/src/main.rs
+```
+
+</Example>
+
+Paths with the `export-ignore` attribute are left out, `export-subst` expands `$Format:…$` with the
+commit's details, and content is converted as a checkout writes it. Git's zlib and girt's deflate
+encoder compress differently, so tar.gz and zip bytes can differ from Git's while their contents and
+headers match. `export-subst` placeholders girt does not expand, `--remote` and `--exec` are
+refused.

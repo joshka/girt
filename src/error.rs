@@ -210,6 +210,7 @@ from_domain_errors! {
     crate::index::StorageError,
     crate::index::WriteTreeError,
     crate::apply::TreeError,
+    crate::archive::Error,
     crate::tree::TreeWriteError,
     crate::tree_diff::Error,
     crate::locks::CleanupFailure,

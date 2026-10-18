@@ -69,9 +69,9 @@ const fn use_(pairs: &'static [(&'static str, &'static str)]) -> Hint {
 const ENTRIES: &[Entry] = &[
     // Top-level Git commands: every name in `git_commands.txt` appears exactly once.
     commands(&[
-        "blame", "checkout", "clone", "config", "diff", "fetch", "grep", "help", "history", "init",
-        "log", "maintenance", "multi-pack-index", "push", "remote", "replace", "repo", "reset",
-        "status", "worktree",
+        "archive", "blame", "checkout", "clone", "config", "diff", "fetch", "grep", "help",
+        "history", "init", "log", "maintenance", "multi-pack-index", "push", "remote", "replace",
+        "repo", "reset", "status", "worktree",
     ], Hint::Same),
     commands(&["annotate"], use_(&[("annotate", "blame")])),
     commands(&["cat-file"], use_(&[
@@ -133,7 +133,7 @@ const ENTRIES: &[Entry] = &[
         "prune-packed", "show-index", "unpack-file", "unpack-objects",
     ], STORE),
     commands(&[
-        "archive", "backfill", "bundle", "credential", "credential-cache", "credential-store",
+        "backfill", "bundle", "credential", "credential-cache", "credential-store",
         "get-tar-commit-id", "url-parse",
     ], TRANSFER),
     commands(&["for-each-repo", "hook", "sparse-checkout", "submodule", "var"], SETUP),
