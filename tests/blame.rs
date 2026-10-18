@@ -554,3 +554,23 @@ fn gitlink_replaced_by_regular_file_starts_new_history() {
     let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "sub"), oracle(dir.path(), "sub"));
 }
+
+/// Configured ignored revisions alter Git attribution but are not applied by girt (#503).
+#[test]
+fn configured_ignore_revisions_are_not_applied() {
+    let dir = fixture("sha1");
+    let first = git(dir.path(), &["rev-parse", "HEAD"]).trim().to_owned();
+    commit(dir.path(), b"ALPHA\nbeta\ngamma\ndelta\n", "old");
+    let ignored = git(dir.path(), &["rev-parse", "HEAD"]).trim().to_owned();
+    std::fs::write(dir.path().join("ignored-revs"), format!("{ignored}\n")).unwrap();
+    git(
+        dir.path(),
+        &["config", "blame.ignoreRevsFile", "ignored-revs"],
+    );
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
+    let actual = actual(&handle, "old");
+    let expected = oracle(dir.path(), "old");
+    assert_eq!(actual[0].0, ignored);
+    assert_eq!(expected[0].0, first);
+    assert_ne!(actual, expected);
+}

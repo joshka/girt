@@ -148,6 +148,30 @@ checkout for a Unicode filename where girt refuses both operations without chang
 ([issue 556](https://github.com/joshka/girt/issues/556)). Status and checkout remain Partial, with
 this filesystem restriction added to their stated gaps.
 
+## Git Capability Audit: Diffs and Blame
+
+`tests/tree_compare.rs` compares structural changes with Git for loose and packed objects, including
+mode/type changes and empty sides. Tree diff remains Supported. `tests/rewrites.rs` compares scores,
+rename/copy source policies, exact matches, binary candidates and candidate-limit counts with Git.
+`configured_rename_limit_requires_caller_options` demonstrates that Git reads `diff.renameLimit`
+while girt requires explicit options; rename/copy detection is Partial under
+[issue 562](https://github.com/joshka/girt/issues/562).
+
+`tests/content_diff.rs` compares Myers hunks and edit reconstruction with Git, including ambiguous
+alignments and NUL classification. `tests/patch.rs` compares unified output. Content diff remains
+Partial under [issue 502](https://github.com/joshka/girt/issues/502): patience and histogram are not
+selectable. `tests/patch_attributes.rs` compares binary attributes, precedence and function headers,
+and verifies textconv refusal. Diff attributes remain Partial under
+[issue 462](https://github.com/joshka/girt/issues/462), with additional existing gaps for built-in
+driver patterns ([issue 460](https://github.com/joshka/girt/issues/460)) and POSIX pattern semantics
+([issue 461](https://github.com/joshka/girt/issues/461)).
+
+`tests/blame.rs` compares line attribution through edits, renames, merges, empty files and shallow
+boundaries with Git. `configured_ignore_revisions_are_not_applied` additionally confirms that
+`blame.ignoreRevsFile` changes Git attribution but is ignored by girt. Blame remains Partial under
+[issue 503](https://github.com/joshka/girt/issues/503), which also tracks moves, copies, textconv
+and incremental output. These comparisons use original fixtures and Git 2.56.0.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger

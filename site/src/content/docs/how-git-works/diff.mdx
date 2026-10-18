@@ -33,7 +33,7 @@ was copied from `a.rs`". It costs more because there are more candidates.
 The cost grows with the number of candidate pairs, so Git caps it with `diff.renameLimit` and falls
 back to plain adds and deletes beyond it.
 
-<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/rewrites/index.html">The caller sets the rename limit; `diff.renameLimit` isn't read.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/562">The caller sets the rename limit; `diff.renameLimit` isn't read.</GirtStatus>
 
 ## Content diff
 
@@ -63,7 +63,7 @@ diffed:
 - A driver's `textconv` command converts the file to text before diffing, for example to diff the
   text of PDFs or the metadata of images.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/462">Patches apply binary flags and `xfuncname`; blame ignores them and refuses `textconv` drivers.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/462">Patches apply binary flags and `xfuncname`; external commands are refused. Built-in driver patterns are incomplete ([#460](https://github.com/joshka/girt/issues/460)), and some POSIX patterns differ ([#461](https://github.com/joshka/girt/issues/461)); blame ignores diff attributes.</GirtStatus>
 
 ## Blame
 
@@ -75,4 +75,4 @@ changed are assigned to it. The walk ends when every line has an owner.
 With `-M`, blame follows lines moved within the file; with `-C`, lines moved or copied from other
 files. `--ignore-rev` skips commits such as mass reformatting.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/503">Follows renames; no move or copy detection, ignore-revs or textconv.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/503">Follows renames; no move or copy detection, ignore-revs, textconv or incremental output.</GirtStatus>
