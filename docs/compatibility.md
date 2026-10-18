@@ -51,6 +51,13 @@ does not establish filesystem alias or symlink safety. No checkout, fetch, absor
 or recursion support is claimed by these tests. See
 [working with submodule definitions](../site/src/content/docs/guides/submodules.md).
 
+Source tests exercise SHA-1 and SHA-256 worktree/index/commit selection, missing-worktree index
+fallback, bare commit reads, byte limits and conflicted/non-regular metadata refusal. URL tests
+compare standard local, file, HTTP and scp-like remote shapes with Git init without contacting those
+endpoints. Worktree symlinks and relative traversal past the remote path are explicitly refused even
+where Git init accepts them. Git refuses inserting a symlink `.gitmodules` index entry; an
+independently constructed imported entry verifies girt's refusal too.
+
 ## Mailmap
 
 `tests/mailmap_git.rs` compares original temporary maps with the installed Git executable's
