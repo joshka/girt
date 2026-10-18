@@ -46,14 +46,76 @@ const REBASE_FILES: &[&str] = &[
     "ignore_date",
 ];
 
+const AM_FILES: &[&str] = &[
+    "applying",
+    "rebasing",
+    "abort-safety",
+    "apply-opt",
+    "author-script",
+    "final-commit",
+    "info",
+    "keep",
+    "last",
+    "messageid",
+    "msg",
+    "next",
+    "patch",
+    "quiet",
+    "quoted-cr",
+    "scissors",
+    "sign",
+    "threeway",
+    "utf8",
+];
+
+fn am_range(files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<(usize, usize), Error> {
+    crate::am::mail_range(
+        files.get(Path::new("rebase-apply/next")).map(Vec::as_slice),
+        files.get(Path::new("rebase-apply/last")).map(Vec::as_slice),
+    )
+    .map_err(|_| Error::Unsupported(PathBuf::from("rebase-apply/next")))
+}
+
+fn validate_am(files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<(), Error> {
+    if !files.contains_key(Path::new("rebase-apply/applying"))
+        || files.contains_key(Path::new("rebase-apply/rebasing"))
+    {
+        return Err(Error::Unsupported(PathBuf::from("rebase-apply")));
+    }
+    let (next, last) = am_range(files)?;
+    if next <= last && !files.contains_key(&PathBuf::from(format!("rebase-apply/{next:04}"))) {
+        return Err(Error::Unsupported(PathBuf::from(format!(
+            "rebase-apply/{next:04}"
+        ))));
+    }
+    for name in files
+        .keys()
+        .filter_map(|path| path.strip_prefix("rebase-apply").ok())
+    {
+        if let Some(text) = name
+            .to_str()
+            .filter(|text| text.as_bytes().iter().all(u8::is_ascii_digit))
+        {
+            let number: usize = text
+                .parse()
+                .map_err(|_| Error::Unsupported(name.to_path_buf()))?;
+            if number == 0 || number > last || text != format!("{number:04}") {
+                return Err(Error::Unsupported(PathBuf::from("rebase-apply").join(name)));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl State {
-    /// Reads merge-backend rebase, sequencer directories or single-operation pseudo-refs.
+    /// Reads am, merge-backend rebase, sequencer directories or single-operation pseudo-refs.
     ///
     /// Uses the worktree-specific Git directory, not the common object/ref directory. Unknown
     /// files, symlinks, apply-backend rebase, simultaneous incompatible operations and malformed
     /// object identities are refused. Original bytes, including author scripts, remain data.
     /// This snapshot requires a caller-owned trusted directory and exclusive operation ownership
     /// during observation/publication; it is not a lock against an independently running Git.
+    /// Use [`Self::read_repository`] for am recovery across files/reftable ref backends.
     ///
     /// # Errors
     ///
@@ -67,15 +129,24 @@ impl State {
         let files = snapshot(&git_dir, limits)?;
         let rebase = git_dir.join("rebase-merge").is_dir();
         let sequence = git_dir.join("sequencer").is_dir();
+        let am = git_dir.join("rebase-apply").is_dir();
         if files.contains_key(Path::new("REBASE_HEAD")) && !rebase {
             return Err(Error::Unsupported(git_dir.join("REBASE_HEAD")));
         }
         let cherry = files.contains_key(Path::new("CHERRY_PICK_HEAD"));
         let revert = files.contains_key(Path::new("REVERT_HEAD"));
-        if (rebase && sequence) || (cherry && revert) {
+        if (rebase && sequence)
+            || (cherry && revert)
+            || (am && (rebase || sequence || cherry || revert))
+        {
             return Err(Error::Unsupported(git_dir));
         }
-        let kind = if rebase {
+        if am {
+            validate_am(&files)?;
+        }
+        let kind = if am {
+            Kind::Am
+        } else if rebase {
             Kind::Rebase
         } else if cherry {
             Kind::CherryPick
@@ -98,7 +169,9 @@ impl State {
         } else {
             return Ok(None);
         };
-        let directory = if rebase {
+        let directory = if am {
+            Some(PathBuf::from("rebase-apply"))
+        } else if rebase {
             Some(PathBuf::from("rebase-merge"))
         } else if sequence {
             Some(PathBuf::from("sequencer"))
@@ -107,6 +180,7 @@ impl State {
         };
         let read_id = |name: &str| parse_optional_id(&files, name, format);
         let pending = match kind {
+            Kind::Am => None,
             Kind::CherryPick => read_id("CHERRY_PICK_HEAD")?,
             Kind::Revert => read_id("REVERT_HEAD")?,
             Kind::Rebase => {
@@ -118,7 +192,9 @@ impl State {
                 head.or(stopped)
             }
         };
-        let original_head = if rebase {
+        let original_head = if am {
+            read_id("ORIG_HEAD")?
+        } else if rebase {
             read_id("rebase-merge/orig-head")?
         } else {
             read_id("sequencer/head")?
@@ -190,15 +266,38 @@ impl State {
         }))
     }
 
+    /// Reads operation files and am's original HEAD through the repository's ref backend.
+    ///
+    /// Use this for portable am recovery: reftable stores `ORIG_HEAD` outside loose metadata
+    /// files. Publication verifies the observed original identity as well as the file snapshot.
+    /// Caller-owned operation/ref writer exclusion is required through observation and publication.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for state admission or reference observation failures.
+    pub fn read_repository(
+        repository: &crate::Repository,
+        limits: Limits,
+    ) -> Result<Option<Self>, Error> {
+        let Some(mut state) = Self::read(repository.git_dir(), repository.object_format(), limits)?
+        else {
+            return Ok(None);
+        };
+        if state.kind == Kind::Am {
+            state.original_head = am_original_head(repository, limits)?;
+        }
+        Ok(Some(state))
+    }
+
     /// Operation kind identified by the observed layout.
     pub fn kind(&self) -> Kind {
         self.kind
     }
-    /// Current unresolved source, if Git recorded one.
+    /// Current unresolved source, if Git recorded one. Am mail has no source object here.
     pub fn pending(&self) -> Option<ObjectId> {
         self.pending
     }
-    /// Original operation tip, when recorded in a sequence directory.
+    /// Original operation tip from sequence metadata or am's original-HEAD ref.
     pub fn original_head(&self) -> Option<ObjectId> {
         self.original_head
     }
@@ -206,7 +305,7 @@ impl State {
     pub fn onto(&self) -> Option<ObjectId> {
         self.onto
     }
-    /// Remaining parsed instructions. Rebase's current stopped instruction is already in `done`.
+    /// Remaining parsed instructions; absent for am. Rebase's stopped instruction is in `done`.
     pub fn todo(&self) -> Option<&Todo> {
         self.todo.as_ref()
     }
@@ -271,6 +370,8 @@ impl State {
     /// install objects and perform the required guarded checkout and expected-value HEAD update.
     /// For rebase continuation, leave remaining todo execution/final branch reattachment to Git or
     /// the caller's executor. Squash/fixup continuation metadata is explicitly unsupported.
+    /// Am continue/skip require the final numbered mail; abort requires its original HEAD and a
+    /// matching abort-safety checkpoint. Queued-mail execution is left to a later executor.
     ///
     /// # Errors
     ///
@@ -281,6 +382,20 @@ impl State {
             || matches!(action, Action::Continue(id) if id.format() != self.format)
         {
             return Err(Error::Unsupported(PathBuf::from("HEAD")));
+        }
+        if self.kind == Kind::Am {
+            let (next, last) = am_range(&self.files)?;
+            if matches!(action, Action::Continue(_) | Action::Skip) && next != last {
+                return Err(Error::Unsupported(PathBuf::from("rebase-apply/next")));
+            }
+            if matches!(action, Action::Abort) && self.original_head.is_none_or(|id| id.is_null()) {
+                return Err(Error::Unsupported(PathBuf::from("ORIG_HEAD")));
+            }
+            let safe = parse_optional_id(&self.files, "rebase-apply/abort-safety", self.format)?
+                .ok_or_else(|| Error::Unsupported(PathBuf::from("rebase-apply/abort-safety")))?;
+            if safe != head {
+                return Err(Error::HeadChanged);
+            }
         }
         if self.files.contains_key(Path::new("sequencer/opts")) {
             return Err(Error::Unsupported(PathBuf::from("sequencer/opts")));
@@ -341,6 +456,8 @@ impl State {
             if let Some(directory) = &self.directory {
                 after.retain(|path, _| !path.starts_with(directory));
             }
+        } else if self.kind == Kind::Am {
+            after.retain(|path, _| !path.starts_with("rebase-apply"));
         } else if self.kind == Kind::Rebase {
             for name in ["author-script", "message", "patch", "stopped-sha"] {
                 after.remove(&PathBuf::from("rebase-merge").join(name));
@@ -383,6 +500,9 @@ impl State {
             after.remove(Path::new(name));
         }
         let reflog_message = match (self.kind, action) {
+            (Kind::Am, Action::Continue(_)) => b"am".to_vec(),
+            (Kind::Am, Action::Skip) => vec![],
+            (Kind::Am, Action::Abort) => b"am --abort".to_vec(),
             (Kind::Rebase, Action::Abort) => {
                 rebase_return_message(b"rebase (abort): returning to ", self.branch.as_ref())
             }
@@ -410,6 +530,43 @@ impl State {
             reference_updates,
             reflog_message,
         })
+    }
+}
+
+pub(super) fn am_original_head(
+    repository: &crate::Repository,
+    limits: Limits,
+) -> Result<Option<ObjectId>, Error> {
+    if repository.reference_backend() == crate::refs::Backend::Files {
+        let mut files = BTreeMap::new();
+        let mut bytes = 0;
+        read_file(
+            repository.git_dir(),
+            Path::new("ORIG_HEAD"),
+            limits,
+            &mut bytes,
+            &mut files,
+        )?;
+        return parse_optional_id(&files, "ORIG_HEAD", repository.object_format());
+    }
+    let snapshot = crate::refs::reftable::Snapshot::read(
+        &repository.git_dir().join("reftable"),
+        repository.object_format(),
+        limits.reftable,
+        &std::sync::atomic::AtomicBool::new(false),
+    )?;
+    let target = snapshot
+        .table
+        .references
+        .into_iter()
+        .find(|record| record.name.as_ref() == b"ORIG_HEAD")
+        .and_then(|record| record.target);
+    match target {
+        Some(crate::refs::Target::Direct(id)) => Ok(Some(id)),
+        None => Ok(None),
+        Some(crate::refs::Target::Symbolic(_)) => {
+            Err(Error::Unsupported(PathBuf::from("ORIG_HEAD")))
+        }
     }
 }
 
@@ -450,14 +607,11 @@ pub(super) fn snapshot(
     if fs::symlink_metadata(git_dir.join("MERGE_HEAD")).is_ok() {
         return Err(Error::Unsupported(git_dir.join("MERGE_HEAD")));
     }
-    if git_dir.join("rebase-apply").exists() {
-        return Err(Error::Unsupported(git_dir.join("rebase-apply")));
-    }
     let mut bytes = 0usize;
     for name in PSEUDO {
         read_file(git_dir, Path::new(name), limits, &mut bytes, &mut files)?;
     }
-    for directory in ["sequencer", "rebase-merge"] {
+    for directory in ["sequencer", "rebase-merge", "rebase-apply"] {
         let path = git_dir.join(directory);
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
@@ -473,6 +627,9 @@ pub(super) fn snapshot(
             let allowed = name.to_str().is_some_and(|name| {
                 if directory == "sequencer" {
                     ["head", "todo", "abort-safety", "opts"].contains(&name)
+                } else if directory == "rebase-apply" {
+                    AM_FILES.contains(&name)
+                        || name.len() >= 4 && name.as_bytes().iter().all(u8::is_ascii_digit)
                 } else {
                     REBASE_FILES.contains(&name)
                 }

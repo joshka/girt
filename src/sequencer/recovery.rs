@@ -21,7 +21,7 @@ impl Recovery {
         let mut message = self.reflog_message.clone();
         if matches!(
             message.as_slice(),
-            b"commit (cherry-pick)" | b"commit" | b"rebase (continue)"
+            b"commit (cherry-pick)" | b"commit" | b"rebase (continue)" | b"am"
         ) {
             message.extend_from_slice(b": ");
             message.extend_from_slice(&commit.subject());
@@ -38,7 +38,7 @@ impl Recovery {
     ///
     /// Returns [`Error::Changed`] when observed metadata differs, or the underlying read failure.
     pub fn verify(&self) -> Result<(), Error> {
-        for directory in ["sequencer", "rebase-merge"] {
+        for directory in ["sequencer", "rebase-merge", "rebase-apply"] {
             let expected = self.state.directory.as_deref() == Some(Path::new(directory));
             if self.state.git_dir.join(directory).exists() != expected {
                 return Err(Error::Changed);
@@ -50,7 +50,8 @@ impl Recovery {
         Ok(())
     }
 
-    /// Borrows the proposed bytes for a state path; `None` means absent after publication.
+    /// Borrows proposed regular-file bytes; `None` means that metadata file is absent.
+    /// Reftable records such as am's original HEAD are observed separately, not returned here.
     pub fn file_after(&self, path: impl AsRef<Path>) -> Option<&[u8]> {
         self.after.get(path.as_ref()).map(Vec::as_slice)
     }
@@ -58,8 +59,9 @@ impl Recovery {
     /// Publishes operation metadata after the caller's checkout and HEAD transaction completes.
     ///
     /// Requires exclusive ownership of this repository operation through the entire caller-owned
-    /// checkout/ref/metadata sequence. Verifies repository location, destination HEAD and original
-    /// byte snapshot, then stages each changed file under a create-new `.lock`. Files are replaced
+    /// checkout/ref/metadata sequence. Verifies repository location, destination HEAD, am's
+    /// original HEAD identity and the file snapshot, then stages changed files under create-new
+    /// `.lock` files. Files are replaced
     /// individually; completed operation directories are renamed out of Git's active namespace
     /// before cleanup. There is no cross-file crash transaction. A failure after replacement
     /// reports changed paths in [`Error::Partial`]. Re-read disk state before recovery; do not
@@ -76,6 +78,12 @@ impl Recovery {
         if repository.git_dir() != self.state.git_dir
             || repository.object_format() != self.state.format
             || repository.head()?.id != Some(self.destination)
+        {
+            return Err(Error::Changed);
+        }
+        if self.state.kind == Kind::Am
+            && super::state::am_original_head(repository, self.state.limits)?
+                != self.state.original_head
         {
             return Err(Error::Changed);
         }
@@ -99,7 +107,7 @@ impl Recovery {
         if self.after.len() > self.state.limits.max_files || total > self.state.limits.max_bytes {
             return Err(Error::Limit);
         }
-        let retiring: Vec<_> = ["sequencer", "rebase-merge"]
+        let retiring: Vec<_> = ["sequencer", "rebase-merge", "rebase-apply"]
             .into_iter()
             .filter(|directory| {
                 self.state
@@ -258,6 +266,9 @@ impl Recovery {
         if kind == Kind::Rebase {
             return Err(Error::Unsupported(PathBuf::from("rebase-merge")));
         }
+        if kind == Kind::Am {
+            return Err(Error::Unsupported(PathBuf::from("rebase-apply")));
+        }
         let state = empty_state(repository, kind, limits)?;
         let mut after = state.files.clone();
         let name = if kind == Kind::CherryPick {
@@ -406,6 +417,43 @@ mod tests {
             .unwrap()
             .unwrap();
         (directory, state)
+    }
+
+    #[test]
+    fn am_cleanup_failure_retains_original_mail_outside_active_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let active = directory.path().join("rebase-apply");
+        fs::create_dir(&active).unwrap();
+        for (name, bytes) in [
+            ("applying", b"".as_slice()),
+            ("next", b"1\n"),
+            ("last", b"1\n"),
+            ("0001", b"original mail"),
+            (
+                "abort-safety",
+                b"1111111111111111111111111111111111111111\n",
+            ),
+        ] {
+            fs::write(active.join(name), bytes).unwrap();
+        }
+        let state = State::read(directory.path(), ObjectFormat::Sha1, Limits::default())
+            .unwrap()
+            .unwrap();
+        let head = "1111111111111111111111111111111111111111".parse().unwrap();
+        let recovery = state.prepare(crate::sequencer::Action::Skip, head).unwrap();
+        let mut changed = Vec::new();
+        let error = recovery
+            .retire_directory(Path::new("rebase-apply"), &mut changed, |_| {
+                Err(io::Error::other("injected cleanup failure"))
+            })
+            .unwrap_err();
+        assert!(matches!(error, Error::Partial { .. }));
+        assert!(!active.exists());
+        assert_eq!(changed.len(), 2);
+        assert_eq!(
+            fs::read(directory.path().join(&changed[1]).join("0001")).unwrap(),
+            b"original mail"
+        );
     }
 
     #[test]

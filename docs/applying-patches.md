@@ -355,3 +355,26 @@ mail metadata and committer identity bytes before copying. Cancellation returns 
 
 The caller owns empty-commit policy, signing, hooks, tree/object installation, reference publication
 and operation-state advancement. Preparing a commit does not authorize any of those mutations.
+
+## Complete or abort the final mail
+
+Read portable recovery state with `sequencer::State::read_repository`, then prepare
+`Action::Continue(commit_id)`, `Skip` or `Abort`. The reader recognizes `Kind::Am`, validates the
+numbered mail range and observes the original HEAD through the files or reftable backend. Continue
+and skip currently require the final mail. Abort can discard a session after earlier mails were
+committed; it requires a matching abort-safety checkpoint and an original destination.
+
+Planning writes nothing. For continue, prepare and install the staged tree/commit with the am APIs;
+for skip or abort, explicitly restore the required index and working files. Publish HEAD through an
+expected-value reference transaction, using the plan's destination and reflog hint, then call
+`Recovery::publish_metadata`. It verifies the repository, destination HEAD, original-HEAD identity
+and exact file snapshot before retiring the active mail directory through the existing sequencer
+rename-and-cleanup path. `ORIG_HEAD` remains intact. Reftable observation has its own configurable
+budget in `sequencer::Limits`.
+
+Exclude operation and reference writers throughout. There is no cross-file crash transaction or
+automatic rollback of caller-owned checkout/reference changes. A cleanup failure reports the retired
+directory path through `sequencer::Error::Partial`; active Git state is already absent, and retained
+mail can be inspected there. Unknown files, symlinks, incompatible operation roots and apply-backend
+rebase are refused. Continuing or skipping with queued mails and broader state forms remain tracked
+in [queued-mail recovery](https://github.com/joshka/girt/issues/821).
