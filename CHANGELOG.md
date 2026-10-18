@@ -9,6 +9,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.17.0](https://github.com/joshka/girt/compare/girt-v0.16.0...girt-v0.17.0) - 2026-10-18
 
+### Behaviour changes
+
+- Repack and gc in bare repositories write reachability bitmaps only when `repack.writeBitmaps` or
+  `pack.writeBitmaps` is explicitly true. This is a temporary difference from Git while bitmap
+  writing is made faster (#732).
+- gpg/gpgsm output without a verdict maps to `NoSignature` (N), as Git does (#719).
+- `reset --hard`, `--keep` and `--merge` are supported on macOS and Linux and return `Unsupported` on
+  Windows (#735).
+
+### Added
+
+- Reset: `--hard`, `--keep`, `--merge` and path resets. Untracked directories are replaced only if
+  they contain nothing but empty directories, a documented difference from Git.
+- `describe` with exact distances, describe revisions, `--dirty`/`--broken`; message cleanup and
+  trailers; ahead/behind counts; notes; mailmap (the CLI log maps identities by default).
+- Signing and verification: SSH, OpenPGP and X.509.
+- Apply: text, binary and extended-header patches, onto trees and the index.
+- Submodules: parsing, sources, status, init/update plans and execution.
+- Multi-pack index reading and writing; reachability bitmap reading, queries and opt-in writing.
+- Transport: TLS client certificates, certificate checks, askpass, `http.extraHeader` and
+  `http.userAgent`.
+
+### Performance
+
+- Commit-graph records are read in place on open, about 760 → 45 ms on Linux v6.1 (#733).
+- Ahead/behind counts and range walks stop by generation: about 2 ms against Git's 26 ms on git.git,
+  and 8.8 ms against 49 ms on Linux v6.0...v6.1 (#720).
+- Consolidating gc verifies the replacement pack in parallel, reaching `git gc` parity on git.git
+  (#667).
+
 ### Other
 
 - Build reset on Windows ([#735](https://github.com/joshka/girt/pull/735))
