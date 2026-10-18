@@ -122,9 +122,11 @@ fn retention_walk_reads_each_entry_once() {
         "fixture must deltify trees and blobs:\n{listing}"
     );
     let repository = Repository::open(dir.path()).unwrap();
+    // The counters are per thread, so the walk reads on this thread alone.
     let policy = RetentionPolicy {
         recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
         packs: PackLimits::trusted(),
+        max_threads: 1,
         ..RetentionPolicy::trusted()
     };
     counters::reset();
@@ -154,6 +156,39 @@ fn retention_walk_reads_each_entry_once() {
         reads < entries / 4,
         "{reads} system reads for {entries} entries"
     );
+}
+
+/// Read-ahead workers share the delta base cache, so the walk reads bases in another order on
+/// several threads. Per-read limits charge cached bases, so the outcome doesn't change.
+#[test]
+fn delta_depth_limits_give_the_same_outcome_on_any_thread_count() {
+    let dir = tempfile::tempdir().unwrap();
+    deltified_history(dir.path());
+    let repository = Repository::open(dir.path()).unwrap();
+    for depth in [0, 1, 2, 3, 64] {
+        let plan = |max_threads| {
+            let policy = RetentionPolicy {
+                recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
+                max_threads,
+                read: crate::ReadLimits {
+                    max_delta_depth: depth,
+                    ..crate::ReadLimits::default()
+                },
+                ..RetentionPolicy::trusted()
+            };
+            repository.plan_retention(&policy, &AtomicBool::new(false))
+        };
+        let alone = plan(1);
+        for _ in 0..4 {
+            let parallel = plan(4);
+            assert_eq!(
+                format!("{:?}", alone.outcome),
+                format!("{:?}", parallel.outcome),
+                "max_delta_depth {depth}"
+            );
+            assert_eq!(alone.reachable, parallel.reachable);
+        }
+    }
 }
 
 /// Independently generated pack with a reachable blob and an old loose pruning candidate.
@@ -377,12 +412,25 @@ fn kind_fixture(
     (repository, parent_id)
 }
 
+/// Plans on the calling thread alone and with read-ahead workers, which must agree.
 fn plan_outcome(repository: &Repository) -> crate::retention::RetentionPlan {
-    let policy = RetentionPolicy {
-        recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
-        ..RetentionPolicy::trusted()
+    let plan = |max_threads| {
+        let policy = RetentionPolicy {
+            recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
+            max_threads,
+            ..RetentionPolicy::trusted()
+        };
+        repository.plan_retention(&policy, &AtomicBool::new(false))
     };
-    repository.plan_retention(&policy, &AtomicBool::new(false))
+    let alone = plan(1);
+    let parallel = plan(4);
+    assert_eq!(
+        format!("{:?}", alone.outcome),
+        format!("{:?}", parallel.outcome)
+    );
+    assert_eq!(alone.reachable, parallel.reachable);
+    assert_eq!(alone.required, parallel.required);
+    parallel
 }
 
 /// Every edge checks its kind, including edges to an identity the walk already queued or read.
@@ -443,4 +491,59 @@ fn retention_walk_checks_kinds_of_repeated_edges() {
         plan_outcome(&repository).outcome,
         RetentionOutcome::Incomplete(RetentionError::WrongObjectKind(wrong)) if wrong == parent
     ));
+}
+
+/// Read-ahead holds parsed edges until the walk reaches them, so a worker keeps no more than the
+/// walk could accept before refusing that object.
+#[test]
+fn read_ahead_collects_no_edges_past_the_walk_limits() {
+    use crate::retention::RetentionError;
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q", "--bare", "."], b"");
+    let blob = git(dir.path(), &["hash-object", "-w", "--stdin"], b"x\n");
+    let listing: String = (0..1000)
+        .map(|n| format!("100644 blob {blob}\tf{n}\n"))
+        .collect();
+    let tree: crate::ObjectId = git(dir.path(), &["mktree"], listing.as_bytes())
+        .parse()
+        .unwrap();
+    let repository = Repository::open(dir.path()).unwrap();
+    let store = repository.objects_with(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let visit = |policy: &RetentionPolicy| {
+        super::visit(&repository, &store, policy, &cancel, tree).unwrap()
+    };
+    let all = visit(&RetentionPolicy::trusted());
+    assert_eq!(all.edges.len(), 1000);
+    let few = visit(&RetentionPolicy::trusted().with_max_edges(3));
+    assert_eq!(
+        few.edges.len(),
+        4,
+        "one past the limit, so the walk refuses"
+    );
+    let none = visit(&RetentionPolicy::trusted().with_max_bytes(10));
+    assert!(none.edges.is_empty());
+    for policy in [
+        RetentionPolicy::trusted().with_max_edges(3),
+        RetentionPolicy::trusted().with_max_bytes(10),
+    ] {
+        let plan = |max_threads| {
+            repository
+                .plan_retention(
+                    &policy
+                        .clone()
+                        .with_heads(vec![tree])
+                        .with_max_threads(max_threads),
+                    &cancel,
+                )
+                .outcome
+        };
+        let alone = format!("{:?}", plan(1));
+        assert!(
+            alone.contains(&format!("{:?}", RetentionError::ReachableEdgeLimit))
+                || alone.contains(&format!("{:?}", RetentionError::ReachableByteLimit)),
+            "{alone}"
+        );
+        assert_eq!(alone, format!("{:?}", plan(4)));
+    }
 }

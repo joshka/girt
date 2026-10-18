@@ -1620,20 +1620,23 @@ impl Store {
         is_blob: &impl Fn(ObjectId) -> bool,
         entries: &mut usize,
     ) -> Result<(), ObjectReadError> {
+        // Pack order lets the header window serve neighbouring entries and each delta family's
+        // chain resolve once, instead of one scattered read per entry in identity order.
+        let _ordered = crate::pack::HeaderScope::ordered();
         for pack in &self.packs {
-            for id in pack.identities() {
+            let mut known = crate::pack::BaseKinds::new();
+            for position in pack.positions_by_offset()? {
                 check_cancelled(cancel)?;
                 charge_copy_entry(entries, max_entries)?;
-                let id = id?;
-                if is_blob(id) {
-                    let position = pack
-                        .find(id)?
-                        .ok_or(ObjectReadError::Corrupt("copy vanished"))?;
-                    if pack.locate(position, limits, cancel)?.0 != ObjectKind::Blob {
-                        return Err(ObjectReadError::Corrupt(
-                            "reachable blob has a graph-bearing copy",
-                        ));
-                    }
+                if is_blob(pack.identity_at(position))
+                    && pack
+                        .locate_memoized(position, limits, cancel, &mut known)?
+                        .0
+                        != ObjectKind::Blob
+                {
+                    return Err(ObjectReadError::Corrupt(
+                        "reachable blob has a graph-bearing copy",
+                    ));
                 }
             }
         }

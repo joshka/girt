@@ -112,3 +112,43 @@ pub use write::{
 mod header_tests;
 #[cfg(test)]
 mod tests;
+
+/// Index damage that framing, CRCs and checksums cannot see.
+#[cfg(test)]
+pub(crate) mod damage {
+    use std::path::Path;
+
+    use crate::ObjectFormat;
+    use crate::object::Hasher;
+
+    /// Swaps the offsets and CRCs of the two entries a v2 index places last in the pack, then
+    /// rewrites the index checksum.
+    ///
+    /// Each identity then names the other's intact bytes: the index structure, every entry CRC
+    /// and the pack checksum still verify, so only decoding with an identity check can tell.
+    pub(crate) fn swap_last_entries(index: &Path, format: ObjectFormat) {
+        let width = format.digest_len();
+        let mut bytes = std::fs::read(index).unwrap();
+        assert_eq!(&bytes[..8], b"\xfftOc\0\0\0\x02", "v2 index");
+        let word =
+            |bytes: &[u8], at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+        let count = word(&bytes, 8 + 255 * 4) as usize;
+        let crcs = 8 + 256 * 4 + count * width;
+        let offsets = crcs + count * 4;
+        let mut order: Vec<usize> = (0..count).collect();
+        order.sort_by_key(|&position| word(&bytes, offsets + position * 4));
+        let (first, second) = (order[count - 1], order[count - 2]);
+        for table in [crcs, offsets] {
+            for byte in 0..4 {
+                bytes.swap(table + first * 4 + byte, table + second * 4 + byte);
+            }
+        }
+        let end = bytes.len() - width;
+        let mut hash = Hasher::new(format);
+        hash.update(&bytes[..end]);
+        bytes[end..].copy_from_slice(hash.finalize().as_bytes());
+        // Published indexes are read-only; replace rather than rewrite in place.
+        std::fs::remove_file(index).unwrap();
+        std::fs::write(index, bytes).unwrap();
+    }
+}

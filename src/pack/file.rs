@@ -905,6 +905,11 @@ impl FilePack {
     }
 
     /// Iterates identities from the validated pinned index without decoding their payloads.
+    /// Every index position in pack offset order, which builds and checks the offset order.
+    pub(crate) fn positions_by_offset(&self) -> Result<impl Iterator<Item = usize> + '_, Error> {
+        self.table.by_offset(&self.index_bytes)
+    }
+
     pub(crate) fn identities(&self) -> impl Iterator<Item = Result<ObjectId, Error>> + '_ {
         (0..self.table.len()).map(|position| self.identity(position))
     }
@@ -992,6 +997,78 @@ impl FilePack {
         cancelled: &AtomicBool,
     ) -> Result<Object, Error> {
         decode(self, position, limits, cancelled)
+    }
+
+    /// Decodes and identity-checks the entries at `positions`, which should be in offset order,
+    /// on up to `max_threads` workers.
+    ///
+    /// Each worker decodes contiguous runs of `positions` through its own delta base cache and
+    /// header window, so the process-wide cache is neither contended nor evicted, and the
+    /// workers' caches together hold no more than its 96 MiB. Every read keeps the checks
+    /// [`Self::read`] makes. The first failure stops the other workers; the reported error is the
+    /// earliest one found in `positions` order, which need not be the earliest entry that is
+    /// damaged.
+    pub(crate) fn read_each(
+        &self,
+        positions: &[usize],
+        limits: ReadLimits,
+        max_threads: usize,
+        cancelled: &AtomicBool,
+    ) -> Result<(), Error> {
+        /// Entries per claimed run: large enough that a run's chains mostly find their bases in
+        /// the worker's cache, small enough to balance uneven entry sizes.
+        const RUN: usize = 1024;
+        let threads = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(max_threads)
+            .min(positions.len().div_ceil(RUN))
+            .max(1);
+        let cache_limit = super::reader::BaseCache::LIMIT / threads;
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let stop = AtomicBool::new(false);
+        let failure = Mutex::new(None::<(usize, Error)>);
+        let work = || {
+            let _headers = window::HeaderScope::new();
+            let _ordered = window::HeaderScope::ordered();
+            let source = PrivateCache {
+                pack: self,
+                cache: super::reader::BaseCache::with_limit(cache_limit),
+            };
+            loop {
+                let run = next.fetch_add(1, Ordering::Relaxed);
+                let Some(chunk) = positions.chunks(RUN).nth(run) else {
+                    return;
+                };
+                for &position in chunk {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let result = check_cancelled(cancelled)
+                        .and_then(|()| decode(&source, position, limits, cancelled));
+                    if let Err(error) = result {
+                        stop.store(true, Ordering::Relaxed);
+                        let mut failure = failure.lock().unwrap_or_else(|e| e.into_inner());
+                        if failure.as_ref().is_none_or(|(first, _)| run < *first) {
+                            *failure = Some((run, error));
+                        }
+                        return;
+                    }
+                }
+            }
+        };
+        if threads == 1 {
+            work();
+        } else {
+            std::thread::scope(|scope| {
+                for _ in 0..threads {
+                    scope.spawn(work);
+                }
+            });
+        }
+        match failure.into_inner().unwrap_or_else(|e| e.into_inner()) {
+            Some((_, error)) => Err(error),
+            None => check_cancelled(cancelled),
+        }
     }
 
     /// Inflates only a delta entry's two leading size varints and returns the result size.
@@ -1239,7 +1316,10 @@ impl FilePack {
             end: entry.end,
             crc,
         };
-        let mut input = BufReader::with_capacity(64 * 1024, input);
+        // Sized to the entry: a reader zero-fills its whole buffer once, and most entries are far
+        // smaller than the 64 KiB a large entry streams through.
+        let capacity = (entry.end - start).clamp(1, 64 * 1024);
+        let mut input = BufReader::with_capacity(capacity, input);
         loop {
             let bytes = input
                 .fill_buf()
@@ -1253,6 +1333,51 @@ impl FilePack {
         }
         input.get_ref().verify_crc(entry.crc)?;
         Ok(())
+    }
+}
+
+/// A pinned pack read through a private delta base cache, for one verification worker.
+struct PrivateCache<'a> {
+    pack: &'a FilePack,
+    cache: super::reader::BaseCache,
+}
+
+impl Source for PrivateCache<'_> {
+    fn format(&self) -> ObjectFormat {
+        self.pack.format
+    }
+
+    fn span(&self, position: usize) -> Result<Span, Error> {
+        Source::span(self.pack, position)
+    }
+
+    fn span_at(&self, offset: usize) -> Result<Span, Error> {
+        Source::span_at(self.pack, offset)
+    }
+
+    fn identity(&self, position: usize) -> Result<ObjectId, Error> {
+        Source::identity(self.pack, position)
+    }
+
+    fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
+        Source::find(self.pack, id)
+    }
+
+    fn base_cache(&self) -> Option<super::reader::CacheView<'_>> {
+        Some(self.cache.charged_view())
+    }
+
+    fn prefix(&self, entry: &Span) -> Result<Vec<u8>, Error> {
+        Source::prefix(self.pack, entry)
+    }
+
+    fn inflate(
+        &self,
+        entry: &Span,
+        header: &EntryHeader,
+        cancelled: &AtomicBool,
+    ) -> Result<(Vec<u8>, usize), Error> {
+        Source::inflate(self.pack, entry, header, cancelled)
     }
 }
 
@@ -1484,6 +1609,114 @@ impl Read for Range<'_> {
         }
         self.position += count;
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod read_each_tests {
+    use std::path::Path;
+    use std::sync::atomic::AtomicBool;
+
+    use rstest::rstest;
+
+    use super::*;
+    use crate::{PackLimits, PackObject, PackWriteLimits};
+
+    /// More entries than one worker run, so several workers decode.
+    const ENTRIES: usize = 3000;
+
+    fn many(root: &Path, format: ObjectFormat) -> (PathBuf, Vec<usize>) {
+        let data: Vec<Vec<u8>> = (0..ENTRIES)
+            .map(|n| format!("entry {n}\n{}", "shared line\n".repeat(n % 7)).into_bytes())
+            .collect();
+        let objects: Vec<_> = data
+            .iter()
+            .map(|data| PackObject {
+                id: ObjectId::for_blob(format, data),
+                kind: ObjectKind::Blob,
+                data,
+            })
+            .collect();
+        let (mut pack, mut index) = (Vec::new(), Vec::new());
+        crate::write_pack_with_compression(
+            format,
+            &objects,
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+            crate::PackCompression::Delta(crate::DeltaOptions::DEFAULT),
+        )
+        .unwrap();
+        let path = root.join("pack-many.idx");
+        std::fs::write(&path, index).unwrap();
+        std::fs::write(path.with_extension("pack"), pack).unwrap();
+        let positions = open(&path, format).positions_by_offset().unwrap().collect();
+        (path, positions)
+    }
+
+    fn open(path: &Path, format: ObjectFormat) -> FilePack {
+        FilePack::open(
+            format,
+            path,
+            &mut PackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn decodes_every_entry_on_any_thread_count(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let (path, positions) = many(root.path(), format);
+        let pack = open(&path, format);
+        let cancel = AtomicBool::new(false);
+        for threads in [0, 1, 4] {
+            pack.read_each(&positions, ReadLimits::default(), threads, &cancel)
+                .unwrap();
+        }
+    }
+
+    /// Entries whose index names each other's bytes pass the checksum and CRC pass but fail
+    /// decoding, even when only a later worker run holds them.
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn identity_damage_in_a_later_run_fails(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let (path, positions) = many(root.path(), format);
+        crate::pack::damage::swap_last_entries(&path, format);
+        let pack = open(&path, format);
+        let cancel = AtomicBool::new(false);
+        pack.verify(&cancel).unwrap();
+        let (healthy, damaged) = positions.split_at(1024);
+        pack.read_each(healthy, ReadLimits::default(), 4, &cancel)
+            .unwrap();
+        for threads in [1, 4] {
+            let error = pack
+                .read_each(&positions, ReadLimits::default(), threads, &cancel)
+                .unwrap_err();
+            assert!(!matches!(error, Error::Cancelled), "{error:?}");
+        }
+        assert!(
+            pack.read_each(damaged, ReadLimits::default(), 4, &cancel)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn cancellation_stops_every_worker() {
+        let root = tempfile::tempdir().unwrap();
+        let (path, positions) = many(root.path(), ObjectFormat::Sha1);
+        let pack = open(&path, ObjectFormat::Sha1);
+        let cancel = AtomicBool::new(true);
+        for threads in [1, 4] {
+            assert!(matches!(
+                pack.read_each(&positions, ReadLimits::default(), threads, &cancel),
+                Err(Error::Cancelled)
+            ));
+        }
     }
 }
 

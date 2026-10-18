@@ -210,7 +210,7 @@
 //! }
 //! ```
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
@@ -238,6 +238,7 @@ mod compose;
 mod consolidate;
 pub use consolidate::PackConsolidation;
 mod inputs;
+mod walk_reads;
 #[cfg(test)]
 mod walk_tests;
 pub use compose::{MaintenanceCause, MaintenanceFailure, MaintenanceReport};
@@ -372,6 +373,10 @@ pub struct RetentionPolicy {
     pub packs: PackLimits,
     /// Per-object read bounds.
     pub read: ReadLimits,
+    /// Worker threads that read objects for the closure walk and decode survivors before old
+    /// packs are retired (default 8). Zero or one reads on the calling thread alone. Fewer are
+    /// used when the host has fewer.
+    pub max_threads: usize,
 }
 
 impl RetentionPolicy {
@@ -486,6 +491,13 @@ impl RetentionPolicy {
         self.read = read;
         self
     }
+
+    /// Sets [`Self::max_threads`].
+    #[must_use]
+    pub fn with_max_threads(mut self, max_threads: usize) -> Self {
+        self.max_threads = max_threads;
+        self
+    }
 }
 
 impl Default for RetentionPolicy {
@@ -505,6 +517,7 @@ impl Default for RetentionPolicy {
             index: index::Limits::default(),
             packs: PackLimits::default(),
             read: ReadLimits::default(),
+            max_threads: 8,
         }
     }
 }
@@ -1389,11 +1402,39 @@ fn walk(
     roots: &BTreeSet<ObjectId>,
     object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
 ) -> Result<BTreeSet<ObjectId>, RetentionError> {
+    let visit = |id| visit(repo, store, policy, cancel, id);
+    let (nodes, blobs) = walk_reads::with_reader(policy.max_threads, &visit, |reader| {
+        walk_with(policy, cancel, roots, object_info, reader)
+    })?;
+    // Only blobs are located, after the graph walk and in pack order: they add no edges, and
+    // locating them in graph order would read headers scattered across the pack.
+    let located = store
+        .locate_all(blobs, policy.read, cancel)
+        .map_err(RetentionError::read)?;
+    for (id, located) in located {
+        let (kind, size) = located.ok_or_else(|| RetentionError::MissingObject(id))?;
+        if kind != ObjectKind::Blob {
+            return Err(RetentionError::WrongObjectKind(id));
+        }
+        object_info.insert(id, ObjectInfo { kind, size });
+    }
+    Ok(nodes.into_keys().collect())
+}
+
+/// Walks the graph in breadth-first order on the calling thread, which alone applies every
+/// limit and kind check in that order. `reader` only reads and parses objects, possibly ahead of
+/// the walk, so the result and the first error are the same however many threads read.
+fn walk_with(
+    policy: &RetentionPolicy,
+    cancel: &AtomicBool,
+    roots: &BTreeSet<ObjectId>,
+    object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
+    reader: &mut walk_reads::Reader<'_>,
+) -> Result<(IdMap<Node>, Vec<ObjectId>), RetentionError> {
     // Each identity is queued once, when it is first named, and keeps one entry for its asserted
     // and read kinds. Trees name most identities many times over (tens of millions of edges on a
     // large history), so an edge to a queued identity costs one hashed probe and no queue entry.
     let mut nodes = IdMap::default();
-    let mut pending = VecDeque::with_capacity(roots.len());
     for &root in roots {
         nodes.insert(
             root,
@@ -1402,33 +1443,32 @@ fn walk(
                 actual: None,
             },
         );
-        pending.push_back(root);
+        // An untyped root has no verified parent's kind assertion, so its identity-checked read
+        // binds its kind; a damaged graph header could otherwise erase edges and allow pruning.
+        reader.push(root, true);
     }
     let mut visited = 0usize;
     let mut bytes = 0u64;
     let mut edges = 0usize;
     let mut blobs = Vec::new();
-    while let Some(id) = pending.pop_front() {
+    while let Some((id, read)) = reader.next() {
         check(cancel)?;
         if visited >= policy.max_entries {
             return Err(RetentionError::ReachableObjectLimit);
         }
         visited += 1;
-        let expected = nodes.get(&id).and_then(|node| node.expected);
-        // Only blobs are located, after the graph walk and in pack order: they add no edges, and
-        // locating them in graph order would read headers scattered across the pack. An edge
-        // to a commit, tree or tag is decoded for its own edges, so it is never located first.
-        if expected == Some(ObjectKind::Blob) && !roots.contains(&id) {
+        // Only blobs are located, after the graph walk. An edge to a commit, tree or tag is
+        // decoded for its own edges, so it is never located first.
+        let Some(read) = read else {
             blobs.push(id);
             continue;
-        }
-        // An untyped root has no verified parent's kind assertion, so its identity-checked read
-        // binds its kind; a damaged graph header could otherwise erase edges and allow pruning.
-        let object = store
-            .read_controlled(id, policy.read, cancel)
-            .map_err(RetentionError::read)?
-            .ok_or_else(|| RetentionError::MissingObject(id))?;
-        let kind = object.kind();
+        };
+        let Visit {
+            kind,
+            size,
+            edges: named,
+            malformed,
+        } = read?;
         // An edge named this identity with another kind after it was queued.
         let expected = nodes.get(&id).and_then(|node| node.expected);
         if expected.is_some_and(|asserted| asserted != kind) {
@@ -1437,23 +1477,17 @@ fn walk(
         if let Some(node) = nodes.get_mut(&id) {
             node.actual = Some(kind);
         }
-        object_info.insert(
-            id,
-            ObjectInfo {
-                kind,
-                size: object.data().len() as u64,
-            },
-        );
+        object_info.insert(id, ObjectInfo { kind, size });
         if kind == ObjectKind::Blob {
             continue;
         }
         bytes = bytes
-            .checked_add(object.data().len() as u64)
+            .checked_add(size)
             .ok_or(RetentionError::ReachableByteOverflow)?;
         if bytes > policy.max_bytes {
             return Err(RetentionError::ReachableByteLimit);
         }
-        let mut add = |target: ObjectId, kind: ObjectKind| -> Result<(), RetentionError> {
+        for (target, kind) in named {
             edges += 1;
             if edges > policy.max_edges {
                 return Err(RetentionError::ReachableEdgeLimit);
@@ -1480,53 +1514,91 @@ fn walk(
                         expected: Some(kind),
                         actual: None,
                     });
-                    pending.push_back(target);
+                    // A blob edge's kind is fixed once queued: only roots are queued untyped.
+                    reader.push(target, kind != ObjectKind::Blob || roots.contains(&target));
                 }
             }
-            Ok(())
-        };
-        match kind {
-            ObjectKind::Blob => {}
-            ObjectKind::Commit => {
-                let commit = Commit::parse(repo.object_format(), object.data())
-                    .map_err(RetentionError::malformed)?;
-                add(commit.tree(), ObjectKind::Tree)?;
+        }
+        if let Some(error) = malformed {
+            return Err(error);
+        }
+    }
+    Ok((nodes, blobs))
+}
+
+/// One object's kind, payload size and the typed edges it names, in the order it names them.
+struct Visit {
+    kind: ObjectKind,
+    size: u64,
+    edges: Vec<(ObjectId, ObjectKind)>,
+    /// The parse error that stopped edge collection, reported after the edges before it.
+    malformed: Option<RetentionError>,
+}
+
+/// Reads `id` with its identity checked and parses its edges, without touching walk state.
+fn visit(
+    repo: &Repository,
+    store: &crate::Objects,
+    policy: &RetentionPolicy,
+    cancel: &AtomicBool,
+    id: ObjectId,
+) -> Result<Visit, RetentionError> {
+    let object = store
+        .read_controlled(id, policy.read, cancel)
+        .map_err(RetentionError::read)?
+        .ok_or_else(|| RetentionError::MissingObject(id))?;
+    let kind = object.kind();
+    let size = object.data().len() as u64;
+    let mut edges = Vec::new();
+    let mut malformed = None;
+    // The walk refuses an object whose payload alone exceeds `max_bytes`, or whose edges alone
+    // exceed `max_edges`, before it reads that object's edges or parse error, so neither is
+    // collected past those bounds.
+    let collect = |edges: &Vec<_>| edges.len() <= policy.max_edges;
+    match kind {
+        _ if kind != ObjectKind::Blob && size > policy.max_bytes => {}
+        ObjectKind::Blob => {}
+        ObjectKind::Commit => match Commit::parse(repo.object_format(), object.data()) {
+            Ok(commit) => {
+                edges.push((commit.tree(), ObjectKind::Tree));
                 if !repo.shallow_roots().contains(id) {
-                    for &parent in commit.parents() {
-                        add(parent, ObjectKind::Commit)?;
+                    let parents = commit.parents().iter().map(|&p| (p, ObjectKind::Commit));
+                    edges.extend(parents.take(policy.max_edges));
+                }
+            }
+            Err(error) => malformed = Some(RetentionError::malformed(error)),
+        },
+        ObjectKind::Tree => {
+            // Borrowed entries: a tree is parsed only for its edges, so copying every name
+            // would allocate once per entry.
+            for entry in crate::tree::RawEntries::new(repo.object_format(), object.data()) {
+                if !collect(&edges) {
+                    break;
+                }
+                match entry {
+                    Ok((crate::EntryMode::Gitlink, _, _)) => {}
+                    Ok((crate::EntryMode::Tree, _, target)) => {
+                        edges.push((target, ObjectKind::Tree));
+                    }
+                    Ok((_, _, target)) => edges.push((target, ObjectKind::Blob)),
+                    Err(error) => {
+                        malformed = Some(RetentionError::malformed(error));
+                        break;
                     }
                 }
             }
-            ObjectKind::Tree => {
-                // Borrowed entries: a tree is parsed only for its edges, so copying every name
-                // would allocate once per entry.
-                for entry in crate::tree::RawEntries::new(repo.object_format(), object.data()) {
-                    let (mode, _, target) = entry.map_err(RetentionError::malformed)?;
-                    match mode {
-                        crate::EntryMode::Gitlink => {}
-                        crate::EntryMode::Tree => add(target, ObjectKind::Tree)?,
-                        _ => add(target, ObjectKind::Blob)?,
-                    }
-                }
-            }
-            ObjectKind::Tag => {
-                let tag = Tag::parse(repo.object_format(), object.data())
-                    .map_err(RetentionError::malformed)?;
-                add(tag.target(), tag.target_kind())?;
-            }
         }
+        ObjectKind::Tag => match Tag::parse(repo.object_format(), object.data()) {
+            Ok(tag) => edges.push((tag.target(), tag.target_kind())),
+            Err(error) => malformed = Some(RetentionError::malformed(error)),
+        },
     }
-    let located = store
-        .locate_all(blobs, policy.read, cancel)
-        .map_err(RetentionError::read)?;
-    for (id, located) in located {
-        let (kind, size) = located.ok_or_else(|| RetentionError::MissingObject(id))?;
-        if kind != ObjectKind::Blob {
-            return Err(RetentionError::WrongObjectKind(id));
-        }
-        object_info.insert(id, ObjectInfo { kind, size });
-    }
-    Ok(nodes.into_keys().collect())
+    Ok(Visit {
+        kind,
+        size,
+        edges,
+        malformed,
+    })
 }
 
 fn canonical_empty_tree(id: ObjectId) -> Option<Object> {

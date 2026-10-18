@@ -469,7 +469,10 @@ impl Repository {
             cancel,
         )
         .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
-        pack.verify(cancel)
+        // The index checksum and structure, including the offset order that gives each decoded
+        // entry its exact end and CRC, are checked here. The whole-pack checksum and CRC pass
+        // streams the file alongside the survivor decode below; both finish before any unlink.
+        pack.verify_index()
             .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
         let retiring = old_indices(&before, first, Some(&replacement_pack));
         // Publishing already decodes protected survivors before omitting them. Decode them again
@@ -504,15 +507,14 @@ impl Repository {
                     found.push((offset, position, id));
                 }
             }
-            // Pack order lets the delta base cache serve each base once. `read` hashes the
+            // Pack order lets the delta base caches serve each base once. Each read hashes the
             // payload against the identity at `position`, which `find` matched to `id`.
             found.sort_unstable();
-            let _ordered = crate::pack::HeaderScope::ordered();
-            for (_, position, id) in found {
-                check(cancel, &report)?;
-                protected_pack
-                    .read(position, policy.read, cancel)
-                    .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+            let positions: Vec<usize> = found.iter().map(|&(_, position, _)| position).collect();
+            protected_pack
+                .read_each(&positions, policy.read, policy.max_threads, cancel)
+                .map_err(|error| failed(read_cause(error), report.clone()))?;
+            for (_, _, id) in found {
                 unverified.remove(&id);
             }
         }
@@ -532,15 +534,31 @@ impl Repository {
             replaced.push((offset, position));
         }
         // Every retained object is decoded and identity-checked before anything is unlinked.
-        // `read` hashes each payload against the identity `find` matched; pack order lets the
-        // delta base cache serve each base once instead of rebuilding chains in identity order.
+        // Each read hashes the payload against the identity `find` matched; pack order lets each
+        // worker's delta base cache serve a base once instead of rebuilding chains in identity
+        // order.
         replaced.sort_unstable();
-        let _ordered = crate::pack::HeaderScope::ordered();
-        for (_, position) in replaced {
-            check(cancel, &report)?;
-            pack.read(position, policy.read, cancel)
-                .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
-        }
+        let positions: Vec<usize> = replaced.into_iter().map(|(_, position)| position).collect();
+        let decode = || pack.read_each(&positions, policy.read, policy.max_threads, cancel);
+        let verify = |result: Result<(), crate::ObjectReadError>| {
+            result.map_err(|error| failed(read_cause(error), report.clone()))
+        };
+        let decoded = if policy.max_threads < 2 {
+            verify(pack.verify(cancel))?;
+            decode()
+        } else {
+            std::thread::scope(|scope| {
+                let verified = scope.spawn(|| pack.verify(cancel));
+                let decoded = decode();
+                verify(
+                    verified
+                        .join()
+                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+                )
+                .map(|()| decoded)
+            })?
+        };
+        decoded.map_err(|error| failed(read_cause(error), report.clone()))?;
 
         let after = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
@@ -787,6 +805,14 @@ fn recheck(path: &Path, expected: Stamp) -> Result<(), RetireCause> {
     Ok(())
 }
 
+// Cancellation keeps its own cause, as the per-object checks this replaced reported it.
+fn read_cause(error: crate::ObjectReadError) -> RetireCause {
+    match error {
+        crate::ObjectReadError::Cancelled => RetireCause::Cancelled,
+        error => RetireCause::Read(Box::new(error)),
+    }
+}
+
 fn check(cancel: &AtomicBool, report: &RetireReport) -> Result<(), RetireFailure> {
     if cancel.load(Ordering::Relaxed) {
         Err(failed(RetireCause::Cancelled, report.clone()))
@@ -964,6 +990,77 @@ mod tests {
         assert!(error.report.published.is_some());
         assert!(error.report.removed.is_empty());
         assert!(old_index.exists());
+    }
+
+    /// Survivors decode on several workers. Damage that only an identity check finds, in the
+    /// entries a later worker decodes, still refuses before any old pack is unlinked.
+    #[test]
+    fn replacement_damage_found_by_a_decode_worker_keeps_old_pack() {
+        let root = tempfile::tempdir().unwrap();
+        git(root.path(), &["init", "--bare", "--template=", "."], b"");
+        // More blobs than one decode worker's run, so several workers verify survivors.
+        let mut stream = String::new();
+        for n in 1..=3000 {
+            let data = format!("blob {n}\n");
+            stream += &format!("blob\nmark :{n}\ndata {}\n{data}\n", data.len());
+        }
+        stream += "commit refs/heads/main\ncommitter A <a@example.com> 1700000000 +0000\n";
+        stream += "data 4\none\n";
+        for n in 1..=3000 {
+            stream += &format!("M 100644 :{n} f{n}\n");
+        }
+        git(root.path(), &["fast-import", "--quiet"], stream.as_bytes());
+        let tree = git(root.path(), &["rev-parse", "refs/heads/main^{tree}"], b"");
+        let commit = git(root.path(), &["rev-parse", "refs/heads/main"], b"");
+        git(
+            root.path(),
+            &["repack", "-ad", "--no-write-bitmap-index"],
+            b"",
+        );
+        // A loose descendant makes the replacement differ from the old pack.
+        let child = git(
+            root.path(),
+            &["commit-tree", &tree, "-p", &commit],
+            b"two\n",
+        );
+        git(root.path(), &["update-ref", "refs/heads/main", &child], b"");
+        let repository = Repository::open(root.path()).unwrap();
+        let directory = repository.object_dir().join("pack");
+        let indexes = || -> BTreeSet<PathBuf> {
+            fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "idx"))
+                .collect()
+        };
+        let old = indexes();
+        let policy = RetentionPolicy {
+            recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
+            max_threads: 4,
+            ..Default::default()
+        };
+        let error = repository
+            .retire_old_packs_at(
+                &policy,
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+                || {
+                    let replacement = indexes().difference(&old).next().unwrap().clone();
+                    crate::pack::damage::swap_last_entries(&replacement, crate::ObjectFormat::Sha1);
+                },
+                |path| fs::remove_file(path),
+                |directory| File::open(directory).and_then(|dir| dir.sync_all()),
+            )
+            .unwrap_err();
+        assert!(matches!(error.cause, RetireCause::Read(_)), "{error:?}");
+        assert!(error.report.published.is_some());
+        assert!(error.report.removed.is_empty());
+        assert!(old.iter().all(|index| index.exists()));
+        // Readers that prefer the old pack still see every object.
+        for index in indexes().difference(&old) {
+            fs::remove_file(index).unwrap();
+        }
+        git(root.path(), &["fsck", "--strict"], b"");
     }
 
     #[test]

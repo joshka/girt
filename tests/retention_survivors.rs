@@ -613,3 +613,73 @@ fn later_protected_copy_is_not_duplicated_in_replacement() {
         "later protected copy should suffice; retirement={report:?}"
     );
 }
+/// A reachable blob located in one pack must not hide a graph-bearing copy of the same identity
+/// in another pack: that copy's edges would otherwise go unprotected.
+#[test]
+fn reachable_blob_with_a_graph_copy_in_another_pack_refuses_the_plan() {
+    let dir = bare();
+    let root = dir.path();
+    // Packs are searched by index name, so the walk locates the blob in `pack-a`.
+    chain(root, "a", &[b"abc0"]);
+    let x = id(root, b"abc0");
+    let mktree = |listing: String| -> ObjectId {
+        String::from_utf8(git(root, &["mktree", "--missing"], listing.as_bytes()))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    };
+    // The reachable tree is written before the relabelling below, which Git would refuse.
+    let tree = mktree(format!("100644 blob {x}\tfile\n"));
+    // `pack-b` labels a tree's bytes with the blob's identity.
+    let other = mktree(format!("100644 blob {x}\tother\n"));
+    let checksum = String::from_utf8(git(
+        root,
+        &["pack-objects", "-q", "objects/pack/tmp"],
+        format!("{other}\n").as_bytes(),
+    ))
+    .unwrap();
+    for extension in ["pack", "idx"] {
+        fs::rename(
+            root.join(format!("objects/pack/tmp-{}.{extension}", checksum.trim())),
+            root.join(format!("objects/pack/pack-b.{extension}")),
+        )
+        .unwrap();
+    }
+    let hex = other.to_string();
+    fs::remove_file(root.join(format!("objects/{}/{}", &hex[..2], &hex[2..]))).unwrap();
+    rename_identity(&root.join("objects/pack/pack-b.idx"), other, x);
+    let plan = Repository::open(root)
+        .unwrap()
+        .plan_retention(&policy(vec![tree]), &AtomicBool::new(false));
+    assert!(
+        format!("{:?}", plan.outcome).contains("graph-bearing copy"),
+        "{:?}",
+        plan.outcome
+    );
+}
+/// A delta base the cache already holds still counts toward the read's depth, so a read fits its
+/// limits or not whatever earlier reads left in the cache.
+#[test]
+fn cached_base_still_counts_toward_delta_depth() {
+    let dir = bare();
+    let root = dir.path();
+    chain(root, "a", &[b"abc0", b"abc1", b"abc2"]);
+    let tip = id(root, b"abc2");
+    let objects = Repository::open(root)
+        .unwrap()
+        .objects_with(PackLimits::default())
+        .unwrap();
+    let shallow = ReadLimits::default().with_max_delta_depth(1);
+    assert!(objects.read_with(tip, shallow).is_err(), "cold read");
+    // A deeper read decodes and caches the tip's bases.
+    let tip_data = objects
+        .read_with(tip, ReadLimits::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(tip_data.data(), b"abc2");
+    assert!(
+        objects.read_with(tip, shallow).is_err(),
+        "read after caching bases"
+    );
+}

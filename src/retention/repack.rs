@@ -11,6 +11,10 @@ use crate::pack::{
 };
 use crate::{DeltaOptions, ObjectId, ObjectReadError, PackCompression, Repository};
 
+/// Write buffer for a new pack: copied entries arrive a few hundred bytes at a time, and the
+/// default 8 KiB buffer would make one write call per few dozen of them.
+const PACK_BUFFER: usize = 1024 * 1024;
+
 /// Bounds one additive repack.
 ///
 /// Entries copied from existing packs stream from their files. Objects that are not packed yet
@@ -337,7 +341,7 @@ impl Repository {
             &packed,
             &fresh,
             (
-                &mut BufWriter::new(pack.as_file_mut()),
+                &mut BufWriter::with_capacity(PACK_BUFFER, pack.as_file_mut()),
                 &mut BufWriter::new(index.as_file_mut()),
             ),
             limits.write,
