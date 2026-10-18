@@ -424,3 +424,198 @@ fn changed_destination_head_preserves_active_mail() {
     assert!(repo.git_dir().join("rebase-apply/applying").exists());
     assert_eq!(git(root.path(), &["rev-parse", "HEAD"], b""), source);
 }
+
+fn queued_stop(root: &Path, format: &str, backend: &str) {
+    git(
+        root,
+        &[
+            "init",
+            "-b",
+            "main",
+            &format!("--object-format={format}"),
+            &format!("--ref-format={backend}"),
+        ],
+        b"",
+    );
+    fs::write(root.join("base"), b"base\n").unwrap();
+    git(root, &["add", "."], b"");
+    git(root, &["commit", "-m", "base"], b"");
+    let base = head(root);
+    for name in ["one", "two", "three"] {
+        fs::write(root.join(name), format!("{name}\n")).unwrap();
+        git(root, &["add", name], b"");
+        git(
+            root,
+            &["commit", "-m", &format!("{name}\n\nBody of {name}.")],
+            b"",
+        );
+    }
+    let mail = git(root, &["format-patch", "--stdout", "-3"], b"");
+    git(
+        root,
+        &["checkout", "-b", "destination", &base.to_string()],
+        b"",
+    );
+    for name in ["one", "two"] {
+        fs::write(root.join(name), b"obstruction\n").unwrap();
+    }
+    assert!(!git_output(root, &["am"], &mail).status.success());
+    fs::remove_file(root.join("one")).unwrap();
+}
+
+#[rstest]
+fn queued_mail_is_prepared_like_git_and_git_can_finish(
+    #[values("sha1", "sha256")] format: &str,
+    #[values("files", "reftable")] backend: &str,
+    #[values(false, true)] continue_current: bool,
+) {
+    let actual = tempfile::tempdir().unwrap();
+    let expected = tempfile::tempdir().unwrap();
+    queued_stop(actual.path(), format, backend);
+    queued_stop(expected.path(), format, backend);
+    let repo = Repository::open(actual.path()).unwrap();
+    let old = head(actual.path());
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    let action = if continue_current {
+        stage(actual.path());
+        stage(expected.path());
+        let snapshot = repo.operation_state(OperationLimits::default()).unwrap();
+        let mail = girt::am::State::from_operation(&snapshot).unwrap().unwrap();
+        let tree = git(actual.path(), &["write-tree"], b"");
+        let tree = std::str::from_utf8(&tree).unwrap().trim().parse().unwrap();
+        let writer =
+            Signature::parse(git(actual.path(), &["var", "GIT_COMMITTER_IDENT"], b"").trim_ascii())
+                .unwrap();
+        let commit = mail
+            .prepare_commit(
+                tree,
+                Some(old),
+                writer.clone(),
+                CommitLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        repo.loose_objects().write_commit(&commit).unwrap();
+        let edit = RefEdit::update(
+            RefName::HEAD,
+            old,
+            commit.id(),
+            Reflog::Append {
+                committer: writer,
+                message: [b"am: ".as_slice(), &commit.subject()].concat(),
+            },
+        )
+        .with_dereference(Dereference::Follow);
+        repo.references().unwrap().transaction(&[edit]).unwrap();
+        Action::Continue(commit.id())
+    } else {
+        Action::Skip
+    };
+    let plan = state
+        .prepare_next_am(
+            action,
+            old,
+            girt::mailinfo::Limits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(
+        plan.file_after("rebase-apply/next"),
+        Some(b"2\n".as_slice())
+    );
+    plan.publish_metadata(&repo).unwrap();
+    assert!(
+        !git_output(
+            expected.path(),
+            &[
+                "am",
+                if continue_current {
+                    "--continue"
+                } else {
+                    "--skip"
+                }
+            ],
+            b""
+        )
+        .status
+        .success()
+    );
+    for name in [
+        "next",
+        "last",
+        "abort-safety",
+        "author-script",
+        "final-commit",
+        "patch",
+        "info",
+        "msg",
+        "0001",
+        "0002",
+        "0003",
+    ] {
+        assert_eq!(
+            fs::read(repo.git_dir().join("rebase-apply").join(name)).unwrap(),
+            fs::read(expected.path().join(".git/rebase-apply").join(name)).unwrap(),
+            "{name}"
+        );
+    }
+    for root in [actual.path(), expected.path()] {
+        fs::remove_file(root.join("two")).unwrap();
+        stage(root);
+        git(root, &["am", "--continue"], b"");
+    }
+    assert_eq!(head(actual.path()), head(expected.path()));
+    assert_eq!(
+        git(actual.path(), &["ls-files", "--stage"], b""),
+        git(expected.path(), &["ls-files", "--stage"], b"")
+    );
+    git(actual.path(), &["fsck", "--no-reflogs"], b"");
+}
+
+#[rstest]
+#[case("missing")]
+#[case("bad_mail")]
+#[case("option")]
+#[case("limit")]
+#[case("cancel")]
+#[case("stale")]
+fn queued_failure_retains_numbered_mail_and_progress(#[case] failure: &str) {
+    let root = tempfile::tempdir().unwrap();
+    queued_stop(root.path(), "sha1", "files");
+    let repo = Repository::open(root.path()).unwrap();
+    let dir = repo.git_dir().join("rebase-apply");
+    match failure {
+        "missing" => fs::remove_file(dir.join("0002")).unwrap(),
+        "bad_mail" => fs::write(dir.join("0002"), b"broken mail\n").unwrap(),
+        "option" => fs::write(dir.join("sign"), b"t\n").unwrap(),
+        _ => (),
+    }
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    let limits = if failure == "limit" {
+        girt::mailinfo::Limits::default().with_max_input_bytes(0)
+    } else {
+        girt::mailinfo::Limits::default()
+    };
+    let plan = state.prepare_next_am(
+        Action::Skip,
+        head(root.path()),
+        limits,
+        &AtomicBool::new(failure == "cancel"),
+    );
+    if failure == "stale" {
+        fs::write(dir.join("0002"), b"changed\n").unwrap();
+        assert!(matches!(
+            plan.unwrap().publish_metadata(&repo),
+            Err(girt::sequencer::Error::Changed)
+        ));
+    } else {
+        assert!(plan.is_err(), "{failure}");
+    }
+    assert_eq!(fs::read(dir.join("next")).unwrap(), b"1\n");
+    assert!(dir.join("0001").exists());
+    assert!(dir.join("0003").exists());
+}
