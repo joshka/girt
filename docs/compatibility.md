@@ -1422,8 +1422,13 @@ reference names its target's commit under its own name, as in Git, and tags of t
 skipped. An annotated tag whose reference was renamed is printed under the tag object's name and
 always in the long form (with the full commit ID under `--abbrev=0`), while patterns match the
 reference name; `tests/describe_git.rs` compares these cases and a recent tag on a 400-commit
-history found within a 20-commit bound. `--dirty`, `--broken`, `--contains` and revision parsing of
-the `-g<hex>` form are not implemented.
+history found within a 20-commit bound. `--dirty`, `--broken` and `--contains` are not implemented.
+
+`tests/revisions.rs` compares revision parsing of `git describe` output (`<name>-<count>-g<hex>`)
+with `git rev-parse --verify`: the name is not looked up but must be a valid branch name, the count
+must be decimal, the hex needs at least four digits (a full ID may carry trailing zeros), a
+reference with the whole name wins, an ambiguous prefix resolves to its one commit even when a blob
+shares it, and steps such as `~1` and `^{tree}` may follow.
 
 ## Commit History
 

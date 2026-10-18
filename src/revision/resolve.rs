@@ -168,7 +168,8 @@ impl<'r> Resolver<'r> {
         }
     }
 
-    /// A full object ID, then references, then an abbreviated object ID: Git's order.
+    /// A full object ID, then references, then an abbreviated object ID, then the ID in
+    /// `git describe` output such as `v1.0-14-gabc1234`: Git's order.
     fn resolve_name(
         &self,
         name: &str,
@@ -182,6 +183,11 @@ impl<'r> Resolver<'r> {
         }
         if name.len() >= 4 && name.bytes().all(|b| b.is_ascii_hexdigit()) {
             return self.abbreviated(name, wanted);
+        }
+        if let Some(hex) = described_id(name, self.objects.object_format()) {
+            // Git reads the ID in describe output as a commit, so an ambiguous prefix resolves to
+            // its one commit whatever kind the expression asks for.
+            return self.abbreviated(hex, Some(ObjectKind::Commit));
         }
         if is_pseudo_ref(name) {
             return Err(RevisionError::Unsupported(
@@ -454,4 +460,26 @@ pub fn ref_candidates(name: &str) -> impl Iterator<Item = RefName> + use<> {
 /// `ORIG_HEAD`. girt's reference store reads only `HEAD` and names under `refs/`.
 fn is_pseudo_ref(name: &str) -> bool {
     name != "HEAD" && !name.is_empty() && name.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
+}
+
+/// The abbreviated ID in `git describe` output, `<name>-<count>-g<hex>`, as Git's revision
+/// parser accepts it: a name that is a valid branch name, a decimal count and at least four hex
+/// digits. The name is not looked up. Hex longer than a full ID is accepted when the extra digits
+/// are zeros, as Git accepts it.
+fn described_id(name: &str, format: crate::ObjectFormat) -> Option<&str> {
+    let (rest, hex) = name.rsplit_once("-g")?;
+    let (prefix, count) = rest.rsplit_once('-')?;
+    let full = format.digest_len() * 2;
+    let hex = match hex.get(full..) {
+        Some(extra) if !extra.is_empty() && extra.bytes().all(|b| b == b'0') => &hex[..full],
+        _ => hex,
+    };
+    let valid = hex.len() >= 4
+        && hex.len() <= full
+        && hex.bytes().all(|b| b.is_ascii_hexdigit())
+        && !count.is_empty()
+        && count.bytes().all(|b| b.is_ascii_digit())
+        && !prefix.is_empty()
+        && RefName::new(format!("refs/heads/{prefix}")).is_ok();
+    valid.then_some(hex)
 }
