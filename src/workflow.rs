@@ -664,6 +664,13 @@ impl Environment {
         self
     }
 
+    /// Every variable, for starting a child process with exactly this environment.
+    pub(crate) fn vars(&self) -> impl Iterator<Item = (&OsStr, &OsStr)> {
+        self.vars
+            .iter()
+            .map(|(name, value)| (name.as_os_str(), value.as_os_str()))
+    }
+
     /// The directory relative paths resolve against, if known.
     pub(crate) fn current_dir(&self) -> Option<&std::path::Path> {
         self.current_dir.as_deref()
