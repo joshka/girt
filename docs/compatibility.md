@@ -2094,6 +2094,18 @@ one, and an empty scoped value. The default agents differ by design (`git/<versi
 configuration and empty `credential.helper` and `core.askPass`. Evidence: macOS arm64, Git 2.56.0,
 2026-10-18.
 
+### TLS Client Certificates
+
+`tests/http_tls.rs` runs `git ls-remote` and girt's `workflow::remote_head` against one loopback
+HTTPS server that requires a client certificate, with disposable OpenSSL CAs and leaves, and checks
+that both succeed or both fail. Cases: no client certificate, certificate and key, a combined
+certificate-and-key file, a certificate without a key, and `GIT_SSL_CERT` and `GIT_SSL_KEY`,
+including the environment overriding `http.sslCert` and replacing an empty `http.sslCert`. Git runs
+with isolated configuration, empty `credential.helper` and `core.askPass`, and
+`GIT_TERMINAL_PROMPT=0`. Git asks a credential helper for a certificate password when a certificate
+has no key; girt fails the connection instead. Evidence: macOS arm64, Git 2.56.0 with libcurl 8.7.1
+(LibreSSL 3.3.6), 2026-10-18.
+
 ## SSH Transport
 
 The optional `ssh` feature adds one OpenSSH process per v0 upload-pack/receive-pack exchange on

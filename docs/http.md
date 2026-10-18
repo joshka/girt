@@ -108,11 +108,12 @@ construct `HttpRemote::configured(settings)`. For a named remote, use
 participates. Resolution performs no file or network I/O.
 
 Supported settings are `http.sslVerify`, `http.sslCAInfo`, `http.proxy`,
-`http.proxyAuthMethod=basic`, `http.followRedirects`, `http.extraHeader` and `http.userAgent`. URL
-scopes match scheme, host (including whole-label `*`), effective port and component-bounded path.
-More specific hosts, then longer paths, then later entries win; unreserved percent escapes are
-normalized. Selected unsupported HTTP settings fail explicitly, including client certificates, pins,
-CA directories, alternate TLS backends and proxy TLS policy.
+`http.proxyAuthMethod=basic`, `http.followRedirects`, `http.extraHeader`, `http.userAgent`,
+`http.sslCert` and `http.sslKey`. URL scopes match scheme, host (including whole-label `*`),
+effective port and component-bounded path. More specific hosts, then longer paths, then later
+entries win; unreserved percent escapes are normalized. Selected unsupported HTTP settings fail
+explicitly, including password-protected client certificates, pins, alternate TLS backends and proxy
+TLS policy.
 
 `http.extraHeader` is multi-valued, as in Git. Entries are taken in configuration order while their
 URL scope matches at least as well as the best entry so far, so a global entry after a scoped one is
@@ -138,6 +139,15 @@ loads bounded PEM bytes into `HttpEnvironment::ssl_ca_info`. Girt never opens th
 Configured paths without supplied bytes fail before network I/O. `ssl_no_verify` overrides
 configured verification in both directions. Disabling checks still requires `allow_insecure_tls`
 approval.
+
+`HttpSettings::configured_tls_paths(config, destination)` returns the configured `sslCAInfo`,
+`sslCert` and `sslKey` paths without checking them. `GIT_SSL_CAINFO`, `GIT_SSL_CERT` and
+`GIT_SSL_KEY` take precedence over their settings, as observed with Git, so an empty setting is an
+error only when no variable replaces it. Each file is limited to 1 MiB. Without a key, the
+certificate file must hold the private key too. `http.sslCertPasswordProtected=true` is refused; Git
+prompts for the password through its credential machinery. `http.sslCAPath` is refused until girt
+matches OpenSSL's subject-hash lookup ([issue 705](https://github.com/joshka/girt/issues/705)).
+`workflow` performs this selection and these reads from its `Environment`.
 
 Proxy precedence is `remote.<name>.proxy`, URL-scoped/global `http.proxy`, then the proxy selected
 from environment by the caller. An empty configured proxy disables proxying. HTTP proxies support

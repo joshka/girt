@@ -1559,28 +1559,41 @@ fn http_environment(
     destination: &Destination,
     environment: &Environment,
 ) -> Result<crate::transport::http::HttpEnvironment, TransferError> {
-    let ca_path = match environment.get("GIT_SSL_CAINFO") {
-        Some(path) => Some(PathBuf::from(path)),
-        None => crate::transport::http::HttpSettings::configured_ca_info(config, destination)
-            .map_err(|error| TransferError::Configuration(error.to_string()))?
+    let paths = crate::transport::http::HttpSettings::configured_tls_paths(config, destination)
+        .map_err(|error| TransferError::Configuration(error.to_string()))?;
+    // The environment variable wins over the setting. Only a setting that is used is checked,
+    // and it expands `~/` like Git paths.
+    let select = |variable: &str, configured: Option<&[u8]>| match environment.get(variable) {
+        Some(path) => Ok(Some(PathBuf::from(path))),
+        None => configured
             .map(|path| {
+                if path.is_empty() || path.contains(&0) {
+                    return Err(TransferError::Configuration(format!(
+                        "empty or invalid path for {variable}'s setting"
+                    )));
+                }
                 let path = String::from_utf8_lossy(path).into_owned();
-                match (path.strip_prefix("~/"), environment.get("HOME")) {
+                Ok(match (path.strip_prefix("~/"), environment.get("HOME")) {
                     (Some(rest), Some(home)) => Path::new(home).join(rest),
                     _ => PathBuf::from(path),
-                }
-            }),
-    };
-    let ssl_ca_info = ca_path
-        .map(|path| {
-            std::fs::read(&path).map_err(|error| {
-                TransferError::Configuration(format!("reading {}: {error}", path.display()))
+                })
             })
-        })
+            .transpose(),
+    };
+    let ssl_ca_info = select("GIT_SSL_CAINFO", paths.ca_info)?
+        .map(|path| read_bounded(&path))
+        .transpose()?;
+    let ssl_cert = select("GIT_SSL_CERT", paths.certificate)?
+        .map(|path| read_bounded(&path))
+        .transpose()?;
+    let ssl_key = select("GIT_SSL_KEY", paths.key)?
+        .map(|path| read_bounded(&path))
         .transpose()?;
     let proxy_var = |names: &[&str]| names.iter().find_map(|name| environment.string(name));
     Ok(crate::transport::http::HttpEnvironment {
         ssl_ca_info,
+        ssl_cert,
+        ssl_key,
         ssl_no_verify: environment
             .bytes("GIT_SSL_NO_VERIFY")
             .map(|value| crate::config::boolean(Some(&value)).unwrap_or(true)),
@@ -1596,6 +1609,30 @@ fn http_environment(
         allow_insecure_tls: true,
         user_agent: environment.string("GIT_HTTP_USER_AGENT"),
     })
+}
+
+// TLS inputs are limited to 1 MiB; reading one byte more detects a larger file without
+// loading it.
+#[cfg(feature = "http")]
+fn read_bounded(path: &Path) -> Result<Vec<u8>, TransferError> {
+    use std::io::Read;
+    const LIMIT: u64 = 1024 * 1024;
+    let failure = |error: std::io::Error| {
+        TransferError::Configuration(format!("reading {}: {error}", path.display()))
+    };
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(failure)?
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(failure)?;
+    if bytes.len() as u64 > LIMIT {
+        return Err(TransferError::Configuration(format!(
+            "{} is larger than 1 MiB",
+            path.display()
+        )));
+    }
+    Ok(bytes)
 }
 
 #[cfg(any(

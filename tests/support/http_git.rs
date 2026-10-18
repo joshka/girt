@@ -18,6 +18,24 @@ impl Server {
         authorization: &str,
         tls: Option<(&Path, &Path)>,
     ) -> Self {
+        Self::spawn(repository, fault, authorization, tls, None)
+    }
+    /// An HTTPS server that requires client certificates issued by `client_ca`.
+    #[allow(dead_code)]
+    pub fn requiring_client_certificate(
+        repository: &Path,
+        tls: (&Path, &Path),
+        client_ca: &Path,
+    ) -> Self {
+        Self::spawn(repository, "", "", Some(tls), Some(client_ca))
+    }
+    fn spawn(
+        repository: &Path,
+        fault: &str,
+        authorization: &str,
+        tls: Option<(&Path, &Path)>,
+        client_ca: Option<&Path>,
+    ) -> Self {
         let root = tempfile::tempdir().unwrap();
         let mut command = Command::new(if cfg!(windows) { "python" } else { "python3" });
         command
@@ -33,6 +51,9 @@ impl Server {
             .arg(std::process::id().to_string());
         if let Some((cert, key)) = tls {
             command.arg("--certificate").arg(cert).arg("--key").arg(key);
+        }
+        if let Some(client_ca) = client_ca {
+            command.arg("--client-ca").arg(client_ca);
         }
         let mut process = Process::spawn_grouped(&mut command, false);
         let port: u16 = process.ready(|line| line.trim().parse::<u16>().map_err(|e| e.to_string()));
