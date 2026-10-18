@@ -226,3 +226,398 @@ fn resign(bytes: &mut [u8], format: ObjectFormat) {
     };
     bytes[end..].copy_from_slice(&hash);
 }
+
+#[rstest]
+#[case::sha1_walk(ObjectFormat::Sha1, false, false)]
+#[case::sha1_pack(ObjectFormat::Sha1, true, false)]
+#[case::sha1_midx(ObjectFormat::Sha1, true, true)]
+#[case::sha256_walk(ObjectFormat::Sha256, false, false)]
+#[case::sha256_pack(ObjectFormat::Sha256, true, false)]
+#[case::sha256_midx(ObjectFormat::Sha256, true, true)]
+fn reachable_difference_matches_git(
+    #[case] format: ObjectFormat,
+    #[case] packed: bool,
+    #[case] midx: bool,
+) {
+    let parents = [vec![], vec![0], vec![0], vec![1, 2], vec![2], vec![3]];
+    let history = history_git::History::with_format(&parents, false, format);
+    let root = history.root.path();
+    if packed {
+        pack_git::git(root, &["repack", "-adb"], b"");
+    }
+    if midx {
+        pack_git::git(root, &["multi-pack-index", "write", "--bitmap"], b"");
+    }
+    let repo = girt::Repository::open(root).unwrap();
+    let objects = repo.objects().unwrap();
+    let include = [history.ids[5], history.ids[4]];
+    let exclude = [history.ids[1]];
+    let expected = difference_ids(root, &include, &exclude);
+    let result = objects.reachable_difference(&include, &exclude).unwrap();
+    assert_eq!(result.ids().collect::<BTreeSet<_>>(), expected);
+    assert_eq!(result.len(), expected.len());
+    assert!(!result.is_empty());
+    assert_eq!(result.count(ObjectKind::Commit), expected.len()); // Shared empty tree excluded.
+    assert_eq!(result.count(ObjectKind::Tree), 0);
+    for id in result.ids() {
+        assert!(result.contains(id));
+        assert!(result.objects().read(id).unwrap().is_some());
+    }
+    let walked = objects
+        .clone()
+        .without_bitmaps()
+        .reachable_difference(&include, &exclude)
+        .unwrap();
+    assert_eq!(
+        result.ids().collect::<Vec<_>>(),
+        walked.ids().collect::<Vec<_>>()
+    );
+    assert!(
+        objects
+            .reachable_difference(&include, &include)
+            .unwrap()
+            .is_empty()
+    );
+    // Zero metadata work falls back to walking, without changing the set.
+    let mut limits = girt::bitmap::QueryLimits::default();
+    limits.bitmap.max_decoded_words = 0;
+    let fallback = objects
+        .reachable_difference_with(&include, &exclude, limits, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(fallback.ids().collect::<BTreeSet<_>>(), expected);
+}
+
+fn difference_ids(
+    root: &std::path::Path,
+    include: &[ObjectId],
+    exclude: &[ObjectId],
+) -> BTreeSet<ObjectId> {
+    let arguments: Vec<_> = include
+        .iter()
+        .map(ToString::to_string)
+        .chain(exclude.iter().map(|id| format!("^{id}")))
+        .collect();
+    let mut args = vec!["rev-list", "--use-bitmap-index", "--objects"];
+    args.extend(arguments.iter().map(String::as_str));
+    let output = pack_git::git(root, &args, b"");
+    std::str::from_utf8(&output)
+        .unwrap()
+        .lines()
+        .map(|line| line.split_whitespace().next().unwrap().parse().unwrap())
+        .collect()
+}
+
+#[test]
+fn query_falls_back_from_unusable_sidecars_and_reports_missing_objects() {
+    let fixture = pack_git::Fixture::new(ObjectFormat::Sha1, true, 4);
+    let root = fixture.root.path();
+    pack_git::git(root, &["repack", "-adb"], b"");
+    let objects = fixture.repo.objects().unwrap();
+    let commit = fixture
+        .records
+        .iter()
+        .find(|(_, kind, _)| *kind == ObjectKind::Commit)
+        .unwrap()
+        .0;
+    let expected = objects.reachable_difference(&[commit], &[]).unwrap();
+    assert_eq!(expected.count(ObjectKind::Commit), 1);
+    assert_eq!(expected.count(ObjectKind::Tree), 1);
+    assert_eq!(expected.count(ObjectKind::Blob), 4);
+    let mut limits = girt::bitmap::QueryLimits::default();
+    limits.max_walk_bytes = 0;
+    assert_eq!(
+        objects
+            .reachable_difference_with(&[commit], &[], limits, &AtomicBool::new(false))
+            .unwrap()
+            .len(),
+        expected.len()
+    );
+    assert!(matches!(
+        objects.clone().without_bitmaps().reachable_difference_with(
+            &[commit],
+            &[],
+            limits,
+            &AtomicBool::new(false)
+        ),
+        Err(Error::Limit("walk bytes"))
+    ));
+    let pack = objects.packs().next().unwrap();
+    for extension in ["bitmap", "rev"] {
+        let path = pack.path().with_extension(extension);
+        let original = fs::read(&path).unwrap();
+        replace_sidecar(&path, b"damaged");
+        let actual = objects.reachable_difference(&[commit], &[]).unwrap();
+        assert_eq!(
+            actual.ids().collect::<Vec<_>>(),
+            expected.ids().collect::<Vec<_>>()
+        );
+        replace_sidecar(&path, &original);
+    }
+    let blob = fixture.records[0].0;
+    let result = objects.reachable_difference(&[blob], &[]).unwrap();
+    assert_eq!(result.ids().collect::<Vec<_>>(), [blob]);
+    assert_eq!(result.count(ObjectKind::Blob), 1);
+    let missing = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"missing");
+    assert!(
+        matches!(objects.reachable_difference(&[commit], &[missing]), Err(Error::MissingObject(id)) if id == missing)
+    );
+    assert!(matches!(
+        objects.reachable_difference_with(
+            &[commit],
+            &[],
+            girt::bitmap::QueryLimits::default(),
+            &AtomicBool::new(true)
+        ),
+        Err(Error::Cancelled)
+    ));
+}
+
+#[test]
+fn query_limits_cover_both_closures_and_shallow_boundaries() {
+    let history = history_git::History::new(&[vec![], vec![0], vec![1]], false);
+    let root = history.root.path();
+    pack_git::git(root, &["repack", "-adb"], b"");
+    let repo = girt::Repository::open(root).unwrap();
+    let objects = repo.objects().unwrap().without_bitmaps();
+    let mut limits = girt::bitmap::QueryLimits::default();
+    limits.max_objects = 4; // Include closure is four objects; exclusion requires another visit.
+    assert!(matches!(
+        objects.reachable_difference_with(
+            &[history.ids[2]],
+            &[history.ids[0]],
+            limits,
+            &AtomicBool::new(false)
+        ),
+        Err(Error::Limit("query objects"))
+    ));
+    limits = girt::bitmap::QueryLimits::default();
+    limits.max_edges = 0;
+    assert!(matches!(
+        objects.reachable_difference_with(&[history.ids[2]], &[], limits, &AtomicBool::new(false)),
+        Err(Error::Limit("query edges"))
+    ));
+    limits = girt::bitmap::QueryLimits::default();
+    limits.max_walk_bytes = 0;
+    assert!(matches!(
+        objects.reachable_difference_with(&[history.ids[2]], &[], limits, &AtomicBool::new(false)),
+        Err(Error::Limit("walk bytes"))
+    ));
+    fs::write(root.join("shallow"), format!("{}\n", history.ids[2])).unwrap();
+    let shallow = girt::Repository::open(root).unwrap().objects().unwrap();
+    let result = shallow
+        .reachable_difference(&[history.ids[2]], &[])
+        .unwrap();
+    assert_eq!(result.count(ObjectKind::Commit), 1);
+    assert_eq!(result.count(ObjectKind::Tree), 1);
+}
+
+fn replace_sidecar(path: &std::path::Path, bytes: &[u8]) {
+    #[cfg(windows)]
+    {
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+    fs::remove_file(path).unwrap();
+    fs::write(path, bytes).unwrap();
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn midx_query_binds_multiple_packs_and_uncovered_loose_tip(#[case] format: ObjectFormat) {
+    let parents: Vec<_> = (0..8)
+        .map(|i| if i == 0 { vec![] } else { vec![i - 1] })
+        .collect();
+    let history = history_git::History::with_format(&parents, false, format);
+    let root = history.root.path();
+    let prefix = root.join("objects/pack/pack");
+    let tree = format.hash_object(ObjectKind::Tree, b"");
+    for (part, ids) in history.ids.chunks(4).enumerate() {
+        let mut input = ids.iter().map(|id| format!("{id}\n")).collect::<String>();
+        if part == 0 {
+            input.push_str(&format!("{tree}\n"));
+        }
+        pack_git::git(
+            root,
+            &["pack-objects", prefix.to_str().unwrap()],
+            input.as_bytes(),
+        );
+    }
+    pack_git::git(root, &["multi-pack-index", "write", "--bitmap"], b"");
+    let objects = girt::Repository::open(root).unwrap().objects().unwrap();
+    assert_eq!(objects.packs().count(), 2);
+    let tip = history.ids[7];
+    let mut limits = girt::bitmap::QueryLimits::default();
+    limits.max_walk_bytes = 0;
+    let result = objects
+        .reachable_difference_with(&[tip], &[], limits, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(
+        result.ids().collect::<BTreeSet<_>>(),
+        reachable_ids(root, tip)
+    );
+    assert_eq!(result.count(ObjectKind::Commit), 8);
+    let output = pack_git::git(
+        root,
+        &["commit-tree", &tree.to_string(), "-p", &tip.to_string()],
+        b"uncovered loose tip\n",
+    );
+    let new_tip = std::str::from_utf8(&output)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let result = objects
+        .reachable_difference(&[new_tip], &[history.ids[3]])
+        .unwrap();
+    assert_eq!(
+        result.ids().collect::<BTreeSet<_>>(),
+        difference_ids(root, &[new_tip], &[history.ids[3]])
+    );
+    // Disable MIDX acceleration; these packs have no individual bitmaps.
+    pack_git::git(root, &["config", "core.multiPackIndex", "false"], b"");
+    let disabled = girt::Repository::open(root).unwrap().objects().unwrap();
+    assert!(matches!(
+        disabled.reachable_difference_with(&[tip], &[], limits, &AtomicBool::new(false)),
+        Err(Error::Limit("walk bytes"))
+    ));
+    assert_eq!(
+        disabled
+            .reachable_difference(&[tip], &[])
+            .unwrap()
+            .ids()
+            .collect::<BTreeSet<_>>(),
+        reachable_ids(root, tip)
+    );
+}
+
+#[test]
+fn roots_include_tags_trees_and_gitlinks_without_following_submodules() {
+    let fixture = pack_git::Fixture::new(ObjectFormat::Sha1, true, 3);
+    let objects = fixture.repo.objects().unwrap();
+    let tag = fixture
+        .records
+        .iter()
+        .find(|(_, kind, _)| *kind == ObjectKind::Tag)
+        .unwrap()
+        .0;
+    let result = objects.reachable_difference(&[tag], &[]).unwrap();
+    assert_eq!(result.count(ObjectKind::Tag), 1);
+    assert_eq!(result.count(ObjectKind::Commit), 1);
+    assert_eq!(result.count(ObjectKind::Tree), 1);
+    assert_eq!(result.count(ObjectKind::Blob), 3);
+    let missing = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"not stored");
+    let input = format!("160000 commit {missing}\tsubmodule\n");
+    let tree = pack_git::git(
+        fixture.root.path(),
+        &["mktree", "--missing"],
+        input.as_bytes(),
+    );
+    let tree: ObjectId = std::str::from_utf8(&tree).unwrap().trim().parse().unwrap();
+    assert_eq!(
+        objects
+            .reachable_difference(&[tree], &[])
+            .unwrap()
+            .ids()
+            .collect::<Vec<_>>(),
+        [tree]
+    );
+}
+
+#[test]
+fn stale_midx_bitmap_cannot_hide_a_surviving_pack_copy() {
+    let fixture = pack_git::Fixture::new(ObjectFormat::Sha1, true, 4);
+    let root = fixture.root.path();
+    let input = fixture
+        .records
+        .iter()
+        .map(|(id, _, _)| format!("{id}\n"))
+        .collect::<String>();
+    pack_git::git(
+        root,
+        &[
+            "pack-objects",
+            "--no-reuse-object",
+            "--window=0",
+            "objects/pack/pack",
+        ],
+        input.as_bytes(),
+    );
+    pack_git::git(root, &["multi-pack-index", "write", "--bitmap"], b"");
+    let directory = root.join("objects/pack");
+    let bytes = fs::read(directory.join("multi-pack-index")).unwrap();
+    let index = girt::multi_pack_index::MultiPackIndex::parse(&bytes, ObjectFormat::Sha1).unwrap();
+    let selected = index.find(fixture.ordinary).unwrap();
+    let path = directory.join(index.pack_names()[selected.pack as usize]);
+    // Published pack artifacts are read-only on some platforms.
+    replace_sidecar(&path, b"removed");
+    fs::remove_file(&path).unwrap();
+    let pack_path = path.with_extension("pack");
+    replace_sidecar(&pack_path, b"removed");
+    fs::remove_file(pack_path).unwrap();
+    let objects = fixture.repo.objects().unwrap();
+    let commit = fixture
+        .records
+        .iter()
+        .find(|(_, kind, _)| *kind == ObjectKind::Commit)
+        .unwrap()
+        .0;
+    let expected = objects
+        .clone()
+        .without_bitmaps()
+        .reachable_difference(&[commit], &[])
+        .unwrap();
+    assert_eq!(
+        objects
+            .reachable_difference(&[commit], &[])
+            .unwrap()
+            .ids()
+            .collect::<Vec<_>>(),
+        expected.ids().collect::<Vec<_>>()
+    );
+    let mut limits = girt::bitmap::QueryLimits::default();
+    limits.max_walk_bytes = 0;
+    assert!(matches!(
+        objects.reachable_difference_with(&[commit], &[], limits, &AtomicBool::new(false)),
+        Err(Error::Limit("walk bytes"))
+    ));
+}
+
+#[test]
+fn malformed_objects_and_wrong_edge_kinds_preserve_query_errors() {
+    let history = history_git::History::new(&[vec![]], false);
+    let root = history.root.path();
+    let malformed = pack_git::git(
+        root,
+        &[
+            "hash-object",
+            "-t",
+            "commit",
+            "--literally",
+            "-w",
+            "--stdin",
+        ],
+        b"invalid commit\n",
+    );
+    let malformed = std::str::from_utf8(&malformed)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let objects = girt::Repository::open(root).unwrap().objects().unwrap();
+    assert!(
+        matches!(objects.reachable_difference(&[malformed], &[]), Err(Error::Object { id, .. }) if id == malformed)
+    );
+    let mut tree_input = b"100644 wrong-kind\0".to_vec();
+    tree_input.extend_from_slice(history.ids[0].as_bytes());
+    let tree = pack_git::git(
+        root,
+        &["hash-object", "-t", "tree", "--literally", "-w", "--stdin"],
+        &tree_input,
+    );
+    let tree = std::str::from_utf8(&tree).unwrap().trim().parse().unwrap();
+    assert!(
+        matches!(objects.reachable_difference(&[tree], &[]), Err(Error::Kind(id)) if id == history.ids[0])
+    );
+}

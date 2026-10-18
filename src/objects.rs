@@ -597,6 +597,7 @@ pub struct Objects {
     damage_history: Arc<crate::pack::DamageHistory>,
     abbreviations: Arc<prefix::LooseAbbreviations>,
     pub(crate) multi_pack_index_enabled: bool,
+    pub(crate) bitmaps_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -727,6 +728,7 @@ impl Objects {
                 damage_history,
                 abbreviations: Arc::default(),
                 multi_pack_index_enabled,
+                bitmaps_enabled: true,
                 directory,
                 shallow: crate::ShallowRoots::empty(format),
                 commit_graph: None,

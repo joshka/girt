@@ -1,4 +1,19 @@
-//! Reachability bitmaps and pack/MIDX reverse indexes.
+//! Reachable object sets, optional bitmap acceleration and pack/MIDX reverse indexes.
+//!
+//! Use [`Objects::reachable_difference`](crate::Objects::reachable_difference) for object counts or
+//! a fetch response's want/have difference. It uses valid bitmap shortcuts where available and
+//! walks uncovered graph objects. [`QueryLimits`] bounds both closures and optional metadata work;
+//! [`Reachability`] retains the object-store snapshot for subsequent reads.
+//!
+//! ```no_run
+//! use girt::Repository;
+//! let repository = Repository::open("repo.git")?;
+//! let tip = repository.head()?.id.ok_or("unborn HEAD")?;
+//! let objects = repository.objects()?;
+//! let reachable = objects.reachable_difference(&[tip], &[])?;
+//! println!("{} objects reachable from HEAD", reachable.len());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 //!
 //! A bitmap position names an object in pack order (or MIDX pseudo-pack order), not object-ID
 //! order. [`BitmapIndex`] checks compressed data and its association with a caller-selected pack
@@ -18,11 +33,14 @@
 //! ```
 
 mod ewah;
+mod inventory;
+mod query;
 mod reverse;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ewah::{Ewah, long, word};
+pub use query::{QueryLimits, Reachability};
 pub use reverse::ReverseIndex;
 
 use crate::{ObjectId, ObjectKind};
@@ -72,6 +90,24 @@ pub enum Error {
     /// The embedded pack/MIDX checksum differs from the caller's expected inventory.
     #[error("bitmap metadata belongs to another pack or multi-pack index")]
     Binding,
+    /// Reading or validating a graph object failed.
+    #[error("reading bitmap query object")]
+    Read(#[from] crate::ObjectReadError),
+    /// A named graph object is unavailable in this snapshot.
+    #[error("missing reachable object {0}")]
+    MissingObject(ObjectId),
+    /// A graph object's content cannot be interpreted.
+    #[error("malformed reachable object {id}")]
+    Object {
+        /// Object whose contents failed to parse.
+        id: ObjectId,
+        /// The typed parser failure.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    /// An edge's declared kind disagrees with the target object.
+    #[error("reachable object {0} has the wrong kind")]
+    Kind(ObjectId),
     /// Cooperative cancellation was requested; no partial bitmap is returned.
     #[error("bitmap operation cancelled")]
     Cancelled,
