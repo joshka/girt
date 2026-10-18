@@ -271,7 +271,7 @@ fn checked_path(definition: &Definition) -> Result<Vec<u8>, PlanError> {
     Ok(path.to_vec())
 }
 
-fn active(config: &Config, name: &[u8], path: &[u8]) -> Result<bool, PlanError> {
+pub(super) fn active(config: &Config, name: &[u8], path: &[u8]) -> Result<bool, PlanError> {
     if let Some(active) = config
         .boolean("submodule", Some(name), "active")
         .map_err(|_| PlanError::InvalidSetting("active"))?

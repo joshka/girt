@@ -241,5 +241,29 @@ New shallow clones are explicitly refused until
 [shallow clone support](https://github.com/joshka/girt/issues/727) lands. Commits absent from
 advertised heads/tags require [direct object-ID fetch](https://github.com/joshka/girt/issues/726).
 Workflow fetch currently has trusted limits and no caller cancellation;
-[fetch controls](https://github.com/joshka/girt/issues/725) track that gap. Clone recursion remains
-tracked in [the submodules issue](https://github.com/joshka/girt/issues/507).
+[fetch controls](https://github.com/joshka/girt/issues/725) track that gap.
+
+## Clone with nested children
+
+Pass `Some(RecursionOptions::new(update_options))` to `CloneOptions::with_submodules` to populate
+children after the superproject checkout. The default clone remains nonrecursive. The child policy
+supplies its own explicit identity, captured environment and filter permission, independently from
+the superproject's checkout settings. Bare and no-checkout recursion requests are refused before
+transfer. An unborn remote has no checked-out children to traverse.
+
+For an existing checked-out parent, call `submodule::populate_recursive` with its selected remote
+URL, the same policy and transfer callbacks. Each initialized child URL becomes the base for nested
+relative URLs. Children honor explicit activation booleans/pathspecs and none update methods. The
+library preserves caller activation policy without writing `submodule.active=.`; Git's CLI recursive
+clone writes that local setting. The future girt CLI flag must reproduce that side effect in the
+[CLI layer](https://github.com/joshka/girt/issues/487).
+
+Set `max_depth` and `max_submodules` on the policy before calling. Defaults are eight nesting levels
+and 1024 children, with a hard depth ceiling of 64. These bound traversal rather than total transfer
+bytes. A flat `RecursiveReport` records root-relative paths and completed initialization/population
+phases in depth-first index order. `RecursiveError` adds the failing path and typed cause. A clone
+recursion failure retains both the completed superproject clone/checkout and this child report.
+Inspect all partial effects before recovery; completed children remain on disk.
+
+General checkout/switch transitions involving gitlinks and `submodule.recurse` integration remain
+tracked in [issue 743](https://github.com/joshka/girt/issues/743).

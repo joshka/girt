@@ -13,11 +13,12 @@
 //! checkouts; configured parent status includes these observations in [`crate::status::Report`].
 //! [`Definition::plan_init`] proposes local config assignments; [`Definition::plan_update`] selects
 //! a recorded commit and update method. [`InitPlan::apply`] publishes config after checking inputs;
-//! [`UpdatePlan::apply`] performs filtered checkout/none updates in existing children. Fetch, clone
-//! are available through explicit [`UpdatePlan::populate`], including absorbed metadata layout.
-//! Recursion remains a separate operation. External
-//! update commands are always refused in `.gitmodules`; user configuration additionally requires
-//! resolved provenance and separate [`Commands`] permission.
+//! [`UpdatePlan::apply`] performs filtered checkout/none updates in existing children. Fetch and
+//! clone are available through explicit [`UpdatePlan::populate`], including absorbed metadata
+//! layout. [`populate_recursive`] composes bounded initialization/population of nested children and
+//! backs [`crate::workflow::CloneOptions::with_submodules`]. External update commands are always
+//! refused in `.gitmodules`; user configuration additionally requires resolved provenance and
+//! separate [`Commands`] permission.
 //!
 //! ```
 //! use girt::submodule::{Modules, Update};
@@ -35,7 +36,12 @@ mod execute;
 mod load;
 mod plan;
 mod populate;
+mod recursive;
 pub use populate::{PopulateError, PopulateFailure, PopulateReport};
+pub use recursive::{
+    RecursionOptions, RecursiveEntry, RecursiveError, RecursiveFailure, RecursiveReport,
+    populate_recursive,
+};
 mod status;
 mod url;
 pub use execute::{InitError, UpdateError, UpdateOptions, UpdateReport};

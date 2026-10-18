@@ -108,7 +108,7 @@ commit ID from the other repository, and `.gitmodules` says where to fetch it:
 `git submodule update --init` clones the submodule and checks out the recorded commit. Status
 reports whether a submodule's checkout matches the recorded commit.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/507">Read and lexically validate `.gitmodules` from explicit worktree/index/commit sources and resolve relative URLs with `girt::submodule`. Inspect gitlink registration, HEAD and nested dirtiness with ignore precedence; configured parent status includes visible changes. Plan and publish initialization config, and apply filtered recorded-commit checkout updates to populated children. Initial clone retains gitlinks and creates empty child directories. Explicitly clone missing children into absorbed modules storage or fetch absent commits before checkout. Other update methods and recursion remain incomplete.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/507">Read and lexically validate `.gitmodules` from explicit worktree/index/commit sources and resolve relative URLs with `girt::submodule`. Inspect gitlink registration, HEAD and nested dirtiness with ignore precedence; configured parent status includes visible changes. Plan and publish initialization config, and apply filtered recorded-commit checkout updates to populated children. Initial clone retains gitlinks and creates empty child directories. Explicitly clone missing children into absorbed modules storage or fetch absent commits before checkout. Opt into bounded recursive population after clone. Other update methods and general checkout/switch gitlink transitions remain incomplete.</GirtStatus>
 
 ## Notes
 
