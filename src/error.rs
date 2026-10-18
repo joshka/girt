@@ -161,6 +161,7 @@ from_domain_errors! {
     crate::merge::CommitError,
     crate::merge::PublicationError,
     crate::reset::ResetError,
+    crate::rerere::Error,
     crate::message::TrailerCommandError,
     crate::attributes::Error,
     crate::attributes::LoadError,
