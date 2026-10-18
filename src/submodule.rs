@@ -9,8 +9,12 @@
 //! Parsing preserves names and paths for inspection. Call [`Definition::validate`] before using
 //! either in a filesystem operation. Validation is lexical; it does not establish that existing
 //! directories are free of symlinks or that a concurrent writer cannot replace them. This module
-//! does not yet initialize or update a submodule checkout. [`status()`] inspects existing
+//! computes initialization/update plans without changing a checkout. [`status()`] inspects existing
 //! checkouts; configured parent status includes these observations in [`crate::status::Report`].
+//! [`Definition::plan_init`] proposes local config assignments; [`Definition::plan_update`] selects
+//! a recorded commit and update method. Both leave publication and execution explicit. External
+//! update commands are always refused in `.gitmodules`; user configuration additionally requires
+//! resolved provenance and separate [`Commands`] permission.
 //!
 //! ```
 //! use girt::submodule::{Modules, Update};
@@ -25,7 +29,9 @@
 //! ```
 
 mod load;
+mod plan;
 mod status;
+pub use plan::{Commands, InitPlan, PlanError, UpdateMethod, UpdatePlan};
 mod url;
 pub use load::{LoadError, Source};
 pub use status::{Checkout, StatusError, status, status_with};
@@ -86,6 +92,7 @@ pub struct Definition {
     url: Option<Vec<u8>>,
     branch: Option<Vec<u8>>,
     update: Update,
+    update_explicit: bool,
     ignore: Ignore,
     shallow: Option<bool>,
     fetch_recurse: Option<FetchRecurse>,
@@ -132,6 +139,7 @@ impl Definition {
             url: value("url").map(<[u8]>::to_vec),
             branch: value("branch").map(<[u8]>::to_vec),
             update,
+            update_explicit: value("update").is_some(),
             ignore,
             shallow: config
                 .boolean("submodule", Some(name), "shallow")

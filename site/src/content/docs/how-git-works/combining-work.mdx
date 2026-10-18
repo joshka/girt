@@ -108,7 +108,7 @@ commit ID from the other repository, and `.gitmodules` says where to fetch it:
 `git submodule update --init` clones the submodule and checks out the recorded commit. Status
 reports whether a submodule's checkout matches the recorded commit.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/507">Read and lexically validate `.gitmodules` from explicit worktree/index/commit sources and resolve relative URLs with `girt::submodule`. Inspect gitlink registration, HEAD and nested dirtiness with ignore precedence; configured parent status includes visible changes. Init, update and clone recursion remain unsupported.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/507">Read and lexically validate `.gitmodules` from explicit worktree/index/commit sources and resolve relative URLs with `girt::submodule`. Inspect gitlink registration, HEAD and nested dirtiness with ignore precedence; configured parent status includes visible changes. Compute initialization assignments and recorded-commit update plans without side effects. Init/update execution and clone recursion remain unsupported.</GirtStatus>
 
 ## Notes
 
