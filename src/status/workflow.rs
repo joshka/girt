@@ -260,6 +260,65 @@ impl Repository {
         }
     }
 
+    /// Reports ignore-aware status with working files converted as Git converts them.
+    ///
+    /// Behaves as [`Self::status_with`], except that each tracked regular file that is read is
+    /// first converted by `filters` (from [`Self::filters`]) as [`Pipeline::to_repository`] would
+    /// store it, and the result is hashed. `core.safecrlf` is not applied, as `git status` does
+    /// not apply it. A file whose stat words match its index entry is still trusted without
+    /// reading. As in Git, a file whose size differs from the nonzero size cached in the index is
+    /// reported as [`Change::Modified`](super::Change::Modified) even when its converted content
+    /// matches, for example after only its line endings changed; the reported identity is then
+    /// the index's own. [`Report::comparison`] is
+    /// [`Comparison::ConvertedContent`](super::Comparison::ConvertedContent).
+    ///
+    /// Files are read in parallel and converted one at a time. Filter commands run only if
+    /// `filters` allows them, and a long-running filter process stays running in `filters` after
+    /// the call.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::status_with`], plus [`Error::Filter`] when a conversion
+    /// fails: a required driver failed, a command would run under
+    /// [`Commands::Refuse`](crate::filter::Commands::Refuse), or attributes could not be read.
+    ///
+    /// [`Pipeline::to_repository`]: crate::filter::Pipeline::to_repository
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "status_with's inputs plus the conversion pipeline"
+    )]
+    pub fn status_with_filters(
+        &self,
+        baseline: Baseline,
+        untracked: UntrackedFiles,
+        ignore: &WorktreeRules,
+        paths: &Pathspec,
+        filters: &mut crate::filter::Pipeline,
+        limits: Limits,
+        cancel: &AtomicBool,
+    ) -> Result<Report, Error> {
+        super::types::check(cancel)?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        return supported::run_with_checkpoint(
+            self,
+            baseline,
+            super::worktree::Listing::Ignoring(Box::new(ignore.base().clone()), untracked),
+            paths,
+            Some(filters),
+            limits,
+            cancel,
+            || {},
+        );
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (baseline, untracked, ignore, paths, filters, limits);
+            Err(Error::Unsupported {
+                path: vec![],
+                reason: "descriptor-relative worktree traversal requires macOS/Linux",
+            })
+        }
+    }
+
     /// Reports ignore-aware status with [`Limits::default`] and no cancellation.
     ///
     /// Equivalent to `self.status_with(baseline, untracked, ignore, &Pathspec::all(),
@@ -304,14 +363,16 @@ mod supported {
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Report, Error> {
-        run_with_checkpoint(repo, baseline, listing, paths, limits, cancel, || {})
+        run_with_checkpoint(repo, baseline, listing, paths, None, limits, cancel, || {})
     }
 
-    fn run_with_checkpoint(
+    #[expect(clippy::too_many_arguments, reason = "one status run's inputs")]
+    pub(super) fn run_with_checkpoint(
         repo: &Repository,
         baseline: Baseline,
         listing: Listing,
         paths: &Pathspec,
+        filters: Option<&mut crate::filter::Pipeline>,
         mut limits: Limits,
         cancel: &AtomicBool,
         before_recheck: impl FnOnce(),
@@ -413,6 +474,15 @@ mod supported {
             Listing::Raw(policy) => (*policy, None),
             Listing::Ignoring(_, files) => (Untracked::Omit, Some(*files)),
         };
+        let comparison = if filters.is_some() {
+            super::super::Comparison::ConvertedContent
+        } else {
+            super::super::Comparison::RawBytesAndPosixModes
+        };
+        let shared = filters.map(|pipeline| super::super::worktree::Shared {
+            pipeline: std::sync::Mutex::new(pipeline),
+            objects: &objects,
+        });
         let observed = super::super::worktree::scan(
             repo,
             root,
@@ -420,6 +490,7 @@ mod supported {
             index_written,
             listing,
             paths,
+            shared.as_ref().map(|shared| shared as _),
             limits,
             cancel,
         )?;
@@ -435,7 +506,7 @@ mod supported {
         }
         check(cancel)?;
         Ok(Report {
-            comparison: super::super::Comparison::RawBytesAndPosixModes,
+            comparison,
             baseline_tree: tree,
             index_missing: index.is_none(),
             staged,
@@ -556,6 +627,7 @@ mod supported {
                 Baseline::Head,
                 Listing::Raw(Untracked::Omit),
                 &Pathspec::all(),
+                None,
                 Limits::default(),
                 &AtomicBool::new(false),
                 || {

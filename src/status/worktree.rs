@@ -26,6 +26,37 @@ pub(super) struct Observation {
     pub boundaries: Vec<Vec<u8>>,
 }
 
+/// Conversion applied to tracked regular files before comparing them with the index.
+pub(crate) trait Convert: Sync {
+    /// The stored form of `file` at `path`, whose index entry names `staged`.
+    fn convert(&self, path: &[u8], file: &[u8], staged: ObjectId) -> Result<Vec<u8>, Error>;
+}
+
+/// A shared pipeline with the objects `text=auto` reads staged blobs from.
+pub(crate) struct Shared<'a> {
+    pub(crate) pipeline: Mutex<&'a mut crate::filter::Pipeline>,
+    pub(crate) objects: &'a crate::Objects,
+}
+
+impl Convert for Shared<'_> {
+    fn convert(&self, path: &[u8], file: &[u8], staged: ObjectId) -> Result<Vec<u8>, Error> {
+        let mut pipeline = self
+            .pipeline
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let staged = crate::filter::Staged::Object(self.objects, staged);
+        pipeline
+            .stored_for_status(path, file, staged)
+            .map(std::borrow::Cow::into_owned)
+            .map_err(|source| Error::Filter {
+                path: path.to_vec(),
+                source: Box::new(source),
+            })
+    }
+}
+
+pub(crate) type Filters<'a> = &'a dyn Convert;
+
 /// How a scan treats paths absent from the index.
 pub(super) enum Listing {
     /// Raw status: list every leaf or none, never consulting ignore rules.
@@ -49,6 +80,7 @@ pub(super) fn scan(
     index_written: Option<u32>,
     listing: Listing,
     paths: &Pathspec,
+    filters: Option<Filters<'_>>,
     limits: Limits,
     cancel: &AtomicBool,
 ) -> Result<Observation, Error> {
@@ -59,6 +91,7 @@ pub(super) fn scan(
         index_written,
         listing,
         paths,
+        filters,
         limits,
         cancel,
         &|_| {},
@@ -74,6 +107,7 @@ fn scan_with_hook(
     index_written: Option<u32>,
     listing: Listing,
     paths: &Pathspec,
+    filters: Option<Filters<'_>>,
     limits: Limits,
     cancel: &AtomicBool,
     after_read: &(dyn Fn(&[u8]) + Sync),
@@ -124,6 +158,7 @@ fn scan_with_hook(
         index_written,
         policy,
         paths,
+        filters,
         max_file_bytes: limits.max_file_bytes,
         max_depth,
         directory_entries: Budget::new(limits.max_directory_entries),
@@ -218,6 +253,9 @@ enum Visited {
 #[derive(Clone, Copy)]
 enum Observed {
     Leaf(TreeValue),
+    /// The file's size differs from the cached index size, which Git reports as modified even
+    /// when its converted content matches the index.
+    Resized(TreeValue),
     Directory,
     Blocked,
 }
@@ -256,6 +294,7 @@ struct Scan<'a> {
     policy: Policy,
     /// Paths outside this pathspec are neither read nor listed.
     paths: &'a Pathspec,
+    filters: Option<Filters<'a>>,
     max_file_bytes: usize,
     max_depth: usize,
     directory_entries: Budget,
@@ -666,12 +705,22 @@ impl Scan<'_> {
         let after = statat(fd, OsStr::from_bytes(name), AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|source| io(path, source))?;
         same(path, stat, &after)?;
+        let Some(filters) = self.filters.filter(|_| kind == FileType::RegularFile) else {
+            let id = ObjectId::for_blob(self.format, &bytes);
+            found.observe(slots, Observed::Leaf(TreeValue { id, mode }));
+            return Ok(());
+        };
+        let id = ObjectId::for_blob(self.format, &filters.convert(path, &bytes, entry.id)?);
+        let value = TreeValue { id, mode };
+        let cached = entry.stat.size;
+        let resized = cached != 0 && cached != stat.st_size as u32;
         found.observe(
             slots,
-            Observed::Leaf(TreeValue {
-                id: ObjectId::for_blob(self.format, &bytes),
-                mode,
-            }),
+            if resized {
+                Observed::Resized(value)
+            } else {
+                Observed::Leaf(value)
+            },
         );
         Ok(())
     }

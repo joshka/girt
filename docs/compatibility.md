@@ -2558,6 +2558,14 @@ capability for a direction leaves content unchanged, or fails a required driver.
 discards the process; the next request starts a new one. Paths with `working-tree-encoding` are
 refused with `filter::Error::Unsupported`.
 
+`Repository::status_with_filters` converts each tracked regular file it reads with
+`Pipeline::to_repository`, without `core.safecrlf`, and hashes the result; `text=auto` reads the
+staged blob only when its rule needs it. Files whose stat words match the index are trusted unread,
+as before. As in Git, a file whose size differs from a nonzero cached index size is modified even
+when its converted content matches the index (observed: changing only line endings under
+`core.autocrlf=input` makes `git status` report `M` while `git diff` is empty). Workers read files
+in parallel and convert them one at a time through the shared pipeline.
+
 ### Content Filters Evidence
 
 `tests/filter_eol.rs` compares `Pipeline::to_repository` with the blobs `git add` stores and its
@@ -2577,7 +2585,12 @@ the output limit. `tests/filter_process.rs` runs an original Perl process filter
 results and the request headers it logged, including content over one pkt-line, an empty file and
 `status=error` before and after content; it checks `status=abort` against Git's exit status, and a
 Git LFS round trip (pointer and content) against `git add` when `git-lfs` is installed (3.8.0 on the
-development machine).
+development machine). `tests/filter_status.rs` compares `status_with_filters` with
+`git --no-optional-locks status --porcelain` after aging the index so files are reread: CRLF files
+checked out under `core.autocrlf=true` (clean, while raw status reports them), a line-ending-only
+change (modified), `ident`, `text` added after a CRLF commit (modified), same-size edits through a
+clean filter (clean when the cleaned content matches), refusal of filter commands, and Git LFS
+files.
 
 ## Working-Tree Index
 

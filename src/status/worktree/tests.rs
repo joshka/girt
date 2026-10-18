@@ -39,6 +39,7 @@ fn observe(
         None,
         Listing::Raw(Untracked::Omit),
         &Pathspec::all(),
+        None,
         limits,
         &AtomicBool::new(false),
     )
@@ -193,6 +194,7 @@ fn reports_change_observed_after_content_read() {
         None,
         Listing::Raw(Untracked::Omit),
         &Pathspec::all(),
+        None,
         Limits::default(),
         &AtomicBool::new(false),
         &|_| fs::write(root.join("file"), b"different").unwrap(),
@@ -216,6 +218,7 @@ fn reports_directory_mutation_during_scan() {
         None,
         Listing::Raw(Untracked::Omit),
         &Pathspec::all(),
+        None,
         Limits::default(),
         &AtomicBool::new(false),
         &|_| fs::write(root.join("new-file"), b"new").unwrap(),
@@ -234,6 +237,7 @@ fn cancellation_during_read_returns_no_partial_report() {
         None,
         Listing::Raw(Untracked::Omit),
         &Pathspec::all(),
+        None,
         Limits::default(),
         &cancel,
         &|_| cancel.store(true, Ordering::Relaxed),
@@ -259,6 +263,7 @@ fn skips_nested_repository_and_bare_metadata() {
         None,
         Listing::Raw(Untracked::RawFilesWithoutIgnores),
         &Pathspec::all(),
+        None,
         Limits::default(),
         &AtomicBool::new(false),
     )
@@ -318,6 +323,7 @@ fn replaced_parent_is_detected_without_following_new_symlink() {
         None,
         Listing::Raw(Untracked::Omit),
         &Pathspec::all(),
+        None,
         Limits::default(),
         &AtomicBool::new(false),
         &|_| {
@@ -407,6 +413,7 @@ fn shared_pattern_budget_admits_exactly_the_limit(#[case] gitignore: &[u8], #[ca
         None,
         Listing::Ignoring(Box::new(rules), UntrackedFiles::All),
         &Pathspec::all(),
+        None,
         Limits::default(),
         &AtomicBool::new(false),
     );
@@ -428,6 +435,7 @@ fn directory_names_are_charged_while_they_are_read() {
         None,
         Listing::Raw(Untracked::Omit),
         &Pathspec::all(),
+        None,
         Limits::default().with_max_directory_entries(8),
         &AtomicBool::new(false),
     );
