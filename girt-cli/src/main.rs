@@ -163,6 +163,11 @@ enum Command {
     /// Speaks protocol v2 when `GIT_PROTOCOL` asks for it, as Git clients do, and v0 otherwise.
     /// Use it over SSH, or locally with `git clone --upload-pack='girt upload-pack' <directory>`.
     UploadPack(transfer::UploadPackArgs),
+    /// Receive a push on stdin and stdout, as the `--receive-pack` command of a Git client.
+    ///
+    /// Applies the repository's receive policy and hooks. Use it over SSH, or locally with
+    /// `git push --receive-pack='girt receive-pack' <directory>`.
+    ReceivePack(transfer::ReceivePackArgs),
 
     /// Check repository objects and connectivity; optionally export dangling objects.
     Fsck(fsck::Args),
@@ -318,6 +323,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Init(args) => repo::init(args, context),
         Command::Clone(args) => transfer::clone(args, context),
         Command::UploadPack(args) => transfer::upload_pack(args, context),
+        Command::ReceivePack(args) => transfer::receive_pack(args, context),
         Command::Object(command) => object::run(command, context),
         Command::Tree(command) => tree::run(command, context),
         Command::Ref(command) => refs::run(command, context),

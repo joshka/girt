@@ -392,3 +392,238 @@ fn v0_wants_match_git_under_every_policy() {
         }
     }
 }
+
+/// The `--receive-pack` command naming the girt binary under test.
+fn receive_pack() -> String {
+    format!(
+        "--receive-pack='{}' receive-pack",
+        env!("CARGO_BIN_EXE_girt")
+    )
+}
+
+/// What a push left behind: the client's porcelain report, its exit status and the server's refs.
+#[derive(Debug, PartialEq)]
+struct Pushed {
+    report: String,
+    success: bool,
+    refs: String,
+}
+
+/// Pushes from a fresh clone of a fresh server, through girt's receive-pack or Git's.
+///
+/// `server` configures the bare server (or a non-bare one when `bare` is false) before the push,
+/// and `client` prepares the clone.
+fn push_scenario(
+    girt: bool,
+    bare: bool,
+    server: &dyn Fn(&Path),
+    client: &dyn Fn(&Path),
+    args: &[&str],
+) -> Pushed {
+    push_scenario_in("sha1", girt, bare, server, client, args)
+}
+
+fn push_scenario_in(
+    format: &str,
+    girt: bool,
+    bare: bool,
+    server: &dyn Fn(&Path),
+    client: &dyn Fn(&Path),
+    args: &[&str],
+) -> Pushed {
+    let root = tempfile::tempdir().unwrap();
+    let origin = origin(root.path(), format);
+    let server_path = root.path().join("server");
+    let mut clone_args = vec!["clone", "-q"];
+    if bare {
+        clone_args.push("--bare");
+    }
+    clone_args.extend([origin.to_str().unwrap(), "server"]);
+    git(root.path(), &clone_args, b"");
+    if !bare {
+        git(&server_path, &["switch", "-q", "main"], b"");
+    }
+    server(&server_path);
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            "--no-local",
+            server_path.to_str().unwrap(),
+            "client",
+        ],
+        b"",
+    );
+    let client_path = root.path().join("client");
+    client(&client_path);
+    let mut full = vec!["push", "--porcelain"];
+    let command = receive_pack();
+    if girt {
+        full.push(&command);
+    }
+    full.push("origin");
+    full.extend(args);
+    let output = git_output(&client_path, &full, b"");
+    let refs = String::from_utf8(git(
+        &server_path,
+        &["for-each-ref", "--format=%(objectname) %(refname)"],
+        b"",
+    ))
+    .unwrap();
+    Pushed {
+        report: String::from_utf8_lossy(&output.stdout)
+            .replace(&*server_path.to_string_lossy(), "SERVER"),
+        success: output.status.success(),
+        refs,
+    }
+}
+
+fn push_matches_git(bare: bool, server: &dyn Fn(&Path), client: &dyn Fn(&Path), args: &[&str]) {
+    let by_girt = push_scenario(true, bare, server, client, args);
+    let by_git = push_scenario(false, bare, server, client, args);
+    assert_eq!(by_girt, by_git);
+}
+
+fn new_commit(repo: &Path) {
+    commit(repo, "pushed");
+}
+
+fn rewind(repo: &Path) {
+    git(repo, &["reset", "-q", "--hard", "HEAD~1"], b"");
+    commit(repo, "rewritten");
+}
+
+fn hook(repo: &Path, name: &str, script: &str) {
+    let path = repo.join("hooks").join(name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[test]
+fn push_update_create_delete_matches_git() {
+    push_matches_git(
+        true,
+        &|_| {},
+        &new_commit,
+        &["main", "HEAD:refs/heads/new", ":refs/heads/side"],
+    );
+}
+
+#[test]
+fn push_non_fast_forward_matches_git() {
+    push_matches_git(true, &|_| {}, &rewind, &["+main"]);
+    let deny = |repo: &Path| {
+        git(
+            repo,
+            &["config", "receive.denyNonFastForwards", "true"],
+            b"",
+        )
+        .clear()
+    };
+    push_matches_git(true, &deny, &rewind, &["+main"]);
+}
+
+#[test]
+fn push_deletes_match_git() {
+    let deny = |repo: &Path| git(repo, &["config", "receive.denyDeletes", "true"], b"").clear();
+    push_matches_git(true, &deny, &|_| {}, &[":refs/heads/side"]);
+}
+
+#[test]
+fn push_hidden_refs_match_git() {
+    let hide = |repo: &Path| {
+        git(
+            repo,
+            &["config", "receive.hideRefs", "refs/heads/side"],
+            b"",
+        )
+        .clear()
+    };
+    push_matches_git(true, &hide, &new_commit, &["HEAD:refs/heads/side"]);
+}
+
+#[test]
+fn push_to_checked_out_branch_matches_git() {
+    push_matches_git(false, &|_| {}, &new_commit, &["main"]);
+    let warn = |repo: &Path| {
+        git(repo, &["config", "receive.denyCurrentBranch", "warn"], b"").clear();
+    };
+    push_matches_git(false, &warn, &new_commit, &["main"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn push_hooks_match_git() {
+    let pre_receive = |repo: &Path| hook(repo, "pre-receive", "echo refusing >&2; exit 1");
+    push_matches_git(true, &pre_receive, &new_commit, &["main"]);
+    let update = |repo: &Path| {
+        hook(
+            repo,
+            "update",
+            r#"test "$1" = refs/heads/new && exit 1; exit 0"#,
+        );
+    };
+    push_matches_git(true, &update, &new_commit, &["main", "HEAD:refs/heads/new"]);
+}
+
+#[test]
+fn sha256_push_matches_git() {
+    let args = ["main", "HEAD:refs/heads/new", ":refs/heads/side"];
+    assert_eq!(
+        push_scenario_in("sha256", true, true, &|_| {}, &new_commit, &args),
+        push_scenario_in("sha256", false, true, &|_| {}, &new_commit, &args),
+    );
+}
+
+#[test]
+fn stale_lease_matches_git() {
+    let moved = |repo: &Path| git(repo, &["update-ref", "refs/heads/side", "main"], b"").clear();
+    let server = |_: &Path| {};
+    let by_girt = push_scenario(
+        true,
+        true,
+        &server,
+        &moved,
+        &["--force-with-lease=side:main", "HEAD:refs/heads/side"],
+    );
+    let by_git = push_scenario(
+        false,
+        true,
+        &server,
+        &moved,
+        &["--force-with-lease=side:main", "HEAD:refs/heads/side"],
+    );
+    assert_eq!(by_girt, by_git);
+}
+
+#[cfg(unix)]
+#[test]
+fn push_options_reach_hooks_as_with_git() {
+    let server = |repo: &Path| {
+        git(
+            repo,
+            &["config", "receive.advertisePushOptions", "true"],
+            b"",
+        )
+        .clear();
+        hook(
+            repo,
+            "pre-receive",
+            r#"test "$GIT_PUSH_OPTION_COUNT" = 2 && test "$GIT_PUSH_OPTION_1" = second"#,
+        );
+    };
+    push_matches_git(
+        true,
+        &server,
+        &new_commit,
+        &["-o", "first", "-o", "second", "main"],
+    );
+    // Options to a receiver that doesn't advertise them are refused by the client.
+    push_matches_git(true, &|_| {}, &new_commit, &["-o", "first", "main"]);
+}

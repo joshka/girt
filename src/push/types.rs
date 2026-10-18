@@ -512,7 +512,7 @@ pub struct PushReport {
     pub integrity: Option<crate::fsck::TransferReport>,
 }
 impl PushReport {
-    pub(super) fn pending(commands: &[PushCommand]) -> Self {
+    pub(crate) fn pending(commands: &[PushCommand]) -> Self {
         Self {
             unpack: None,
             progress: vec![],

@@ -321,6 +321,13 @@ export const calls: Record<string, CliCalls> = {
       unreleased('serve::Protocol::from_parameters', 520),
     ],
   },
+  'receive-pack': {
+    git: 'git receive-pack',
+    api: [
+      unreleased('serve::ReceivePack::serve', 520),
+      unreleased('serve::ReceivePack::with_identity', 520),
+    ],
+  },
 
   // Packs and maintenance.
   'pack list': {

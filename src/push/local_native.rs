@@ -372,8 +372,21 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
             .zip(&current_values)
             // Deletions are never up to date: deleting an absent reference still checks its
             // expected value, as with `git push --force-with-lease`.
-            .map(|(command, current)| !command.deletes() && *current == Some(command.new))
+            // A received command is a compare-and-swap like Git's: its old value must match too.
+            .map(|(command, current)| {
+                !command.deletes()
+                    && *current == Some(command.new)
+                    && (!prepared.received || command.expected == *current)
+            })
             .collect();
+        // Hooks see the old value the client supplied, as Git's receive-pack passes it.
+        let hook_old = |index: usize| {
+            if prepared.received {
+                prepared.commands[index].expected.unwrap_or(null)
+            } else {
+                current_values[index].unwrap_or(null)
+            }
+        };
         let hook_updates = |selected: &dyn Fn(usize) -> bool| {
             prepared
                 .commands
@@ -381,7 +394,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 .enumerate()
                 .filter(|&(index, _)| selected(index))
                 .map(|(index, command)| super::hooks::HookUpdate {
-                    old: current_values[index].unwrap_or(null),
+                    old: hook_old(index),
                     new: command.new,
                     name: &command.name,
                 })
@@ -469,7 +482,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 report.refs[index].status = Some(Status::Ok);
                 continue;
             }
-            let old = current_values[index].unwrap_or(null).to_string();
+            let old = hook_old(index).to_string();
             let new = command.new.to_string();
             let (accepted, messages) = hooks
                 .run(
@@ -494,8 +507,34 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
                 continue;
             }
+            // Like Git, a received branch tip must be a commit.
+            if prepared.received
+                && !command.deletes()
+                && command.name.as_bytes().starts_with(b"refs/heads/")
+            {
+                let objects = repository
+                    .objects_with(prepared.limits.destination_packs)
+                    .map_err(|error| PushError::Uncertain {
+                        cause: PushFailure::install(FetchError::Destination(error)),
+                        report: Box::new(report.clone()),
+                    })?;
+                let kind = objects
+                    .header(command.new, prepared.limits.read)
+                    .map_err(|error| PushError::Uncertain {
+                        cause: PushFailure::install(FetchError::Destination(error)),
+                        report: Box::new(report.clone()),
+                    })?
+                    .map(|header| header.kind());
+                if kind != Some(crate::ObjectKind::Commit) {
+                    report.refs[index].status =
+                        Some(Status::Rejected(b"invalid new value provided".to_vec()));
+                    report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
+                    continue;
+                }
+            }
             if hide.matches(&command.name) {
-                report.refs[index].status = Some(Status::Rejected(b"hidden reference".to_vec()));
+                report.refs[index].status =
+                    Some(Status::Rejected(b"deny updating a hidden ref".to_vec()));
                 report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
                 continue;
             }
@@ -528,7 +567,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 }
             }
             if command.deletes() && deny_deletes {
-                report.refs[index].status = Some(Status::Rejected(b"deletion denied".to_vec()));
+                report.refs[index].status = Some(Status::Rejected(b"deletion prohibited".to_vec()));
                 report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
                 continue;
             }
@@ -575,7 +614,12 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 }
                 Err(TransactionError::Prepare { source, .. }) => {
                     let (reason, origin) = if matches!(source, ReferenceError::Mismatch { .. }) {
-                        (b"stale old value".to_vec(), RejectionOrigin::ExpectedValue)
+                        let reason: &[u8] = if prepared.received {
+                            b"incorrect old value provided"
+                        } else {
+                            b"stale old value"
+                        };
+                        (reason.to_vec(), RejectionOrigin::ExpectedValue)
                     } else {
                         (
                             b"reference storage rejected".to_vec(),
@@ -806,4 +850,34 @@ fn reflog_policy(
         committer: identity.clone(),
         message: b"push".to_vec(),
     })
+}
+
+/// Receives commands and a pack from a remote client, as `git receive-pack` does, applying the
+/// same policy, validation, quarantine and hooks as a native local push.
+///
+/// Commands carry the client's expected old values, and force is allowed: like Git, the receiver
+/// refuses non-fast-forward updates only under `receive.denyNonFastForwards`. A thin `pack` is
+/// completed from the repository's objects.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn receive(
+    destination: &Path,
+    config_inputs: &ConfigInputs,
+    format: crate::ObjectFormat,
+    commands: Vec<super::PushCommand>,
+    pack: crate::fetch::Bytes,
+    options: Option<Vec<Vec<u8>>>,
+    limits: super::PushLimits,
+    identity: Option<&Signature>,
+    control: TransportControl<'_>,
+) -> Result<PushReport, PushError> {
+    let prepared = PreparedPush::received(format, commands, pack, limits, options);
+    send_preparing(
+        destination,
+        format,
+        control,
+        identity,
+        config_inputs,
+        |_| Ok(prepared),
+        |_| {},
+    )
 }
