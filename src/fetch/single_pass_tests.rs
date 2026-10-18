@@ -281,6 +281,7 @@ fn validate(
         FetchOptions {
             limits: FetchLimits::default(),
             depth: None,
+            filter: None,
         },
         &mut ValidationObserver::new(&AtomicBool::new(false), &mut |_| {}),
     )

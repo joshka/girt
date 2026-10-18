@@ -130,6 +130,29 @@ impl FromStr for ObjectFilter {
     }
 }
 
+impl ObjectFilter {
+    /// Whether a server applying this filter may leave out an object of `kind`, reached from a
+    /// commit's root-tree edge when `root_tree` is set.
+    ///
+    /// Selected tips are always sent, so this concerns only objects they reach. The answer is
+    /// an upper bound: a blob's size and an object's depth below the root tree beyond the first
+    /// level are not known for an object that was not received, so `blob:limit` admits any
+    /// missing blob and `tree:<depth>` with a depth of 1 or more admits any missing object below a
+    /// root tree.
+    pub(crate) fn may_omit(&self, kind: ObjectKind, root_tree: bool) -> bool {
+        match self {
+            Self::BlobNone | Self::BlobLimit(_) | Self::SparseOid(_) => kind == ObjectKind::Blob,
+            Self::TreeDepth(depth) => match kind {
+                ObjectKind::Blob => true,
+                ObjectKind::Tree => *depth == 0 || !root_tree,
+                ObjectKind::Commit | ObjectKind::Tag => false,
+            },
+            Self::ObjectType(kept) => kind != *kept,
+            Self::Combine(parts) => parts.iter().any(|part| part.may_omit(kind, root_tree)),
+        }
+    }
+}
+
 impl fmt::Display for ObjectFilter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

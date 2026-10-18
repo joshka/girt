@@ -371,3 +371,159 @@ fn local_push_failure_is_not_masked_by_the_service() {
     );
     assert!(matches!(result, Err(TransferError::Push(_))), "{result:?}");
 }
+
+/// Blob IDs in `rev-list --missing=print` output, sorted.
+fn missing_objects(directory: &std::path::Path) -> Vec<String> {
+    let listed = git(
+        directory,
+        &["rev-list", "--objects", "--all", "--missing=print"],
+        b"",
+    );
+    let mut missing: Vec<String> = String::from_utf8(listed)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.strip_prefix('?').map(str::to_owned))
+        .collect();
+    missing.sort();
+    missing
+}
+
+/// A blobless fetch from a server that allows filters receives commits and trees only, and
+/// leaves a repository Git accepts as a partial clone of `origin`.
+#[rstest]
+#[case::v0_sha1("0", girt::ObjectFormat::Sha1)]
+#[case::v2_sha1("2", girt::ObjectFormat::Sha1)]
+#[case::v0_sha256("0", girt::ObjectFormat::Sha256)]
+#[case::v2_sha256("2", girt::ObjectFormat::Sha256)]
+fn blobless_fetch_leaves_a_partial_clone(
+    #[case] version: &str,
+    #[case] format: girt::ObjectFormat,
+) {
+    let fixture = Fixture::new(format, true, 3);
+    git(
+        fixture.root.path(),
+        &["config", "uploadpack.allowFilter", "true"],
+        b"",
+    );
+    let directory = tempfile::tempdir().unwrap();
+    git(
+        directory.path(),
+        &["init", "--quiet", &format!("--object-format={format}"), "."],
+        b"",
+    );
+    let url = format!("mem::{}", fixture.root.path().display());
+    git(directory.path(), &["remote", "add", "origin", &url], b"");
+    git(
+        directory.path(),
+        &["config", "protocol.mem.allow", "always"],
+        b"",
+    );
+    git(
+        directory.path(),
+        &["config", "protocol.version", version],
+        b"",
+    );
+    let repository = Repository::open(directory.path()).unwrap();
+
+    let outcome = girt::workflow::fetch(
+        &repository,
+        "origin",
+        &girt::workflow::FetchOptions::new(["refs/heads/*:refs/remotes/origin/*"])
+            .with_filter(girt::fetch::ObjectFilter::BlobNone),
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(GitService))),
+    )
+    .unwrap();
+    assert!(outcome.filter_applied);
+
+    let mut blobs: Vec<String> = fixture
+        .records
+        .iter()
+        .filter(|(_, kind, _)| *kind == girt::ObjectKind::Blob)
+        .map(|(id, _, _)| id.to_string())
+        .collect();
+    blobs.sort();
+    assert_eq!(missing_objects(directory.path()), blobs);
+    let pack = directory.path().join(".git/objects/pack");
+    let promisors = std::fs::read_dir(&pack)
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "promisor")
+        })
+        .count();
+    assert_eq!(promisors, 1);
+    let config = |name: &str| {
+        String::from_utf8(git(directory.path(), &["config", "get", name], b"")).unwrap()
+    };
+    assert_eq!(config("remote.origin.promisor"), "true\n");
+    assert_eq!(config("remote.origin.partialclonefilter"), "blob:none\n");
+    assert_eq!(config("core.repositoryformatversion"), "1\n");
+    git(directory.path(), &["fsck", "--strict"], b"");
+
+    // A later fetch without an explicit filter keeps using the configured one.
+    let repository = Repository::open(directory.path()).unwrap();
+    let outcome = girt::workflow::fetch(
+        &repository,
+        "origin",
+        &girt::workflow::FetchOptions::new(["refs/tags/*:refs/tags/*"]),
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(GitService))),
+    )
+    .unwrap();
+    assert!(outcome.filter_applied);
+    assert_eq!(missing_objects(directory.path()), blobs);
+    git(directory.path(), &["fsck", "--strict"], b"");
+
+    // `without_filter` overrides the configured filter, like `git fetch --no-filter`.
+    let outcome = girt::workflow::fetch(
+        &repository,
+        "origin",
+        &girt::workflow::FetchOptions::new(["refs/tags/*:refs/tags/*"]).without_filter(),
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(GitService))),
+    )
+    .unwrap();
+    assert!(!outcome.filter_applied);
+    assert_eq!(config("remote.origin.partialclonefilter"), "blob:none\n");
+}
+
+/// A server that does not allow filters sends every object; the fetch reports that the filter
+/// was not applied and installs an ordinary pack.
+#[rstest]
+#[case::v0("0")]
+#[case::v2("2")]
+fn filter_unsupported_by_server_fetches_everything(#[case] version: &str) {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let (directory, repository) = local(
+        &fixture,
+        &[
+            ("protocol.mem.allow", "always"),
+            ("protocol.version", version),
+        ],
+    );
+    let outcome = girt::workflow::fetch(
+        &repository,
+        "origin",
+        &girt::workflow::FetchOptions::new(["refs/heads/*:refs/remotes/origin/*"])
+            .with_filter(girt::fetch::ObjectFilter::BlobNone),
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(GitService))),
+    )
+    .unwrap();
+    assert!(!outcome.filter_applied);
+    assert!(missing_objects(directory.path()).is_empty());
+    let pack = directory.path().join(".git/objects/pack");
+    assert!(std::fs::read_dir(&pack).unwrap().all(|entry| {
+        entry
+            .unwrap()
+            .path()
+            .extension()
+            .is_none_or(|extension| extension != "promisor")
+    }));
+    git(directory.path(), &["fsck", "--strict"], b"");
+}

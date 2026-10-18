@@ -113,6 +113,7 @@ pub struct FetchRequest {
     retained_missing_sources: BTreeSet<Vec<u8>>,
     prune: bool,
     pub(super) depth: Option<NonZeroU32>,
+    pub(super) filter: Option<super::ObjectFilter>,
     shallow_before: Vec<ObjectId>,
 }
 
@@ -252,6 +253,7 @@ impl FetchRequest {
             retained_missing_sources: BTreeSet::new(),
             prune: false,
             depth: None,
+            filter: None,
             shallow_before,
         })
     }
@@ -382,6 +384,42 @@ impl FetchRequest {
     /// ```
     pub fn with_depth(mut self, depth: NonZeroU32) -> Self {
         self.depth = Some(depth);
+        self
+    }
+
+    /// Requests a partial fetch that leaves out the objects `filter` matches, like `git fetch
+    /// --filter`.
+    ///
+    /// Upload-pack sources that advertise filtering send a pack that omits those objects, and
+    /// [`FetchReady::finish`] installs it with a `.promisor` marker so Git treats the omitted
+    /// objects as promised by the remote. Other sources send a complete pack; the received
+    /// result's [`super::ReceivedFetch::filter_applied`] reports which happened. Native local
+    /// sources and bundles ignore the filter, as `git clone --filter` does for a local path.
+    ///
+    /// This does not record the filter in configuration; [`crate::workflow::fetch`] does.
+    ///
+    /// ```
+    /// use std::collections::BTreeSet;
+    ///
+    /// use girt::fetch::{FetchRequest, ObjectFilter};
+    /// use girt::refs::Reflog;
+    /// use girt::remote::Remote;
+    /// # let (_directory, _upstream, repo, _main, _) = include!("../doctest/remote.rs");
+    ///
+    /// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+    /// let request = FetchRequest::prepare(
+    ///     repo.clone(),
+    ///     origin.fetch_refspecs().clone(),
+    ///     BTreeSet::new(),
+    ///     Reflog::Preserve,
+    /// )?
+    /// .with_filter(ObjectFilter::BlobNone);
+    /// # let _ = request;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn with_filter(mut self, filter: super::ObjectFilter) -> Self {
+        self.filter = Some(filter);
         self
     }
 
@@ -767,6 +805,7 @@ impl FetchRequest {
             super::FetchOptions {
                 limits,
                 depth: self.depth,
+                filter: self.filter.clone(),
             },
             cancel,
             progress,

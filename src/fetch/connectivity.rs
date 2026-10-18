@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::known::KnownObjects;
 use super::verified::TreeProof;
-use super::{FetchError, FetchLimits, check_cancelled};
+use super::{FetchError, FetchLimits, ObjectFilter, check_cancelled};
 use crate::{IdMap, IdSet, Object, ObjectId, ObjectKind};
 
 /// Typed edges of one object, borrowed from receive evidence where it is retained.
@@ -112,14 +112,17 @@ pub(super) fn validate_with_known(
     limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<Vec<ObjectId>, FetchError> {
-    validate_with_boundaries(objects, known, wants, &[], limits, cancel)
+    validate_with_boundaries(objects, known, wants, &[], None, limits, cancel)
 }
 
+/// Like `validate`, stopping at `shallow` commits' parents and, with `filter`, at absent objects
+/// the server's filter could have omitted.
 pub(super) fn validate_with_boundaries(
     objects: &impl ReceivedObjects,
     known: &(impl KnownObjects + ?Sized),
     wants: &[ObjectId],
     shallow: &[ObjectId],
+    filter: Option<&ObjectFilter>,
     limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<Vec<ObjectId>, FetchError> {
@@ -140,13 +143,22 @@ pub(super) fn validate_with_boundaries(
         // Proving received trees collectively avoids walking their entries. Any failure there
         // defers to the exact walk, which alone decides rejections and their errors.
         if let Some(proof) = objects.tree_proof() {
-            match walk(objects, known, wants, shallow, limits, cancel, Some(proof)) {
+            match walk(
+                objects,
+                known,
+                wants,
+                shallow,
+                filter,
+                limits,
+                cancel,
+                Some(proof),
+            ) {
                 Err(FetchError::Cancelled) => return Err(FetchError::Cancelled),
                 Err(_) => {}
                 Ok(walked) => return Ok(walked),
             }
         }
-        walk(objects, known, wants, shallow, limits, cancel, None)
+        walk(objects, known, wants, shallow, filter, limits, cancel, None)
     };
     #[cfg(feature = "tracing")]
     let operation = || {
@@ -184,11 +196,18 @@ struct Walked {
 /// a received object of the required kind or a known object whose history is checked here. A
 /// received tree reached from a commit or tag therefore needs no expansion. Known targets of
 /// unreachable received trees also become dependencies, so the result can exceed the exact walk's.
+///
+/// With a `filter`, an edge to an object that is neither received nor known is a promised object
+/// when the filter can omit its kind, as in a Git promisor pack. Selected tips are never promised,
+/// and neither is a commit's root tree under `tree:<depth>` with a depth of 1 or more. Blob sizes
+/// and deeper tree depths are not checked; see `ObjectFilter::may_omit`.
+#[allow(clippy::too_many_arguments)]
 fn walk(
     objects: &impl ReceivedObjects,
     known: &(impl KnownObjects + ?Sized),
     wants: &[ObjectId],
     shallow: &[ObjectId],
+    filter: Option<&ObjectFilter>,
     limits: FetchLimits,
     cancel: &AtomicBool,
     proof: Option<TreeProof<'_>>,
@@ -198,6 +217,9 @@ fn walk(
     };
     let kind = |id: ObjectId| -> Result<Option<ObjectKind>, FetchError> {
         Ok(objects.kind(id, cancel)?.or_else(|| known.known_kind(id)))
+    };
+    let promised = |expected: ObjectKind, root_tree: bool| {
+        filter.is_some_and(|filter| filter.may_omit(expected, root_tree))
     };
     let shallow: IdSet = shallow.iter().copied().collect();
     for &id in &shallow {
@@ -225,7 +247,12 @@ fn walk(
             .ok_or(FetchError::Limit("connectivity edges"))?;
         for (&target, &expected) in proof.targets {
             check_cancelled(cancel)?;
-            let actual = kind(target)?.ok_or(FetchError::Missing(target))?;
+            let Some(actual) = kind(target)? else {
+                if promised(expected, false) {
+                    continue;
+                }
+                return Err(FetchError::Missing(target));
+            };
             if actual != expected {
                 return Err(FetchError::Kind(target));
             }
@@ -260,7 +287,8 @@ fn walk(
                 Cow::Owned(object_edges(id, &object)?)
             }
         };
-        let shallow_commit = shallow.contains(&id) && kind(id)? == Some(ObjectKind::Commit);
+        let commit = kind(id)? == Some(ObjectKind::Commit);
+        let shallow_commit = commit && shallow.contains(&id);
         let mut edge = |id, expected| {
             if shallow_commit && expected == crate::ObjectKind::Commit {
                 return Ok(());
@@ -272,7 +300,12 @@ fn walk(
             let actual = match seen.get(&id) {
                 Some(&actual) => actual,
                 None => {
-                    let actual = kind(id)?.ok_or(FetchError::Missing(id))?;
+                    let Some(actual) = kind(id)? else {
+                        if promised(expected, commit) {
+                            return Ok(());
+                        }
+                        return Err(FetchError::Missing(id));
+                    };
                     seen.insert(id, actual);
                     pending.push_back(id);
                     actual
@@ -396,6 +429,88 @@ mod tests {
             Err(FetchError::Missing(_))
         ));
     }
+    /// Validates a commit whose tree names one missing entry of `mode`, under `filter`.
+    fn filtered_commit(
+        mode: EntryMode,
+        parents: Vec<ObjectId>,
+        filter: &ObjectFilter,
+    ) -> Result<Vec<ObjectId>, FetchError> {
+        let tree = tree(
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"promised"),
+            mode,
+        );
+        let root = commit(tree.id(), parents);
+        let id = root.id();
+        let objects: IdMap<Object> = [root, tree].into_iter().map(|o| (o.id(), o)).collect();
+        validate_with_boundaries(
+            &objects,
+            &IdMap::default(),
+            &[id],
+            &[],
+            Some(filter),
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+    }
+
+    #[rstest]
+    #[case::blob_none(EntryMode::Blob, ObjectFilter::BlobNone)]
+    #[case::tree_depth_blob(EntryMode::Blob, ObjectFilter::TreeDepth(1))]
+    #[case::tree_depth_tree(EntryMode::Tree, ObjectFilter::TreeDepth(1))]
+    #[case::combined(
+        EntryMode::Tree,
+        ObjectFilter::Combine(vec![ObjectFilter::BlobNone, ObjectFilter::TreeDepth(1)])
+    )]
+    fn filter_promises_objects_it_can_omit(#[case] mode: EntryMode, #[case] filter: ObjectFilter) {
+        assert_eq!(filtered_commit(mode, vec![], &filter).unwrap(), vec![]);
+    }
+
+    #[rstest]
+    #[case::tree_under_blob_filter(EntryMode::Tree, vec![], ObjectFilter::BlobNone)]
+    #[case::parent(
+        EntryMode::Blob,
+        vec![ObjectId::for_blob(crate::ObjectFormat::Sha1, b"parent")],
+        ObjectFilter::BlobNone
+    )]
+    #[case::blob_kept_by_type(EntryMode::Blob, vec![], ObjectFilter::ObjectType(ObjectKind::Blob))]
+    fn filter_does_not_promise_objects_it_keeps(
+        #[case] mode: EntryMode,
+        #[case] parents: Vec<ObjectId>,
+        #[case] filter: ObjectFilter,
+    ) {
+        assert!(matches!(
+            filtered_commit(mode, parents, &filter),
+            Err(FetchError::Missing(_))
+        ));
+    }
+
+    /// `tree:<depth>` with a depth of 1 or more keeps every root tree; `tree:0` omits it.
+    #[rstest]
+    #[case::depth_one(ObjectFilter::TreeDepth(1), false)]
+    #[case::depth_zero(ObjectFilter::TreeDepth(0), true)]
+    #[case::combined(
+        ObjectFilter::Combine(vec![ObjectFilter::BlobNone, ObjectFilter::TreeDepth(2)]),
+        false
+    )]
+    fn tree_depth_keeps_root_trees(#[case] filter: ObjectFilter, #[case] promised: bool) {
+        let root = commit(
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"root tree"),
+            vec![],
+        );
+        let id = root.id();
+        let objects = IdMap::from_iter([(id, root)]);
+        let result = validate_with_boundaries(
+            &objects,
+            &IdMap::default(),
+            &[id],
+            &[],
+            Some(&filter),
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(result.is_ok(), promised, "{result:?}");
+    }
+
     #[test]
     fn rejects_missing_parent_even_when_tree_is_complete() {
         let tree = object(ObjectKind::Tree, vec![]);

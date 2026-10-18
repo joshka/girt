@@ -88,7 +88,7 @@
 //! cover operations this module does not, such as retaining a fetched pack against repacking while
 //! the caller checks it before publishing references, or publishing shallow boundaries under caller
 //! control. Depth-limited fetches themselves are supported here through
-//! [`FetchOptions::with_depth`].
+//! [`FetchOptions::with_depth`], and partial fetches through [`FetchOptions::with_filter`].
 //!
 //! # What a configured transfer does
 //!
@@ -258,7 +258,7 @@ use std::sync::atomic::AtomicBool;
 
 use crate::fetch::{
     FetchLimits, FetchRequest, FetchUpdateKind, FetchUpdateLimits, FetchWorkflowError,
-    KnownHistory, RemoteHead,
+    KnownHistory, ObjectFilter, RemoteHead,
 };
 use crate::push::{PreparedPush, PushCommand, PushFailure, PushLimits, PushReport};
 use crate::refs::{RefName, Reflog};
@@ -985,6 +985,8 @@ impl TransferCallbacks for NoCallbacks {}
 pub struct FetchOptions {
     refspecs: Vec<Vec<u8>>,
     depth: Option<NonZeroU32>,
+    /// `None` reuses the remote's configured filter; `Some(None)` fetches unfiltered.
+    filter: Option<Option<ObjectFilter>>,
     prune: bool,
     tag_namespaces: Vec<RefName>,
     reflog: Option<(crate::Signature, Vec<u8>)>,
@@ -1030,6 +1032,7 @@ impl FetchOptions {
                 .map(|refspec| refspec.as_ref().to_vec())
                 .collect(),
             depth: None,
+            filter: None,
             prune: false,
             tag_namespaces: Vec::new(),
             reflog: None,
@@ -1060,6 +1063,44 @@ impl FetchOptions {
     #[must_use]
     pub fn with_depth(mut self, depth: Option<NonZeroU32>) -> Self {
         self.depth = depth;
+        self
+    }
+
+    /// Asks the remote to leave out the objects `filter` matches, like `git fetch --filter`.
+    ///
+    /// The remote becomes a promisor, as with `git clone --filter`: the fetch writes
+    /// `remote.<name>.promisor = true` and `remote.<name>.partialclonefilter = <spec>`, and raises
+    /// `core.repositoryformatversion` to 1. Git then fetches omitted objects from that remote on
+    /// demand; girt does not yet. Without this or [`Self::without_filter`], a fetch reuses the
+    /// remote's configured `partialclonefilter`, if any, so later fetches of a partial clone stay
+    /// partial.
+    ///
+    /// A remote that does not support filtering sends every object instead, which
+    /// [`FetchOutcome::filter_applied`] reports. girt fetches local remotes, both paths and
+    /// `file://` URLs, without upload-pack, so they always send every object.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::fetch::ObjectFilter;
+    /// use girt::workflow::FetchOptions;
+    ///
+    /// // Commits and trees only; file contents stay on the remote.
+    /// let blobless = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"])
+    ///     .with_filter(ObjectFilter::BlobNone);
+    /// # let _ = blobless;
+    /// ```
+    #[must_use]
+    pub fn with_filter(mut self, filter: ObjectFilter) -> Self {
+        self.filter = Some(Some(filter));
+        self
+    }
+
+    /// Fetches every object even when the remote has a configured `partialclonefilter`, like
+    /// `git fetch --no-filter`. The promisor configuration is left as it is.
+    #[must_use]
+    pub fn without_filter(mut self) -> Self {
+        self.filter = Some(None);
         self
     }
 
@@ -1212,6 +1253,10 @@ pub struct FetchOutcome {
     /// refspec. Git fails the whole fetch in this case; girt fetches the rest and reports them
     /// here.
     pub missing_sources: Vec<Vec<u8>>,
+    /// The remote applied the requested object filter, so the fetched pack may omit objects.
+    /// `false` when no filter was in effect, or when the remote does not support filtering and
+    /// sent every object; Git warns "filtering not recognized by server, ignoring" there.
+    pub filter_applied: bool,
 }
 
 /// Options for [`push`] beyond the commands themselves.
@@ -2294,7 +2339,23 @@ impl Repository {
                 TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error)))
             })?
         };
-        let request = || self.fetch_request(options, listed.clone());
+        let filter = match &options.filter {
+            Some(filter) => filter.clone(),
+            None => configured_filter(self.config(), remote_name)?,
+        };
+        if let Some(filter) = &filter
+            && !matches!(endpoint, Endpoint::Local(_))
+        {
+            crate::fetch::register_promisor(self, remote_name, filter)
+                .map_err(TransferError::local)?;
+        }
+        let request = || {
+            let request = self.fetch_request(options, listed.clone())?;
+            Ok::<_, TransferError>(match &filter {
+                Some(filter) => request.with_filter(filter.clone()),
+                None => request,
+            })
+        };
         let control = TransportControl::new(&cancel);
         #[cfg(feature = "http")]
         let mut on_message = |message: &[u8]| {
@@ -2417,6 +2478,7 @@ impl Repository {
             }
         }
         .map_err(|error| TransferError::Fetch(Box::new(error)))?;
+        let filter_applied = ready.received().filter_applied();
         let report = ready
             .finish(FetchUpdateLimits::trusted(), &cancel)
             .map_err(|error| TransferError::FetchFinish(Box::new(error)))?;
@@ -2447,6 +2509,7 @@ impl Repository {
                 })
                 .collect(),
             missing_sources: report.missing,
+            filter_applied,
         })
     }
 
@@ -2959,6 +3022,26 @@ fn is_unauthorized_push<T>(result: &Result<T, crate::push::PushError>) -> bool {
             crate::push::PushFailure::Http(crate::transport::http::HttpError::Status(401))
         ))
     )
+}
+
+/// Reads `remote.<name>.partialclonefilter`, the filter a partial clone keeps using.
+fn configured_filter(
+    config: &crate::Config,
+    remote_name: &str,
+) -> Result<Option<ObjectFilter>, TransferError> {
+    let Some(spec) = config.string("remote", Some(remote_name.as_bytes()), "partialclonefilter")
+    else {
+        return Ok(None);
+    };
+    let invalid = |detail: String| {
+        TransferError::Configuration(format!(
+            "invalid remote.{remote_name}.partialclonefilter: {detail}"
+        ))
+    };
+    let spec = std::str::from_utf8(spec).map_err(|error| invalid(error.to_string()))?;
+    spec.parse()
+        .map(Some)
+        .map_err(|error: crate::fetch::ObjectFilterParseError| invalid(error.to_string()))
 }
 
 // The HTTP status a fetch failed with, for `Http::settle_proxy`.

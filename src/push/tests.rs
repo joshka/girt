@@ -1723,6 +1723,7 @@ fn fresh_transfer_deltas_obey_the_receiver_depth_limit() {
                 ..crate::fetch::FetchLimits::default()
             },
             depth: None,
+            filter: None,
         },
         &mut crate::fetch::ValidationObserver::new(&AtomicBool::new(false), &mut |_| {}),
     )

@@ -178,12 +178,15 @@ impl FetchRequest {
     ) -> Result<FetchDownload, FetchWorkflowError> {
         self.check_known(known.as_deref().unwrap_or(&KnownHistory::default()))?;
         let mut plan = None;
-        let downloaded = super::receive_http_with_depth_and_progress(
+        let downloaded = super::receive_http_with_options(
             remote,
             |advertisement| select(self.plan(advertisement), &mut plan),
             known,
-            self.depth,
-            limits,
+            super::FetchOptions {
+                limits,
+                depth: self.depth,
+                filter: self.filter.clone(),
+            },
             control,
             progress,
         )
@@ -216,6 +219,7 @@ impl FetchRequest {
             super::FetchOptions {
                 limits,
                 depth: self.depth,
+                filter: self.filter.clone(),
             },
             cancel,
             progress,
@@ -283,6 +287,7 @@ impl FetchRequest {
             super::FetchOptions {
                 limits,
                 depth: self.depth,
+                filter: self.filter.clone(),
             },
             control,
             diagnostics,

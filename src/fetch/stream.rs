@@ -39,7 +39,8 @@ pub(crate) fn download(
     cancel: &AtomicBool,
     mut progress: impl FnMut(&[u8]),
 ) -> Result<DownloadedFetch, FetchError> {
-    let FetchOptions { limits, depth } = options;
+    let limits = options.limits;
+    let depth = options.depth;
     let empty = KnownHistory::default();
     protocol::validate_known(known.as_deref().unwrap_or(&empty), limits, cancel)?;
     let budget = limits.max_advertisement_bytes.min(limits.max_wire_bytes);
@@ -63,8 +64,7 @@ pub(crate) fn download(
         &dialect,
         wants,
         history,
-        depth,
-        limits,
+        &options,
         cancel,
     )?;
     if cancel.load(std::sync::atomic::Ordering::Relaxed) {

@@ -414,7 +414,11 @@ pub(super) fn receive_depth_observed(
         super::bytes::Bytes::File(temporary, written.pack_bytes as usize),
         known,
         shallow,
-        super::FetchOptions { limits, depth },
+        super::FetchOptions {
+            limits,
+            depth,
+            filter: None,
+        },
         &mut super::progress::ValidationObserver::new(control.cancel, &mut validation),
     )?;
     check(control)?;
