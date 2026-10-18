@@ -3,8 +3,8 @@
 //! Git stores `am` progress in the worktree-private `rebase-apply` directory. Take a bounded
 //! [`OperationState`] snapshot, then use [`State::from_operation`] to interpret its mail range.
 //! Artifacts borrow the snapshot unchanged. Author scripts are untrusted shell text: this module
-//! never executes or decodes them. Inspection does not apply patches, install objects, change the
-//! index or working files, publish references, or authorize cleanup.
+//! never executes them. Inspection retains their exact bytes. It does not apply patches, install
+//! objects, change the index or working files, publish references, or authorize cleanup.
 //!
 //! ```no_run
 //! use girt::am::State;
@@ -26,6 +26,9 @@
 //! raw-clean tracked state, caller exclusion of writers, and explicit handling of partial working
 //! changes in [`ApplyFailure`]. It does not create commits or advance the mail range.
 //!
+//! [`State::prepare_commit`] separately decodes the fixed author assignments and proposes an
+//! unsigned commit from an explicit tree, parent and committer without installing it.
+//!
 //! Snapshot limits bound all retained files and directories before interpretation. Callers must
 //! exclude concurrent operation writers while taking the snapshot; an interpreted state is an
 //! observation, not a lock or a validated resume plan. Apply-backend rebase metadata is refused.
@@ -33,6 +36,8 @@ use std::path::Path;
 
 use crate::OperationState;
 
+mod commit;
+pub use commit::{CommitLimits, PrepareError};
 mod stage;
 pub use stage::{ApplyFailure, ApplyLimits, apply_current};
 #[cfg(test)]

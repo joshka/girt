@@ -2,7 +2,7 @@
 use std::fs;
 use std::sync::atomic::AtomicBool;
 
-use girt::am::{CommitLimits, State};
+use girt::am::{CommitLimits, PrepareError, State};
 use girt::{ObjectId, OperationLimits, Repository, Signature};
 use rstest::rstest;
 
@@ -16,7 +16,9 @@ fn proposal_matches_git_continue(
     #[values(
         "A Writer <a@example.com>",
         "O'Neil <o'neil@example.com>",
-        "É Writer <e@example.com>"
+        "É Writer <e@example.com>",
+        "Bang! Writer <b!@example.com>",
+        "Mix!' Writer <mix!'@example.com>"
     )]
     author: &str,
     #[values("+0000", "+0530", "-0730")] zone: &str,
@@ -74,13 +76,8 @@ fn proposal_matches_git_continue(
         .unwrap();
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), index);
     assert_eq!(
-        git(root, &["rev-parse", "HEAD"], b""),
-        parent_text
-            .as_bytes()
-            .iter()
-            .copied()
-            .chain([b'\n'])
-            .collect::<Vec<_>>()
+        git(root, &["rev-parse", "HEAD"], b"").trim_ascii(),
+        parent_text.as_bytes()
     );
     git(root, &["am", "--continue"], b"");
     assert_eq!(
@@ -96,6 +93,13 @@ fn proposal_matches_git_continue(
 }
 
 #[rstest]
+#[case("valid")]
+#[case("exact_limit")]
+#[case("literal")]
+#[case("missing_message")]
+#[case("calendar")]
+#[case("identity")]
+#[case("format")]
 #[case("script")]
 #[case("substitution")]
 #[case("unknown")]
@@ -103,7 +107,7 @@ fn proposal_matches_git_continue(
 #[case("date")]
 #[case("limit")]
 #[case("cancel")]
-fn unsafe_metadata_is_refused(#[case] failure: &str) {
+fn metadata_admission_reports_the_expected_outcome(#[case] failure: &str) {
     let temporary = tempfile::tempdir().unwrap();
     let repo = Repository::init(
         girt::ObjectFormat::Sha1,
@@ -122,10 +126,15 @@ fn unsafe_metadata_is_refused(#[case] failure: &str) {
     ] {
         fs::write(dir.join(name), bytes).unwrap();
     }
+    let sentinel = temporary.path().join("sentinel");
     let mut script = b"GIT_AUTHOR_NAME='Writer'\nGIT_AUTHOR_EMAIL='w@example.com'\nGIT_AUTHOR_DATE='Mon, 17 Sep 2001 00:00:00 +0000'\n".to_vec();
     match failure {
-        "script" => script.extend_from_slice(b"touch sentinel\n"),
-        "substitution" => script = b"GIT_AUTHOR_NAME=$(touch sentinel)\n".to_vec(),
+        "script" => {
+            script.extend_from_slice(format!("touch '{}'\n", sentinel.display()).as_bytes())
+        }
+        "substitution" => {
+            script = format!("GIT_AUTHOR_NAME=$(touch '{}')\n", sentinel.display()).into_bytes()
+        }
         "unknown" => script.extend_from_slice(b"EXTRA='value'\n"),
         "date" => {
             script = String::from_utf8(script)
@@ -133,30 +142,78 @@ fn unsafe_metadata_is_refused(#[case] failure: &str) {
                 .replace("Mon, 17 Sep 2001 00:00:00 +0000", "yesterday")
                 .into_bytes()
         }
+        "calendar" => {
+            script = String::from_utf8(script)
+                .unwrap()
+                .replace("17 Sep", "31 Feb")
+                .into_bytes()
+        }
+        "identity" => {
+            script = String::from_utf8(script)
+                .unwrap()
+                .replace("NAME='Writer'", "NAME=''")
+                .into_bytes()
+        }
+        "literal" => {
+            script = String::from_utf8(script)
+                .unwrap()
+                .replace(
+                    "NAME='Writer'",
+                    &format!("NAME='$(touch {})'", sentinel.display()),
+                )
+                .into_bytes()
+        }
         _ => {}
     }
     if failure != "missing" {
-        fs::write(dir.join("author-script"), script).unwrap();
+        fs::write(dir.join("author-script"), &script).unwrap();
+    }
+    if failure == "missing_message" {
+        fs::remove_file(dir.join("final-commit")).unwrap();
     }
     let snapshot = repo.operation_state(OperationLimits::default()).unwrap();
     let state = State::from_operation(&snapshot).unwrap().unwrap();
     let mut limits = CommitLimits::default();
+    let tree = girt::Tree::new(repo.object_format(), vec![]).unwrap().id();
+    let committer = Signature::parse(b"Writer <w@example.com> 1000684800 +0000").unwrap();
     if failure == "limit" {
         limits.max_metadata_bytes = 1;
     }
-    let tree = girt::Tree::new(repo.object_format(), vec![]).unwrap().id();
-    let committer = Signature::parse(b"Writer <w@example.com> 1000684800 +0000").unwrap();
-    assert!(
-        state
-            .prepare_commit(
-                tree,
-                None,
-                committer,
-                limits,
-                &AtomicBool::new(failure == "cancel")
-            )
-            .is_err()
+    if failure == "exact_limit" {
+        limits.max_metadata_bytes = script.len()
+            + state.message.unwrap().len()
+            + committer.name.len()
+            + committer.email.len();
+    }
+    let parent = (failure == "format").then(|| ObjectId::null(girt::ObjectFormat::Sha256));
+    let result = state.prepare_commit(
+        tree,
+        parent,
+        committer,
+        limits,
+        &AtomicBool::new(failure == "cancel"),
     );
+    match failure {
+        "valid" | "exact_limit" | "literal" => {
+            let commit = result.unwrap();
+            assert!(commit.parents().is_empty());
+            assert_eq!(commit.message(), b"subject\n");
+        }
+        "script" | "substitution" | "unknown" => {
+            assert!(matches!(result, Err(PrepareError::Script)))
+        }
+        "missing" => assert!(matches!(
+            result,
+            Err(PrepareError::Missing("author-script"))
+        )),
+        "missing_message" => assert!(matches!(result, Err(PrepareError::Missing("final-commit")))),
+        "date" => assert!(matches!(result, Err(PrepareError::DateSyntax))),
+        "calendar" => assert!(matches!(result, Err(PrepareError::Date(_)))),
+        "identity" | "format" => assert!(matches!(result, Err(PrepareError::Commit(_)))),
+        "limit" => assert!(matches!(result, Err(PrepareError::Limit))),
+        "cancel" => assert!(matches!(result, Err(PrepareError::Cancelled))),
+        _ => unreachable!(),
+    }
     assert!(!temporary.path().join("sentinel").exists());
     assert!(!repo.git_dir().join("sentinel").exists());
 }
