@@ -114,6 +114,18 @@ remains above the 1.5 target; output stays explicit-only. Load differed between 
 within-run ratios rather than claiming the absolute-time difference as a controlled speedup. See
 [pack-order evidence](evidence/bitmap-repack-pack-order-under-load.json).
 
+A finer diagnostic after pack ordering measured 10.75 seconds of actual object decode/verification,
+17.85 seconds of graph assembly/parsing/ID translation and 9.12 seconds of selected traversal. Its
+58,693,073 edges motivated a bounded inventory ID-position table instead of a binary search for
+every edge. The table uses collision-resistant hashing for IDs not yet independently verified; all
+reads and graph checks remain. See
+[diagnostic evidence](evidence/bitmap-graph-pack-order-profile.json).
+
+With that ID-position table, four alternating runs under load 19–24 measured median 10.00 seconds
+plain and 33.30 seconds with bitmaps (3.33 times plain), retaining the same inventory and artifact
+sizes. This remains above the 1.5 target. Different load again limits comparisons to the measured
+within-run ratios; see [ID-map evidence](evidence/bitmap-repack-id-map-under-load.json).
+
 ## Multi-pack indexes
 
 The MIDX fixtures in `tests/multi_pack_index.rs` use isolated Git configuration and original pack

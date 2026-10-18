@@ -29,6 +29,13 @@ impl<'a> Graph<'a> {
             targets: Vec::new(),
             parents: vec![false; ids.len()],
         };
+        // Inventory IDs are claims until all reads finish. Use the collision-resistant map
+        // even though successful construction independently verifies every claimed identity.
+        let positions: crate::PeerIdMap<_> = ids
+            .iter()
+            .enumerate()
+            .map(|(position, &id)| (id, position))
+            .collect();
         let mut expected = Vec::new();
         let mut input = 0_u64;
         // Read offset order so delta chains reuse recently decoded bases. All graph positions
@@ -51,9 +58,10 @@ impl<'a> Graph<'a> {
                 if graph.targets.len() >= limits.max_edges {
                     return Err(WriteError::Limit("graph edges"));
                 }
-                let target_position = ids
-                    .binary_search(&target)
-                    .map_err(|_| WriteError::Closure(target))?;
+                let target_position = positions
+                    .get(&target)
+                    .copied()
+                    .ok_or(WriteError::Closure(target))?;
                 if object.kind() == ObjectKind::Commit && kind == ObjectKind::Commit {
                     graph.parents[target_position] = true;
                 }
