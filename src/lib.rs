@@ -185,6 +185,7 @@ pub mod ignore;
 pub mod index;
 pub mod locks;
 pub mod loose;
+pub mod merge;
 pub mod object;
 pub mod objects;
 pub mod pack;

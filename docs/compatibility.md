@@ -2923,3 +2923,20 @@ while holding `index.lock` leaves it in place, and cleanup never touches unregis
 Other platforms report `Unsupported` for existing registered paths, preserving both the lock and its
 guard's validity for normal Drop/abort. Already absent paths do not require removal. No library
 signal handlers or new variants in existing public error enums are introduced.
+
+## Content Merging
+
+`tests/merge_content.rs` compares original byte fixtures with the installed `git merge-file` under
+isolated system/global configuration. It checks clean separated changes, adjacent and overlapping
+changes, identical replacements, unchanged sides, empty inputs, deletion, invalid UTF-8, missing
+final LF and common boundary lines. Merge, diff3 and zdiff3 marker output and ours/theirs favoring
+are compared byte for byte, including clean/conflicted exit classification. Union is compared with
+Git's default merge-style refinement; its result is independent of subsequent marker presentation.
+Explicit binary detection/favoring, custom marker labels/width, cancellation and input bounds have
+focused checks.
+
+The implementation uses bounded Myers comparisons and connected base edit intervals. It does not
+claim Git's repeated-line placement or internal common-line conflict refinement; those are tracked
+in [the refinement task](https://github.com/joshka/girt/issues/498). Tree merging, renames, virtual
+bases, attributes, configured whitespace and index/working-file publication are not implemented by
+this increment. See the [content merge guide](merging.md).

@@ -14,9 +14,10 @@ these yet.
 A **merge** combines two lines of work. Git finds their
 [merge base](/girt/how-git-works/config-and-revisions/#merge-bases), diffs each side against it, and
 keeps both sets of changes. A file changed on only one side takes that side's version. Where both
-sides changed the same lines differently, Git records a **conflict**: the
-[index](/girt/how-git-works/working-tree/#the-index) holds all three versions in stages 1–3, and the
-working file gets markers:
+sides changed overlapping regions differently, Git records a **conflict**. Adjacent changes can also
+be grouped into one conflict. The [index](/girt/how-git-works/working-tree/#the-index) holds the
+available base, ours and theirs versions in stages 1–3; a missing version has no entry at its stage.
+Text conflicts put markers in the working file:
 
 ```text
 <<<<<<< HEAD
@@ -26,11 +27,17 @@ let limit = 20;
 >>>>>>> feature
 ```
 
+Binary conflicts keep our version in the working file without text markers; the index retains the
+available original sides for resolution.
+
 When there are several merge bases, Git's default strategy first merges the bases together into a
 virtual base. Cherry-pick, revert, rebase and stash are all merges underneath: cherry-picking C is a
 merge whose base is C's parent. Without merging, a tool can read history but can't combine work.
 
-<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/493" />
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/493">
+  Byte-content merging, structured conflicts and merge/diff3/zdiff3 markers. Tree and commit
+  merging, attributes and conflict publication are not yet implemented.
+</GirtStatus>
 
 ## Filters
 
