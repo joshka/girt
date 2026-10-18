@@ -20,12 +20,16 @@
 //! [`crate::Objects::merge_tree_entries`] merges entries at matching paths and returns a
 //! [`TreeMerge`] with a candidate root, generated objects and original conflict sides. Install
 //! generated objects explicitly before publishing a clean root. This primitive does not infer
-//! renames; rename-aware composition remains a separate operation.
+//! renames. [`crate::Objects::merge_trees`] composes rename inference and directory relocation
+//! with the same in-memory result, explicitly refusing ambiguous normalization layouts.
 //! [`Driver`] selects built-in or caller-owned custom drivers from an attribute state.
 //! [`MarkerOptions::from_config`] applies an explicit conflict-style configuration snapshot.
 mod content;
 mod driver;
+mod memory;
+mod renames;
 pub use driver::{Driver, DriverError};
+pub use renames::{RenameError, TreeMergeOptions};
 mod render;
 mod tree;
 mod types;

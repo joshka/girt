@@ -18,3 +18,36 @@ pub fn merge_tree(root: &Path, ours: &str, theirs: &str) -> Output {
         .output()
         .unwrap()
 }
+
+pub fn commit(root: &Path, tree: girt::ObjectId, parent: Option<girt::ObjectId>) -> girt::ObjectId {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .current_dir(root)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", root.join("absent-config"))
+        .args([
+            "-c",
+            "user.name=Merge Author",
+            "-c",
+            "user.email=merge@example.com",
+            "commit-tree",
+            &tree.to_string(),
+            "-m",
+            "fixture",
+        ]);
+    if let Some(parent) = parent {
+        command.args(["-p", &parent.to_string()]);
+    }
+    let output = command.output().unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}

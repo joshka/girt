@@ -48,6 +48,12 @@ pub enum ConflictKind {
     Symlink,
     /// Submodule commit identities differ; the submodule is not opened.
     Gitlink,
+    /// One source was renamed to two different destinations.
+    RenameRename,
+    /// One side renamed a path the other deleted.
+    RenameDelete,
+    /// An addition was relocated by an inferred directory rename.
+    DirectoryRename,
 }
 
 /// Original entries for one unresolved path, independent of provisional tree content.
@@ -66,6 +72,12 @@ pub struct TreeConflict {
     pub theirs: Option<TreeValue>,
     /// Content-level hunks when regular file payloads were compared.
     pub content: Option<ContentMerge>,
+    /// Original rename source, when the conflict arose from path inference.
+    pub rename_source: Option<Vec<u8>>,
+    /// Per-stage paths for conflicts with distinct destinations; otherwise [`Self::path`].
+    ///
+    /// Ordered base/ours/theirs. Missing sides ignore their corresponding path.
+    pub stage_paths: Option<[Vec<u8>; 3]>,
 }
 
 impl TreeConflict {
@@ -79,11 +91,14 @@ impl TreeConflict {
     pub fn index_entries(&self) -> Result<Vec<crate::index::Entry>, TreeError> {
         use crate::index::{Entry, Mode, Stage};
         let mut entries = Vec::new();
-        for (side, stage) in [
+        for (position, (side, stage)) in [
             (self.base, Stage::Base),
             (self.ours, Stage::Ours),
             (self.theirs, Stage::Theirs),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let Some(side) = side else {
                 continue;
             };
@@ -94,7 +109,11 @@ impl TreeConflict {
                 EntryMode::Gitlink => Mode::Gitlink,
                 EntryMode::Tree => return Err(TreeError::DirectoryStages),
             };
-            entries.push(Entry::new(self.path.clone(), mode, side.id).with_stage(stage));
+            let path = self
+                .stage_paths
+                .as_ref()
+                .map_or(&self.path, |paths| &paths[position]);
+            entries.push(Entry::new(path.clone(), mode, side.id).with_stage(stage));
         }
         Ok(entries)
     }
@@ -217,27 +236,46 @@ impl Objects {
         options: TreeOptions,
         cancel: &AtomicBool,
     ) -> Result<TreeMerge, TreeError> {
-        let mut merger = Merger {
-            objects: self,
+        merge_prepared(
+            self,
+            [base, ours, theirs],
             options,
             cancel,
-            remaining: options.max_entries,
-            conflicts: Vec::new(),
-            blobs: Vec::new(),
-            trees: Vec::new(),
-        };
-        let tree = merger.directory(Some(base), Some(ours), Some(theirs), &[], 0)?;
-        Ok(TreeMerge {
-            tree,
-            conflicts: merger.conflicts,
-            blobs: merger.blobs,
-            trees: merger.trees,
-        })
+            &super::memory::Memory::default(),
+        )
     }
+}
+
+pub(super) fn merge_prepared(
+    objects: &Objects,
+    roots: [ObjectId; 3],
+    options: TreeOptions,
+    cancel: &AtomicBool,
+    memory: &super::memory::Memory,
+) -> Result<TreeMerge, TreeError> {
+    let mut merger = Merger {
+        objects,
+        options,
+        cancel,
+        memory,
+        remaining: options.max_entries,
+        conflicts: Vec::new(),
+        blobs: Vec::new(),
+        trees: Vec::new(),
+    };
+    let [base, ours, theirs] = roots;
+    let tree = merger.directory(Some(base), Some(ours), Some(theirs), &[], 0)?;
+    Ok(TreeMerge {
+        tree,
+        conflicts: merger.conflicts,
+        blobs: merger.blobs,
+        trees: merger.trees,
+    })
 }
 
 struct Merger<'a> {
     objects: &'a Objects,
+    memory: &'a super::memory::Memory,
     options: TreeOptions,
     cancel: &'a AtomicBool,
     remaining: usize,
@@ -260,7 +298,7 @@ impl Merger<'_> {
         let Some(id) = id else {
             return Ok(BTreeMap::new());
         };
-        let tree = self.objects.read_tree(id)?;
+        let tree = self.memory.read_tree(self.objects, id)?;
         self.remaining = self
             .remaining
             .checked_sub(tree.entries().len())
@@ -357,6 +395,8 @@ impl Merger<'_> {
             ours,
             theirs,
             content: None,
+            rename_source: None,
+            stage_paths: None,
         };
         if let (Some(o), Some(t)) = (ours, theirs) {
             if regular(o.mode) && regular(t.mode) && base.is_none_or(|b| regular(b.mode)) {
@@ -393,11 +433,11 @@ impl Merger<'_> {
                 return Ok(Some(ours));
             };
         let base = match conflict.base {
-            Some(b) => self.objects.read_blob(b.id)?,
+            Some(b) => self.memory.read_blob(self.objects, b.id)?,
             None => Vec::new(),
         };
-        let a = self.objects.read_blob(ours.id)?;
-        let b = self.objects.read_blob(theirs.id)?;
+        let a = self.memory.read_blob(self.objects, ours.id)?;
+        let b = self.memory.read_blob(self.objects, theirs.id)?;
         let content = content_with(&base, &a, &b, self.options.content, self.cancel)?;
         if content.is_clean() {
             let bytes = content.render(&MarkerOptions::default());
