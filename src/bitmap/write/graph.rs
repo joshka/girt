@@ -15,20 +15,26 @@ impl<'a> Graph<'a> {
     pub fn read(
         format: ObjectFormat,
         ids: &'a [ObjectId],
+        order: &[usize],
         limits: WriteLimits,
         cancel: &AtomicBool,
         mut read: impl FnMut(usize) -> Result<Object, ObjectReadError>,
     ) -> Result<Self, WriteError> {
+        // Callers supply the validated pack order or an explicitly constructed MIDX permutation.
+        debug_assert_eq!(order.len(), ids.len());
         let mut graph = Self {
             ids,
-            kinds: Vec::with_capacity(ids.len()),
-            edges: Vec::with_capacity(ids.len()),
+            kinds: vec![ObjectKind::Blob; ids.len()],
+            edges: vec![0..0; ids.len()],
             targets: Vec::new(),
             parents: vec![false; ids.len()],
         };
         let mut expected = Vec::new();
         let mut input = 0_u64;
-        for (position, &id) in ids.iter().enumerate() {
+        // Read offset order so delta chains reuse recently decoded bases. All graph positions
+        // remain in object-ID order, independently of this physical traversal order.
+        for &position in order {
+            let id = ids[position];
             check(cancel)?;
             let object = read(position).map_err(|error| match error {
                 ObjectReadError::Cancelled => WriteError::Cancelled,
@@ -38,7 +44,7 @@ impl<'a> Graph<'a> {
                 .checked_add(object.data().len() as u64)
                 .filter(|&bytes| bytes <= limits.max_input_bytes)
                 .ok_or(WriteError::Limit("graph input bytes"))?;
-            graph.kinds.push(object.kind());
+            graph.kinds[position] = object.kind();
             let first = graph.targets.len();
             let mut push = |target: ObjectId, kind| -> Result<(), WriteError> {
                 check(cancel)?;
@@ -79,7 +85,7 @@ impl<'a> Graph<'a> {
                     push(tag.target(), tag.target_kind())?;
                 }
             }
-            graph.edges.push(first..graph.targets.len());
+            graph.edges[position] = first..graph.targets.len();
         }
         for (&target, &kind) in graph.targets.iter().zip(&expected) {
             check(cancel)?;

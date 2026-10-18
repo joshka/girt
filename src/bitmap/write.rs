@@ -161,9 +161,14 @@ impl Objects {
             .map(|position| pack.identity_at(position))
             .collect();
         let order: Vec<_> = pack.positions_by_offset()?.collect();
-        let graph = graph::Graph::read(self.object_format(), &ids, limits, cancel, |position| {
-            pack.read(position, limits.read, cancel)
-        })?;
+        let graph = graph::Graph::read(
+            self.object_format(),
+            &ids,
+            &order,
+            limits,
+            cancel,
+            |position| pack.read(position, limits.read, cancel),
+        )?;
         let written = encode::artifacts(
             pack.checksum(),
             &order,

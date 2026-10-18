@@ -128,7 +128,8 @@ println!("{} selected commits, {} bitmap bytes", written.commits, written.bitmap
 The writer verifies every inventory object's contents and graph edges, including dependencies of
 unselected commits. An inventory that omits a reachable object is refused even if another pack or an
 alternate contains it. Shallow repositories cannot establish full-DAG claims and are refused.
-Existing bitmaps are never used to construct new claims.
+Existing bitmaps are never used to construct new claims. Objects are decoded in pack-offset order to
+reuse delta bases; graph and selected-commit positions remain in sorted object-ID order.
 
 Supply `WriteOptions::commits` for explicit selection. An empty list chooses graph tips first, then
 samples remaining commits evenly in sorted ID order, up to `max_commits` (64 by default). Explicit

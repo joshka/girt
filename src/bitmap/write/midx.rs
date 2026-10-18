@@ -97,14 +97,21 @@ pub(super) fn encode(
     let width = objects.object_format().digest_len();
     let anchor = ObjectId::from_bytes(objects.object_format(), &index[index.len() - width..])
         .map_err(|_| WriteError::Limit("MIDX checksum"))?;
-    let graph = Graph::read(objects.object_format(), &ids, limits, cancel, |position| {
-        let location = locations[position];
-        let pack = packs[location.pack as usize].1;
-        let index_position = pack
-            .find(ids[position])?
-            .ok_or(crate::ObjectReadError::Corrupt("bitmap MIDX object absent"))?;
-        pack.read(index_position, limits.read, cancel)
-    })?;
+    let graph = Graph::read(
+        objects.object_format(),
+        &ids,
+        &order,
+        limits,
+        cancel,
+        |position| {
+            let location = locations[position];
+            let pack = packs[location.pack as usize].1;
+            let index_position = pack
+                .find(ids[position])?
+                .ok_or(crate::ObjectReadError::Corrupt("bitmap MIDX object absent"))?;
+            pack.read(index_position, limits.read, cancel)
+        },
+    )?;
     let remaining = WriteLimits {
         max_bytes: limits
             .max_bytes
