@@ -338,6 +338,32 @@ fn indexed_near_tip_queries_stop_before_old_history(
 }
 
 #[rstest]
+fn indexed_ahead_behind_stops_at_shared_history(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("1", "2")] version: &str,
+) {
+    // A long shared chain, then one commit on the left and two on the right.
+    let mut parents: Vec<Vec<usize>> = vec![vec![]];
+    parents.extend((0..9).map(|i| vec![i]));
+    parents.extend([vec![9], vec![9], vec![11]]);
+    let h = History::with_format(&parents, false, format);
+    let graph = CommitGraph::parse(&graph(&h, version), format).unwrap();
+    let objects = h.objects().with_commit_graph(graph).unwrap();
+    // Both tips, the right tip's parent and the merge base: nothing below the base is read.
+    let limits = girt::HistoryLimits::default()
+        .with_max_commits(4)
+        .with_max_parents(3);
+    let counts = objects
+        .ahead_behind_with(h.ids[10], h.ids[12], limits)
+        .unwrap();
+    assert_eq!((counts.ahead, counts.behind), (1, 2));
+    assert!(matches!(
+        objects.ahead_behind_with(h.ids[10], h.ids[12], limits.with_max_commits(3)),
+        Err(girt::HistoryError::Limit("commits"))
+    ));
+}
+
+#[rstest]
 fn indexed_shallow_boundaries_override_parents(
     #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
 ) {

@@ -98,8 +98,9 @@ use crate::{
 ///
 /// Bounds cover distinct commits (including queued roots/parents), parent occurrences (including
 /// duplicates but excluding edges beyond shallow boundaries), and each object read. Memory is
-/// O(commits + parents), plus one decoded commit and the reader's pack snapshot. These are input
-/// bounds, not a total heap or wall-clock limit.
+/// O(commits + parents), plus one decoded commit and the reader's pack snapshot. Range walks and
+/// ahead/behind counts over an attached commit-graph also use one byte per indexed commit,
+/// however few they explore. These are input bounds, not a total heap or wall-clock limit.
 ///
 /// ```
 /// use girt::{HistoryLimits, ReadLimits};

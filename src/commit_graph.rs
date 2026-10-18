@@ -42,7 +42,7 @@ use crate::{ObjectFormat, ObjectId};
 pub struct CommitGraph {
     commits: Vec<GraphCommit>,
     format: ObjectFormat,
-    generation_order: history::GenerationOrder,
+    history: history::HistoryIndex,
 }
 
 /// Metadata claimed by a commit-graph, without object-store verification.
@@ -141,7 +141,7 @@ impl CommitGraph {
         Ok(Self {
             commits,
             format,
-            generation_order: history::GenerationOrder::Unavailable,
+            history: history::HistoryIndex::default(),
         })
     }
 
@@ -196,7 +196,7 @@ impl CommitGraph {
         Ok(Self {
             commits,
             format,
-            generation_order: history::GenerationOrder::Unavailable,
+            history: history::HistoryIndex::default(),
         })
     }
 

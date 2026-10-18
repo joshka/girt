@@ -1515,17 +1515,34 @@ a commit-graph. `girt-cli/tests/git_parity.rs` compares `girt status --branch` w
 of `git status -sb` with no upstream, a gone upstream, level, ahead, diverged, a local (`.`)
 upstream and a detached HEAD.
 
-Measured on a bare clone of git.git (82,443 commits) with a commit-graph from
-`git commit-graph write --reachable`, Git 2.56.0, macOS arm64, release build; girt times are the
-call alone, Git times include process start:
+Measured with `examples/range_timing.rs` on bare clones of git.git (82,500 commits) and Linux v6.1
+(1,138,794 commits), each with a commit-graph from `git commit-graph write --reachable` (generation
+v2), Git 2.56.0, macOS arm64, release build, best of 15. girt times are the call alone, after
+opening the repository; Git times are whole `git rev-list --left-right --count` processes.
+`walk_range` for the matching `A..B` takes the same time as the count:
 
-| Range                             | Counts    | girt   | Git         |
-| --------------------------------- | --------- | ------ | ----------- |
-| `master~3...master`               | 0, 20     | 0.3 ms | under 10 ms |
-| merge parents of the newest merge | 5, 191    | 5.7 ms | 10 ms       |
-| `v2.40.0...v2.39.5`               | 515, 123  | 3.4 ms | under 10 ms |
-| `v2.30.0...master`                | 0, 14,005 | 54 ms  | 15-20 ms    |
-| `v1.0.0...master`                 | 0, 72,550 | 95 ms  | 30 ms       |
+| Repository | Range                       | Counts     | girt    | Git    |
+| ---------- | --------------------------- | ---------- | ------- | ------ |
+| git.git    | `master~3...master`         | 0, 6       | 0.01 ms | 10 ms  |
+| git.git    | `seen~1^2...master`         | 2, 173     | 0.04 ms | 9 ms   |
+| git.git    | `master...seen`             | 0, 327     | 0.06 ms | 9 ms   |
+| git.git    | `v2.30.0...master`          | 0, 21,025  | 2.0 ms  | 26 ms  |
+| git.git    | `v1.0.0...master`           | 0, 79,570  | 3.2 ms  | 43 ms  |
+| Linux      | `v6.1~3...v6.1`             | 0, 13      | 0.01 ms | 7 ms   |
+| Linux      | `v6.1~1^2...v6.1~5`         | 1, 150     | 0.09 ms | 8 ms   |
+| Linux      | `v6.0...v6.1`               | 0, 15,109  | 8.8 ms  | 49 ms  |
+| Linux      | `v5.0...v6.1`               | 0, 326,150 | 42 ms   | 190 ms |
+
+The walk paints both sides in one pass, highest generation first, with colors in an array indexed by
+commit-graph position. It stops once no queued commit is reachable from only the side being counted.
+To prove an old commit is reachable from only one side, it must still paint the other side down to
+that commit's generation. So `v6.0...v6.1`, whose v6.1 side includes branches based on much older
+commits, explores 109,164 commits for 15,109 results, more than the default
+`HistoryLimits::max_commits` of 100,000. `girt status` passes `HistoryLimits::trusted`, like the
+history commands. Opening the commit-graph itself still costs about 20 ms on git.git and 0.7 s on
+Linux, which dominates a single near-tip query;
+[issue 625](https://github.com/joshka/girt/issues/625) tracks that. Each walk also allocates one
+byte of color per indexed commit, about 1 MB on Linux.
 
 Without a commit-graph girt reads both complete ancestries, 0.5-1 s for every row, where Git stops
 early using commit dates (60 ms for `master~3...master`). girt does not use date heuristics, so its
