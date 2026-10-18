@@ -27,6 +27,10 @@ pub struct AppliedIndex {
 }
 
 impl AppliedIndex {
+    pub(crate) fn into_parts(self) -> (Index, AppliedTree) {
+        (self.index, self.tree)
+    }
+
     /// Proposed index. Unaffected entries retain their flags and cached stat data.
     pub fn index(&self) -> &Index {
         &self.index

@@ -1,4 +1,4 @@
-//! Inspect a stopped patch-mail application before deciding how to resume it.
+//! Inspect a stopped patch-mail application and explicitly stage its current patch.
 //!
 //! Git stores `am` progress in the worktree-private `rebase-apply` directory. Take a bounded
 //! [`OperationState`] snapshot, then use [`State::from_operation`] to interpret its mail range.
@@ -21,12 +21,22 @@
 //! # Ok::<(), girt::Error>(())
 //! ```
 //!
+//! [`apply_current`] is a separate mutation: it installs the extracted patch in working files and
+//! the index while leaving HEAD and operation metadata for Git `am --continue`. It requires a
+//! raw-clean tracked state, caller exclusion of writers, and explicit handling of partial working
+//! changes in [`ApplyFailure`]. It does not create commits or advance the mail range.
+//!
 //! Snapshot limits bound all retained files and directories before interpretation. Callers must
 //! exclude concurrent operation writers while taking the snapshot; an interpreted state is an
 //! observation, not a lock or a validated resume plan. Apply-backend rebase metadata is refused.
 use std::path::Path;
 
 use crate::OperationState;
+
+mod stage;
+pub use stage::{ApplyFailure, ApplyLimits, apply_current};
+#[cfg(test)]
+mod apply_tests;
 
 /// Borrowed progress and artifacts from an `am` operation snapshot.
 ///
@@ -50,10 +60,16 @@ pub struct State<'a> {
     pub author_script: Option<&'a [u8]>,
 }
 
-/// Operation metadata cannot be interpreted as an `am` mail range.
+/// Mail state cannot be interpreted or is not ready for staging.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// The current operation or repository is not ready for guarded patch staging.
+    #[error("am patch cannot be staged: {0}")]
+    NotReady(&'static str),
+    /// Cancellation was observed before working-file publication.
+    #[error("am patch staging cancelled")]
+    Cancelled,
     /// A `rebase-apply` root exists without the `applying` marker, or has a `rebasing` marker.
     #[error("rebase-apply metadata is not an am operation")]
     NotAm,

@@ -239,6 +239,19 @@ impl OperationState {
         }
     }
 
+    // A snapshot from another repository cannot authorize mutation here. Writer exclusion is
+    // still caller-owned: this comparison detects observed changes, not races after the check.
+    pub(crate) fn verify_for(&self, repo: &Repository) -> Result<(), OperationError> {
+        if self.directory != repo.git_dir() {
+            return Err(OperationError::Changed);
+        }
+        let current = Self::read(self.directory.clone(), self.limits)?;
+        if current.nodes != self.nodes {
+            return Err(OperationError::Changed);
+        }
+        Ok(())
+    }
+
     /// Rechecks the complete snapshot, then removes inspected nodes, children before parents.
     ///
     /// The caller must exclude Git/jj operation writers for the entire inspection and cleanup
