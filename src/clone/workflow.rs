@@ -149,6 +149,30 @@ impl CloneRequest {
         plan::plan(&self.selection, advertisement)
     }
 
+    /// Validates a complete portable bundle without creating the destination.
+    ///
+    /// Uses the normal clone branch selection and [`CloneReady::finish`] publication path.
+    /// Incremental bundles are refused because a new destination has no prerequisite history.
+    ///
+    /// # Errors
+    ///
+    /// Returns branch selection, prerequisite or pack-validation failures without destination
+    /// effects.
+    pub fn receive_bundle(
+        self,
+        bundle: &crate::bundle::Bundle<'_>,
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<CloneReady, crate::bundle::Error> {
+        let plan = self.plan(&bundle.advertisement()).map_err(Box::new)?;
+        let received = bundle.receive(&crate::fetch::KnownHistory::default(), limits, cancel)?;
+        Ok(CloneReady {
+            request: self,
+            head: plan.head,
+            received,
+        })
+    }
+
     /// Downloads and validates a full local upload-pack transfer without creating the destination.
     ///
     /// No local known history is offered. Selection uses this session's advertisement; later

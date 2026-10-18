@@ -568,6 +568,37 @@ impl FetchRequest {
         Ok(updates)
     }
 
+    /// Validates a portable bundle and applies this request's normal reference mapping policy.
+    ///
+    /// No storage changes occur until the returned [`FetchReady`] is finished. Depth-limited
+    /// requests are refused because bundles carry fixed history rather than negotiation.
+    ///
+    /// # Errors
+    ///
+    /// Returns unsupported depth, mapping, prerequisite or pack-validation errors.
+    pub fn receive_bundle(
+        self,
+        bundle: &crate::bundle::Bundle<'_>,
+        known: &KnownHistory,
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<FetchReady, crate::bundle::Error> {
+        if self.depth.is_some() {
+            return Err(crate::bundle::Error::UnsupportedOperation(
+                "bundle depth request",
+            ));
+        }
+        self.check_known(known)
+            .map_err(|error| crate::bundle::Error::Fetch(Box::new(error)))?;
+        let updates = self.plan(&bundle.advertisement()).map_err(Box::new)?;
+        let received = bundle.receive(known, limits, cancel)?;
+        Ok(FetchReady {
+            request: self,
+            updates,
+            received,
+        })
+    }
+
     /// Transfers and validates synchronously using a caller-selected local upload-pack endpoint.
     ///
     /// Pass explicit verified `known` history for incremental negotiation, or an empty history for

@@ -177,6 +177,7 @@ from_domain_errors! {
     crate::commit_graph::GraphVerifyError,
     crate::config::ConfigError,
     crate::config::EditError,
+    crate::bundle::Error,
     crate::config::InvalidValue,
     crate::config::ResolveError,
     crate::config::ResolveFailure,

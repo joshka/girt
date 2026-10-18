@@ -176,6 +176,7 @@ mod pack_git;
 pub mod attributes;
 pub mod bitmap;
 pub mod blame;
+pub mod bundle;
 mod bytes;
 pub mod checkout;
 pub mod clone;
