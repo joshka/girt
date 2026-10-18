@@ -39,9 +39,9 @@ permissions:
   contents: read
 
 # Only the latest branch or PR run is relevant under start-and-repair.
-# Focused manual checks must not cancel the full main check.
+# Focused manual checks and nightly runs must not cancel or be cancelled by push runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
