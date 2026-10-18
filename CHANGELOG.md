@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `girt::signing` splits signed commits and tags into the signature and the exact payload it
+  signs, matching what Git passes to `gpg`, `gpgsm` and `ssh-keygen` when verifying.
+  `Commit::merge_tags` reads the tags a merge recorded in `mergetag` headers.
+
 ## [0.16.0](https://github.com/joshka/girt/compare/girt-v0.15.0...girt-v0.16.0) - 2026-10-18
 
 ### Breaking changes
