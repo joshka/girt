@@ -409,6 +409,43 @@ mod tests {
     }
 
     #[test]
+    fn am_cleanup_failure_retains_original_mail_outside_active_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let active = directory.path().join("rebase-apply");
+        fs::create_dir(&active).unwrap();
+        for (name, bytes) in [
+            ("applying", b"".as_slice()),
+            ("next", b"1\n"),
+            ("last", b"1\n"),
+            ("0001", b"original mail"),
+            (
+                "abort-safety",
+                b"1111111111111111111111111111111111111111\n",
+            ),
+        ] {
+            fs::write(active.join(name), bytes).unwrap();
+        }
+        let state = State::read(directory.path(), ObjectFormat::Sha1, Limits::default())
+            .unwrap()
+            .unwrap();
+        let head = "1111111111111111111111111111111111111111".parse().unwrap();
+        let recovery = state.prepare(crate::sequencer::Action::Skip, head).unwrap();
+        let mut changed = Vec::new();
+        let error = recovery
+            .retire_directory(Path::new("rebase-apply"), &mut changed, |_| {
+                Err(io::Error::other("injected cleanup failure"))
+            })
+            .unwrap_err();
+        assert!(matches!(error, Error::Partial { .. }));
+        assert!(!active.exists());
+        assert_eq!(changed.len(), 2);
+        assert_eq!(
+            fs::read(directory.path().join(&changed[1]).join("0001")).unwrap(),
+            b"original mail"
+        );
+    }
+
+    #[test]
     fn failed_retired_cleanup_keeps_active_state_absent_and_reports_preserved_path() {
         let (directory, state) = rebase_state();
         let recovery = state
