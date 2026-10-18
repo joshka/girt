@@ -196,6 +196,7 @@ mod peel;
 pub mod push;
 pub mod refs;
 pub mod remote;
+pub mod replay;
 pub mod repo;
 pub mod repository;
 pub mod retention;

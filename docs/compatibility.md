@@ -3044,3 +3044,20 @@ Add/add regular files with differing executable modes still compare content inde
 SHA-256 oracle cases compare prepared marker-tree identities with Git and retain original
 stage-two/stage-three modes. A focused assertion confirms generated recursive-base trees remain
 available in the returned object collection.
+
+## Commit replay
+
+`Objects::cherry_pick` and `Objects::revert` compare explicit source/selected-parent/destination
+snapshots with the rename-aware merge engine. `tests/replay_git.rs` generates independent Git CLI
+fixtures with isolated configuration and fixed identities and dates. SHA-1 and SHA-256 cherry-pick,
+provenance (`-x`) and ordinary revert produce identical commit identities. Root revert and merge
+mainline selection are covered, along with original conflict sides and absence of state publication.
+Originally empty commits (`--allow-empty`) and redundant changes use separate stop/keep/skip
+policies; keeping both corresponds to `--keep-redundant-commits`.
+
+Computation creates no objects, index, working files, state files or references. Source author is
+preserved for cherry-pick; caller identity supplies the new committer and both revert identities.
+Opaque source headers and signatures are omitted. Messages are byte-oriented; caller-supplied
+messages are not cleaned through Git configuration. Existing content/rename merge limitations apply.
+Git sequencer continuation, interactive rebase and stash publication are separate planned work in
+[the replay design](https://github.com/joshka/girt/issues/608).

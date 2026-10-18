@@ -57,3 +57,18 @@ pub use types::{
     ConflictStyle, ContentHunk, ContentMerge, ContentOptions, Error, Favor, MarkerOptions,
 };
 pub use whitespace::Whitespace;
+
+/// Internal replay entry point; an unstored empty tree supplies root-commit comparisons.
+pub(crate) fn replay_trees(
+    objects: &crate::Objects,
+    base: crate::ObjectId,
+    ours: crate::ObjectId,
+    theirs: crate::ObjectId,
+    empty: crate::Tree,
+    options: TreeMergeOptions,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<TreeMerge, RenameError> {
+    let mut memory = memory::Memory::default();
+    memory.trees.insert(empty.id(), empty);
+    renames::merge_with_memory(objects, [base, ours, theirs], options, cancel, &mut memory)
+}
