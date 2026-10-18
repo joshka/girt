@@ -89,6 +89,7 @@
 //! | Use HTTP/SSH and credentials | [`transport`], [`remote::CredentialStore`] |
 //! | Compare snapshots and file contents | [`Objects::compare_trees`], [`content_diff`], [`rewrites`] |
 //! | Write unified patches as `git diff` does | [`patch`], [`Objects::write_patch`] |
+//! | Read `.gitattributes` and diff drivers | [`attributes`], [`patch::DiffAttributes`] |
 //! | Print paths, modes, statuses and dates as Git does | [`display`] |
 //! | Manage the index and working tree | [`index`], [`status`], [`checkout`], [`ignore`] |
 //! | Plan retention, repack, or coordinate mutation | [`retention`], [`locks`] |
@@ -160,6 +161,7 @@ extern crate self as girt;
 #[path = "../tests/support/pack_git.rs"]
 mod pack_git;
 
+pub mod attributes;
 pub mod blame;
 mod bytes;
 pub mod checkout;
@@ -197,6 +199,7 @@ pub mod repository;
 pub mod retention;
 pub mod revision;
 pub mod rewrites;
+mod source_files;
 pub mod status;
 pub mod tag;
 pub mod transport;

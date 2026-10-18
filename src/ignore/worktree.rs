@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use super::{Case, Error, Ignore, InputKind, Limits, Match, Source};
 use crate::Repository;
+use crate::source_files::{Ancestors, FileError, native, os_path, read_optional};
 use crate::workflow::Environment;
 
 /// Where a loaded ignore file sits in Git's precedence order.
@@ -272,7 +272,7 @@ impl WorktreeRules {
                 .unwrap_or_else(|| self.root.clone())
                 .join(".gitignore");
             let remaining = self.checked.remaining_bytes();
-            if let Some(content) = walk.read_gitignore(&file, remaining)? {
+            if let Some(content) = walk.read(".gitignore", &file, remaining)? {
                 self.push(
                     SourceKind::Directory(directory.to_vec()),
                     file,
@@ -449,210 +449,29 @@ fn global_excludes(
         let home = environment.get("HOME").ok_or(LoadError::Unsupported(
             "core.excludesFile uses ~/ but HOME is unset",
         ))?;
-        return Ok(Some(Path::new(home).join(os_path(rest)?)));
+        return Ok(Some(Path::new(home).join(excludes_path(rest)?)));
     }
     if value.starts_with(b"~") {
         return Err(LoadError::Unsupported(
             "core.excludesFile uses ~user/ expansion",
         ));
     }
-    Ok(Some(root.join(os_path(value)?)))
+    Ok(Some(root.join(excludes_path(value)?)))
 }
 
-fn os_path(bytes: &[u8]) -> Result<PathBuf, LoadError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
-    }
-    #[cfg(not(unix))]
-    {
-        std::str::from_utf8(bytes)
-            .map(PathBuf::from)
-            .map_err(|_| LoadError::Unsupported("core.excludesFile is not Unicode"))
-    }
+fn excludes_path(bytes: &[u8]) -> Result<PathBuf, LoadError> {
+    os_path(bytes).ok_or(LoadError::Unsupported("core.excludesFile is not Unicode"))
 }
 
-/// Converts a validated slash-separated directory to a native path below `root`.
-fn native(root: &Path, directory: &[u8]) -> Option<PathBuf> {
-    let mut path = root.to_owned();
-    if directory.is_empty() {
-        return Some(path);
-    }
-    for component in directory.split(|byte| *byte == b'/') {
-        if component.is_empty() || component == b"." || component == b".." {
-            return None;
-        }
-        path.push(os_path(component).ok()?);
-    }
-    Some(path)
-}
-
-fn io(path: &Path, source: impl Into<std::io::Error>) -> LoadError {
-    LoadError::Io {
-        path: path.to_owned(),
-        source: source.into(),
-    }
-}
-
-/// Reads at most `remaining` bytes, so an oversized source fails before it is buffered.
-fn read_bounded(
-    file: impl std::io::Read,
-    path: &Path,
-    remaining: usize,
-) -> Result<Vec<u8>, LoadError> {
-    use std::io::Read as _;
-    let mut content = Vec::new();
-    let limit = u64::try_from(remaining)
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
-    file.take(limit)
-        .read_to_end(&mut content)
-        .map_err(|source| io(path, source))?;
-    if content.len() > remaining {
-        return Err(LoadError::Rules {
-            path: path.to_owned(),
-            source: Error::Limit("source bytes"),
-        });
-    }
-    Ok(content)
-}
-
-/// Reads a configured excludes file or `info/exclude`, following symlinks as Git does.
-///
-/// The file is opened without blocking, so a FIFO is refused rather than waited on.
-fn read_optional(path: &Path, remaining: usize) -> Result<Option<Vec<u8>>, LoadError> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits().cast_signed());
-    }
-    let file = match options.open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(io(path, source)),
-    };
-    if !file
-        .metadata()
-        .map_err(|source| io(path, source))?
-        .is_file()
-    {
-        return Err(LoadError::Unsupported("ignore file is not a regular file"));
-    }
-    read_bounded(file, path, remaining).map(Some)
-}
-
-/// The worktree directories of one query, opened component by component without following
-/// symlinks.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-struct Ancestors {
-    directory: Option<rustix::fd::OwnedFd>,
-    depth: usize,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl Ancestors {
-    fn open(root: &Path) -> Result<Self, LoadError> {
-        let directory = crate::status::worktree::open_root(root).map_err(|_| {
-            io(
-                root,
-                std::io::Error::other("cannot open the working tree without following symlinks"),
-            )
-        })?;
-        Ok(Self {
-            directory: Some(directory),
-            depth: 0,
-        })
-    }
-
-    /// Opens the last component of `directory`; false when it is missing, a symlink or not a
-    /// directory, so no `.gitignore` at or below it applies.
-    fn enter(&mut self, root: &Path, directory: &[u8]) -> Result<bool, LoadError> {
-        use std::os::unix::ffi::OsStrExt;
-        let Some(current) = &self.directory else {
-            return Ok(false);
-        };
-        let components = directory
-            .split(|byte| *byte == b'/')
-            .filter(|c| !c.is_empty());
-        let Some(name) = components.clone().nth(self.depth) else {
-            return Ok(true);
-        };
-        if components.count() != self.depth + 1 || name == b"." || name == b".." {
-            self.directory = None;
-            return Ok(false);
-        }
-        match rustix::fs::openat(
-            current,
-            std::ffi::OsStr::from_bytes(name),
-            crate::status::worktree::directory_flags(),
-            rustix::fs::Mode::empty(),
-        ) {
-            Ok(next) => {
-                self.directory = Some(next);
-                self.depth += 1;
-                Ok(true)
-            }
-            Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP) => {
-                self.directory = None;
-                Ok(false)
-            }
-            Err(source) => Err(io(&native(root, directory).unwrap_or_default(), source)),
-        }
-    }
-
-    /// Reads `.gitignore` in the current directory, skipping symlinks and non-files as Git does.
-    fn read_gitignore(&self, path: &Path, remaining: usize) -> Result<Option<Vec<u8>>, LoadError> {
-        use rustix::fs::{FileType, Mode, OFlags};
-        let Some(directory) = &self.directory else {
-            return Ok(None);
-        };
-        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-        let file = match rustix::fs::openat(directory, ".gitignore", flags, Mode::empty()) {
-            Ok(file) => file,
-            Err(rustix::io::Errno::NOENT | rustix::io::Errno::LOOP) => return Ok(None),
-            Err(source) => return Err(io(path, source)),
-        };
-        let stat = rustix::fs::fstat(&file).map_err(|source| io(path, source))?;
-        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
-            return Ok(None);
-        }
-        read_bounded(std::fs::File::from(file), path, remaining).map(Some)
-    }
-}
-
-/// Path-based fallback where descriptor-relative traversal is unavailable: each query rechecks
-/// every ancestor with `symlink_metadata`, which cannot exclude concurrent substitution.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-struct Ancestors {
-    blocked: bool,
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-impl Ancestors {
-    fn open(_root: &Path) -> Result<Self, LoadError> {
-        Ok(Self { blocked: false })
-    }
-
-    fn enter(&mut self, root: &Path, directory: &[u8]) -> Result<bool, LoadError> {
-        self.blocked = self.blocked
-            || !native(root, directory)
-                .and_then(|folder| std::fs::symlink_metadata(folder).ok())
-                .is_some_and(|metadata| metadata.is_dir());
-        Ok(!self.blocked)
-    }
-
-    fn read_gitignore(&self, path: &Path, remaining: usize) -> Result<Option<Vec<u8>>, LoadError> {
-        match std::fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.is_file() => {
-                let file = std::fs::File::open(path).map_err(|source| io(path, source))?;
-                read_bounded(file, path, remaining).map(Some)
-            }
-            Ok(_) => Ok(None),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-            Err(source) => Err(io(path, source)),
+impl From<FileError> for LoadError {
+    fn from(error: FileError) -> Self {
+        match error {
+            FileError::Io { path, source } => Self::Io { path, source },
+            FileError::TooLarge { path } => Self::Rules {
+                path,
+                source: Error::Limit("source bytes"),
+            },
+            FileError::NotFile => Self::Unsupported("ignore file is not a regular file"),
         }
     }
 }

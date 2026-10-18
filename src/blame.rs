@@ -5,8 +5,9 @@
 //! first matching parent in stored parent order; unmatched lines belong to the current commit.
 //! Renames use the default rewrite similarity policy. Repeated lines can have different
 //! shortest-edit alignment from Git ([issue 440](https://github.com/joshka/girt/issues/440)). Copy/move detection, ignore-revs,
-//! attributes, textconv and incremental output are unsupported. A NUL-containing requested file is
-//! refused; older versions remain raw line inputs. Reached shallow boundaries are refused for
+//! textconv and incremental output are unsupported; attributes do not otherwise change blame, and
+//! [`Repo::blame`](crate::Repo::blame) refuses a textconv driver. A NUL-containing requested file
+//! is refused; older versions remain raw line inputs. Reached shallow boundaries are refused for
 //! attributed lines. Empty files return no ranges.
 //!
 //! ```no_run
@@ -24,3 +25,4 @@ mod types;
 mod walk;
 
 pub use types::{Error, Hunk, Limits};
+pub(crate) use walk::valid_path;

@@ -122,12 +122,12 @@ Desired sketch: `git.log("main").exclude("release").date_order().take(20)`. Gap 
 
 <!-- ergonomics-status: supported -->
 
-Supported: the handle resolves both revisions to trees, detects renames and writes the unified patch
-`git diff` prints, streaming each line to the caller's writer. Hunks come from girt's Myers
-comparison without Git's indent heuristic, so ambiguous changes may align differently; attributes,
-textconv, diff configuration and binary patches are not applied. `Objects::write_patch_with` chooses
-context lines, abbreviation, binary policy, limits and cancellation; `patch::write_hunks` renders a
-`content_diff` result alone.
+Supported: the handle resolves both revisions to trees, detects renames, applies `.gitattributes`
+and `diff.<driver>` settings, and writes the unified patch `git diff` prints, streaming each line to
+the caller's writer. Some ambiguous changes may align differently from Git; textconv and external
+diff drivers are refused rather than run, and binary patches are not encoded.
+`Objects::write_patch_with` chooses context lines, abbreviation, binary policy, attributes, limits
+and cancellation; `patch::write_hunks` renders a `content_diff` result alone.
 
 With `Repo`:
 
@@ -454,8 +454,8 @@ Desired sketch: `git.switch("topic")?`. Gap closure:
 `git.blame("HEAD", b"src/lib.rs")?` returns structured ranges with commit, original byte path,
 original line and destination line. `Objects::blame` takes a commit id; `blame_with` on either
 surface exposes limits and cancellation. File renames and merge parents are followed. NUL-containing
-files and reached shallow boundaries are explicitly refused. Copy/move detection, ignore-revs,
-attributes and incremental output are unsupported. Repetitive content can align differently from
+files, reached shallow boundaries and textconv drivers are explicitly refused. Copy/move detection,
+ignore-revs and incremental output are unsupported. Repetitive content can align differently from
 Git; see [440](https://github.com/joshka/girt/issues/440).
 
 With `Repo`:

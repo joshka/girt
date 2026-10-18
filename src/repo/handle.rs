@@ -85,6 +85,15 @@ pub enum Error {
         #[source]
         source: Box<crate::refs::TransactionError>,
     },
+    /// The file's diff driver configures `textconv`, which Git runs before blaming and girt does
+    /// not. Blame through [`crate::Objects::blame_with`] to attribute the stored bytes.
+    #[error("diff driver {driver:?} of {path:?} configures textconv, which girt does not run")]
+    Textconv {
+        /// Original path bytes.
+        path: Vec<u8>,
+        /// Driver name from the `diff` attribute.
+        driver: Vec<u8>,
+    },
 }
 
 impl Repo {
@@ -131,7 +140,8 @@ impl Repo {
         Ok(Self::new(repository))
     }
 
-    /// Chooses the environment for [`Signature`], [`Repository::ignore_rules`] and [`workflow`].
+    /// Chooses the environment for [`Signature`], [`Repository::ignore_rules`],
+    /// [`Repository::diff_attributes`] and [`workflow`].
     /// Repository configuration is unchanged; load it with matching inputs before construction.
     #[must_use]
     pub fn with_environment(mut self, environment: Environment) -> Self {
@@ -213,9 +223,14 @@ impl Repo {
     /// Attributes lines through [`crate::Objects::blame`] with default limits.
     /// Resolves `revision` to a commit; paths remain literal bytes.
     ///
+    /// Reads the path's diff driver from [`Repository::diff_attributes`] as `git blame` does: a
+    /// driver with `diff.<driver>.textconv` is refused, since Git would blame the converted text.
+    /// `binary` and `-diff` do not change blame, in Git or here.
+    ///
     /// # Errors
     ///
-    /// Returns revision resolution and blame errors, without mutation.
+    /// Returns revision resolution, attribute and blame errors, and [`Error::Textconv`], without
+    /// mutation.
     pub fn blame(
         &self,
         revision: impl Display,
@@ -231,9 +246,12 @@ impl Repo {
 
     /// Attributes lines through [`crate::Objects::blame_with`] with explicit controls.
     ///
+    /// Refuses a textconv driver as [`Self::blame`] does.
+    ///
     /// # Errors
     ///
-    /// Returns revision resolution and blame errors, without partial attribution.
+    /// Returns revision resolution, attribute and blame errors, and [`Error::Textconv`], without
+    /// partial attribution.
     pub fn blame_with(
         &self,
         revision: impl Display,
@@ -242,6 +260,18 @@ impl Repo {
         cancel: &std::sync::atomic::AtomicBool,
     ) -> crate::Result<Vec<crate::blame::Hunk>> {
         let commit = self.reader.resolve(revision, Some(ObjectKind::Commit))?;
+        let path = path.as_ref();
+        let mut attributes = self.reader.repository.diff_attributes(&self.environment)?;
+        // Blame itself reports an invalid path.
+        if crate::blame::valid_path(path)
+            && let Some(driver) = attributes.textconv_driver(path)?
+        {
+            return Err(Error::Textconv {
+                path: path.to_vec(),
+                driver,
+            }
+            .into());
+        }
         Ok(self
             .reader
             .snapshot()?
@@ -272,16 +302,20 @@ impl Repo {
     /// Writes the `git diff <old> <new>` patch between two revisions' trees.
     ///
     /// Resolves both revisions to trees as [`Self::rev_parse`] does, detects renames (including
-    /// empty files, as Git does) with [`crate::Objects::diff_trees_with`], then calls
-    /// [`crate::Objects::write_patch`]. Abbreviation is
-    /// automatic; `core.abbrev`, `diff.*` configuration and attributes are not read. Use
-    /// [`crate::Objects::write_patch_with`] for context, abbreviation, binary policy or limits.
-    /// Pass a buffered writer: each patch line is a separate write.
+    /// empty files, as Git does) with [`crate::Objects::diff_trees_with`], loads
+    /// [`Repository::diff_attributes`], then calls [`crate::Objects::write_patch_with`] with
+    /// default options and limits. Attributes come from the working tree (`attr.tree` or
+    /// `GIT_ATTR_SOURCE` when set, none in a bare repository), so `binary`, `-diff` and
+    /// `diff=<driver>` apply as in `git diff`; a driver with textconv or an external command is
+    /// refused. Abbreviation is automatic; `core.abbrev` and `diff.*` settings other than
+    /// drivers are not read. Use [`crate::Objects::write_patch_with`] for context, abbreviation,
+    /// binary policy, drivers or limits. Pass a buffered writer: each patch line is a separate
+    /// write.
     ///
     /// # Errors
     ///
-    /// Returns resolution, comparison and [`crate::patch::Error`] failures. Lines written before a
-    /// failure remain in `out`.
+    /// Returns resolution, attribute, comparison and [`crate::patch::Error`] failures. Lines
+    /// written before a failure remain in `out`.
     pub fn write_patch(
         &self,
         out: impl std::io::Write,
@@ -299,7 +333,15 @@ impl Repo {
             Default::default(),
             &std::sync::atomic::AtomicBool::new(false),
         )?;
-        Ok(objects.write_patch(out, &comparison.entries)?)
+        let mut attributes = self.reader.repository.diff_attributes(&self.environment)?;
+        Ok(objects.write_patch_with(
+            out,
+            &comparison.entries,
+            crate::patch::Options::default(),
+            Some(&mut attributes),
+            crate::patch::Limits::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )?)
     }
 
     /// Starts an empty snapshot through [`crate::tree::TreeEditor::new`].

@@ -2,8 +2,10 @@ use super::rules::charge;
 use super::{Case, Error};
 
 /// Compiled once so repeated queries do not rescan classes or allocate pattern copies.
+///
+/// Shared with [`crate::attributes`], whose patterns follow the same matching rules.
 #[derive(Clone, Debug)]
-pub(super) struct Pattern {
+pub(crate) struct Pattern {
     pub negative: bool,
     directory: bool,
     anchored: bool,
@@ -42,18 +44,26 @@ impl Pattern {
         }
         let negative = bytes.starts_with(b"!");
         bytes = bytes.strip_prefix(b"!").unwrap_or(bytes);
+        let mut pattern = Self::glob(bytes, case);
+        pattern.negative = negative;
+        Some(pattern)
+    }
+
+    /// Compiles one already-delimited pattern without comment, negation or space handling, as a
+    /// `.gitattributes` line supplies it.
+    pub fn glob(mut bytes: &[u8], case: Case) -> Self {
         let directory = bytes.ends_with(b"/");
         bytes = bytes.strip_suffix(b"/").unwrap_or(bytes);
         let anchored = bytes.contains(&b'/');
         bytes = bytes.strip_prefix(b"/").unwrap_or(bytes);
         let expression = compile(bytes, case).unwrap_or(Expression::Invalid);
-        Some(Self {
-            negative,
+        Self {
+            negative: false,
             directory,
             anchored,
             case,
             expression,
-        })
+        }
     }
 
     pub fn matches(&self, path: &[u8], directory: bool, work: &mut usize) -> Result<bool, Error> {
@@ -97,7 +107,10 @@ impl Pattern {
                         .saturating_add(1)
                         .saturating_mul(text.len().saturating_add(1)),
                 )?;
-                Ok(glob(tokens, text, self.case))
+                Ok(
+                    suffix(tokens, text, self.case)
+                        .unwrap_or_else(|| glob(tokens, text, self.case)),
+                )
             }
         }
     }
@@ -152,6 +165,32 @@ fn compile(pattern: &[u8], case: Case) -> Option<Expression> {
         })
         .collect();
     Some(literal.map_or(Expression::Glob(tokens), Expression::Literal))
+}
+
+/// Decides `*literal`, the most common glob shape (`*.rs`), without allocating; `None` for other
+/// shapes. `*` matches no `/`, so the text before the literal suffix must contain none.
+fn suffix(tokens: &[Token], text: &[u8], case: Case) -> Option<bool> {
+    let (Token::Star, literal) = tokens.split_first()? else {
+        return None;
+    };
+    if literal.len() > text.len() {
+        return literal
+            .iter()
+            .all(|token| matches!(token, Token::Byte(_)))
+            .then_some(false);
+    }
+    let (head, tail) = text.split_at(text.len() - literal.len());
+    let mut equal = true;
+    for (token, actual) in literal.iter().zip(tail) {
+        let Token::Byte(expected) = token else {
+            return None;
+        };
+        equal &= match case {
+            Case::Sensitive => expected == actual,
+            Case::AsciiInsensitive => expected.eq_ignore_ascii_case(actual),
+        };
+    }
+    Some(equal && !head.contains(&b'/'))
 }
 
 /// Two reusable rows bound memory to O(path length). Each token visits each path byte once.

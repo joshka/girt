@@ -47,7 +47,7 @@
     reason = "parses untrusted repository or network input (#103)"
 )]
 
-mod pattern;
+pub(crate) mod pattern;
 mod rules;
 mod worktree;
 

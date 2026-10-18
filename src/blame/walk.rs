@@ -78,11 +78,7 @@ impl Objects {
         cancel: &AtomicBool,
     ) -> Result<Vec<Hunk>, Error> {
         let path = path.as_ref();
-        if path.is_empty()
-            || path
-                .split(|b| *b == b'/')
-                .any(|p| p.is_empty() || p == b"." || p == b".." || p.contains(&0))
-        {
+        if !valid_path(path) {
             return Err(Error::InvalidPath);
         }
         let mut walk = Walk {
@@ -343,6 +339,14 @@ fn unchanged(
         old_cursor += 1;
     }
     Ok(mapping)
+}
+
+/// Whether `path` is a literal repository-relative path blame accepts.
+pub(crate) fn valid_path(path: &[u8]) -> bool {
+    !path.is_empty()
+        && !path
+            .split(|b| *b == b'/')
+            .any(|p| p.is_empty() || p == b"." || p == b".." || p.contains(&0))
 }
 
 #[cfg(test)]

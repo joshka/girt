@@ -24,8 +24,8 @@ use crate::{Context, complete};
 /// `--renames` / `--copies`), and `--patch` mirrors `git diff --no-renames <a> <b>` (or
 /// `git diff -M <a> <b>` with `--renames`). Known patch differences: girt's line diff is plain
 /// Myers without Git's indent heuristic, so ambiguous hunks may align differently; binary detection
-/// scans whole blobs for NUL rather than the first 8000 bytes; attributes, textconv and funcname
-/// drivers are ignored.
+/// scans whole blobs for NUL rather than the first 8000 bytes. Attributes and `diff.<driver>`
+/// settings apply as in `git diff`, but a driver with textconv or an external command is refused.
 #[derive(Debug, clap::Args)]
 pub struct DiffArgs {
     /// The old revision (commit or tree).
@@ -90,15 +90,19 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
         let options = Options::default().with_abbrev_len(Some(width));
         let limits = Limits::default().with_read(ReadLimits::trusted());
         let cancel = AtomicBool::new(false);
+        let mut attributes = repository
+            .diff_attributes(&context.environment)
+            .wrap_err("reading diff attributes")?;
+        let attributes = Some(&mut attributes);
         if context.color {
             let mut colored = PatchColor::new(&mut out);
             objects
-                .write_patch_with(&mut colored, &entries, options, limits, &cancel)
+                .write_patch_with(&mut colored, &entries, options, attributes, limits, &cancel)
                 .wrap_err("writing patch")?;
             colored.flush()?;
         } else {
             objects
-                .write_patch_with(&mut out, &entries, options, limits, &cancel)
+                .write_patch_with(&mut out, &entries, options, attributes, limits, &cancel)
                 .wrap_err("writing patch")?;
         }
     } else {

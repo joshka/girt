@@ -11,12 +11,20 @@
 //! [`quote_path`]. Nothing is collected into one buffer; each line goes straight to the writer, so
 //! pass a buffered writer such as [`io::BufWriter`] or a `Vec<u8>`.
 //!
-//! The output matches `git diff` for the same entries with these differences: hunks come from
-//! girt's [Myers comparison](crate::content_diff::diff) with boundary compaction and indent-aware
-//! scoring calibrated against Git, so some ambiguous changes may align differently; binary
-//! detection scans whole blobs for NUL rather than a prefix; attributes, textconv, `diff.<driver>`
-//! function names, whitespace options, colour and binary patch encoding are not provided. The hunk
-//! header's function context uses Git's default rule.
+//! [`DiffAttributes`] applies `.gitattributes` and `diff.<driver>.*` configuration per path:
+//! `binary`, `-diff` and `diff=<driver>` choose binary or text output and the hunk header's
+//! function line, as `git diff` applies them. [`Objects::write_patch`] applies none, because
+//! object storage alone has no attributes; [`Repo::write_patch`](crate::Repo::write_patch) loads
+//! them by default, and [`Objects::write_patch_with`] takes them explicitly.
+//!
+//! The output matches `git diff` for the same entries and attributes with these differences:
+//! hunks come from girt's [Myers comparison](crate::content_diff::diff) with boundary compaction
+//! and indent-aware scoring calibrated against Git, so some ambiguous changes may align
+//! differently; binary detection scans whole blobs for NUL rather than a prefix; girt runs no
+//! textconv or external diff commands (drivers that configure them are refused, see
+//! [`External`]); Git's built-in diff drivers other than `rust` use the default function rule
+//! (see [`FunctionLines::builtin`]); whitespace options, colour and binary patch encoding are not
+//! provided.
 //!
 //! ```
 //! use girt::tree::TreeEditor;
@@ -52,12 +60,17 @@
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+mod drivers;
+mod function;
 mod hunks;
 
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub use hunks::write_hunks;
+pub use drivers::DiffAttributes;
+use drivers::{Content, Driver};
+pub use function::{FunctionLines, PatternError};
+pub use hunks::{write_hunks, write_hunks_with};
 
 use crate::content_diff::{
     BinaryMode, BlobContent, ContentDiff, ContentReadError, DiffError, DiffLimits,
@@ -99,6 +112,31 @@ pub struct Options {
     /// Set false for placement analogous to Git's `--no-indent-heuristic`; compaction still
     /// applies. Some ambiguous placements differ from Git; see [`crate::content_diff::diff`].
     pub indent_heuristic: bool,
+    /// What to do with a diff driver that configures `textconv` or `command` (default
+    /// [`External::Refuse`]).
+    pub external: External,
+}
+
+/// The handling of diff drivers that would run a command, which girt never does
+/// ([issue 462](https://github.com/joshka/girt/issues/462)).
+///
+/// ```
+/// use girt::patch::{External, Options};
+///
+/// // `git diff --no-textconv --no-ext-diff`
+/// let options = Options::default().with_external(External::Ignore);
+/// assert_eq!(options.external, External::Ignore);
+/// ```
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum External {
+    /// Fail with [`Error::External`] before writing the file's patch, since Git would run the
+    /// driver's `diff.<driver>.textconv` or `diff.<driver>.command`.
+    #[default]
+    Refuse,
+    /// Ignore those settings and diff the stored content, as `--no-textconv --no-ext-diff` do.
+    /// The driver's other settings still apply.
+    Ignore,
 }
 
 impl Options {
@@ -129,6 +167,13 @@ impl Options {
         self.binary = binary;
         self
     }
+
+    /// Sets [`Self::external`].
+    #[must_use]
+    pub fn with_external(mut self, external: External) -> Self {
+        self.external = external;
+        self
+    }
 }
 
 impl Default for Options {
@@ -138,6 +183,7 @@ impl Default for Options {
             abbrev_len: None,
             binary: BinaryMode::Auto,
             indent_heuristic: true,
+            external: External::Refuse,
         }
     }
 }
@@ -212,14 +258,49 @@ pub enum Error {
     /// The caller's cancellation flag was observed between or within entries.
     #[error("patch rendering cancelled")]
     Cancelled,
+    /// The attributes of a path could not be read.
+    #[error("reading attributes of {}", quote_path(.path))]
+    Attributes {
+        /// Path whose attributes were requested.
+        path: Vec<u8>,
+        /// File, storage or limit failure, boxed to keep this error small.
+        #[source]
+        source: Box<crate::attributes::LoadError>,
+    },
+    /// A diff driver's function-name pattern could not be compiled.
+    #[error("compiling the function pattern of diff driver {}", String::from_utf8_lossy(.driver))]
+    Function {
+        /// Driver name from the `diff` attribute.
+        driver: Vec<u8>,
+        /// Compilation failure.
+        #[source]
+        source: PatternError,
+    },
+    /// A path's diff driver configures a command girt does not run; nothing of this file's patch
+    /// was written. Use [`External::Ignore`] to diff stored content instead.
+    #[error(
+        "diff driver {} of {} configures {kind}, which girt does not run",
+        String::from_utf8_lossy(.driver),
+        quote_path(.path)
+    )]
+    External {
+        /// Path whose driver configures the command.
+        path: Vec<u8>,
+        /// Driver name from the `diff` attribute.
+        driver: Vec<u8>,
+        /// `textconv` or `command`.
+        kind: &'static str,
+    },
 }
 
 impl Objects {
-    /// Writes `entries` as a unified patch with default options and limits, without cancellation.
+    /// Writes `entries` as a unified patch with default options and limits, without attributes or
+    /// cancellation.
     ///
-    /// Wraps [`Self::write_patch_with`] with [`Options::default`] and [`Limits::default`]. See
-    /// the [module documentation](crate::patch) for the output format and its differences from
-    /// `git diff`.
+    /// Wraps [`Self::write_patch_with`] with [`Options::default`], no [`DiffAttributes`] and
+    /// [`Limits::default`]. See the [module documentation](crate::patch) for the output format and
+    /// its differences from `git diff`; [`Repo::write_patch`](crate::Repo::write_patch) applies the
+    /// repository's attributes.
     ///
     /// # Errors
     ///
@@ -229,12 +310,14 @@ impl Objects {
             out,
             entries,
             Options::default(),
+            None,
             Limits::default(),
             &AtomicBool::new(false),
         )
     }
 
-    /// Writes `entries` as a unified patch under explicit options, limits and cancellation.
+    /// Writes `entries` as a unified patch under explicit options, attributes, limits and
+    /// cancellation.
     ///
     /// Entries are rendered in slice order;
     /// [`Comparison::entries`](crate::tree_diff::Comparison::entries) already uses Git's order.
@@ -243,19 +326,25 @@ impl Objects {
     /// `Subproject commit <id>` line per side, as `git diff` does without `--submodule`. A rename
     /// or copy prints its similarity from the entry. Identical identities print headers only.
     ///
+    /// With `attributes`, each side's driver comes from its own path (the old path for the old
+    /// side of a rename); see [`DiffAttributes`]. Gitlink sides have no driver. Attribute files are
+    /// read as paths first need them.
+    ///
     /// Blob reads are synchronous. Cancellation is checked before each entry and inside each
     /// read and comparison; a single storage read or writer call cannot be interrupted.
     ///
     /// # Errors
     ///
-    /// Returns [`Error`] on the first write, storage, limit, abbreviation or cancellation failure,
-    /// after writing the complete patches of earlier entries and possibly part of the failing
-    /// entry. Nothing is written to storage.
+    /// Returns [`Error`] on the first write, storage, attribute, driver, limit, abbreviation or
+    /// cancellation failure, after writing the complete patches of earlier entries and possibly
+    /// part of the failing entry. Attribute and driver failures occur before the entry's first
+    /// line. Nothing is written to storage.
     pub fn write_patch_with(
         &self,
         mut out: impl io::Write,
         entries: &[Entry],
         options: Options,
+        attributes: Option<&mut DiffAttributes>,
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<(), Error> {
@@ -263,6 +352,7 @@ impl Objects {
             objects: self,
             out: &mut out,
             options,
+            attributes,
             limits,
             abbrev_len: options.abbrev_len.unwrap_or_else(|| self.auto_abbrev_len()),
             cancel,
@@ -287,6 +377,7 @@ struct Renderer<'a, W> {
     objects: &'a Objects,
     out: &'a mut W,
     options: Options,
+    attributes: Option<&'a mut DiffAttributes>,
     limits: Limits,
     abbrev_len: usize,
     cancel: &'a AtomicBool,
@@ -329,6 +420,19 @@ impl<W: io::Write> Renderer<'_, W> {
         new: Option<TreeValue>,
         rewrite: Option<Rewrite>,
     ) -> Result<(), Error> {
+        let old_driver = self.driver(old_path, old)?;
+        let new_driver = self.driver(new_path, new)?;
+        if self.options.external == External::Refuse
+            && let Some(driver) = [&old_driver, &new_driver]
+                .into_iter()
+                .find(|driver| driver.external.is_some())
+        {
+            return Err(Error::External {
+                path: new_path.to_vec(),
+                driver: driver.name.clone().unwrap_or_default(),
+                kind: driver.external.unwrap_or_default(),
+            });
+        }
         let old_name = quote_path(&[b"a/", old_path].concat()).to_string();
         let new_name = quote_path(&[b"b/", new_path].concat()).to_string();
         let out = &mut *self.out;
@@ -369,11 +473,29 @@ impl<W: io::Write> Renderer<'_, W> {
         }
 
         let content = self.read(new_path, old, new)?;
+        let binary = match (self.options.binary, old_driver.content, new_driver.content) {
+            (BinaryMode::Auto, Content::Auto, Content::Auto) | (BinaryMode::Text, ..) => {
+                self.options.binary
+            }
+            (BinaryMode::Auto, old_content, new_content) => {
+                let binary = |content: Content, bytes: &[u8]| match content {
+                    Content::Auto => bytes.contains(&0),
+                    Content::Text => false,
+                    Content::Binary => true,
+                };
+                if binary(old_content, &content.old) || binary(new_content, &content.new) {
+                    BinaryMode::Binary
+                } else {
+                    BinaryMode::Text
+                }
+            }
+            (mode, ..) => mode,
+        };
         let content_diff = diff_with_options(
             &content.old,
             &content.new,
             crate::content_diff::Options::default()
-                .with_binary(self.options.binary)
+                .with_binary(binary)
                 .with_indent_heuristic(self.options.indent_heuristic),
             self.limits.diff,
             self.cancel,
@@ -406,10 +528,30 @@ impl<W: io::Write> Renderer<'_, W> {
                 let tab = |name: &str| if name.contains(' ') { "\t" } else { "" };
                 writeln!(out, "--- {old_name}{}", tab(old_name))?;
                 writeln!(out, "+++ {new_name}{}", tab(new_name))?;
-                write_hunks(out, &text, self.options.context_lines)?;
+                let function = old_driver
+                    .function
+                    .as_ref()
+                    .or(new_driver.function.as_ref());
+                let default = FunctionLines::default();
+                write_hunks_with(
+                    out,
+                    &text,
+                    self.options.context_lines,
+                    function.unwrap_or(&default),
+                )?;
             }
         }
         Ok(())
+    }
+
+    /// The driver of one side; absent sides, gitlinks and renders without attributes have none.
+    fn driver(&mut self, path: &[u8], value: Option<TreeValue>) -> Result<Driver, Error> {
+        match (&mut self.attributes, value) {
+            (Some(attributes), Some(value)) if value.mode != EntryMode::Gitlink => {
+                attributes.driver(path)
+            }
+            _ => Ok(Driver::default()),
+        }
     }
 
     /// Abbreviates an identity, or prints the null identity at the minimum length.
