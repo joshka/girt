@@ -38,6 +38,15 @@ historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec 
 [R06 evidence](evidence/r06.md) records the native Linux/macOS/Windows refresh for these increments,
 including the selected Windows scope and exact tested revision.
 
+## Mailmap
+
+`tests/mailmap_git.rs` compares original temporary maps with the installed Git executable's
+`check-mailmap`: all four forms, ASCII case folding for names and emails, comments, unknown
+identities, duplicate component replacement and name-specific precedence. Repository fixtures
+compare worktree/blob/file precedence and the bare `HEAD:.mailmap` default. Oracle helpers clear
+inherited Git environment variables and isolate system/global configuration. See the
+[mailmap guide](mailmap.md) for presentation policy and configured-path limitations.
+
 ## Git Capability Audit: Storage
 
 The storage audit uses Git 2.56.0 on macOS and original temporary fixtures. Git oracle helpers clear

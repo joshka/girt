@@ -67,6 +67,9 @@ pub struct LogArgs {
     /// Show at most this many commits.
     #[arg(short = 'n', long, value_name = "N")]
     limit: Option<usize>,
+    /// Resolve author identities using repository mailmap sources.
+    #[arg(long, alias = "mailmap", num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+    use_mailmap: Option<bool>,
     /// One line per commit: ID and subject.
     #[arg(long)]
     oneline: bool,
@@ -136,6 +139,17 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
 pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let objects = repository.objects()?;
+    let enabled = args.use_mailmap.unwrap_or(
+        repository
+            .config()
+            .boolean("log", None, "mailmap")?
+            .unwrap_or(true),
+    );
+    let mailmap = if enabled {
+        common::mailmap(&repository, &objects)?
+    } else {
+        girt::mailmap::Mailmap::default()
+    };
     let yellow = crate::color::style(context.color, crate::color::YELLOW);
     let reset = crate::color::style(context.color, crate::color::RESET);
     let selection = common::select(&repository, &objects, &args.revs)?;
@@ -198,6 +212,7 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
             .author()
             .wrap_err_with(|| format!("parsing author of {id}"))?
             .ok_or_else(|| eyre!("commit {id} has no author"))?;
+        let author = mailmap.resolve_signature(author);
         let date = author.date().unwrap_or(IdentityDate {
             seconds: 0,
             offset_minutes: 0,
