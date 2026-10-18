@@ -38,6 +38,29 @@ historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec 
 [R06 evidence](evidence/r06.md) records the native Linux/macOS/Windows refresh for these increments,
 including the selected Windows scope and exact tested revision.
 
+## Multi-pack indexes
+
+The MIDX fixtures in `tests/multi_pack_index.rs` use isolated Git configuration and original pack
+workloads. Git 2.56.0 on macOS writes incremental chains with
+`git multi-pack-index write --incremental`; it rejects `--split`, although its shipped
+`technical/multi-pack-index` design notes still describe that older option. Observed chain layers
+have zero base counts and layer-local pack ordinals. Monolithic files take precedence over chains.
+
+The reader checks MIDX v1/v2 structure and checksums in SHA-1 and SHA-256 repositories. Optional
+lookup hints retain ordinary pack-index bounds checks and full object identity verification. An
+invalid `core.multiPackIndex` boolean disables this optional acceleration. Missing, corrupt, stale
+or disabled hints fall back to the pack inventory; packs added after MIDX creation remain visible
+when opening a fresh snapshot. Explicit verification checks every claimed ID and offset against the
+named pack indexes. It does not replace whole-pack verification. Bitmap queries and MIDX writing
+remain tracked in [the MIDX issue](https://github.com/joshka/girt/issues/517) and
+[the bitmap issue](https://github.com/joshka/girt/issues/518).
+
+With isolated default configuration in an original bare repository, both `git gc --prune=now` and
+`git repack -adb` produced a pack bitmap and `.rev` file, and neither created a MIDX. An explicit
+`git multi-pack-index write --bitmap` then produced a MIDX and its checksum-named bitmap alongside
+the pack bitmap. These are observations of Git 2.56.0, not automatic-maintenance behavior
+implemented by girt.
+
 ## Submodule definitions
 
 `tests/submodules.rs` generates original repositories through Git with inherited `GIT_*` values

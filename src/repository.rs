@@ -1244,8 +1244,14 @@ impl Repository {
         packs: crate::PackLimits,
         alternates: crate::AlternateLimits,
     ) -> Result<crate::Objects, crate::ObjectReadError> {
-        let mut objects =
-            crate::Objects::open(self.object_format, &self.object_dir, packs, alternates)?;
+        let mut objects = crate::Objects::open_controlled_with_midx(
+            self.object_format,
+            &self.object_dir,
+            packs,
+            alternates,
+            &std::sync::atomic::AtomicBool::new(false),
+            self.multi_pack_index_enabled(),
+        )?;
         objects.shallow = self.shallow.clone();
         self.attach_default_commit_graph(&mut objects);
         Ok(objects)
@@ -1289,12 +1295,13 @@ impl Repository {
         alternates: crate::AlternateLimits,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<crate::Objects, crate::ObjectReadError> {
-        let mut objects = crate::Objects::open_controlled(
+        let mut objects = crate::Objects::open_controlled_with_midx(
             self.object_format,
             &self.object_dir,
             packs,
             alternates,
             cancelled,
+            self.multi_pack_index_enabled(),
         )?;
         objects.shallow = self.shallow.clone();
         self.attach_default_commit_graph(&mut objects);
@@ -1302,6 +1309,14 @@ impl Repository {
             return Err(crate::ObjectReadError::Cancelled);
         }
         Ok(objects)
+    }
+
+    fn multi_pack_index_enabled(&self) -> bool {
+        // Auxiliary acceleration is optional; invalid configuration disables it conservatively.
+        matches!(
+            self.config().boolean("core", None, "multiPackIndex"),
+            Ok(None | Some(true))
+        )
     }
 
     fn attach_default_commit_graph(&self, objects: &mut crate::Objects) {

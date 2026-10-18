@@ -537,15 +537,15 @@ impl ReadLimits {
 ///
 /// REF_DELTA bases must be indexed in the same pack. Thin packs and cross-pack/loose bases return
 /// [`ObjectReadError::MissingBase`], even if the base exists elsewhere. Traversal is iterative,
-/// detects cycles, and enforces [`ReadLimits`]. Multi-pack indexes and bitmap/reverse indexes are
-/// ignored; ordinary pack indexes remain required. Indexes are publication markers: unindexed packs
-/// are ignored, while an index without its pack is an opening error. A publisher must finish the
-/// pack before publishing its index. History queries use the repository handle's immutable shallow
-/// boundaries; raw reads preserve commit parents. Reopen the repository or refresh its shallow
-/// snapshot, then create a new reader after Git deepening. Loose objects, packs and boundaries are
-/// not captured in one filesystem transaction; exclude concurrent depth changes while opening.
-/// Local alternate stores use the same format and aggregate pack limits; see
-/// [`crate::Repository::objects_with_alternates`] for topology and precedence. Complete
+/// detects cycles, and enforces [`ReadLimits`]. Multi-pack indexes accelerate verified reads when
+/// usable; bitmap/reverse indexes are ignored; ordinary pack indexes remain required. Indexes are
+/// publication markers: unindexed packs are ignored, while an index without its pack is an opening
+/// error. A publisher must finish the pack before publishing its index. History queries use the
+/// repository handle's immutable shallow boundaries; raw reads preserve commit parents. Reopen the
+/// repository or refresh its shallow snapshot, then create a new reader after Git deepening. Loose
+/// objects, packs and boundaries are not captured in one filesystem transaction; exclude concurrent
+/// depth changes while opening. Local alternate stores use the same format and aggregate pack
+/// limits; see [`crate::Repository::objects_with_alternates`] for topology and precedence. Complete
 /// partial-clone stores are readable; no missing-object fetch is attempted. Loose writes
 /// use [`LooseObjects`]; validated received-pack installation uses
 /// [`crate::fetch::ReceivedFetch::install`].
@@ -596,6 +596,7 @@ pub struct Objects {
     /// Artifact-generation evidence survives refresh without retaining old handles/tables.
     damage_history: Arc<crate::pack::DamageHistory>,
     abbreviations: Arc<prefix::LooseAbbreviations>,
+    pub(crate) multi_pack_index_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -607,6 +608,7 @@ struct Store {
     pack_paths: Vec<PathBuf>,
     /// `.keep`/`.promisor` markers of each entry in `packs` observed while opening.
     pack_marks: Vec<listing::PackMarks>,
+    midx: Option<crate::multi_pack_index::Lookup>,
 }
 
 fn share_pack_damage(
@@ -643,6 +645,7 @@ impl Objects {
         self.format
     }
 
+    #[cfg(test)]
     pub(crate) fn open(
         format: ObjectFormat,
         directory: &Path,
@@ -658,12 +661,24 @@ impl Objects {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn open_controlled(
         format: ObjectFormat,
         directory: &Path,
         limits: PackLimits,
         alternates: AlternateLimits,
         cancelled: &AtomicBool,
+    ) -> Result<Self, ObjectReadError> {
+        Self::open_controlled_with_midx(format, directory, limits, alternates, cancelled, true)
+    }
+
+    pub(crate) fn open_controlled_with_midx(
+        format: ObjectFormat,
+        directory: &Path,
+        limits: PackLimits,
+        alternates: AlternateLimits,
+        cancelled: &AtomicBool,
+        multi_pack_index_enabled: bool,
     ) -> Result<Self, ObjectReadError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -690,6 +705,20 @@ impl Objects {
             for directory in directories {
                 stores.push(Store::open(format, &directory, &mut budget, cancelled)?);
             }
+            for store in stores.iter_mut().filter(|_| multi_pack_index_enabled) {
+                check_cancelled(cancelled)?;
+                store.midx = crate::multi_pack_index::Lookup::load(
+                    format,
+                    &store.directory.join("pack"),
+                    &store.pack_paths,
+                    budget.max_index_bytes,
+                    cancelled,
+                );
+                check_cancelled(cancelled)?;
+                if let Some(index) = &store.midx {
+                    budget.max_index_bytes -= index.byte_len();
+                }
+            }
             let damage_history = Arc::new(crate::pack::DamageHistory::default());
             share_pack_damage(&mut stores, &damage_history)?;
             Ok(Self {
@@ -697,6 +726,7 @@ impl Objects {
                 stores,
                 damage_history,
                 abbreviations: Arc::default(),
+                multi_pack_index_enabled,
                 directory,
                 shallow: crate::ShallowRoots::empty(format),
                 commit_graph: None,
@@ -817,8 +847,14 @@ impl Objects {
         alternates: AlternateLimits,
         cancelled: &AtomicBool,
     ) -> Result<(), ObjectReadError> {
-        let mut candidate =
-            Self::open_controlled(self.format, &self.directory, packs, alternates, cancelled)?;
+        let mut candidate = Self::open_controlled_with_midx(
+            self.format,
+            &self.directory,
+            packs,
+            alternates,
+            cancelled,
+            self.multi_pack_index_enabled,
+        )?;
         check_cancelled(cancelled)?;
         share_pack_damage(&mut candidate.stores, &self.damage_history)?;
         self.stores = candidate.stores;
@@ -1246,6 +1282,24 @@ impl Objects {
             let mut damage = None;
             for store in &self.stores {
                 check_cancelled(cancelled)?;
+                if let Some((pack, position)) = store
+                    .midx
+                    .as_ref()
+                    .filter(|_| self.multi_pack_index_enabled)
+                    .and_then(|midx| midx.find(id, &store.packs))
+                    .and_then(|(ordinal, position)| {
+                        store.packs.get(ordinal).map(|pack| (pack, position))
+                    })
+                {
+                    match pack.read_candidate(position, limits, cancelled) {
+                        Ok(object) => {
+                            check_cancelled(cancelled)?;
+                            return Ok(Some(object));
+                        }
+                        Err(crate::pack::ReadFailure::Damaged(_)) => {}
+                        Err(crate::pack::ReadFailure::Other(error)) => return Err(error),
+                    }
+                }
                 // Like Git, look in packs first: most objects are packed, and an object ID
                 // determines its content wherever it is stored.
                 for pack in &store.packs {
@@ -1651,6 +1705,7 @@ impl Store {
                     packs: vec![],
                     pack_paths: vec![],
                     pack_marks: vec![],
+                    midx: None,
                 });
             }
             Err(source) => {
@@ -1725,6 +1780,7 @@ impl Store {
             packs,
             pack_paths,
             pack_marks,
+            midx: None,
         })
     }
 }
@@ -1838,3 +1894,39 @@ fn charge_copy_entry(entries: &mut usize, max: usize) -> Result<(), ObjectReadEr
 #[cfg(test)]
 #[path = "objects/tests.rs"]
 mod tests;
+
+impl Objects {
+    pub(crate) fn verify_multi_pack_index(
+        &self,
+        index: &crate::multi_pack_index::MultiPackIndex<'_>,
+    ) -> Result<(), crate::multi_pack_index::Error> {
+        use crate::multi_pack_index::Error;
+        for store in &self.stores {
+            let selected = index
+                .pack_names()
+                .iter()
+                .map(|name| {
+                    let path = store
+                        .directory
+                        .join("pack")
+                        .join(name)
+                        .with_extension("pack");
+                    store
+                        .pack_paths
+                        .iter()
+                        .position(|candidate| *candidate == path)
+                        .and_then(|ordinal| store.packs.get(ordinal))
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(packs) = selected else {
+                continue;
+            };
+            for pack in &packs {
+                pack.verify_index()?;
+            }
+            index.verify_entries(&packs)?;
+            return Ok(());
+        }
+        Err(Error::MissingPack)
+    }
+}

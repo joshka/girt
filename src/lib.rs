@@ -185,6 +185,7 @@ pub mod content_diff;
 pub mod display;
 mod edges;
 mod error;
+pub mod multi_pack_index;
 pub use error::{Error, Result};
 pub mod apply;
 pub mod fetch;

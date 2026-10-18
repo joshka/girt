@@ -333,6 +333,8 @@ The Windows integration selection follows implemented operations, not just file 
   on Windows; Linux byte filenames and macOS normalization restrictions have distinct local cases.
 - `checkout_portable`: Cancellation before locking and explicit unsupported-platform checkout
   rejection. The `checkout` suite and native symlink tests run only on macOS/Linux.
+- `multi_pack_index`: Portable isolated Git-generated v1/v2 indexes in both object formats,
+  incremental chains, uncovered packs and stale/corrupt/disabled hint fallback.
 - `repositories`: Opening, initialization, discovery, configuration and Git-written layouts.
 - `layout_shallow`: Both-format relative/moved layouts, worktree inventory and shallow-depth
   observations. Filesystem symlink/permission cases are Unix-only; raw byte paths are Linux-only.
