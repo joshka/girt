@@ -152,163 +152,172 @@ pub(super) fn receive_depth_observed(
     let mut edges = 0_usize;
     let mut read = limits.known_read;
     read.max_object_bytes = read.max_object_bytes.min(limits.max_object_bytes);
-    prefetch::with_prefetch(
-        &store,
-        read,
-        control.cancel,
-        limits.max_threads,
-        |prefetch| {
-            while let Some((id, kind)) = pending.pop_front().or_else(|| {
-                pending.extend(commit_trees.drain(..).rev());
-                pending.pop_front()
-            }) {
-                prefetch.popped();
-                check(control)?;
-                queued.remove(&id);
-                if let Some(&actual) = observed.get(&id) {
-                    if kind.is_some_and(|kind| kind != actual) {
+    if let Some(ids) = bitmap_selection(&store, &wants, known, depth, limits, control)? {
+        selected = ids;
+        observe(LocalFetchProgress::Reading {
+            objects: selected.len() as u64,
+        });
+    } else {
+        prefetch::with_prefetch(
+            &store,
+            read,
+            control.cancel,
+            limits.max_threads,
+            |prefetch| {
+                while let Some((id, kind)) = pending.pop_front().or_else(|| {
+                    pending.extend(commit_trees.drain(..).rev());
+                    pending.pop_front()
+                }) {
+                    prefetch.popped();
+                    check(control)?;
+                    queued.remove(&id);
+                    if let Some(&actual) = observed.get(&id) {
+                        if kind.is_some_and(|kind| kind != actual) {
+                            return Err(FetchError::Kind(id));
+                        }
+                        continue;
+                    }
+                    if observed.len() >= limits.max_objects {
+                        return Err(FetchError::Limit("local objects"));
+                    }
+                    let prefetch::Fetched {
+                        kind: object_kind,
+                        length,
+                        payload,
+                    } = prefetch.take(id, kind, &pending, &observed)?;
+                    if kind.is_some_and(|kind| kind != object_kind) {
                         return Err(FetchError::Kind(id));
                     }
-                    continue;
-                }
-                if observed.len() >= limits.max_objects {
-                    return Err(FetchError::Limit("local objects"));
-                }
-                let prefetch::Fetched {
-                    kind: object_kind,
-                    length,
-                    payload,
-                } = prefetch.take(id, kind, &pending, &observed)?;
-                if kind.is_some_and(|kind| kind != object_kind) {
-                    return Err(FetchError::Kind(id));
-                }
-                observed.insert(id, object_kind);
-                // Readers synthesize the empty tree even without a Git object file. Materialize it
-                // whenever this walk reaches it, rather than treating it as stored destination
-                // data.
-                let available = depth.is_none()
-                    && limits.max_haves > 0
-                    && known.kind(id) == Some(object_kind)
-                    && !(object_kind == ObjectKind::Tree && length == 0);
-                if available
-                    && known.complete_kind(id) == Some(object_kind)
-                    && !known.shallow.contains(&id)
-                {
-                    dependencies.push(id);
-                    continue;
-                }
-                if depth.is_some() && id == wants[0] && object_kind != ObjectKind::Commit {
-                    return Err(FetchError::Unsupported(
-                        "native local depth requires commit tip",
-                    ));
-                }
-                bytes = bytes
-                    .checked_add(length)
-                    .ok_or(FetchError::Limit("local bytes"))?;
-                if bytes > limits.max_decode_bytes {
-                    return Err(FetchError::Limit("local bytes"));
-                }
-                // Blobs have no edges. Their framing is checked now and their identity during
-                // import. Selection only follows edges: every selected object's
-                // identity is checked when the destination imports it, so this walk
-                // does not hash payloads it never returns.
-                let object = if object_kind == ObjectKind::Blob {
-                    UnverifiedObject {
-                        kind: object_kind,
-                        data: Default::default(),
-                    }
-                } else if let Some(object) = payload {
-                    object
-                } else {
-                    store
-                        .read_unverified(id, read, control.cancel)
-                        .map_err(|source| FetchError::LocalRead { id, source })?
-                        .ok_or(FetchError::Missing(id))?
-                };
-                if depth.is_none() {
-                    match object_kind {
-                        ObjectKind::Commit => {
-                            if let Ok(commit) =
-                                crate::Commit::parse(source.object_format(), object.data())
-                            {
-                                boundaries.pair_commit(known, commit.tree(), commit.parents());
-                            }
-                        }
-                        ObjectKind::Tree => {
-                            boundaries.pair_tree(known, id, object.data());
-                        }
-                        _ => {}
-                    }
-                }
-                crate::edges::visit(id, object.kind(), object.data(), |target, kind| {
-                    check(control)?;
-                    if depth.is_some() && id == wants[0] && kind == ObjectKind::Commit {
-                        // Depth one cuts only the selected commit's parent edges. Its tree and all
-                        // reachable content stay in the self-contained pack.
-                        if shallow.is_empty() {
-                            shallow.push(id);
-                        }
-                        return Ok(());
-                    }
-                    edges += 1;
-                    if edges > limits.max_connectivity_edges {
-                        return Err(FetchError::Limit("local edges"));
-                    }
-                    // Most edges name an object already read. Check it now rather than queueing it,
-                    // as trees repeat their unchanged entries across a history.
-                    if let Some(&actual) = observed.get(&target) {
-                        return if actual == kind {
-                            Ok(())
-                        } else {
-                            Err(FetchError::Kind(target))
-                        };
-                    }
-                    // A complete parent's tree names this object. Send it again only if the
-                    // destination lost it.
-                    if boundaries.kind(target) == Some(kind)
-                        && known.stored_kind(target) == Some(kind)
+                    observed.insert(id, object_kind);
+                    // Readers synthesize the empty tree even without a Git object file. Materialize
+                    // it whenever this walk reaches it, rather than treating it
+                    // as stored destination data.
+                    let available = depth.is_none()
+                        && limits.max_haves > 0
+                        && known.kind(id) == Some(object_kind)
+                        && !(object_kind == ObjectKind::Tree && length == 0);
+                    if available
+                        && known.complete_kind(id) == Some(object_kind)
+                        && !known.shallow.contains(&id)
                     {
-                        observed.insert(target, kind);
-                        dependencies.push(target);
-                        return Ok(());
+                        dependencies.push(id);
+                        continue;
                     }
-                    // An object queued once is read once, and its read checks the first
-                    // required kind. Another edge requiring a different kind cannot match it.
-                    match queued.entry(target) {
-                        Entry::Occupied(entry) => {
-                            return if *entry.get() == kind {
+                    if depth.is_some() && id == wants[0] && object_kind != ObjectKind::Commit {
+                        return Err(FetchError::Unsupported(
+                            "native local depth requires commit tip",
+                        ));
+                    }
+                    bytes = bytes
+                        .checked_add(length)
+                        .ok_or(FetchError::Limit("local bytes"))?;
+                    if bytes > limits.max_decode_bytes {
+                        return Err(FetchError::Limit("local bytes"));
+                    }
+                    // Blobs have no edges. Their framing is checked now and their identity during
+                    // import. Selection only follows edges: every selected object's
+                    // identity is checked when the destination imports it, so this walk
+                    // does not hash payloads it never returns.
+                    let object = if object_kind == ObjectKind::Blob {
+                        UnverifiedObject {
+                            kind: object_kind,
+                            data: Default::default(),
+                        }
+                    } else if let Some(object) = payload {
+                        object
+                    } else {
+                        store
+                            .read_unverified(id, read, control.cancel)
+                            .map_err(|source| FetchError::LocalRead { id, source })?
+                            .ok_or(FetchError::Missing(id))?
+                    };
+                    if depth.is_none() {
+                        match object_kind {
+                            ObjectKind::Commit => {
+                                if let Ok(commit) =
+                                    crate::Commit::parse(source.object_format(), object.data())
+                                {
+                                    boundaries.pair_commit(known, commit.tree(), commit.parents());
+                                }
+                            }
+                            ObjectKind::Tree => {
+                                boundaries.pair_tree(known, id, object.data());
+                            }
+                            _ => {}
+                        }
+                    }
+                    crate::edges::visit(id, object.kind(), object.data(), |target, kind| {
+                        check(control)?;
+                        if depth.is_some() && id == wants[0] && kind == ObjectKind::Commit {
+                            // Depth one cuts only the selected commit's parent edges. Its tree and
+                            // all reachable content stay in the
+                            // self-contained pack.
+                            if shallow.is_empty() {
+                                shallow.push(id);
+                            }
+                            return Ok(());
+                        }
+                        edges += 1;
+                        if edges > limits.max_connectivity_edges {
+                            return Err(FetchError::Limit("local edges"));
+                        }
+                        // Most edges name an object already read. Check it now rather than queueing
+                        // it, as trees repeat their unchanged entries
+                        // across a history.
+                        if let Some(&actual) = observed.get(&target) {
+                            return if actual == kind {
                                 Ok(())
                             } else {
                                 Err(FetchError::Kind(target))
                             };
                         }
-                        Entry::Vacant(entry) => {
-                            entry.insert(kind);
+                        // A complete parent's tree names this object. Send it again only if the
+                        // destination lost it.
+                        if boundaries.kind(target) == Some(kind)
+                            && known.stored_kind(target) == Some(kind)
+                        {
+                            observed.insert(target, kind);
+                            dependencies.push(target);
+                            return Ok(());
                         }
-                    }
-                    if object_kind == ObjectKind::Commit && kind == ObjectKind::Tree {
-                        commit_trees.push((target, Some(kind)));
+                        // An object queued once is read once, and its read checks the first
+                        // required kind. Another edge requiring a different kind cannot match it.
+                        match queued.entry(target) {
+                            Entry::Occupied(entry) => {
+                                return if *entry.get() == kind {
+                                    Ok(())
+                                } else {
+                                    Err(FetchError::Kind(target))
+                                };
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(kind);
+                            }
+                        }
+                        if object_kind == ObjectKind::Commit && kind == ObjectKind::Tree {
+                            commit_trees.push((target, Some(kind)));
+                        } else {
+                            pending.push_back((target, Some(kind)));
+                        }
+                        Ok(())
+                    })?;
+                    if available {
+                        // An interrupted unpack can leave this object without its descendants.
+                        // Walking its source edges above proves those
+                        // descendants are either selected or complete.
+                        dependencies.push(id);
                     } else {
-                        pending.push_back((target, Some(kind)));
+                        selected.push(id);
+                        observe(LocalFetchProgress::Reading {
+                            objects: selected.len() as u64,
+                        });
                     }
-                    Ok(())
-                })?;
-                if available {
-                    // An interrupted unpack can leave this object without its descendants. Walking
-                    // its source edges above proves those descendants are
-                    // either selected or complete.
-                    dependencies.push(id);
-                } else {
-                    selected.push(id);
-                    observe(LocalFetchProgress::Reading {
-                        objects: selected.len() as u64,
-                    });
+                    check(control)?;
                 }
-                check(control)?;
-            }
-            Ok::<_, FetchError>(())
-        },
-    )?;
+                Ok::<_, FetchError>(())
+            },
+        )?;
+    }
     // The walk's tables are proportional to the whole history; release them before writing.
     drop((pending, commit_trees, observed, queued));
     check(control)?;
@@ -411,6 +420,56 @@ pub(super) fn receive_depth_observed(
     check(control)?;
     observe(LocalFetchProgress::Complete);
     Ok(received)
+}
+
+/// Selects every object reachable from `wants` with the source's bitmap index, when the
+/// destination has none of them.
+///
+/// A clone otherwise reads and parses every commit and tree in the source to find the same set.
+/// Returns `None` to walk instead: when the destination has any selected object, a depth limit or
+/// shallow boundary applies, or the source has no bitmap for these wants. The selection trusts the
+/// source's derived metadata only to choose objects; the destination's import still hashes every
+/// received object and checks its connectivity, so a stale or wrong bitmap fails validation rather
+/// than storing a gap.
+fn bitmap_selection(
+    store: &crate::Objects,
+    wants: &[ObjectId],
+    known: &KnownHistory,
+    depth: Option<NonZeroU32>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+) -> Result<Option<Vec<ObjectId>>, FetchError> {
+    if depth.is_some() || !known.shallow.is_empty() {
+        return Ok(None);
+    }
+    let query = crate::bitmap::QueryLimits {
+        max_objects: limits.max_objects,
+        max_edges: limits.max_connectivity_edges,
+        max_walk_bytes: limits.max_decode_bytes as u64,
+        ..Default::default()
+    };
+    // The query observes cancellation but not the deadline, which is checked once it returns. Its
+    // limits bound the work, and on git/git it takes under a second.
+    let Ok(Some(reachable)) = store.bitmap_difference(wants, &[], query, control.cancel) else {
+        check(control)?;
+        return Ok(None);
+    };
+    check(control)?;
+    if reachable.len() > limits.max_objects {
+        return Err(FetchError::Limit("local objects"));
+    }
+    let ids: Vec<_> = reachable.ids().collect();
+    // The walk sends every object the destination lacks and records the others as dependencies.
+    // When it lacks all of them, both choose the same objects. Like the walk, send the empty tree
+    // even though readers synthesize it.
+    let empty_tree = store.object_format().empty_tree();
+    for &id in &ids {
+        check(control)?;
+        if id != empty_tree && known.kind(id).is_some() {
+            return Ok(None);
+        }
+    }
+    Ok(Some(ids))
 }
 
 pub(super) fn advertise(

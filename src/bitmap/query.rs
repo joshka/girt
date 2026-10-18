@@ -134,8 +134,49 @@ impl Objects {
                 .ok_or(Error::Limit("edges"))?,
         )?;
         let tips: Vec<_> = include.iter().chain(exclude).copied().collect();
-        let (indexes, mut decoded) = super::inventory::load(self, &tips, limits, cancel)?;
-        for source in &indexes {
+        let (indexes, decoded) = super::inventory::load(self, &tips, limits, cancel)?;
+        self.difference_from(&indexes, decoded, budget, include, exclude, cancel)
+    }
+
+    /// Finds a reachability difference like [`Self::reachable_difference_with`], but only when a
+    /// bitmap index covers some of the tips' history.
+    ///
+    /// Returns `None` when bitmaps are disabled or none applies, so the caller can choose its own
+    /// walk rather than this one's verified reads.
+    pub(crate) fn bitmap_difference(
+        &self,
+        include: &[ObjectId],
+        exclude: &[ObjectId],
+        limits: QueryLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Reachability>, Error> {
+        check(cancel)?;
+        let mut budget = Budget::new(limits);
+        budget.edges(
+            include
+                .len()
+                .checked_add(exclude.len())
+                .ok_or(Error::Limit("edges"))?,
+        )?;
+        let tips: Vec<_> = include.iter().chain(exclude).copied().collect();
+        let (indexes, decoded) = super::inventory::load(self, &tips, limits, cancel)?;
+        if indexes.is_empty() {
+            return Ok(None);
+        }
+        self.difference_from(&indexes, decoded, budget, include, exclude, cancel)
+            .map(Some)
+    }
+
+    fn difference_from(
+        &self,
+        indexes: &[super::inventory::Bound],
+        mut decoded: usize,
+        mut budget: Budget,
+        include: &[ObjectId],
+        exclude: &[ObjectId],
+        cancel: &AtomicBool,
+    ) -> Result<Reachability, Error> {
+        for source in indexes {
             if let Some((bitmap, visits)) =
                 source.difference(include, exclude, &mut decoded, cancel)?
             {
@@ -160,7 +201,7 @@ impl Objects {
         }
         let mut walk = Walk {
             objects: self,
-            indexes: &indexes,
+            indexes,
             budget: &mut budget,
             decoded: &mut decoded,
             cancel,
