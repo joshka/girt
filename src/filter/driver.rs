@@ -194,6 +194,7 @@ pub struct Drivers {
     pub(super) commands: Commands,
     pub(super) limits: Limits,
     pub(super) directory: Option<PathBuf>,
+    pub(super) environment: Option<crate::workflow::Environment>,
 }
 
 impl Default for Drivers {
@@ -203,11 +204,21 @@ impl Default for Drivers {
             commands: Commands::Refuse,
             limits: Limits::default(),
             directory: None,
+            environment: None,
         }
     }
 }
 
 impl Drivers {
+    pub(super) fn configure_command(&self, command: &mut std::process::Command) {
+        if let Some(directory) = &self.directory {
+            command.current_dir(directory);
+        }
+        if let Some(environment) = &self.environment {
+            command.env_clear().envs(environment.vars());
+        }
+    }
+
     /// Reads `filter.<name>.clean`, `smudge`, `process` and `required`, with [`Commands::Refuse`]
     /// and default [`Limits`]. An empty command configures none.
     ///
@@ -328,9 +339,7 @@ pub(super) fn run(
     let script = substitute(command, path);
     let mut shell = Command::new("sh");
     shell.arg("-c").arg(os_string(script));
-    if let Some(directory) = &drivers.directory {
-        shell.current_dir(directory);
-    }
+    drivers.configure_command(&mut shell);
     let mut child = shell
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

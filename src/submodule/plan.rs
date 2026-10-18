@@ -16,16 +16,17 @@ pub enum Commands {
 
 /// Configuration assignments needed to initialize one caller-selected submodule.
 ///
-/// Append [`Self::settings`] to the parent's local config under `submodule.<name>` using
-/// [`crate::config::ConfigEdit`]. These are proposed assignments, not a transaction: recheck the
-/// effective configuration under caller exclusion before publishing, and reopen afterwards.
-/// No URL rewriting, transport authorization, file creation or network access occurs. Derived
-/// `Debug` includes unredacted proposed URLs; treat it like the original configuration.
+/// [`Self::apply`] checks the effective URL/update/activation inputs again under the parent's
+/// local config lock, then publishes these assignments. [`Self::settings`] also supports explicit
+/// document editing. Preserve caller exclusion of configuration sources and reopen afterwards;
+/// no multi-file transaction is implied. Derived `Debug` includes unredacted proposed URLs and
+/// captured settings; treat it like the original configuration.
 #[derive(Clone, Debug)]
 pub struct InitPlan {
     name: Vec<u8>,
     path: Vec<u8>,
     settings: Vec<(&'static str, Vec<u8>)>,
+    pub(super) expected: [Values; 4],
 }
 
 impl InitPlan {
@@ -68,7 +69,8 @@ pub enum UpdateMethod {
 /// The URL comes from initialized effective configuration. Checkout detaches HEAD; rebase and
 /// merge preserve the child's branch; none leaves it unchanged. The plan does not establish that
 /// objects are present, content is clean, paths are unaliased, or a write is safe. Fetch/clone,
-/// checkout filters, reference publication and bounded recursion belong to explicit execution.
+/// checkout filters and reference publication belong to explicit [`Self::apply`]. Fetch/clone and
+/// recursive execution are not yet available.
 /// Derived `Debug` includes the unredacted URL and command text.
 #[derive(Clone, Debug)]
 pub struct UpdatePlan {
@@ -77,6 +79,7 @@ pub struct UpdatePlan {
     recorded: ObjectId,
     url: Vec<u8>,
     method: UpdateMethod,
+    pub(super) expected: [Values; 2],
 }
 
 impl UpdatePlan {
@@ -173,6 +176,7 @@ impl Definition {
             name: self.name().to_vec(),
             path,
             settings,
+            expected: init_values(config, self.name()),
         })
     }
 
@@ -237,6 +241,7 @@ impl Definition {
             recorded,
             url,
             method,
+            expected: update_values(config, self.name()),
         })
     }
 }
@@ -301,4 +306,27 @@ pub enum PlanError {
     /// Configuration source is eligible, but the caller did not permit command execution.
     #[error("external submodule update commands are refused")]
     CommandRefused,
+}
+
+// Only settings used by the selected plan participate in its publication precondition.
+type Values = Vec<Option<Vec<u8>>>;
+fn values(config: &Config, name: Option<&[u8]>, key: &str) -> Values {
+    config
+        .values("submodule", name, key)
+        .map(|value| value.map(<[u8]>::to_vec))
+        .collect()
+}
+pub(super) fn init_values(config: &Config, name: &[u8]) -> [Values; 4] {
+    [
+        values(config, Some(name), "url"),
+        values(config, Some(name), "update"),
+        values(config, Some(name), "active"),
+        values(config, None, "active"),
+    ]
+}
+pub(super) fn update_values(config: &Config, name: &[u8]) -> [Values; 2] {
+    [
+        values(config, Some(name), "url"),
+        values(config, Some(name), "update"),
+    ]
 }

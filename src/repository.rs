@@ -444,10 +444,21 @@ pub struct RepositoryMetadata {
     bare: bool,
     config: Config,
     inherited_config: ConfigInputs,
+    opening_config: OpeningConfig,
     format_version: u32,
     object_format: ObjectFormat,
     reference_backend: crate::refs::Backend,
     worktree_config_conflict: bool,
+}
+
+// Retain the caller's source selection and bootstrap bounds for explicit fresh-config checks.
+#[derive(Clone, Debug)]
+struct OpeningConfig {
+    inputs: ConfigInputs,
+    location: RepositoryLocation,
+    placement: IncludePlacement,
+    references: crate::refs::reftable::StackLimits,
+    command: Option<command_layout::CommandWorktree>,
 }
 
 impl RepositoryMetadata {
@@ -547,6 +558,7 @@ impl RepositoryMetadata {
             bare: self.bare,
             config: self.config,
             inherited_config: self.inherited_config,
+            opening_config: self.opening_config,
             format_version: self.format_version,
             object_format: self.object_format,
             shallow,
@@ -559,7 +571,7 @@ impl RepositoryMetadata {
         location: &RepositoryLocation,
         inputs: &ConfigInputs,
         reference_limits: crate::refs::reftable::StackLimits,
-        command: Option<command_layout::CommandWorktree<'_>>,
+        command: Option<command_layout::CommandWorktree>,
         placement: IncludePlacement,
     ) -> Result<Self, OpenError> {
         let RepositoryLocation {
@@ -605,14 +617,15 @@ impl RepositoryMetadata {
             Some(Some(b"reftable")) => crate::refs::Backend::Reftable,
             _ => crate::refs::Backend::Files,
         };
-        let mut inherited_config = inputs.clone();
-        inherited_config
-            .files
-            .retain(|file| !matches!(file.scope, ConfigScope::Local | ConfigScope::Worktree));
-        for file in &mut inherited_config.files {
+        let mut opening_config = inputs.clone();
+        for file in &mut opening_config.files {
             file.path =
                 std::path::absolute(&file.path).map_err(|source| io_error(&file.path, source))?;
         }
+        let mut inherited_config = opening_config.clone();
+        inherited_config
+            .files
+            .retain(|file| !matches!(file.scope, ConfigScope::Local | ConfigScope::Worktree));
         inherited_config.context.git_dirs.clear();
         inherited_config.context.branch = None;
         let mut inputs = inputs.clone();
@@ -681,7 +694,7 @@ impl RepositoryMetadata {
                 skip_unreadable: false,
             });
         }
-        let (worktree, bare, worktree_config_conflict) = if let Some(command) = command {
+        let (worktree, bare, worktree_config_conflict) = if let Some(command) = &command {
             command.resolve(&git_dir, &layout_config, &config_path)?
         } else {
             let worktree = resolve_worktree(
@@ -703,6 +716,13 @@ impl RepositoryMetadata {
             bare,
             config,
             inherited_config,
+            opening_config: OpeningConfig {
+                inputs: opening_config,
+                location: location.clone(),
+                placement,
+                references: reference_limits,
+                command,
+            },
             format_version,
             object_format,
             reference_backend,
@@ -778,6 +798,7 @@ pub struct Repository {
     bare: bool,
     config: Config,
     inherited_config: ConfigInputs,
+    opening_config: OpeningConfig,
     format_version: u32,
     object_format: ObjectFormat,
     shallow: ShallowRoots,
@@ -876,6 +897,18 @@ pub enum OpenError {
 }
 
 impl Repository {
+    pub(crate) fn reopen(&self) -> Result<Self, OpenError> {
+        let opening = &self.opening_config;
+        let metadata = RepositoryMetadata::read_location(
+            &opening.location,
+            &opening.inputs,
+            opening.references,
+            opening.command.clone(),
+            opening.placement,
+        )?;
+        metadata.open_storage()
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn inherited_config(&self) -> &ConfigInputs {
         &self.inherited_config

@@ -102,8 +102,8 @@ impl RepositoryLocation {
             inputs,
             crate::refs::reftable::StackLimits::default(),
             Some(CommandWorktree {
-                cwd,
-                worktree_override,
+                cwd: cwd.to_owned(),
+                worktree_override: worktree_override.map(Path::to_path_buf),
             }),
             IncludePlacement::InPlace,
         )
@@ -121,19 +121,20 @@ impl RepositoryMetadata {
     }
 }
 
-pub(super) struct CommandWorktree<'a> {
-    cwd: &'a Path,
-    worktree_override: Option<&'a Path>,
+#[derive(Clone, Debug)]
+pub(super) struct CommandWorktree {
+    cwd: PathBuf,
+    worktree_override: Option<PathBuf>,
 }
 
-impl CommandWorktree<'_> {
+impl CommandWorktree {
     pub(super) fn resolve(
-        self,
+        &self,
         git_dir: &Path,
         config: &Config,
         source: &Path,
     ) -> Result<(Option<PathBuf>, bool, bool), OpenError> {
-        if let Some(path) = self.worktree_override {
+        if let Some(path) = &self.worktree_override {
             return Ok((Some(available_path(path)?), false, false));
         }
         let bare = boolean(config, source, "bare")? == Some(true);
@@ -150,7 +151,7 @@ impl CommandWorktree<'_> {
             }
             available_path(&git_dir.join(path_bytes(source, value)?))?
         } else {
-            available_path(self.cwd)?
+            available_path(&self.cwd)?
         };
         Ok((Some(worktree), false, false))
     }

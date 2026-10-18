@@ -13,6 +13,15 @@ pub fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
 }
 
 pub fn attempt(directory: &Path, args: &[&str], input: &[u8]) -> std::process::Output {
+    attempt_with_env(directory, args, input, &[])
+}
+
+pub fn attempt_with_env(
+    directory: &Path,
+    args: &[&str],
+    input: &[u8],
+    environment: &[(&str, &std::ffi::OsStr)],
+) -> std::process::Output {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -30,6 +39,7 @@ pub fn attempt(directory: &Path, args: &[&str], input: &[u8]) -> std::process::O
         .env("GIT_COMMITTER_NAME", "C. Recorder")
         .env("GIT_COMMITTER_EMAIL", "committer@example.com")
         .env("GIT_COMMITTER_DATE", "@1700000123 -0700")
+        .envs(environment.iter().copied())
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

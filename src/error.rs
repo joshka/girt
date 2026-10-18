@@ -119,6 +119,8 @@ from_domain_errors! {
     crate::submodule::UrlError,
     crate::submodule::StatusError,
     crate::submodule::PlanError,
+    crate::submodule::InitError,
+    crate::submodule::UpdateError,
     crate::apply::Error,
     crate::apply::IndexError,
     crate::mailmap::Error,
