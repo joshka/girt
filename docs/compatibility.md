@@ -38,6 +38,19 @@ historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec 
 [R06 evidence](evidence/r06.md) records the native Linux/macOS/Windows refresh for these increments,
 including the selected Windows scope and exact tested revision.
 
+## Submodule definitions
+
+`tests/submodules.rs` generates original repositories through Git with inherited `GIT_*` values
+cleared, isolated system/global configuration, and fixed identities and timestamps. Git 2.56.0 on
+macOS confirms last-assignment path/URL selection by `submodule init`, name/path separation,
+relative-URL interpretation by Git, built-in update copying, traversal-name rejection, invalid
+boolean/fetch-recursion refusal, implicit string setting refusal, shadowed invalid assignments,
+external-update-command refusal and invalid-ignore fallback. Byte-preservation and conservative
+lexical validation have separate library tests. The latter rejects some values Git init accepts; it
+does not establish filesystem alias or symlink safety. No checkout, fetch, absorbed-layout, status
+or recursion support is claimed by these tests. See
+[working with submodule definitions](../site/src/content/docs/guides/submodules.md).
+
 ## Mailmap
 
 `tests/mailmap_git.rs` compares original temporary maps with the installed Git executable's
