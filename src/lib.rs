@@ -175,6 +175,7 @@ mod pack_git;
 mod posix_regex;
 
 pub mod attributes;
+pub mod bisect;
 pub mod bitmap;
 pub mod blame;
 pub mod bundle;

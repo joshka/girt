@@ -69,9 +69,9 @@ const fn use_(pairs: &'static [(&'static str, &'static str)]) -> Hint {
 const ENTRIES: &[Entry] = &[
     // Top-level Git commands: every name in `git_commands.txt` appears exactly once.
     commands(&[
-        "archive", "blame", "checkout", "clone", "config", "diff", "fetch", "grep", "help",
-        "history", "init", "log", "maintenance", "multi-pack-index", "push", "remote", "replace",
-        "repo", "reset", "status", "worktree",
+        "archive", "bisect", "blame", "checkout", "clone", "config", "diff", "fetch", "grep",
+        "help", "history", "init", "log", "maintenance", "multi-pack-index", "push", "remote",
+        "replace", "repo", "reset", "status", "worktree",
         "fsck",
     ], Hint::Same),
     commands(&["annotate"], use_(&[("annotate", "blame")])),
@@ -139,7 +139,7 @@ const ENTRIES: &[Entry] = &[
     ], TRANSFER),
     commands(&["for-each-repo", "hook", "sparse-checkout", "submodule", "var"], SETUP),
     commands(&[
-        "bisect", "cherry-pick", "citool", "difftool", "filter-branch", "fmt-merge-msg", "gitk",
+        "cherry-pick", "citool", "difftool", "filter-branch", "fmt-merge-msg", "gitk",
         "gui", "merge", "merge-file", "merge-index", "merge-one-file", "merge-tree", "mergetool",
         "pull", "rebase", "replay", "rerere", "revert", "stash", "switch",
     ], PORCELAIN),
