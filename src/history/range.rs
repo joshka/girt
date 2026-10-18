@@ -45,7 +45,7 @@ impl Objects {
                 .chain(exclude)
                 .all(|id| graph.generation(*id).is_some())
         }) {
-            return paint(self, graph, include, exclude, limits);
+            return Ok(paint(self, graph, include, exclude, Sides::Include, limits)?.0);
         }
         let roots: Vec<_> = include.iter().chain(exclude).copied().collect();
         let graph = Graph::read(self, &roots, limits)?;
@@ -66,6 +66,99 @@ impl Objects {
     }
 }
 
+/// How many commits each side of a symmetric range has that the other lacks.
+///
+/// Returned by [`Objects::ahead_behind`]. A merge commit counts once, like any other commit.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct AheadBehind {
+    /// Commits reachable from the left tip but not from the right tip.
+    pub ahead: usize,
+    /// Commits reachable from the right tip but not from the left tip.
+    pub behind: usize,
+}
+
+impl Objects {
+    /// Counts the commits only `left` reaches and the commits only `right` reaches.
+    ///
+    /// This is `git rev-list --left-right --count left...right`: with `left` a branch and `right`
+    /// its upstream, [`AheadBehind::ahead`] is how many commits the branch has that the upstream
+    /// lacks. Equal tips give zero on both sides; disconnected histories count every commit.
+    ///
+    /// With a commit-graph covering both tips, the walk visits commits in descending generation
+    /// order and stops once every queued commit is reachable from both tips, so shared history
+    /// below the merge base is not read. Without one, both complete ancestries are read. Both give
+    /// exact counts; no timestamp heuristics are used.
+    ///
+    /// ```
+    /// # use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+    /// # let directory = tempfile::tempdir()?;
+    /// # let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r.git"), InitKind::Bare)?;
+    /// # let loose = repo.loose_objects();
+    /// # let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    /// # let person = Signature {
+    /// #     name: b"A. Writer".to_vec(), email: b"writer@example.com".to_vec(),
+    /// #     seconds: 1_700_000_000, offset_minutes: 0,
+    /// # };
+    /// # let commit = |parents, message: &[u8]| loose.write_commit(&Commit::new(CommitFields {
+    /// #     tree, parents, author: person.clone(), committer: person.clone(),
+    /// #     extra_headers: vec![], message: message.to_vec(),
+    /// # })?);
+    /// let base = commit(vec![], b"base\n")?;
+    /// let local = commit(vec![base], b"local\n")?;
+    /// let upstream = commit(vec![base], b"upstream 1\n")?;
+    /// let upstream = commit(vec![upstream], b"upstream 2\n")?;
+    ///
+    /// let counts = repo.objects()?.ahead_behind(local, upstream)?;
+    /// assert_eq!((counts.ahead, counts.behind), (1, 2));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::walk_range`].
+    pub fn ahead_behind(
+        &self,
+        left: ObjectId,
+        right: ObjectId,
+    ) -> Result<AheadBehind, HistoryError> {
+        self.ahead_behind_with(left, right, HistoryLimits::default())
+    }
+
+    /// Counts both sides of a symmetric range under explicit bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::walk_range_with`]; bounds count commits explored on both
+    /// sides.
+    pub fn ahead_behind_with(
+        &self,
+        left: ObjectId,
+        right: ObjectId,
+        limits: HistoryLimits,
+    ) -> Result<AheadBehind, HistoryError> {
+        if let Some(graph) = self
+            .commit_graph
+            .as_ref()
+            .filter(|graph| graph.generation(left).is_some() && graph.generation(right).is_some())
+        {
+            let (ahead, behind) = paint(self, graph, &[left], &[right], Sides::Both, limits)?;
+            return Ok(AheadBehind {
+                ahead: ahead.len(),
+                behind: behind.len(),
+            });
+        }
+        let graph = Graph::read(self, &[left, right], limits)?;
+        let left = graph.reachable(graph.positions[&left]);
+        let right = graph.reachable(graph.positions[&right]);
+        let only = |a: &[bool], b: &[bool]| a.iter().zip(b).filter(|(a, b)| **a && !**b).count();
+        Ok(AheadBehind {
+            ahead: only(&left, &right),
+            behind: only(&right, &left),
+        })
+    }
+}
+
 fn mark(graph: &Graph, root: usize, marks: &mut [bool]) {
     let mut stack = vec![root];
     while let Some(index) = stack.pop() {
@@ -76,9 +169,19 @@ fn mark(graph: &Graph, root: usize, marks: &mut [bool]) {
     }
 }
 
+/// Which single-color commits a paint collects and waits for.
+#[derive(Clone, Copy, PartialEq)]
+enum Sides {
+    /// Commits reachable only from the include roots.
+    Include,
+    /// Commits reachable from only one side, either side.
+    Both,
+}
+
 struct Paint {
     marks: IdMap<u8>,
     queue: BinaryHeap<(u64, ObjectId)>,
+    sides: Sides,
     interesting: usize,
     remaining_edges: usize,
     max_commits: usize,
@@ -97,10 +200,18 @@ impl Paint {
             }
             self.queue.push((generation, id));
         }
-        self.interesting += usize::from(new == 1);
-        self.interesting -= usize::from(old == 1);
+        self.interesting += usize::from(self.counts(new));
+        self.interesting -= usize::from(self.counts(old));
         self.marks.insert(id, new);
         Ok(())
+    }
+
+    /// Whether a commit with `color` is still interesting: one side reaches it, not both.
+    fn counts(&self, color: u8) -> bool {
+        match self.sides {
+            Sides::Include => color == 1,
+            Sides::Both => color == 1 || color == 2,
+        }
     }
 }
 
@@ -109,11 +220,13 @@ fn paint(
     graph: &crate::commit_graph::CommitGraph,
     include: &[ObjectId],
     exclude: &[ObjectId],
+    sides: Sides,
     limits: HistoryLimits,
-) -> Result<Vec<ObjectId>, HistoryError> {
+) -> Result<(Vec<ObjectId>, Vec<ObjectId>), HistoryError> {
     let mut state = Paint {
         marks: IdMap::default(),
         queue: BinaryHeap::new(),
+        sides,
         interesting: 0,
         remaining_edges: limits.max_parents,
         max_commits: limits.max_commits,
@@ -130,15 +243,21 @@ fn paint(
             )?;
         }
     }
-    let mut result = Vec::new();
+    let mut included = Vec::new();
+    let mut excluded = Vec::new();
     while state.interesting != 0 {
         let Some((_, id)) = state.queue.pop() else {
             break;
         };
+        // Every child of `id` has a higher generation and was popped first, so its color is final.
         let color = state.marks[&id];
-        if color == 1 {
+        if state.counts(color) {
             state.interesting -= 1;
-            result.push(id);
+            if color == 1 {
+                included.push(id)
+            } else {
+                excluded.push(id)
+            }
         }
         if objects.shallow_roots().contains(id) {
             continue;
@@ -159,7 +278,7 @@ fn paint(
             )?;
         }
     }
-    Ok(result)
+    Ok((included, excluded))
 }
 
 impl Objects {

@@ -690,3 +690,75 @@ fn hash_with_path_matches_git_hash_object() {
             .success()
     );
 }
+
+/// `girt status --branch` prints the header line of `git status -sb` for each upstream state.
+#[test]
+fn status_branch_header_matches_git() {
+    let scratch = tempfile::tempdir().unwrap();
+    let repository = scratch.path().join("repo");
+    fixture(scratch.path(), &repository);
+    let git = |args: &[&str]| {
+        let output = run(
+            Command::new("git").args(args),
+            scratch.path(),
+            &repository,
+            None,
+        );
+        assert!(output.status.success(), "git {args:?}");
+        output.stdout
+    };
+    let header = |args: &[&str]| {
+        let output = run(
+            Command::new(env!("CARGO_BIN_EXE_girt")).args(args),
+            scratch.path(),
+            &repository,
+            None,
+        );
+        assert!(output.status.success(), "girt {args:?}");
+        output
+            .stdout
+            .split(|&b| b == b'\n')
+            .next()
+            .unwrap()
+            .to_vec()
+    };
+    let compare = |state: &str| {
+        let expected = git(&["status", "-sb", "-uno"]);
+        let expected = expected.split(|&b| b == b'\n').next().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&header(&["status", "--branch"])),
+            String::from_utf8_lossy(expected),
+            "{state}"
+        );
+    };
+    compare("no upstream");
+    git(&[
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/*:refs/remotes/origin/*",
+    ]);
+    git(&["config", "branch.main.remote", "origin"]);
+    git(&["config", "branch.main.merge", "refs/heads/main"]);
+    compare("gone");
+    git(&["update-ref", "refs/remotes/origin/main", "main"]);
+    compare("level");
+    git(&["update-ref", "refs/remotes/origin/main", "first"]);
+    compare("ahead");
+    git(&["commit", "--quiet", "--allow-empty", "-m", "upstream"]);
+    git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(&["reset", "--quiet", "--soft", "first"]);
+    git(&["commit", "--quiet", "--allow-empty", "-m", "local"]);
+    compare("diverged");
+    git(&["config", "branch.main.remote", "."]);
+    git(&["config", "branch.main.merge", "refs/heads/main"]);
+    compare("local upstream");
+    git(&["config", "branch.main.merge", "refs/tags/v1"]);
+    compare("annotated tag upstream");
+    git(&["checkout", "--quiet", "--orphan", "unborn"]);
+    git(&["config", "branch.unborn.remote", "."]);
+    git(&["config", "branch.unborn.merge", "refs/heads/main"]);
+    compare("unborn with upstream");
+    git(&["checkout", "--quiet", "main"]);
+    git(&["checkout", "--quiet", "--detach"]);
+    compare("detached");
+}

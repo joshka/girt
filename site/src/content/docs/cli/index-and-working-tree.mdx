@@ -38,7 +38,9 @@ $ girt index list --stage
 changed path, using the letters of `git status --porcelain`: the first column is the index against
 `HEAD`, the second the working tree against the index. `-u` adds untracked files, filtered through
 `.gitignore`, `info/exclude` and `core.excludesFile`. Without `-u` it corresponds to
-`git status --porcelain -uno`, and with it to `--untracked-files=all`.
+`git status --porcelain -uno`, and with it to `--untracked-files=all`. `-b` starts with the branch
+line of `git status -sb`, such as `## main...origin/main [ahead 1, behind 2]`: the commits each side
+has that the other lacks, or `[gone]` when the upstream reference no longer exists.
 
 ```console
 $ printf 'more\n' >> README.md

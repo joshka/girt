@@ -219,3 +219,66 @@ fn root_order_can_differ_from_git_topological_order(#[case] format: ObjectFormat
     assert_eq!(actual, h.ids);
     assert_ne!(actual, expected);
 }
+
+/// A deterministic history with merges, criss-crosses and two disconnected roots.
+fn tangled() -> Vec<Vec<usize>> {
+    let mut parents = vec![vec![], vec![]];
+    let mut seed = 0x9e37_79b9_u32;
+    for i in 2..40 {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        let first = (seed as usize) % i;
+        let edges = if seed.is_multiple_of(3) {
+            let second = (seed as usize / 7) % i;
+            if second == first {
+                vec![first]
+            } else {
+                vec![first, second]
+            }
+        } else {
+            vec![first]
+        };
+        parents.push(edges);
+    }
+    parents
+}
+
+#[rstest]
+fn ahead_behind_matches_rev_list(#[values(false, true)] commit_graph: bool) {
+    let h = History::new(&tangled(), true);
+    if commit_graph {
+        history_git::git(
+            h.root.path(),
+            &["commit-graph", "write", "--reachable"],
+            b"",
+        );
+    }
+    let objects = h.objects();
+    let objects = if commit_graph {
+        objects
+    } else {
+        objects.without_commit_graph()
+    };
+    for left in (0..h.ids.len()).step_by(3) {
+        for right in (1..h.ids.len()).step_by(4) {
+            let range = format!("{}...{}", h.ids[left], h.ids[right]);
+            let output = history_git::git(
+                h.root.path(),
+                &["rev-list", "--left-right", "--count", &range],
+                b"",
+            );
+            let output = String::from_utf8(output).unwrap();
+            let expected: Vec<usize> = output
+                .split_whitespace()
+                .map(|n| n.parse().unwrap())
+                .collect();
+            let counts = objects.ahead_behind(h.ids[left], h.ids[right]).unwrap();
+            assert_eq!(
+                [counts.ahead, counts.behind],
+                expected[..],
+                "{left}...{right}"
+            );
+        }
+    }
+}

@@ -46,6 +46,9 @@ pub enum IndexCommand {
 /// refuses non-ASCII working-tree paths on macOS.
 #[derive(Debug, clap::Args)]
 pub struct StatusArgs {
+    /// Start with a `## branch...upstream [ahead N, behind M]` line, as `git status -sb` does.
+    #[arg(short, long)]
+    branch: bool,
     /// Also list untracked files, filtered through .gitignore, info/exclude and
     /// core.excludesFile.
     #[arg(short, long)]
@@ -258,6 +261,11 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
     });
 
     let mut out = stdout();
+    if args.branch {
+        out.write_all(b"## ")?;
+        out.write_all(&branch_header(&repository)?)?;
+        out.write_all(b"\n")?;
+    }
     let reset = crate::color::style(context.color, crate::color::RESET);
     for (path, code) in &lines {
         if context.color {
@@ -284,6 +292,62 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
     }
     out.flush()?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// The branch line of `git status -sb` without its `## ` prefix: the branch, its upstream and how
+/// far each is from the other, `[gone]` when the upstream reference is missing. Bytes are kept
+/// as stored, as Git prints them. An unborn branch always reports its upstream as gone, as Git
+/// does.
+fn branch_header(repository: &Repository) -> Result<Vec<u8>> {
+    let head = repository.head().wrap_err("reading HEAD")?;
+    let Some(branch) = head.name.as_bytes().strip_prefix(b"refs/heads/") else {
+        return Ok(b"HEAD (no branch)".to_vec());
+    };
+    let mut header = match head.id {
+        Some(_) => branch.to_vec(),
+        None => [b"No commits yet on ".as_slice(), branch].concat(),
+    };
+    let objects = repository.objects().wrap_err("opening objects")?;
+    let resolver = girt::revision::Resolver::new(repository, &objects)?;
+    let upstream = match resolver.upstream_name(None) {
+        Ok(upstream) => upstream,
+        Err(girt::revision::RevisionError::NoUpstream { .. }) => return Ok(header),
+        Err(error) => return Err(error).wrap_err("reading the upstream"),
+    };
+    let short = ["refs/heads/", "refs/tags/", "refs/remotes/"]
+        .iter()
+        .find_map(|prefix| upstream.as_bytes().strip_prefix(prefix.as_bytes()))
+        .unwrap_or(upstream.as_bytes());
+    header.extend_from_slice(b"...");
+    header.extend_from_slice(short);
+    let references = repository.references().wrap_err("opening references")?;
+    let upstream_id = references
+        .resolve(&upstream)
+        .wrap_err("reading the upstream")?
+        .id;
+    let (Some(id), Some(upstream_id)) = (head.id, upstream_id) else {
+        header.extend_from_slice(b" [gone]");
+        return Ok(header);
+    };
+    let upstream_commit = objects
+        .peel(
+            upstream_id,
+            girt::PeelLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .wrap_err("peeling the upstream")?
+        .target;
+    let counts = objects
+        .ahead_behind(id, upstream_commit)
+        .wrap_err("counting commits")?;
+    let distance = match (counts.ahead, counts.behind) {
+        (0, 0) => String::new(),
+        (ahead, 0) => format!(" [ahead {ahead}]"),
+        (0, behind) => format!(" [behind {behind}]"),
+        (ahead, behind) => format!(" [ahead {ahead}, behind {behind}]"),
+    };
+    header.extend_from_slice(distance.as_bytes());
+    Ok(header)
 }
 
 /// Status letter for a changed entry: `T` when the kind changes, otherwise `M`.

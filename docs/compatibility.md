@@ -1239,6 +1239,30 @@ Declared shallow boundaries stop parent traversal; raw commit parents remain ava
 [shallow snapshots](repositories.md#shallow-snapshots). Partial repositories and replacement-object
 semantics remain unsupported.
 
+### Ahead/Behind Counts
+
+`tests/history.rs` compares `Objects::ahead_behind` with `git rev-list --left-right --count` for
+every sampled pair in a 40-commit history with merges, criss-crosses and two roots, with and without
+a commit-graph. `girt-cli/tests/git_parity.rs` compares `girt status --branch` with the first line
+of `git status -sb` with no upstream, a gone upstream, level, ahead, diverged, a local (`.`)
+upstream and a detached HEAD.
+
+Measured on a bare clone of git.git (82,443 commits) with a commit-graph from
+`git commit-graph write --reachable`, Git 2.56.0, macOS arm64, release build; girt times are the
+call alone, Git times include process start:
+
+| Range                             | Counts    | girt   | Git         |
+| --------------------------------- | --------- | ------ | ----------- |
+| `master~3...master`               | 0, 20     | 0.3 ms | under 10 ms |
+| merge parents of the newest merge | 5, 191    | 5.7 ms | 10 ms       |
+| `v2.40.0...v2.39.5`               | 515, 123  | 3.4 ms | under 10 ms |
+| `v2.30.0...master`                | 0, 14,005 | 54 ms  | 15-20 ms    |
+| `v1.0.0...master`                 | 0, 72,550 | 95 ms  | 30 ms       |
+
+Without a commit-graph girt reads both complete ancestries, 0.5-1 s for every row, where Git stops
+early using commit dates (60 ms for `master~3...master`). girt does not use date heuristics, so its
+answer is exact even with skewed commit dates.
+
 ## SHA-1 Pack Writing
 
 `write_pack` exports the caller's explicit object set to separate pack and index `Write` sinks. It
