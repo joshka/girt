@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use super::live_progress::LiveProgress;
 use super::v2::Capabilities;
-use super::{Advertisement, DownloadedFetch, FetchError, FetchLimits, KnownHistory, protocol};
+use super::{
+    Advertisement, DownloadedFetch, FetchError, FetchLimits, FetchOptions, KnownHistory, protocol,
+};
 use crate::ObjectId;
 use crate::packet::Wire;
 use crate::transport::TransportControl;
@@ -178,12 +180,47 @@ pub async fn receive_http_with_progress(
 pub async fn receive_http_with_depth_and_progress(
     remote: &HttpRemote,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    mut known: Option<Arc<KnownHistory>>,
+    known: Option<Arc<KnownHistory>>,
     depth: Option<NonZeroU32>,
     limits: FetchLimits,
     control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]),
+) -> Result<DownloadedFetch, FetchError> {
+    receive_http_with_options(
+        remote,
+        select,
+        known,
+        FetchOptions::default()
+            .with_limits(limits)
+            .with_depth(depth),
+        control,
+        progress,
+    )
+    .await
+}
+
+/// Downloads an HTTP fetch shaped by [`FetchOptions`], with [`receive_http_with_progress`]'s live
+/// notices.
+///
+/// `options.depth` requests shallow history as [`receive_http_with_depth`] does.
+/// `options.filter` requests a partial pack when the server advertises filtering; otherwise the
+/// pack is complete. The validated result's [`ReceivedFetch::filter_applied`] reports which.
+///
+/// # Errors
+///
+/// Returns [`receive_http_with_depth_and_progress`]'s errors.
+///
+/// [`ReceivedFetch::filter_applied`]: super::ReceivedFetch::filter_applied
+pub async fn receive_http_with_options(
+    remote: &HttpRemote,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    mut known: Option<Arc<KnownHistory>>,
+    options: FetchOptions,
+    control: TransportControl<'_>,
     mut progress: impl FnMut(&[u8]),
 ) -> Result<DownloadedFetch, FetchError> {
+    let limits = options.limits;
+    let depth = options.depth;
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -222,8 +259,7 @@ pub async fn receive_http_with_depth_and_progress(
             &dialect,
             wants,
             history,
-            depth,
-            limits,
+            &options,
             control.cancel,
         )?;
         control.check()?;

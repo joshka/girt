@@ -84,6 +84,8 @@ pub struct ReceivedFetch {
     shallow: Vec<ObjectId>,
     limits: FetchLimits,
     pub(super) verified: super::verified::VerifiedObjects,
+    /// The server applied an object filter, so the pack may omit objects it references.
+    filter_applied: bool,
 }
 
 pub(crate) enum PackInput<'a> {
@@ -156,6 +158,7 @@ impl ReceivedFetch {
             shallow: vec![],
             limits: FetchLimits::default(),
             verified: Default::default(),
+            filter_applied: false,
         }
     }
 
@@ -177,6 +180,7 @@ impl ReceivedFetch {
             shallow: contents.shallow,
             limits: contents.limits,
             verified: Default::default(),
+            filter_applied: false,
         }
     }
 
@@ -192,6 +196,7 @@ impl ReceivedFetch {
             known,
             &wants,
             &known.shallow,
+            None,
             limits,
             cancel,
         )?;
@@ -259,7 +264,11 @@ impl ReceivedFetch {
         options: super::FetchOptions,
         observer: &mut ValidationObserver<'_>,
     ) -> Result<Self, FetchError> {
-        let super::FetchOptions { limits, depth } = options;
+        let super::FetchOptions {
+            limits,
+            depth,
+            filter,
+        } = options;
         let cancel = observer.cancel;
         let format = advertisement.object_format()?;
         let mut pack = pack.into();
@@ -297,6 +306,7 @@ impl ReceivedFetch {
             &bounded,
             &wants,
             &shallow,
+            filter.as_ref(),
             limits,
             cancel,
         )?;
@@ -334,6 +344,7 @@ impl ReceivedFetch {
             complete,
             shallow,
             limits,
+            filter_applied: filter.is_some(),
         };
         observer.complete();
         Ok(received)
@@ -381,6 +392,17 @@ impl ReceivedFetch {
     /// metadata publication with the pack before a depth-limited result can be installed.
     pub fn shallow_roots(&self) -> &[ObjectId] {
         &self.shallow
+    }
+
+    /// Whether the server applied the requested object filter.
+    ///
+    /// A filtered pack omits objects the filter matched; the source promises them instead. It is
+    /// `false` when no filter was requested and when the server does not support filtering. Git
+    /// then warns "filtering not recognized by server, ignoring"; here the pack is complete and
+    /// this reports the fallback. Installing a filtered pack also publishes its `.promisor`
+    /// marker.
+    pub fn filter_applied(&self) -> bool {
+        self.filter_applied
     }
 
     /// Publishes the validated pack and index without replacing any existing artifact.
@@ -602,6 +624,11 @@ impl ReceivedFetch {
             index.as_file().sync_all()?;
             let basename = directory.join(format!("pack-{checksum}"));
             check_cancelled(cancel)?;
+            if self.filter_applied {
+                // Readers treat objects missing from a promisor pack's closure as promised, so the
+                // marker must exist before the pack becomes visible.
+                publish_promisor(&basename.with_extension("promisor"))?;
+            }
             publish(
                 pack,
                 &basename.with_extension("pack"),
@@ -659,6 +686,25 @@ pub struct FetchInstalled {
     pub checksum: Option<ObjectId>,
     /// Verified object count (not the count of objects new to this repository).
     pub objects: usize,
+}
+
+/// Creates an empty `.promisor` marker, or keeps an existing one from an identical earlier pack.
+fn publish_promisor(path: &Path) -> Result<(), FetchError> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(file) => Ok(file.sync_all()?),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if fs::symlink_metadata(path)?.is_file() {
+                Ok(())
+            } else {
+                Err(FetchError::Existing(path.into()))
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn publish(
@@ -753,6 +799,7 @@ mod shallow_tests {
                     max_objects,
                     ..Default::default()
                 },
+                filter: None,
             },
             &mut ValidationObserver::new(&AtomicBool::new(false), &mut |_| {}),
         )

@@ -1190,6 +1190,7 @@ mod tests {
             &known,
             &[parent],
             &[],
+            None,
             FetchLimits::default(),
             &cancel,
         );
@@ -1202,6 +1203,7 @@ mod tests {
             &known,
             &[parent],
             &[],
+            None,
             FetchLimits::default(),
             &cancel,
         );
@@ -1334,6 +1336,7 @@ mod tests {
             &known,
             &[commit],
             &[],
+            None,
             FetchLimits::default(),
             &AtomicBool::new(false),
         );
@@ -1355,6 +1358,7 @@ mod tests {
             &known,
             &[commit],
             &[],
+            None,
             FetchLimits::default(),
             &AtomicBool::new(false),
         )

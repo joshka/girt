@@ -196,6 +196,7 @@ impl CloneRequest {
             crate::fetch::FetchOptions {
                 limits,
                 depth: None,
+                filter: None,
             },
             cancel,
             progress,
@@ -257,6 +258,7 @@ impl CloneRequest {
             crate::fetch::FetchOptions {
                 limits,
                 depth: None,
+                filter: None,
             },
             control,
             diagnostics,

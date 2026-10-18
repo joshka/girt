@@ -1056,6 +1056,7 @@ mod tests {
             super::super::FetchOptions {
                 limits: FetchLimits::default(),
                 depth: None,
+                filter: None,
             },
             &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
         )
@@ -1096,6 +1097,7 @@ mod tests {
             super::super::FetchOptions {
                 limits: FetchLimits::default(),
                 depth: None,
+                filter: None,
             },
             &mut ValidationObserver::new(&cancel, &mut |state| {
                 snapshots.push(state);

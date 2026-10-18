@@ -7,7 +7,8 @@ use std::sync::atomic::AtomicBool;
 use super::known::KnownObjects as _;
 use super::v2::Capabilities;
 use super::{
-    FetchError as Error, FetchLimits, FetchOptions, KnownHistory, ReceivedFetch, check_cancelled,
+    FetchError as Error, FetchLimits, FetchOptions, KnownHistory, ObjectFilter, ReceivedFetch,
+    check_cancelled,
 };
 use crate::packet::{Frame, Wire, packet, put};
 use crate::refs::RefName;
@@ -264,10 +265,7 @@ pub fn receive_with_known(
         writer,
         select,
         known,
-        FetchOptions {
-            limits,
-            depth: None,
-        },
+        FetchOptions::default().with_limits(limits),
         cancel,
         progress,
     )
@@ -291,7 +289,8 @@ pub fn receive_with_known_depth(
     cancel: &AtomicBool,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, Error> {
-    let FetchOptions { limits, depth } = options;
+    let limits = options.limits;
+    let depth = options.depth;
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -323,8 +322,7 @@ pub fn receive_with_known_depth(
             &dialect,
             wants,
             known,
-            depth,
-            limits,
+            &options,
             cancel,
         )?;
         if negotiation.v2 && negotiation.needs_pack {
@@ -369,6 +367,8 @@ pub(super) struct Negotiation {
     pub(super) needs_pack: bool,
     shallow: Vec<ObjectId>,
     depth: Option<NonZeroU32>,
+    /// The filter sent to the server; `None` when none was requested or the server lacks support.
+    pub(super) filter: Option<ObjectFilter>,
     v2: bool,
 }
 
@@ -436,17 +436,25 @@ pub(super) fn validate_known(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Sends the want, shallow, filter and have lines for one fetch.
+///
+/// A filter is sent only when the server advertises support for it. Otherwise the request is
+/// unfiltered, as Git's "filtering not recognized by server, ignoring" fallback is, and
+/// [`Negotiation::filter`] records that no filter was sent.
 pub(super) fn request(
     writer: &mut impl Write,
     advertisement: &Advertisement,
     dialect: &Dialect,
     selected: Vec<ObjectId>,
     known: &KnownHistory,
-    depth: Option<NonZeroU32>,
-    limits: FetchLimits,
+    options: &FetchOptions,
     cancel: &AtomicBool,
 ) -> Result<Negotiation, Error> {
+    let FetchOptions {
+        limits,
+        depth,
+        ref filter,
+    } = *options;
     check_cancelled(cancel)?;
     let format = advertisement.object_format()?;
     if known.objects.keys().any(|id| id.format() != format)
@@ -497,10 +505,14 @@ pub(super) fn request(
             needs_pack: false,
             shallow: known.shallow.clone(),
             depth,
+            filter: None,
             v2: matches!(dialect, Dialect::V2(_)),
         });
     }
     if let Dialect::V2(capabilities) = dialect {
+        let filter = filter
+            .as_ref()
+            .filter(|_| capabilities.has_feature(b"fetch", b"filter"));
         return request_v2(
             writer,
             capabilities,
@@ -508,10 +520,12 @@ pub(super) fn request(
             &wire_wants,
             known,
             depth,
+            filter,
             limits,
             cancel,
         );
     }
+    let filter = filter.as_ref().filter(|_| advertisement.has(b"filter"));
     if !advertisement.has(b"side-band-64k") {
         return Err(Error::Unsupported("side-band-64k is required"));
     }
@@ -531,6 +545,9 @@ pub(super) fn request(
             if format == ObjectFormat::Sha256 {
                 caps.push_str(" object-format=sha256");
             }
+            if filter.is_some() {
+                caps.push_str(" filter");
+            }
         }
         let ack_cap = if i == 0 && multi_ack {
             " multi_ack"
@@ -549,6 +566,9 @@ pub(super) fn request(
     if let Some(depth) = depth {
         packet(writer, format!("deepen {depth}\n").as_bytes(), cancel)?;
     }
+    if let Some(filter) = filter {
+        packet(writer, format!("filter {filter}\n").as_bytes(), cancel)?;
+    }
     put(writer, b"0000", cancel)?;
     let haves: IdSet = known.haves.iter().take(have_count).copied().collect();
     for id in known.haves.iter().take(have_count) {
@@ -563,6 +583,7 @@ pub(super) fn request(
         needs_pack: true,
         shallow: known.shallow.clone(),
         depth,
+        filter: filter.cloned(),
         v2: false,
     })
 }
@@ -577,6 +598,7 @@ fn request_v2(
     wire_wants: &[ObjectId],
     known: &KnownHistory,
     depth: Option<NonZeroU32>,
+    filter: Option<&ObjectFilter>,
     limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<Negotiation, Error> {
@@ -598,6 +620,9 @@ fn request_v2(
     if let Some(depth) = depth {
         packet(writer, format!("deepen {depth}\n").as_bytes(), cancel)?;
     }
+    if let Some(filter) = filter {
+        packet(writer, format!("filter {filter}\n").as_bytes(), cancel)?;
+    }
     let haves: IdSet = known.haves.iter().take(have_count).copied().collect();
     for id in known.haves.iter().take(have_count) {
         packet(writer, format!("have {id}\n").as_bytes(), cancel)?;
@@ -612,6 +637,7 @@ fn request_v2(
         needs_pack: true,
         shallow: known.shallow.clone(),
         depth,
+        filter: filter.cloned(),
         v2: true,
     })
 }
@@ -674,6 +700,7 @@ pub(super) fn response_observed(
         FetchOptions {
             limits,
             depth: negotiation.depth,
+            filter: negotiation.filter,
         },
         observer,
     )
@@ -1002,6 +1029,7 @@ mod tests {
                 needs_pack: true,
                 shallow: vec![],
                 depth: NonZeroU32::new(1),
+                filter: None,
                 v2: false,
             },
             limits,
@@ -1136,6 +1164,7 @@ mod tests {
                 needs_pack: true,
                 shallow: offered.to_vec(),
                 depth: depth.and_then(NonZeroU32::new),
+                filter: None,
                 v2: true,
             },
             FetchLimits::default(),
@@ -1227,5 +1256,131 @@ mod tests {
             ),
             Err(Error::Protocol("unknown unshallow root"))
         ));
+    }
+
+    /// Writes the request for one want of a v0 advertisement offering `capabilities`.
+    fn v0_request(capabilities: &str, filter: Option<ObjectFilter>) -> (String, Negotiation) {
+        let cancel = AtomicBool::new(false);
+        let id = ObjectId::Sha1([1; 20]);
+        let mut bytes = Vec::new();
+        packet(
+            &mut bytes,
+            format!("{id} refs/heads/main\0{capabilities}\n").as_bytes(),
+            &cancel,
+        )
+        .unwrap();
+        bytes.extend_from_slice(b"0000");
+        let mut reader = bytes.as_slice();
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: 4096,
+            cancel: &cancel,
+        };
+        let (advertisement, _) = advertise_with_version(&mut wire, FetchLimits::default()).unwrap();
+        let mut written = Vec::new();
+        let negotiation = request(
+            &mut written,
+            &advertisement,
+            &Dialect::V0,
+            vec![id],
+            &KnownHistory::default(),
+            &FetchOptions::default()
+                .with_depth(NonZeroU32::new(1))
+                .with_filter(filter),
+            &cancel,
+        )
+        .unwrap();
+        (String::from_utf8(written).unwrap(), negotiation)
+    }
+
+    #[test]
+    fn v0_request_sends_filter_after_deepen_when_advertised() {
+        let (written, negotiation) = v0_request(
+            "side-band-64k shallow filter",
+            Some(ObjectFilter::BlobLimit(1024)),
+        );
+        let id = ObjectId::Sha1([1; 20]);
+        assert_eq!(
+            written,
+            format!(
+                "0047want {id} side-band-64k filter\n000ddeepen 1\n001bfilter blob:limit=1024\n00000009done\n"
+            )
+        );
+        assert_eq!(negotiation.filter, Some(ObjectFilter::BlobLimit(1024)));
+    }
+
+    #[rstest]
+    #[case::requested_but_not_advertised("side-band-64k shallow", Some(ObjectFilter::BlobNone))]
+    #[case::advertised_but_not_requested("side-band-64k shallow filter", None)]
+    fn v0_request_omits_filter(#[case] capabilities: &str, #[case] filter: Option<ObjectFilter>) {
+        let (written, negotiation) = v0_request(capabilities, filter);
+        let id = ObjectId::Sha1([1; 20]);
+        assert_eq!(
+            written,
+            format!("0040want {id} side-band-64k\n000ddeepen 1\n00000009done\n")
+        );
+        assert_eq!(negotiation.filter, None);
+    }
+
+    /// Writes the v2 fetch command for one want, against a server whose `fetch` offers `features`.
+    fn v2_request(features: &str, filter: Option<ObjectFilter>) -> (String, Negotiation) {
+        let cancel = AtomicBool::new(false);
+        let id = ObjectId::Sha1([1; 20]);
+        let mut bytes = Vec::new();
+        for line in ["agent=git/2.56.0\n", &format!("fetch={features}\n")] {
+            packet(&mut bytes, line.as_bytes(), &cancel).unwrap();
+        }
+        bytes.extend_from_slice(b"0000");
+        let mut reader = bytes.as_slice();
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: 4096,
+            cancel: &cancel,
+        };
+        let capabilities = Capabilities::read(&mut wire, FetchLimits::default()).unwrap();
+        let advertisement = Advertisement::new(
+            vec![AdvertisedRef::new(
+                RefName::new("refs/heads/main").unwrap(),
+                id,
+                AdvertisementKind::Tip,
+            )],
+            vec![],
+        );
+        let mut written = Vec::new();
+        let negotiation = request(
+            &mut written,
+            &advertisement,
+            &Dialect::V2(capabilities),
+            vec![id],
+            &KnownHistory::default(),
+            &FetchOptions::default().with_filter(filter),
+            &cancel,
+        )
+        .unwrap();
+        (String::from_utf8(written).unwrap(), negotiation)
+    }
+
+    #[test]
+    fn v2_request_sends_filter_after_wants_when_advertised() {
+        let (written, negotiation) = v2_request("shallow filter", Some(ObjectFilter::BlobNone));
+        let id = ObjectId::Sha1([1; 20]);
+        assert!(
+            written.ends_with(&format!(
+                "000eofs-delta\n0032want {id}\n0015filter blob:none\n0009done\n0000"
+            )),
+            "{written}"
+        );
+        assert_eq!(negotiation.filter, Some(ObjectFilter::BlobNone));
+    }
+
+    #[test]
+    fn v2_request_omits_filter_the_server_does_not_offer() {
+        let (written, negotiation) = v2_request("shallow", Some(ObjectFilter::BlobNone));
+        let id = ObjectId::Sha1([1; 20]);
+        assert!(
+            written.ends_with(&format!("000eofs-delta\n0032want {id}\n0009done\n0000")),
+            "{written}"
+        );
+        assert_eq!(negotiation.filter, None);
     }
 }

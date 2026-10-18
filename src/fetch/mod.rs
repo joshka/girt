@@ -30,8 +30,8 @@
 //!
 //! [`FetchRequest::prepare`] captures the destination's references, the refspecs, which forced
 //! destinations the caller authorizes, and the reflog policy. Builder methods add pruning
-//! ([`FetchRequest::with_prune`]), a depth limit ([`FetchRequest::with_depth`]), tag namespaces
-//! and per-namespace reflog policy.
+//! ([`FetchRequest::with_prune`]), a depth limit ([`FetchRequest::with_depth`]), an object filter
+//! ([`FetchRequest::with_filter`]), tag namespaces and per-namespace reflog policy.
 //!
 //! A receive adapter then reads the source's advertisement, maps the refspecs over it, transfers
 //! and validates. [`FetchRequest::receive_local`] returns a [`FetchReady`] directly.
@@ -83,6 +83,19 @@
 //! [`receive_with_known_depth`] and network depth functions report boundaries, but
 //! [`ReceivedFetch::install`] refuses a shallow result: only the request workflow publishes them.
 //!
+//! # Partial fetches
+//!
+//! An [`ObjectFilter`], set with [`FetchRequest::with_filter`] or [`FetchOptions::with_filter`],
+//! asks the source to leave out matching objects, like `git fetch --filter=blob:none`. The filter
+//! is sent only to a source that advertises filtering; any other source sends every object, and
+//! [`ReceivedFetch::filter_applied`] reports that. A filtered pack is validated like any other,
+//! except that a tree or blob it references but omits is promised rather than missing, when the
+//! filter could have omitted that kind of object. Selected tips, commits and tag targets the filter
+//! keeps must still be present. Installation publishes a `.promisor` marker before the pack, so Git
+//! knows the omitted objects can be fetched from the remote later. Native local sources and bundles
+//! ignore filters. [`crate::workflow::fetch`] also records the remote as a promisor in
+//! configuration. Fetching omitted objects on demand is not supported.
+//!
 //! # Progress
 //!
 //! [`LocalFetchObserver`] receives a local fetch's source messages, [`LocalFetchProgress`] while
@@ -112,9 +125,9 @@
 //! self-contained packs before installation. Every adapter accepts protocol v0, v1 and v2 answers;
 //! the network endpoints request v0 unless given another
 //! [`RequestedProtocol`](crate::transport::RequestedProtocol), and a v2 stream uses one `ls-refs`
-//! and one `fetch` command. Both SHA-1 and SHA-256 repositories are supported. Partial-clone
-//! filters are not. Discovery reports peeled tag hints separately from selectable tips, and
-//! never authorizes a later update.
+//! and one `fetch` command. Both SHA-1 and SHA-256 repositories are supported, and so is the
+//! `filter` capability for [partial fetches](#partial-fetches). Discovery reports peeled tag
+//! hints separately from selectable tips, and never authorizes a later update.
 //!
 //! # Concurrency
 //!
@@ -207,7 +220,7 @@ mod http;
 #[cfg(feature = "http")]
 pub use http::{
     receive_http, receive_http_with_depth, receive_http_with_depth_and_progress,
-    receive_http_with_progress,
+    receive_http_with_options, receive_http_with_progress,
 };
 
 mod download;
@@ -250,7 +263,9 @@ mod shallow;
 pub use shallow::FetchShallowError;
 mod known;
 mod object_filter;
+mod promisor;
 pub use object_filter::{ObjectFilter, ObjectFilterParseError};
+pub(crate) use promisor::register_promisor;
 mod local;
 mod local_native;
 mod protocol;
@@ -274,11 +289,15 @@ pub use protocol::{
     receive_with_known_depth,
 };
 
-/// Resource bounds and optional positive commit depth for one wire fetch.
+/// Resource bounds, optional positive commit depth and optional object filter for one wire fetch.
 ///
 /// `depth` counts commits from each selected tip. `None` requests no depth change. A positive
 /// depth can return shallow boundaries; ordinary installation rejects such a result until
 /// coordinated boundary publication is available.
+///
+/// `filter` asks the server for a partial pack that leaves out the objects it matches. A server
+/// that does not advertise filtering sends a complete pack instead;
+/// [`ReceivedFetch::filter_applied`] reports which happened.
 ///
 /// # Examples
 ///
@@ -293,13 +312,15 @@ pub use protocol::{
 ///     .with_depth(NonZeroU32::new(1));
 /// assert_eq!(options.depth, NonZeroU32::new(1));
 /// ```
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct FetchOptions {
     /// Wire, decoding, and graph budgets.
     pub limits: FetchLimits,
     /// Requested commit depth, or no depth change.
     pub depth: Option<NonZeroU32>,
+    /// Objects the server may leave out of the pack, or `None` for a complete fetch.
+    pub filter: Option<ObjectFilter>,
 }
 
 impl FetchOptions {
@@ -314,6 +335,21 @@ impl FetchOptions {
     #[must_use]
     pub fn with_depth(mut self, depth: Option<NonZeroU32>) -> Self {
         self.depth = depth;
+        self
+    }
+
+    /// Sets [`Self::filter`].
+    ///
+    /// ```
+    /// use girt::fetch::{FetchOptions, ObjectFilter};
+    ///
+    /// // Like `git fetch --filter=blob:none`: commits and trees, but no file contents.
+    /// let options = FetchOptions::default().with_filter(Some(ObjectFilter::BlobNone));
+    /// assert_eq!(options.filter, Some(ObjectFilter::BlobNone));
+    /// ```
+    #[must_use]
+    pub fn with_filter(mut self, filter: Option<ObjectFilter>) -> Self {
+        self.filter = filter;
         self
     }
 }

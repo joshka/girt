@@ -129,7 +129,9 @@ pub async fn receive_ssh_with_depth(
         remote,
         select,
         known,
-        FetchOptions { limits, depth },
+        FetchOptions::default()
+            .with_limits(limits)
+            .with_depth(depth),
         control,
         |_| {},
         |_| {},
@@ -140,9 +142,10 @@ pub async fn receive_ssh_with_depth(
 /// Downloads an SSH fetch with separate local diagnostics and live remote notices.
 ///
 /// Uses [`receive_ssh`]'s owned download and process contracts, with `options.depth` selecting
-/// optional shallow history. `diagnostics` receives raw local stderr in chunks of at most 8192
-/// bytes; it follows [`super::discover_ssh_with_diagnostics`]'s redaction and display obligations.
-/// `progress` receives complete remote channel-2 payloads once, in order, after validation of the
+/// optional shallow history and `options.filter` an optional partial pack. `diagnostics` receives
+/// raw local stderr in chunks of at most 8192 bytes; it follows
+/// [`super::discover_ssh_with_diagnostics`]'s redaction and display obligations. `progress`
+/// receives complete remote channel-2 payloads once, in order, after validation of the
 /// acknowledgement/shallow prefix. Notifications borrow the retained response and add no buffer.
 /// Malformed or terminal sideband framing stops notification; final validation is authoritative.
 ///
@@ -165,7 +168,8 @@ pub async fn receive_ssh_with_progress(
     mut diagnostics: impl FnMut(&[u8]),
     mut progress: impl FnMut(&[u8]),
 ) -> Result<DownloadedFetch, FetchError> {
-    let FetchOptions { limits, depth } = options;
+    let limits = options.limits;
+    let depth = options.depth;
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -210,8 +214,7 @@ pub async fn receive_ssh_with_progress(
             &dialect,
             wants,
             history,
-            depth,
-            limits,
+            &options,
             control.cancel,
         )?;
         control.check()?;

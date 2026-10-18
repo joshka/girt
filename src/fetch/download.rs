@@ -265,8 +265,7 @@ mod tests {
             &protocol::Dialect::V0,
             vec![wanted],
             known.as_deref().unwrap_or(&empty),
-            None,
-            limits,
+            &crate::fetch::FetchOptions::default().with_limits(limits),
             &cancel,
         )
         .unwrap();
