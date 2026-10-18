@@ -7,6 +7,85 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/joshka/girt/compare/girt-v0.16.0...girt-v0.17.0) - 2026-10-18
+
+### Behaviour changes
+
+- Repack and gc in bare repositories write reachability bitmaps only when `repack.writeBitmaps` or
+  `pack.writeBitmaps` is explicitly true. This is a temporary difference from Git while bitmap
+  writing is made faster (#732).
+- gpg/gpgsm output without a verdict maps to `NoSignature` (N), as Git does (#719).
+- `reset --hard`, `--keep` and `--merge` are supported on macOS and Linux and return `Unsupported` on
+  Windows (#735).
+
+### Added
+
+- Reset: `--hard`, `--keep`, `--merge` and path resets. Untracked directories are replaced only if
+  they contain nothing but empty directories, a documented difference from Git.
+- `describe` with exact distances, describe revisions, `--dirty`/`--broken`; message cleanup and
+  trailers; ahead/behind counts; notes; mailmap (the CLI log maps identities by default).
+- Signing and verification: SSH, OpenPGP and X.509.
+- Apply: text, binary and extended-header patches, onto trees and the index.
+- Submodules: parsing, sources, status, init/update plans and execution.
+- Multi-pack index reading and writing; reachability bitmap reading, queries and opt-in writing.
+- Transport: TLS client certificates, certificate checks, askpass, `http.extraHeader` and
+  `http.userAgent`.
+
+### Performance
+
+- Commit-graph records are read in place on open, about 760 → 45 ms on Linux v6.1 (#733).
+- Ahead/behind counts and range walks stop by generation: about 2 ms against Git's 26 ms on git.git,
+  and 8.8 ms against 49 ms on Linux v6.0...v6.1 (#720).
+- Consolidating gc verifies the replacement pack in parallel, reaching `git gc` parity on git.git
+  (#667).
+
+### Other
+
+- Build reset on Windows ([#735](https://github.com/joshka/girt/pull/735))
+- Assert unset repacks disable bitmap output ([#736](https://github.com/joshka/girt/pull/736))
+- Read commit-graph records in place instead of decoding them on open ([#733](https://github.com/joshka/girt/pull/733))
+- Require explicit repack bitmap configuration ([#732](https://github.com/joshka/girt/pull/732))
+- Reset with --keep and --merge, and remove emptied directories on hard reset ([#709](https://github.com/joshka/girt/pull/709))
+- Reset working files as git reset --hard does ([#693](https://github.com/joshka/girt/pull/693))
+- Publish bitmap indexes during explicit maintenance ([#729](https://github.com/joshka/girt/pull/729))
+- Write reachability bitmap artifacts ([#724](https://github.com/joshka/girt/pull/724))
+- Fix reset git hints and an ambiguous trailers doc link ([#730](https://github.com/joshka/girt/pull/730))
+- Add a load gate to the jj benchmark harness ([#678](https://github.com/joshka/girt/pull/678))
+- Fix Windows submodule precondition warnings ([#728](https://github.com/joshka/girt/pull/728))
+- Make signing tests pass on the CI runners' gpgsm and Windows ssh-keygen ([#719](https://github.com/joshka/girt/pull/719))
+- Paint ahead/behind and range walks over commit-graph positions ([#720](https://github.com/joshka/girt/pull/720))
+- List configured HTTP remotes with credentials ([#723](https://github.com/joshka/girt/pull/723))
+- Apply submodule initialization and checkout plans ([#708](https://github.com/joshka/girt/pull/708))
+- Mark local changes in girt history describe with --dirty and --broken ([#702](https://github.com/joshka/girt/pull/702))
+- Query reachable object differences with bitmaps ([#713](https://github.com/joshka/girt/pull/713))
+- Read reachability bitmaps and reverse indexes ([#710](https://github.com/joshka/girt/pull/710))
+- Ask GIT_ASKPASS and core.askPass for HTTP credentials ([#716](https://github.com/joshka/girt/pull/716))
+- Resolve git describe output as a revision ([#701](https://github.com/joshka/girt/pull/701))
+- Add a TLS certificate check hook for HTTPS ([#712](https://github.com/joshka/girt/pull/712))
+- Fix the Windows submodule rustdoc link ([#707](https://github.com/joshka/girt/pull/707))
+- Fix Windows maintenance compilation ([#697](https://github.com/joshka/girt/pull/697))
+- Support TLS client certificates for HTTP ([#704](https://github.com/joshka/girt/pull/704))
+- Plan submodule initialization and updates ([#694](https://github.com/joshka/girt/pull/694))
+- Name commits by their nearest tag as git describe does ([#676](https://github.com/joshka/girt/pull/676))
+- Write and verify multi-pack indexes ([#686](https://github.com/joshka/girt/pull/686))
+- Inspect submodule checkouts and nested status ([#683](https://github.com/joshka/girt/pull/683))
+- Run gpg signing comparisons on Unix only ([#691](https://github.com/joshka/girt/pull/691))
+- Reset the branch and index paths as git reset --soft, --mixed and -- <paths> do ([#681](https://github.com/joshka/girt/pull/681))
+- Parallelise consolidation's plan walk and survivor decode ([#667](https://github.com/joshka/girt/pull/667))
+- Skip the URL trailer comparison on Git older than 2.56 ([#685](https://github.com/joshka/girt/pull/685))
+- Support http.extraHeader and http.userAgent ([#680](https://github.com/joshka/girt/pull/680))
+- Gate Unix-only signing test cases on Windows ([#682](https://github.com/joshka/girt/pull/682))
+- Read multi-pack indexes for object lookup ([#677](https://github.com/joshka/girt/pull/677))
+- Prepare and publish index-only patch drafts ([#675](https://github.com/joshka/girt/pull/675))
+- Reverse parsed text and binary patches ([#674](https://github.com/joshka/girt/pull/674))
+- Read submodule snapshots and resolve relative URLs ([#672](https://github.com/joshka/girt/pull/672))
+- Sign and verify OpenPGP and X.509 signatures with gpg and gpgsm ([#669](https://github.com/joshka/girt/pull/669))
+- Correct index publication timestamp docs ([#673](https://github.com/joshka/girt/pull/673))
+- Read and validate submodule definitions ([#668](https://github.com/joshka/girt/pull/668))
+- Read and add commit message trailers as git interpret-trailers does ([#660](https://github.com/joshka/girt/pull/660))
+- Clean up commit messages as Git does before committing ([#650](https://github.com/joshka/girt/pull/650))
+- Count commits ahead and behind as git rev-list --left-right --count does ([#656](https://github.com/joshka/girt/pull/656))
+
 ### Added
 
 - `girt::signing` splits signed commits and tags into the signature and the exact payload it

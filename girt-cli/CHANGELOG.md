@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.10](https://github.com/joshka/girt/compare/girt-cli-v0.2.9...girt-cli-v0.2.10) - 2026-10-18
+
+### Other
+
+- Reset with --keep and --merge, and remove emptied directories on hard reset ([#709](https://github.com/joshka/girt/pull/709))
+- Reset working files as git reset --hard does ([#693](https://github.com/joshka/girt/pull/693))
+- Publish bitmap indexes during explicit maintenance ([#729](https://github.com/joshka/girt/pull/729))
+- Fix reset git hints and an ambiguous trailers doc link ([#730](https://github.com/joshka/girt/pull/730))
+- Paint ahead/behind and range walks over commit-graph positions ([#720](https://github.com/joshka/girt/pull/720))
+- List configured HTTP remotes with credentials ([#723](https://github.com/joshka/girt/pull/723))
+- Mark local changes in girt history describe with --dirty and --broken ([#702](https://github.com/joshka/girt/pull/702))
+- Name commits by their nearest tag as git describe does ([#676](https://github.com/joshka/girt/pull/676))
+- Write and verify multi-pack indexes ([#686](https://github.com/joshka/girt/pull/686))
+- Reset the branch and index paths as git reset --soft, --mixed and -- <paths> do ([#681](https://github.com/joshka/girt/pull/681))
+- Count commits ahead and behind as git rev-list --left-right --count does ([#656](https://github.com/joshka/girt/pull/656))
+
 ## [0.2.9](https://github.com/joshka/girt/compare/girt-cli-v0.2.8...girt-cli-v0.2.9) - 2026-10-18
 
 ### Other
