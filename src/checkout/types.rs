@@ -314,7 +314,7 @@ pub struct Report {
     /// Last phase entered.
     pub stage: Stage,
     /// Operations confirmed successful, in execution order. Unlisted paths were not changed by
-    /// checkout, except owned temporary artifacts listed in a failure's cleanup errors.
+    /// checkout, except incomplete leaves listed in a failure's cleanup errors.
     pub applied: Vec<Applied>,
     /// True only after successful index publication. On failure the prior index remains, apart
     /// from independent writers; completed working-tree changes are not rolled back.
@@ -355,7 +355,7 @@ pub struct Failure {
     pub cause: Box<Error>,
     /// Partial worktree outcome. No automatic rollback is attempted.
     pub report: Report,
-    /// Cleanup failures identify owned temporary paths/locks that may remain. Never remove a
+    /// Cleanup failures identify incomplete leaves or locks that may remain. Never remove a
     /// reported artifact without verifying ownership and excluding concurrent writers first.
     pub cleanup: Vec<Error>,
 }
@@ -453,7 +453,7 @@ pub enum Error {
     /// Descriptor-relative filesystem operation failed.
     #[error("checkout I/O at {path:?}")]
     Io {
-        /// Relative path; cleanup failures contain the owned temporary name.
+        /// Relative path; cleanup failures name the incomplete leaf.
         path: Vec<u8>,
         /// Operating-system cause.
         #[source]

@@ -43,7 +43,13 @@
 //! changed tracked leaves, removes only known empty directories needed for directory-to-file
 //! transitions, creates missing directories and installs leaves. Each operation rechecks its path
 //! and ancestors. Publication rechecks all target content and the index before renaming the index
-//! lock. Derived `TREE`, `FSMN`, `UNTR`, `EOIE` and `IEOT` caches are discarded, including on
+//! lock. Preparation and publication enumerate each directory's names once; mutation instead
+//! creates every directory and leaf exclusively, so a name that appeared after preparation,
+//! including a filesystem case or normalization alias, is refused rather than replaced. Leaves are
+//! written under their final names, as Git writes them, so a concurrent reader can observe a file
+//! whose content is still being written. An install is reported only once its content is
+//! complete; a failed write removes the partial leaf while it is still the file checkout created.
+//! Derived `TREE`, `FSMN`, `UNTR`, `EOIE` and `IEOT` caches are discarded, including on
 //! unchanged checkouts. Git can rebuild them; girt does not consult fsmonitor or untracked caches.
 //! New index entries have zero cached stat words and cleared assume-valid flags; Git may
 //! need `git update-index --refresh` before stat-only plumbing such as `git diff-files`.

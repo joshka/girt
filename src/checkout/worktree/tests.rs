@@ -1,5 +1,6 @@
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
+use std::sync::atomic::Ordering;
 
 use rstest::rstest;
 
@@ -313,7 +314,7 @@ fn destination_symlink_substitution_does_not_follow_or_overwrite() {
         Limits::default(),
         &AtomicBool::new(false),
         &mut |event, _| {
-            if event == "before rename" {
+            if event == "before create" {
                 symlink(outside.path(), f.root().join("file")).unwrap();
             }
             Ok(())
@@ -362,7 +363,7 @@ fn cancellation_reports_prior_namespace_changes(#[case] checkpoint: &str, #[case
 
 #[rstest]
 #[case::write("before write", 1)]
-#[case::install("before rename", 1)]
+#[case::install("before create", 1)]
 #[case::delete("before delete", 0)]
 #[case::index("before publication", 2)]
 fn injected_io_failures_report_residual_changes(#[case] checkpoint: &str, #[case] count: usize) {
@@ -448,8 +449,9 @@ fn mode_only_dirty_change_is_not_overwritten() {
     );
 }
 
+// A leaf whose content could not be written is not applied; failed removal is reported.
 #[test]
-fn successful_install_with_failed_cleanup_is_reported() {
+fn incomplete_install_with_failed_cleanup_is_reported() {
     let f = Fixture::new();
     let new = f.tree(b"file", EntryMode::Blob, b"new");
     let error = run(
@@ -458,18 +460,17 @@ fn successful_install_with_failed_cleanup_is_reported() {
         Some(new),
         Limits::default(),
         &AtomicBool::new(false),
-        &mut |event, path| {
-            if event == "before cleanup" {
-                return Err(io(path, std::io::Error::other("cleanup failure")));
-            }
-            Ok(())
+        &mut |event, path| match event {
+            "before write" => Err(io(path, std::io::Error::other("write failure"))),
+            "before cleanup" => Err(io(path, std::io::Error::other("cleanup failure"))),
+            _ => Ok(()),
         },
     )
     .unwrap_err();
-    assert_eq!(error.report.applied, vec![op(b"file", Action::Install)]);
+    assert!(error.report.applied.is_empty());
     assert_eq!(error.cleanup.len(), 1);
-    assert_eq!(fs::read(f.root().join("file")).unwrap(), b"new");
-    assert_eq!(fs::read_dir(f.root()).unwrap().count(), 3);
+    assert_eq!(fs::read(f.root().join("file")).unwrap(), b"");
+    assert_eq!(fs::read_dir(f.root()).unwrap().count(), 2);
     assert!(!f.repo.git_dir().join("index").exists());
 }
 
@@ -730,6 +731,31 @@ fn root_substitution_before_mutation_is_detected() {
     assert_eq!(failure.cleanup.len(), 1); // The moved metadata lock is deliberately not chased.
 }
 
+// A root moved after mutation started must not lose tracked files to later operations.
+#[test]
+fn root_substitution_during_mutation_is_detected() {
+    let f = Fixture::new();
+    let old = f.initial(b"file", EntryMode::Blob, b"old");
+    let saved = f.root().with_file_name("saved");
+    let failure = run(
+        &f.repo,
+        Some(old),
+        None,
+        Limits::default(),
+        &AtomicBool::new(false),
+        &mut |event, _| {
+            if event == "before delete" {
+                fs::rename(f.root(), &saved).unwrap();
+                fs::create_dir(f.root()).unwrap();
+            }
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert!(failure.report.applied.is_empty());
+    assert_eq!(fs::read(saved.join("file")).unwrap(), b"old");
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_preserves_non_utf8_filename_bytes() {
@@ -751,11 +777,11 @@ fn macos_rejects_non_ascii_paths() {
     assert!(failure.report.applied.is_empty());
 }
 
+// Cleanup of an incomplete leaf never deletes an entry that replaced it.
 #[test]
-fn replaced_temporary_is_not_deleted_by_cleanup() {
+fn replaced_incomplete_leaf_is_not_deleted_by_cleanup() {
     let f = Fixture::new();
     let new = f.tree(b"file", EntryMode::Blob, b"new");
-    let mut replaced = Vec::new();
     let error = run(
         &f.repo,
         None,
@@ -763,22 +789,21 @@ fn replaced_temporary_is_not_deleted_by_cleanup() {
         Limits::default(),
         &AtomicBool::new(false),
         &mut |event, path| {
-            if event == "before cleanup" {
-                let temporary = f.root().join(OsStr::from_bytes(path));
-                fs::remove_file(&temporary).unwrap();
-                fs::write(&temporary, b"foreign").unwrap();
-                replaced = path.to_vec();
+            match event {
+                "before write" => return Err(io(path, std::io::Error::other("write failure"))),
+                "before cleanup" => {
+                    fs::remove_file(f.root().join("file")).unwrap();
+                    fs::write(f.root().join("file"), b"foreign").unwrap();
+                }
+                _ => (),
             }
             Ok(())
         },
     )
     .unwrap_err();
+    assert!(error.report.applied.is_empty());
     assert_eq!(error.cleanup.len(), 1);
-    assert_eq!(
-        fs::read(f.root().join(OsStr::from_bytes(&replaced))).unwrap(),
-        b"foreign"
-    );
-    assert_eq!(fs::read(f.root().join("file")).unwrap(), b"new");
+    assert_eq!(fs::read(f.root().join("file")).unwrap(), b"foreign");
     assert!(!error.report.index_published);
 }
 

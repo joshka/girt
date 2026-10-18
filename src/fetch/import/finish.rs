@@ -33,15 +33,15 @@ fn charge(object: &Object) -> usize {
 /// Packs smaller than this are hashed on the decoding thread; workers would not pay for themselves.
 const MIN_PARALLEL_OBJECTS: usize = 1024;
 
-struct Job {
-    position: usize,
-    object: Object,
-}
+/// Objects or payload bytes gathered before a batch goes to a worker. Most objects take far less
+/// time to hash than one channel handoff, so workers receive them in batches.
+const BATCH_OBJECTS: usize = 64;
+const BATCH_BYTES: usize = 1024 * 1024;
+
+type Job = Vec<(usize, Object)>;
 
 struct Done {
-    position: usize,
-    id: ObjectId,
-    described: Described,
+    finished: Vec<(usize, ObjectId, Described)>,
     bytes: usize,
 }
 
@@ -49,8 +49,12 @@ struct Done {
 pub(super) struct Finisher {
     jobs: Option<SyncSender<Job>>,
     done: Option<Receiver<Done>>,
-    /// Payload bytes submitted but not yet merged.
+    /// Objects submitted but not yet sent to a worker, and their charged bytes.
+    batch: Job,
+    batch_bytes: usize,
+    /// Payload bytes submitted but not yet merged, including the unsent batch.
     in_flight: usize,
+    /// Batches sent but not yet merged.
     pending: usize,
 }
 
@@ -70,6 +74,8 @@ pub(super) fn with_finisher<R>(
         return body(&mut Finisher {
             jobs: None,
             done: None,
+            batch: Vec::new(),
+            batch_bytes: 0,
             in_flight: 0,
             pending: 0,
         });
@@ -84,22 +90,19 @@ pub(super) fn with_finisher<R>(
             scope.spawn(move || {
                 loop {
                     let job = queue.lock().unwrap_or_else(|e| e.into_inner()).recv();
-                    let Ok(Job { position, object }) = job else {
+                    let Ok(job) = job else {
                         return;
                     };
-                    let id = object.id();
-                    let described = Described::new(id, &object);
-                    let bytes = charge(&object);
-                    drop(object);
-                    if results
-                        .send(Done {
-                            position,
-                            id,
-                            described,
-                            bytes,
+                    let mut bytes = 0;
+                    let finished = job
+                        .into_iter()
+                        .map(|(position, object)| {
+                            let id = object.id();
+                            bytes += charge(&object);
+                            (position, id, Described::new(id, &object))
                         })
-                        .is_err()
-                    {
+                        .collect();
+                    if results.send(Done { finished, bytes }).is_err() {
                         return;
                     }
                 }
@@ -109,6 +112,8 @@ pub(super) fn with_finisher<R>(
         let mut finisher = Finisher {
             jobs: Some(jobs),
             done: Some(done),
+            batch: Vec::with_capacity(BATCH_OBJECTS),
+            batch_bytes: 0,
             in_flight: 0,
             pending: 0,
         };
@@ -145,12 +150,27 @@ impl Finisher {
             check_cancelled(cancel)?;
         }
         self.in_flight += bytes;
+        self.batch_bytes += bytes;
+        self.batch.push((position, object));
+        if self.batch.len() >= BATCH_OBJECTS || self.batch_bytes >= BATCH_BYTES {
+            self.send()?;
+        }
+        self.drain(objects, false)
+    }
+
+    /// Sends the gathered batch to a worker.
+    fn send(&mut self) -> Result<(), FetchError> {
+        if self.batch.is_empty() {
+            return Ok(());
+        }
+        let batch = std::mem::replace(&mut self.batch, Vec::with_capacity(BATCH_OBJECTS));
+        self.batch_bytes = 0;
         if let Some(jobs) = &self.jobs {
-            jobs.send(Job { position, object })
+            jobs.send(batch)
                 .map_err(|_| FetchError::Pack(Error::Corrupt("import worker stopped")))?;
             self.pending += 1;
         }
-        self.drain(objects, false)
+        Ok(())
     }
 
     /// Hashes and describes `object` on this thread, so its identity is final on return.
@@ -167,6 +187,10 @@ impl Finisher {
 
     /// Merges finished objects, waiting for at least one when `block` is set and any are pending.
     fn drain(&mut self, objects: &mut IndexedObjects, mut block: bool) -> Result<(), FetchError> {
+        if block {
+            // Waiting on results requires every charged object to be with a worker.
+            self.send()?;
+        }
         let Some(done) = &self.done else {
             return Ok(());
         };
@@ -186,13 +210,16 @@ impl Finisher {
             };
             self.pending -= 1;
             self.in_flight -= finished.bytes;
-            merge(objects, finished.position, finished.id, finished.described)?;
+            for (position, id, described) in finished.finished {
+                merge(objects, position, id, described)?;
+            }
         }
         Ok(())
     }
 
     /// Merges every submitted object, so all identities and descriptions are final.
     pub fn finish(&mut self, objects: &mut IndexedObjects) -> Result<(), FetchError> {
+        self.send()?;
         while self.pending != 0 {
             self.drain(objects, true)?;
         }
