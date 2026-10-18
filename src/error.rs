@@ -243,6 +243,7 @@ from_domain_errors! {
     crate::PeelFailure,
     crate::push::PushError,
     crate::push::PushFailure,
+    crate::serve::ServeError,
     crate::refs::InvalidRefName,
     crate::refs::PackRefsError,
     crate::refs::ReferenceError,

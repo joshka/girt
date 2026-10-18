@@ -158,6 +158,11 @@ enum Command {
     /// remote-tracking value to match; fetch first after a stale rejection. Prefix a refspec
     /// with `+` to permit non-fast-forward updates.
     Push(transfer::PushArgs),
+    /// Serve a fetch on stdin and stdout, as the `--upload-pack` command of a Git client.
+    ///
+    /// Speaks protocol v2, which Git clients request through `GIT_PROTOCOL`. Use it over SSH, or
+    /// locally with `git clone --upload-pack='girt upload-pack' <directory>`.
+    UploadPack(transfer::UploadPackArgs),
 
     /// Check repository objects and connectivity; optionally export dangling objects.
     Fsck(fsck::Args),
@@ -310,6 +315,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Repo(command) => repo::run(command, context),
         Command::Init(args) => repo::init(args, context),
         Command::Clone(args) => transfer::clone(args, context),
+        Command::UploadPack(args) => transfer::upload_pack(args, context),
         Command::Object(command) => object::run(command, context),
         Command::Tree(command) => tree::run(command, context),
         Command::Ref(command) => refs::run(command, context),

@@ -208,6 +208,7 @@ pub mod fsmonitor;
 #[cfg(any(fuzzing, test))]
 #[doc(hidden)]
 pub mod fuzzing;
+mod hide_refs;
 pub mod history;
 pub mod hooks;
 pub mod ignore;
@@ -240,6 +241,7 @@ pub mod retention;
 pub mod revision;
 pub mod rewrites;
 pub mod sequencer;
+pub mod serve;
 pub mod signing;
 mod source_files;
 pub mod stash;

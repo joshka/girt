@@ -91,3 +91,24 @@ ok	refs/heads/main
 
 A destination without `refs/` is taken as a branch under `refs/heads/`. girt exits 1 unless every
 reference was accepted.
+
+## Serve fetches (`girt upload-pack`)
+
+<Example cmd="upload-pack">
+
+`girt upload-pack <directory>` serves one fetch or clone on stdin and stdout, as Git's
+`git-upload-pack` does. Give it to a Git client as its upload-pack command, locally or over SSH:
+
+```console
+$ git clone -q --upload-pack='girt upload-pack' demo.git served
+$ git -C served branch -r
+  origin/HEAD -> origin/main
+  origin/main
+```
+
+</Example>
+
+It speaks protocol v2, which Git clients request by default. References hidden by
+`uploadpack.hideRefs` or `transfer.hideRefs` aren't listed. As with Git's server, a v2 client may
+still fetch any object by ID, so keep private data in a separate repository. Shallow clones,
+partial-clone filters and protocol v0 clients aren't served yet.
