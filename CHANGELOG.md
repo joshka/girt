@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/joshka/girt/compare/girt-v0.13.1...girt-v0.14.0) - 2026-10-18
+
+### Other
+
+- Re-measure the jj status rows on girt main with #452 ([#459](https://github.com/joshka/girt/pull/459))
+- Refresh the jj benchmark matrix on girt 0.11.1 with per-cell version stamps ([#454](https://github.com/joshka/girt/pull/454))
+- Apply diff attributes to patches and blame ([#463](https://github.com/joshka/girt/pull/463))
+
 ### Added
 
 - Read `.gitattributes` with `attributes::Attributes` and `Repository::attributes`, and apply
