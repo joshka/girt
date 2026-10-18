@@ -40,12 +40,14 @@ including the selected Windows scope and exact tested revision.
 
 ## Numeric diff summaries
 
-`girt::diffstat` renders caller-supplied text counts and binary lengths as Git numstat records.
+`girt::diffstat` renders caller-supplied text counts and binary lengths as Git `--numstat` records.
 `tests/diffstat.rs` compares bytes with isolated `git diff --cached --numstat`, including NUL
 termination, empty additions, binary files, quoted paths, and renamed paths with shared directory
 components. Escaped rename paths retain separately quoted source and destination names. File count,
-aggregate path bytes, and output bytes have independent limits. Counts and ordering remain the
-caller's responsibility; repository collection and human-readable graph layout are not yet provided.
+aggregate path bytes, output bytes, and requested stat width have independent limits. `stat` formats
+caller-supplied line counts and binary lengths with Git's path truncation and graph scaling. Counts
+and ordering remain the caller's responsibility; repository collection and command-line width
+selection are not yet provided.
 
 ## Reachability bitmap files
 
