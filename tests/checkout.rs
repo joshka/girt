@@ -437,3 +437,39 @@ fn progress_counts_applied_operations_before_publication() {
     assert!(events.windows(2).all(|pair| pair[0].0 <= pair[1].0));
     assert!(report.index_published);
 }
+
+/// Raw checkout creates real symlinks even when Git is configured to write placeholders.
+#[test]
+fn configured_symlink_placeholders_are_not_written() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = source(temp.path());
+    let destination = temp.path().join("clone");
+    clone_without_checkout(source.worktree().unwrap(), &destination, false);
+    git(&destination, &["config", "core.symlinks", "false"]);
+    let repo = Repository::open(&destination).unwrap();
+    checkout(&repo, None, tree(source.worktree().unwrap()));
+    assert!(
+        fs::symlink_metadata(destination.join("link"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    fs::remove_file(destination.join("link")).unwrap();
+    git(
+        &destination,
+        &[
+            "-c",
+            "core.symlinks=false",
+            "checkout-index",
+            "--force",
+            "link",
+        ],
+    );
+    assert!(
+        !fs::symlink_metadata(destination.join("link"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(fs::read(destination.join("link")).unwrap(), b"dir/raw");
+}

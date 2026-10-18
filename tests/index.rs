@@ -1741,3 +1741,48 @@ fn stale_claim_before_intent_to_add_still_checks_objects(#[case] format: girt::O
         Err(girt::index::WriteTreeError::MissingObject { id, .. }) if id == missing
     ));
 }
+
+/// Both sparse pattern modes produce skip-worktree flags that survive girt index publication.
+#[rstest]
+#[case::cone("--cone", "inside")]
+#[case::non_cone("--no-cone", "/inside/")]
+fn sparse_pattern_modes_preserve_git_skip_flags(
+    #[case] mode: &str,
+    #[case] pattern: &str,
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    let root = repo.worktree().unwrap();
+    fs::create_dir(root.join("inside")).unwrap();
+    fs::create_dir(root.join("outside")).unwrap();
+    fs::write(root.join("inside/a"), b"a").unwrap();
+    fs::write(root.join("outside/b"), b"b").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-m", "sparse pattern audit"]);
+    git(
+        root,
+        &["sparse-checkout", "set", mode, "--no-sparse-index", pattern],
+    );
+    let expected = git(root, &["ls-files", "-v"]);
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    assert!(
+        edit.index()
+            .entries()
+            .iter()
+            .any(|entry| entry.path == b"outside/b" && entry.skip_worktree)
+    );
+    edit.commit().unwrap();
+    assert_eq!(git(root, &["ls-files", "-v"]), expected);
+    assert!(!root.join("outside/b").exists());
+    assert!(root.join("inside/a").exists());
+    assert!(git(root, &["status", "--porcelain=v1", "-z"]).is_empty());
+    assert!(matches!(
+        repo.raw_status_with(
+            girt::status::Baseline::Head,
+            girt::status::Untracked::RawFilesWithoutIgnores,
+            girt::status::Limits::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        ),
+        Err(girt::status::Error::Unsupported { .. })
+    ));
+}

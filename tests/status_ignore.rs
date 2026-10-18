@@ -487,3 +487,33 @@ fn configured_sources_are_bounded_and_never_block() {
     let result = repo.ignore_rules(&fixture.environment());
     assert!(matches!(result, Err(LoadError::Unsupported(_))));
 }
+
+/// A real user's home resolves independently of HOME in Git, unlike girt's explicit refusal.
+#[test]
+fn existing_user_home_excludes_are_a_git_compatibility_gap() {
+    let user = Command::new("id").arg("-un").output().unwrap();
+    assert!(user.status.success());
+    let user = std::str::from_utf8(&user.stdout).unwrap().trim();
+    let home = std::env::var_os("HOME").expect("HOME is required for this Unix fixture");
+    let excludes = tempfile::Builder::new()
+        .prefix(".girt-ignore-audit-")
+        .tempdir_in(&home)
+        .unwrap();
+    fs::write(excludes.path().join("ignore"), "audit-ignored\n").unwrap();
+    let tail = excludes.path().file_name().unwrap().to_str().unwrap();
+    let fixture = Fixture::new();
+    fixture.git_in_repo(&[
+        "config",
+        "core.excludesFile",
+        &format!("~{user}/{tail}/ignore"),
+    ]);
+    fixture.write(&[("audit-ignored", "payload")]);
+    assert_eq!(
+        fixture.git_in_repo(&["check-ignore", "audit-ignored"]),
+        b"audit-ignored\n"
+    );
+    assert!(matches!(
+        fixture.repository().ignore_rules(&fixture.environment()),
+        Err(LoadError::Unsupported(_))
+    ));
+}
