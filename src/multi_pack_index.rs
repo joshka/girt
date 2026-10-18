@@ -10,6 +10,8 @@
 //! maintenance exclusion; it does not repack objects or select retention policy. Use
 //! [`crate::Repository::verify_multi_pack_index`] for explicit standalone/chain diagnostics.
 //! Optional read-path discovery falls back on unusable metadata; explicit verification reports it.
+//! [`crate::Repository::expire_multi_pack_index`] verifies packed survivors and publishes a
+//! replacement standalone index before retiring redundant packs, under caller-owned isolation.
 //!
 //! ```no_run
 //! use girt::ObjectFormat;
@@ -23,6 +25,9 @@
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+
+mod expire;
+pub use expire::{ExpireCause, ExpireFailure, ExpireLimits, ExpireReport};
 
 mod install;
 mod verify;
