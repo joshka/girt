@@ -600,8 +600,26 @@ fn remote_value<'a>(config: &'a Config, remote: &[u8], name: &str) -> Option<Opt
         .map(|entry| entry.value.as_deref())
 }
 
-// Fail closed: a configured pin, client certificate, alternate backend or CA directory must not
-// silently disappear when a caller switches from Git. Unrelated URL scopes remain irrelevant.
+// Settings that only tune Git's libcurl backend, with nothing to change in girt's rustls/reqwest
+// stack and no effect on what is trusted or where requests go. girt ignores them, so a Git
+// configuration that sets them still works.
+const BACKEND_ONLY: &[&str] = &[
+    // Chooses among libcurl's TLS libraries; girt always uses rustls.
+    "sslbackend",
+    // Windows Secure Channel options, for the `schannel` backend only.
+    "schannelcheckrevoke",
+    "schannelusesslcainfo",
+    // Buffer and connection-count tuning for libcurl and dumb HTTP.
+    "postbuffer",
+    "maxrequests",
+    "minsessions",
+    // The HTTP version libcurl negotiates; girt always speaks HTTP/1.1.
+    "version",
+];
+
+// Fail closed: a configured pin, CA directory, cookie, delegation, resolve override or other
+// setting that affects security or routing must not silently disappear when a caller switches
+// from Git. Backend-only tuning is ignored. Unrelated URL scopes remain irrelevant.
 fn reject_unsupported(config: &Config, target: &Url) -> Result<(), HttpError> {
     for entry in config.entries() {
         if !entry.section.eq_ignore_ascii_case(b"http") {
@@ -622,7 +640,8 @@ fn reject_unsupported(config: &Config, target: &Url) -> Result<(), HttpError> {
             "sslcertpasswordprotected",
         ]
         .iter()
-        .any(|supported| name.eq_ignore_ascii_case(supported))
+        .chain(BACKEND_ONLY)
+        .any(|known| name.eq_ignore_ascii_case(known))
             && http_value(config, target, name).is_some()
         {
             return Err(HttpError::Configuration("unsupported HTTP setting"));
@@ -741,12 +760,27 @@ mod tests {
     }
 
     #[rstest]
+    #[case::backend("sslBackend=openssl")]
+    #[case::schannel("schannelCheckRevoke=false")]
+    #[case::post_buffer("postBuffer=524288000")]
+    #[case::version("version=HTTP/2")]
+    #[case::schannel_ca("schannelUseSSLCAInfo=true")]
+    #[case::max_requests("maxRequests=5")]
+    #[case::min_sessions("minSessions=1")]
+    fn backend_only_settings_are_ignored(#[case] setting: &str) {
+        let (config, destination) = configuration(&format!("[http]\n{setting}\n"));
+        assert!(HttpSettings::resolve(&config, &destination, &HttpEnvironment::default()).is_ok());
+    }
+
+    #[rstest]
     #[case::pin("pinnedPubkey=secret")]
     #[case::ca_directory("sslCAPath=secret")]
     #[case::client_certificate("sslCert=secret")]
-    #[case::backend("sslBackend=secret")]
     #[case::proxy_ca("proxySSLCAInfo=secret")]
     #[case::low_speed("lowSpeedLimit=1")]
+    #[case::resolve("curloptResolve=example.test:443:127.0.0.1")]
+    #[case::cookies("cookieFile=/tmp/cookies")]
+    #[case::delegation("delegation=always")]
     #[case::auth("proxyAuthMethod=negotiate")]
     fn unsupported_settings_fail_without_values(#[case] setting: &str) {
         let (config, destination) = configuration(&format!("[http]\n{setting}\n"));

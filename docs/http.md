@@ -111,9 +111,13 @@ Supported settings are `http.sslVerify`, `http.sslCAInfo`, `http.proxy`,
 `http.proxyAuthMethod=basic`, `http.followRedirects`, `http.extraHeader`, `http.userAgent`,
 `http.sslCert` and `http.sslKey`. URL scopes match scheme, host (including whole-label `*`),
 effective port and component-bounded path. More specific hosts, then longer paths, then later
-entries win; unreserved percent escapes are normalized. Selected unsupported HTTP settings fail
-explicitly, including password-protected client certificates, pins, alternate TLS backends and proxy
-TLS policy.
+entries win; unreserved percent escapes are normalized. Unsupported HTTP settings that affect
+security or routing fail explicitly, including password-protected client certificates, pins, CA
+directories, cookies, `http.delegation`, `http.curloptResolve`, low-speed limits and proxy TLS
+policy. Settings that only tune Git's libcurl backend are ignored, so a Git configuration that sets
+them still works: `http.sslBackend`, `http.schannelCheckRevoke`, `http.schannelUseSSLCAInfo`,
+`http.postBuffer`, `http.maxRequests`, `http.minSessions` and `http.version` (girt always uses
+rustls and HTTP/1.1).
 
 `http.extraHeader` is multi-valued, as in Git. Entries are taken in configuration order while their
 URL scope matches at least as well as the best entry so far, so a global entry after a scoped one is
