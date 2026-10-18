@@ -2542,16 +2542,17 @@ writer cannot interleave. Exact-byte comparisons detect observed noncooperating 
 prevent a noncooperating race after the final check. Symlinks and non-regular index files are
 rejected; hostile directory/lock replacement is outside the filesystem contract.
 
-The published file timestamp is conservatively set to one second after the Unix epoch, preserving
-entry stat words while preventing a later rewrite timestamp from making modern racy entries look
-clean to Git. The nonzero timestamp matters: the Git CLI same-stat regression checks that modified
-content remains visible with mtime restored and ctime checks disabled. Consumers still own their
-stat policy; no status/refresh operation is implemented. Timestamp-setting support is required.
-Publication uses same-directory rename and its host/filesystem replacement semantics. No fsync,
-crash durability, shared-permission handling or blanket platform guarantee is claimed. Validation,
-write and rename failures preserve original destination bytes except for independent concurrent
-changes. Only the acquired lock is cleaned; cleanup failures may leave that owned lock for manual
-recovery. Existing locks are never stolen. Index ownership is independent of reference storage.
+Publication zeroes the cached size of entries whose mtime is at or after the earlier of the previous
+index's modification time and the time of writing. Other entry stat words remain exact, and the
+published file keeps its normal filesystem modification time. This prevents an index rewrite from
+making previously racy entries look clean to Git. The Git CLI same-stat regression checks that
+modified content remains visible with mtime restored and ctime checks disabled. Callers supplying
+new stat data still own its correctness. Publication uses same-directory rename and its
+host/filesystem replacement semantics. No fsync, crash durability, shared-permission handling or
+blanket platform guarantee is claimed. Validation, write and rename failures preserve original
+destination bytes except for independent concurrent changes. Only the acquired lock is cleaned;
+cleanup failures may leave that owned lock for manual recovery. Existing locks are never stolen.
+Index ownership is independent of reference storage.
 
 The implementation uses the public
 [index format specification](https://git-scm.com/docs/index-format) and original fixtures generated
