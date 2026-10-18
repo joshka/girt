@@ -163,8 +163,21 @@ fn description(finding: &Finding) -> std::borrow::Cow<'_, str> {
         MessageId::MissingCommitter => "invalid format - expected 'committer' line",
         MessageId::MissingTaggerEntry => "invalid format - expected 'tagger' line",
         MessageId::BadTree => "cannot be parsed",
+        MessageId::MissingEmail => "invalid author/committer line - missing email",
+        MessageId::BadEmail => "invalid author/committer line - bad email",
+        MessageId::MissingNameBeforeEmail | MessageId::MissingSpaceBeforeEmail => {
+            "invalid author/committer line - missing space before email"
+        }
+        MessageId::MissingSpaceBeforeDate => {
+            "invalid author/committer line - missing space before date"
+        }
+        MessageId::ZeroPaddedDate => "invalid author/committer line - zero-padded date",
+        MessageId::BadDateOverflow => {
+            "invalid author/committer line - date causes integer overflow"
+        }
+        MessageId::BadTimezone => "invalid author/committer line - bad time zone",
         MessageId::BadDate => "invalid author/committer line - bad date",
-        MessageId::BadName => "invalid author/committer line - missing name",
+        MessageId::BadName => "invalid author/committer line - bad name",
         _ => "invalid object payload",
     };
     description.into()

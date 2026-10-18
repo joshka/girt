@@ -199,3 +199,34 @@ fn physical_commit_header_diagnostics_match_git_exactly() {
         assert_metadata_payload_matches_git(root.path(), "commit", payload.as_bytes());
     }
 }
+
+#[test]
+fn identity_diagnostics_match_git_exactly() {
+    for person in [
+        "A<a> 1000000000 +0000",
+        "<a> 1000000000 +0000",
+        "A no-email 1000000000 +0000",
+        "A <a 1000000000 +0000",
+        "A a> 1000000000 +0000",
+        "A <a>1000000000 +0000",
+        "A <a> -1 +0000",
+        "A <a> 0123 +0000",
+        "A <a> 18446744073709551616 +0000",
+        "A <a> 1000000000 +00",
+        "A <a> 1000000000 +9999",
+        " <> 1000000000 +0000",
+    ] {
+        for role in ["author", "committer"] {
+            let (root, tree) = metadata_fixture();
+            let ordinary = "Ordinary <ordinary@example.invalid> 1000000000 +0000";
+            let (author, committer) = if role == "author" {
+                (person, ordinary)
+            } else {
+                (ordinary, person)
+            };
+            let payload =
+                format!("tree {tree}\nauthor {author}\ncommitter {committer}\n\nmessage\n");
+            assert_metadata_payload_matches_git(root.path(), "commit", payload.as_bytes());
+        }
+    }
+}

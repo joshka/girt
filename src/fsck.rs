@@ -16,6 +16,7 @@ use std::collections::BTreeSet;
 use crate::{ObjectFormat, ObjectKind, Tree};
 
 mod commit;
+mod identity;
 mod lost_found;
 mod message;
 mod policy;
@@ -103,25 +104,6 @@ fn check_payload(
             },
         })
         .collect()
-}
-
-fn check_identity(
-    identity: Result<Option<crate::IdentityRef<'_>>, crate::CommitError>,
-    missing: MessageId,
-    ids: &mut BTreeSet<MessageId>,
-) {
-    match identity {
-        Ok(None) => {
-            ids.insert(missing);
-        }
-        Err(_) => {
-            ids.insert(MessageId::BadName);
-        }
-        Ok(Some(identity)) if identity.date().is_err() => {
-            ids.insert(MessageId::BadDate);
-        }
-        _ => {}
-    }
 }
 
 fn check_tree(

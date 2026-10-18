@@ -1,8 +1,8 @@
 //! Commit header conventions beyond graph decoding, observed with isolated Git fixtures.
 use std::collections::BTreeSet;
 
-use super::{MessageId, check_identity};
-use crate::{Commit, IdentityRef, ObjectFormat};
+use super::{MessageId, identity};
+use crate::{Commit, ObjectFormat};
 
 pub(super) fn check(format: ObjectFormat, data: &[u8], ids: &mut BTreeSet<MessageId>) {
     if Commit::parse(format, data).is_err() {
@@ -43,11 +43,9 @@ pub(super) fn check(format: ObjectFormat, data: &[u8], ids: &mut BTreeSet<Messag
         ids.insert(MessageId::MissingAuthor);
         return;
     };
-    check_identity(
-        IdentityRef::parse(author).map(Some),
-        MessageId::MissingAuthor,
-        ids,
-    );
+    if let Some(message) = identity::check(author) {
+        ids.insert(message);
+    }
     if !ids.is_empty() {
         return;
     }
@@ -65,11 +63,9 @@ pub(super) fn check(format: ObjectFormat, data: &[u8], ids: &mut BTreeSet<Messag
         ids.insert(MessageId::MissingCommitter);
         return;
     };
-    check_identity(
-        IdentityRef::parse(committer).map(Some),
-        MessageId::MissingCommitter,
-        ids,
-    );
+    if let Some(message) = identity::check(committer) {
+        ids.insert(message);
+    }
     if ids.is_empty() && remaining.contains(&0) {
         ids.insert(MessageId::NulInCommit);
     }
