@@ -19,6 +19,7 @@ mod common;
 mod complete;
 mod config;
 mod diff;
+mod git_hints;
 mod history;
 mod maintenance;
 mod object;
@@ -166,9 +167,10 @@ fn main() -> ExitCode {
     let early_color = color::Color::early(&args);
     // Help uses stdout; parse errors use stderr. Resolve each before clap prints and exits.
     let mut command = Cli::command();
-    let matches = match command.try_get_matches_from_mut(args) {
+    let matches = match command.try_get_matches_from_mut(&args) {
         Ok(matches) => matches,
-        Err(error) => {
+        Err(mut error) => {
+            git_hints::annotate(&mut error, &args);
             let enabled = if error.use_stderr() {
                 early_color.stderr()
             } else {
