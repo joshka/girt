@@ -561,6 +561,10 @@ fn metadata_name_refusals_match_git(
 }
 
 fn mktree(root: &Path, entries: &str) -> String {
+    git_stdin(root, &["mktree", "-z"], entries)
+}
+
+fn git_stdin(root: &Path, args: &[&str], input: &str) -> String {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -569,7 +573,7 @@ fn mktree(root: &Path, entries: &str) -> String {
     }
     let mut child = command
         .current_dir(root)
-        .args(["mktree", "-z"])
+        .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", root.join("absent-config"))
         .stdin(std::process::Stdio::piped())
@@ -580,9 +584,117 @@ fn mktree(root: &Path, entries: &str) -> String {
         .stdin
         .take()
         .unwrap()
-        .write_all(entries.as_bytes())
+        .write_all(input.as_bytes())
         .unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// Writes `files` (path, content) as a tree in `root`'s object store, through the index so nested
+/// and colliding paths need no working files.
+fn tree_of(root: &Path, files: &[(&str, &str)]) -> String {
+    let mut info = String::new();
+    for (path, content) in files {
+        let blob = git_stdin(root, &["hash-object", "-w", "--stdin"], content);
+        info.push_str(&format!("100644 {blob}\t{path}\0"));
+    }
+    git_stdin(root, &["update-index", "-z", "--index-info"], &info);
+    let tree = String::from_utf8(git(root, &["write-tree"])).unwrap();
+    fs::remove_file(root.join(".git/index")).unwrap();
+    tree.trim().to_owned()
+}
+
+/// Every path below `root` other than `.git`, with file contents.
+fn snapshot(root: &Path) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).unwrap() {
+            let path = entry.unwrap().path();
+            let relative = path
+                .strip_prefix(root)
+                .unwrap()
+                .as_os_str()
+                .as_bytes()
+                .to_vec();
+            if relative == b".git" {
+                continue;
+            }
+            if path.is_dir() {
+                found.push((relative, None));
+                pending.push(path);
+            } else {
+                found.push((relative, Some(fs::read(&path).unwrap())));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Girt writes the same files as Git for one tree, and Git reports the same status for both.
+fn assert_checks_out_like_git(files: &[(&str, &str)]) -> girt::checkout::Report {
+    let temp = tempfile::tempdir().unwrap();
+    let oracle = temp.path().join("oracle");
+    let subject = temp.path().join("subject");
+    let mut trees = Vec::new();
+    for root in [&oracle, &subject] {
+        git(temp.path(), &["init", "-q", root.to_str().unwrap()]);
+        trees.push(tree_of(root, files));
+    }
+    assert_eq!(trees[0], trees[1]);
+    git(&oracle, &["read-tree", "--reset", "-u", &trees[0]]);
+    let repo = Repository::open(&subject).unwrap();
+    let report = repo
+        .checkout_tree_with(
+            None,
+            Some(trees[1].parse().unwrap()),
+            Limits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(report.index_published);
+    assert_eq!(snapshot(&subject), snapshot(&oracle));
+    assert_eq!(
+        git(&subject, &["ls-files", "--stage", "-z"]),
+        git(&oracle, &["ls-files", "--stage", "-z"])
+    );
+    assert_eq!(
+        git(&subject, &["status", "--porcelain=v1", "-z"]),
+        git(&oracle, &["status", "--porcelain=v1", "-z"])
+    );
+    report
+}
+
+#[test]
+fn unicode_names_check_out_like_git() {
+    let report = assert_checks_out_like_git(&[
+        ("caf\u{e9}.txt", "composed"),
+        ("d\u{e9}cor/cafe\u{301}", "decomposed"),
+        ("\u{65e5}\u{672c}/\u{c9}t\u{e9}", "unicode case"),
+    ]);
+    assert!(report.collisions.is_empty());
+}
+
+/// On a case-sensitive Linux volume every path is written; on a default macOS volume one path
+/// of each set is, as Git chooses. Either way the files and status match Git's.
+#[test]
+fn colliding_paths_check_out_like_git() {
+    let report = assert_checks_out_like_git(&[
+        ("Dir/f", "upper dir"),
+        ("X.h", "upper"),
+        ("caf\u{e9}", "composed"),
+        ("cafe\u{301}", "decomposed"),
+        ("dir/f", "lower dir"),
+        ("x.h", "lower"),
+        ("xt_CONNMARK.h", "same"),
+        ("xt_connmark.h", "same"),
+    ]);
+    if cfg!(target_os = "linux") {
+        assert!(report.collisions.is_empty());
+    } else {
+        assert!(!report.collisions.is_empty());
+    }
 }

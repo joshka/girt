@@ -334,6 +334,50 @@ pub struct Report {
     /// `filter.<name>.required` failed, or the blob is not valid UTF-8 for its
     /// `working-tree-encoding`. Only filtered checkouts fill this.
     pub unfiltered: Vec<Vec<u8>>,
+    /// Target paths that share one name on the working tree's volume, as Git's "the following
+    /// paths have collided" warning lists them. Every path stays in the index; each set has one
+    /// written path. Empty on volumes that compare names as bytes.
+    pub collisions: Vec<Collision>,
+}
+
+/// Target paths that the working tree's volume stores under one name.
+///
+/// Case-insensitive volumes merge `README` and `readme`; macOS volumes also merge composed and
+/// decomposed spellings such as `café`. Checkout resolves a set the way Git does, taking paths in
+/// index order: a directory keeps its first spelling and later spellings' children are written into
+/// it; a file keeps the last spelling, with its name and content. The other paths remain in the
+/// index, so status reports them as modified when their content differs from the written file.
+///
+/// ```
+/// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::checkout::Limits;
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("repo"),
+///     InitKind::Worktree,
+/// )?;
+/// let report = repo.checkout_tree_with(None, None, Limits::default(), &AtomicBool::new(false))?;
+/// for collision in &report.collisions {
+///     eprintln!(
+///         "{} was written; {} other spellings share its name",
+///         collision.written.escape_ascii(),
+///         collision.shadowed.len()
+///     );
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Collision {
+    /// The target path whose name, and content for a file, the volume holds.
+    pub written: Vec<u8>,
+    /// Other target paths sharing that name, in index order. For a directory these are the other
+    /// spellings of the directory itself, not its contents.
+    pub shadowed: Vec<Vec<u8>>,
 }
 
 /// Checkout failure with exact completed operations and independently reported cleanup failures.

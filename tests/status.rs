@@ -841,43 +841,48 @@ fn distinguishes_worktree_and_file_byte_limits(
     }
 }
 
-/// Git accepts Unicode paths on macOS where raw status and checkout explicitly refuse them.
-#[cfg(target_os = "macos")]
-#[test]
-fn macos_unicode_worktree_paths_are_explicitly_refused() {
+/// Composed and decomposed Unicode names compare clean, as in Git, and an unchanged checkout of
+/// them changes nothing.
+#[rstest]
+#[case::composed("caf\u{e9}.txt")]
+#[case::decomposed("cafe\u{301}.txt")]
+#[case::nested("d\u{e9}cor/\u{c9}t\u{e9}")]
+fn unicode_worktree_paths_match_git(#[case] path: &str) {
     let (_root, repo) = fixture_in(ObjectFormat::Sha1);
     let root = repo.worktree().unwrap();
-    fs::write(root.join("café.txt"), b"unicode path\n").unwrap();
+    if let Some(parent) = Path::new(path).parent() {
+        fs::create_dir_all(root.join(parent)).unwrap();
+    }
+    fs::write(root.join(path), b"unicode path\n").unwrap();
     git(root, &["add", "."]);
     git(root, &["commit", "-m", "unicode audit"]);
     assert!(git(root, &["status", "--porcelain=v1", "-z"]).is_empty());
-    let result = repo.raw_status_with(
-        Baseline::Head,
-        Untracked::RawFilesWithoutIgnores,
-        &girt::pathspec::Pathspec::all(),
-        Limits::default(),
-        &AtomicBool::new(false),
-    );
-    assert!(matches!(
-        result,
-        Err(girt::status::Error::Unsupported { .. })
-    ));
+    let report = repo
+        .raw_status_with(
+            Baseline::Head,
+            Untracked::RawFilesWithoutIgnores,
+            &girt::pathspec::Pathspec::all(),
+            Limits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(report.unstaged.is_empty() && report.raw_untracked.is_empty());
     let tree: ObjectId = std::str::from_utf8(&git(root, &["rev-parse", "HEAD^{tree}"]))
         .unwrap()
         .trim()
         .parse()
         .unwrap();
-    git(root, &["read-tree", "-m", "-u", "HEAD", "HEAD"]);
-    assert!(
-        repo.checkout_tree_with(
+    let report = repo
+        .checkout_tree_with(
             Some(tree),
             Some(tree),
             girt::checkout::Limits::default(),
-            &AtomicBool::new(false)
+            &AtomicBool::new(false),
         )
-        .is_err()
-    );
-    assert_eq!(fs::read(root.join("café.txt")).unwrap(), b"unicode path\n");
+        .unwrap();
+    assert!(report.applied.is_empty());
+    assert_eq!(fs::read(root.join(path)).unwrap(), b"unicode path\n");
+    assert!(git(root, &["status", "--porcelain=v1", "-z"]).is_empty());
 }
 
 /// Git reports intent-to-add as an unstaged addition; girt currently refuses the index flag.

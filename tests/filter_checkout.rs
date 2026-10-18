@@ -279,3 +279,44 @@ fn git_lfs_checkout_writes_content() {
     let status = git(root, &["status", "--porcelain"], b"");
     assert_eq!(String::from_utf8_lossy(&status), "");
 }
+
+/// Filters apply by planned path even where a volume merges directory spellings: on a
+/// case-insensitive volume `dir/b.txt` is written inside `Dir`, still converted.
+#[test]
+fn filters_apply_to_paths_written_through_merged_directories() {
+    let directory = tempfile::tempdir().unwrap();
+    let src = directory.path().join("src");
+    git(
+        directory.path(),
+        &["init", "-q", src.to_str().unwrap()],
+        b"",
+    );
+    let mut info = String::new();
+    for (path, content) in [
+        (".gitattributes", "*.txt text eol=crlf\n"),
+        ("Dir/a.txt", "upper\n"),
+        ("dir/b.txt", "lower\n"),
+    ] {
+        let blob = git(&src, &["hash-object", "-w", "--stdin"], content.as_bytes());
+        let blob = String::from_utf8(blob).unwrap();
+        info.push_str(&format!("100644 {}\t{path}\0", blob.trim()));
+    }
+    git(
+        &src,
+        &["update-index", "-z", "--index-info"],
+        info.as_bytes(),
+    );
+    git(&src, &["commit", "-qm", "merged directories"], b"");
+    let tree = rev(&src, "HEAD^{tree}");
+    let (theirs, ours) = (directory.path().join("git"), directory.path().join("girt"));
+    clone(&src, &theirs, &[]);
+    clone(&src, &ours, &[]);
+    git(&theirs, &["read-tree", "--reset", "-u", "HEAD"], b"");
+    girt_checkout(&ours, None, tree, Commands::Run).unwrap();
+    assert_eq!(files(&ours), files(&theirs));
+    assert!(files(&ours).values().any(|bytes| bytes == b"lower\r\n"));
+    assert_eq!(
+        git(&ours, &["status", "--porcelain=v1", "-z"], b""),
+        git(&theirs, &["status", "--porcelain=v1", "-z"], b"")
+    );
+}

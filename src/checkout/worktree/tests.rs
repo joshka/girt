@@ -177,7 +177,6 @@ fn preserves_staged_changes_and_conflicts(#[case] stage: index::Stage) {
 #[rstest]
 #[case::leaf(b"file", "file")]
 #[case::ancestor(b"file/child", "file")]
-#[case::case_alias(b"FILE", "file")]
 fn refuses_untracked_obstructions(#[case] path: &[u8], #[case] obstruction: &str) {
     let f = Fixture::new();
     let target = f.tree(path, EntryMode::Blob, b"new");
@@ -186,6 +185,25 @@ fn refuses_untracked_obstructions(#[case] path: &[u8], #[case] obstruction: &str
     assert!(failure.report.applied.is_empty());
     assert_eq!(fs::read(f.root().join(obstruction)).unwrap(), b"user");
     assert!(!f.repo.git_dir().join("index").exists());
+}
+
+// An untracked file is an obstruction only where the volume stores both names as one.
+#[test]
+fn untracked_case_alias_obstructs_only_where_case_folds() {
+    let f = Fixture::new();
+    let target = f.tree(b"FILE", EntryMode::Blob, b"new");
+    fs::write(f.root().join("file"), b"user").unwrap();
+    let result = f.checkout(None, Some(target));
+    let policy = NamePolicy::from_config(&f.repo).unwrap();
+    if policy.key(b"FILE") == policy.key(b"file") {
+        let failure = result.unwrap_err();
+        assert!(failure.report.applied.is_empty());
+        assert!(!f.repo.git_dir().join("index").exists());
+    } else {
+        result.unwrap();
+        assert_eq!(fs::read(f.root().join("FILE")).unwrap(), b"new");
+    }
+    assert_eq!(fs::read(f.root().join("file")).unwrap(), b"user");
 }
 
 #[rstest]
@@ -650,34 +668,147 @@ fn corrupted_blob_is_rejected_before_mutation() {
     assert!(failure.report.applied.is_empty());
 }
 
-#[test]
-fn colliding_tree_paths_are_rejected_even_on_case_sensitive_filesystems() {
-    let f = Fixture::new();
+fn colliding_tree(f: &Fixture) -> ObjectId {
     let store = f.repo.loose_objects();
-    let id = store.write_blob(b"new").unwrap();
+    let upper = store.write_blob(b"upper").unwrap();
+    let lower = store.write_blob(b"lower").unwrap();
+    let entry = |name: &[u8], id| TreeEntry {
+        name: name.to_vec(),
+        mode: EntryMode::Blob,
+        id,
+    };
+    store
+        .write_tree(
+            &Tree::new(
+                crate::ObjectFormat::Sha1,
+                vec![entry(b"FILE", upper), entry(b"file", lower)],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+// Volumes that compare names as bytes keep both files; folding volumes keep Git's choice, the
+// last path in index order, and report the set.
+#[test]
+fn colliding_tree_paths_follow_the_volume_name_policy() {
+    let f = Fixture::new();
+    let tree = colliding_tree(&f);
+    let report = f.checkout(None, Some(tree)).unwrap();
+    let names: BTreeSet<_> = fs::read_dir(f.root())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name != ".git")
+        .collect();
+    let policy = NamePolicy::from_config(&f.repo).unwrap();
+    if policy.key(b"FILE") != policy.key(b"file") {
+        assert!(report.collisions.is_empty());
+        assert_eq!(names.len(), 2);
+        assert_eq!(fs::read(f.root().join("FILE")).unwrap(), b"upper");
+    } else {
+        assert_eq!(
+            report.collisions,
+            [Collision {
+                written: b"file".to_vec(),
+                shadowed: vec![b"FILE".to_vec()],
+            }]
+        );
+        assert_eq!(names.into_iter().collect::<Vec<_>>(), ["file"]);
+    }
+    assert_eq!(fs::read(f.root().join("file")).unwrap(), b"lower");
+    let index = index::Index::parse(
+        crate::ObjectFormat::Sha1,
+        &f.index_bytes(),
+        index::Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(index.entries().len(), 2);
+}
+
+// `core.ignoreCase=true` folds case even on a volume that compares bytes, so a stale or copied
+// config can never let two files that collide on disk both be written.
+#[test]
+fn configured_case_folding_applies_on_any_volume() {
+    let f = Fixture::new();
+    let config = f.repo.git_dir().join("config");
+    let mut text = fs::read_to_string(&config).unwrap();
+    text.push_str("[core]\n\tignorecase = true\n");
+    fs::write(&config, text).unwrap();
+    let f = Fixture {
+        repo: Repository::open(f.root()).unwrap(),
+        ..f
+    };
+    let report = f.checkout(None, Some(colliding_tree(&f))).unwrap();
+    assert_eq!(report.collisions.len(), 1);
+    assert!(f.root().join("file").exists());
+    assert!(
+        !fs::read_dir(f.root())
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name() == "FILE")
+    );
+}
+
+// Git reads core.precomposeUnicode only on macOS; a Linux volume stores both spellings.
+#[cfg(target_os = "linux")]
+#[test]
+fn precompose_setting_does_not_merge_spellings_on_linux() {
+    let f = Fixture::new();
+    let config = f.repo.git_dir().join("config");
+    let mut text = fs::read_to_string(&config).unwrap();
+    text.push_str("[core]\n\tprecomposeunicode = true\n");
+    fs::write(&config, text).unwrap();
+    let f = Fixture {
+        repo: Repository::open(f.root()).unwrap(),
+        ..f
+    };
+    let store = f.repo.loose_objects();
+    let id = store.write_blob(b"x").unwrap();
+    let entry = |name: &str| TreeEntry {
+        name: name.as_bytes().to_vec(),
+        mode: EntryMode::Blob,
+        id,
+    };
     let tree = store
         .write_tree(
             &Tree::new(
                 crate::ObjectFormat::Sha1,
-                vec![
-                    TreeEntry {
-                        name: b"file".to_vec(),
-                        mode: EntryMode::Blob,
-                        id,
-                    },
-                    TreeEntry {
-                        name: b"FILE".to_vec(),
-                        mode: EntryMode::Blob,
-                        id,
-                    },
-                ],
+                vec![entry("cafe\u{301}"), entry("caf\u{e9}")],
             )
             .unwrap(),
         )
         .unwrap();
-    let failure = f.checkout(None, Some(tree)).unwrap_err();
-    assert!(failure.report.applied.is_empty());
-    assert!(!f.root().join("file").exists());
+    let report = f.checkout(None, Some(tree)).unwrap();
+    assert!(report.collisions.is_empty());
+    assert!(f.root().join("caf\u{e9}").exists());
+    assert!(f.root().join("cafe\u{301}").exists());
+}
+
+#[test]
+fn file_and_directory_sharing_a_name_are_refused_before_mutation() {
+    let f = Fixture::new();
+    let store = f.repo.loose_objects();
+    let id = store.write_blob(b"x").unwrap();
+    let file = TreeEntry {
+        name: b"A".to_vec(),
+        mode: EntryMode::Blob,
+        id,
+    };
+    let directory = TreeEntry {
+        name: b"a".to_vec(),
+        mode: EntryMode::Tree,
+        id: f.entry_tree(b"inner", EntryMode::Blob, id),
+    };
+    let tree = store
+        .write_tree(&Tree::new(crate::ObjectFormat::Sha1, vec![file, directory]).unwrap())
+        .unwrap();
+    let result = f.checkout(None, Some(tree));
+    let policy = NamePolicy::from_config(&f.repo).unwrap();
+    if policy.key(b"A") != policy.key(b"a") {
+        result.unwrap();
+    } else {
+        assert!(result.unwrap_err().report.applied.is_empty());
+        assert_eq!(fs::read_dir(f.root()).unwrap().count(), 1);
+    }
 }
 
 #[test]
@@ -770,13 +901,19 @@ fn linux_preserves_non_utf8_filename_bytes() {
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn macos_rejects_non_ascii_paths() {
-    let f = Fixture::new();
-    let tree = f.tree("é".as_bytes(), EntryMode::Blob, b"raw");
-    let failure = f.checkout(None, Some(tree)).unwrap_err();
-    assert!(failure.report.applied.is_empty());
+fn writes_composed_and_decomposed_names() {
+    for name in ["caf\u{e9}", "cafe\u{301}"] {
+        let f = Fixture::new();
+        let tree = f.tree(name.as_bytes(), EntryMode::Blob, b"raw");
+        f.checkout(None, Some(tree)).unwrap();
+        let listed: Vec<_> = fs::read_dir(f.root())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name != ".git")
+            .collect();
+        assert_eq!(listed, [OsStr::new(name)]);
+    }
 }
 
 // Cleanup of an incomplete leaf never deletes an entry that replaced it.

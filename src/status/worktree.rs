@@ -895,9 +895,6 @@ pub(crate) fn validate_path(path: &[u8]) -> Result<(), Error> {
     {
         return Err(unsupported(path, "unsafe path"));
     }
-    if cfg!(target_os = "macos") && !path.is_ascii() {
-        return Err(unsupported(path, "non-ASCII filesystem paths on macOS"));
-    }
     Ok(())
 }
 

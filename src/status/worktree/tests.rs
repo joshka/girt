@@ -278,13 +278,13 @@ fn tracks_exact_case_without_alias_lookup() {
     assert_eq!(result.changes[0].change, Change::Deleted);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn rejects_non_ascii_paths_on_normalizing_platform() {
-    assert!(matches!(
-        validate_path(b"caf\xc3\xa9"),
-        Err(Error::Unsupported { .. })
-    ));
+fn reads_composed_and_decomposed_names_as_bytes() {
+    for name in ["caf\u{e9}", "cafe\u{301}"] {
+        let (_temp, repo, entries) = fixture(name.as_bytes(), b"new");
+        let result = observe(&repo, &entries, Limits::default()).unwrap();
+        assert_eq!(result.changes[0].path, name.as_bytes());
+    }
 }
 
 #[cfg(target_os = "linux")]

@@ -144,10 +144,9 @@ Two additional comparisons use Git 2.56.0 on macOS.
 `existing_user_home_excludes_are_a_git_compatibility_gap` shows that Git expands a real named user's
 home for `core.excludesFile` even when `HOME` differs, while girt refuses it
 ([issue 555](https://github.com/joshka/girt/issues/555)); ignore rules are therefore Partial.
-`macos_unicode_worktree_paths_are_explicitly_refused` shows clean Git status and successful tree
-checkout for a Unicode filename where girt refuses both operations without changing content
-([issue 556](https://github.com/joshka/girt/issues/556)). Status and checkout remain Partial, with
-this filesystem restriction added to their stated gaps.
+`unicode_worktree_paths_match_git` compares composed, decomposed and nested Unicode names with Git:
+raw status is clean and an unchanged checkout changes nothing
+([issue 556](https://github.com/joshka/girt/issues/556)).
 
 ## Git Capability Audit: Diffs and Blame
 
@@ -2782,9 +2781,8 @@ ancestors, directories replacing files and special tracked files are explicit ob
 name matching prevents case-insensitive lookup from making a differently spelled index path clean.
 Linux preserves non-UTF-8 filename bytes. Colons and backslashes are ordinary name bytes, as they
 are to Git on these platforms. Both platforms reject NUL, empty/dot/parent components and
-case-insensitive `.git` components. macOS non-ASCII relative names are explicitly unsupported
-because normalization aliases are not implemented. Other platforms reject traversal before storage
-access; no Windows worktree-status support is claimed.
+case-insensitive `.git` components. Non-ASCII names are compared as bytes on both platforms. Other
+platforms reject traversal before storage access; no Windows worktree-status support is claimed.
 
 Limits cover index reads, baseline tree flattening, pack snapshots, object reconstruction and total
 index/HEAD payload bytes, worktree file/total bytes, visited directory entries, generated paths and
@@ -2879,9 +2877,26 @@ mutation boundaries. Final target verification precedes index publication. These
 observed changes but cannot prevent an arbitrary writer racing the last unlink check, directory
 rename or ABA replacement. Hostile hardlink/mount manipulation is outside the contract.
 
-Linux preserves non-UTF-8 names. macOS requires ASCII target paths and names in traversed
-directories. Both reject case-colliding selected paths, filesystem name aliases, NUL,
-empty/dot/parent components, case-insensitive `.git` components and components longer than 255
+Linux preserves non-UTF-8 names. Name equivalence follows the working tree's volume, observed with
+Git 2.56.0 on a default (case-insensitive) APFS volume and on a case-sensitive APFS disk image.
+`git init` and `git clone` write `core.ignorecase=true` only on the first, and
+`core.precomposeunicode=true` on both. On the case-sensitive image `xt_CONNMARK.h` and
+`xt_connmark.h` both check out, while composed and decomposed `café` still collide: APFS folds
+normalization regardless of case sensitivity. Girt folds case when `core.ignoreCase` is true or the
+working tree's root resolves `.GIT` to its `.git` entry (a read-only probe of the volume being
+written, not of the git directory, which may live elsewhere), and folds normalization on macOS only;
+Git reads `core.precomposeUnicode` only on macOS, so a Linux volume keeps both spellings whatever
+the setting. Config only adds folding to what the probe shows, so stale config cannot let two names
+that collide on disk both be written. Where paths collide, Git takes them in index order: a file
+keeps the last spelling with its content, a directory keeps the first and later spellings' children
+are written into it, and `git status` then reports each shadowed file as modified when its content
+differs. Girt makes the same choice and lists each set in `Report::collisions`.
+`colliding_paths_check_out_like_git` compares files, index and status with
+`git read-tree --reset -u` on the running platform. Girt still refuses a file and a directory
+sharing a name, a spelling change of one name between baseline and target (a case-only rename on a
+folding volume, [issue 620](https://github.com/joshka/girt/issues/620)), and an existing entry the
+volume merges with a wanted name; Git handles the first two. Both reject filesystem name aliases,
+NUL, empty/dot/parent components, case-insensitive `.git` components and components longer than 255
 bytes. Colons and backslashes are accepted (`posix_colon_and_backslash_names_check_out_like_git`
 compares the result with Git status). Metadata-name aliases follow Git's `core.protectNTFS` and
 `core.protectHFS`, read from config at Git's observed defaults: NTFS protection on unless set to

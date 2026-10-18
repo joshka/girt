@@ -22,9 +22,18 @@
 //! Hardlink/mount attacks and ABA replacements are outside this contract. No batch atomicity,
 //! automatic rollback, crash durability, branch switching or force mode is provided.
 //!
-//! Linux/macOS only, on filesystems with native hard links, symlinks and POSIX modes. macOS paths
-//! and names in enumerated directories must be ASCII. Colons and backslashes are ordinary name
-//! bytes. Both platforms conservatively reject ASCII case aliases, unsafe components, and the
+//! Linux/macOS only, on filesystems with native hard links, symlinks and POSIX modes. Colons,
+//! backslashes and non-ASCII names are ordinary name bytes.
+//!
+//! Names follow the working tree's volume. Case folds when `core.ignoreCase` is true or the
+//! working tree's root resolves `.GIT` to its `.git` entry; Unicode normalization folds on macOS,
+//! the only platform where Git reads `core.precomposeUnicode`. Target paths sharing a folded name
+//! are resolved as Git resolves them and listed in [`Report::collisions`]; see [`Collision`]. A
+//! file and a directory sharing a name, a spelling change between baseline and target of one name
+//! (such as a case-only rename), and any existing entry the volume merges with a wanted name are
+//! refused before mutation.
+//!
+//! Both platforms reject unsafe components and the
 //! metadata names Git refuses: `.git` in any ASCII case, the NTFS spellings of `.git` (`git~1`,
 //! trailing dots or spaces, `:stream`) unless `core.protectNTFS` is false, and on macOS the HFS+
 //! spellings with ignorable code points unless `core.protectHFS` is false. Also refused are
