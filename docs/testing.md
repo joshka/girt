@@ -312,8 +312,8 @@ The Windows integration selection follows implemented operations, not just file 
   transfer. Retained provider-capture comparisons need no installed key or signing provider.
 - `discovery`: Native local HEAD and both-format Git v0/v1/v2 advertisement observations, including
   unborn v2 `ls-refs`; no network transfer is claimed by this portable suite.
-- `packs`, `history`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph queries,
-  structural tree comparison and byte-preserving content diff.
+- `packs`, `history`, `commit_graph`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph
+  queries, structural tree comparison and byte-preserving content diff.
 - `builders`: Both-format index-to-tree, nested path construction, commit payload signing and
   combined rename results checked against Git CLI in disposable repositories. No native checkout
   operations are required. The SSH signing-oracle cases run on Unix with an isolated temporary key;

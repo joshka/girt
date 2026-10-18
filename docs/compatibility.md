@@ -239,6 +239,22 @@ validation failure. It does not establish a missing protocol capability. Follow-
 and classification will be recorded in that issue; fixture processes were absent after the completed
 runs.
 
+## Commit-Graph Metadata
+
+`commit_graph::CommitGraph` reads standalone SHA-1 and SHA-256 graph files with ordered parent
+edges, including octopus merges, generation v1 and corrected commit dates (GDA2/GDO2). Parsing
+checks the checksum, chunk boundaries, fanout, sorted identities and parent positions under explicit
+byte, commit and parent bounds. This is structural validation, not object-store verification.
+Unknown chunks are ignored; split files require a later loading increment. History queries do not
+yet consume this metadata, and Bloom filters are not used.
+
+`tests/commit_graph.rs` generates original histories using the installed Git executable, writes both
+generation versions with `git commit-graph write --reachable`, runs `git commit-graph verify`, and
+compares metadata and octopus parent order with the original objects. It also checks every truncated
+prefix, checksum corruption and resource limits. Unit fixtures independently encode the format
+documented by `git help gitformat-commit-graph`; checksum-preserving malformed chunk, fanout and
+parent records must fail. The suite is portable and selected for Windows validation.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger

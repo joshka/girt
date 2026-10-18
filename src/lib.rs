@@ -170,6 +170,7 @@ mod file_policy;
 pub use file_policy::SharedPermissions;
 
 pub mod commit;
+pub mod commit_graph;
 pub mod config;
 pub mod content_diff;
 pub mod display;
