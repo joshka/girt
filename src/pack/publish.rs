@@ -1,4 +1,92 @@
 //! No-clobber publication of caller-validated, synchronized pack artifacts.
+//!
+//! The caller excludes conflicting publishers and synchronizes complete temporary contents before
+//! calling. This module only publishes names; it does not validate objects or authorize retirement.
+//! A required promisor marker belongs to the caller and must be durable before pack visibility.
+//! Pack names are synchronized before index visibility on Unix; other platforms retain the existing
+//! weaker name-durability guarantee. Interruption can leave a complete unindexed pack.
+use std::fs::File;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use tempfile::NamedTempFile;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum Error {
+    #[error("pack publication cancelled")]
+    Cancelled,
+    #[error("conflicting existing pack artifact: {0}")]
+    Existing(PathBuf),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
+pub(crate) fn pair_checked<E>(
+    pack: NamedTempFile,
+    index: NamedTempFile,
+    basename: &Path,
+    cancel: &AtomicBool,
+    after_pack: impl FnOnce(),
+    mut fresh: impl FnMut() -> Result<(), E>,
+) -> Result<(), E>
+where
+    E: From<Error>,
+{
+    check(cancel)?;
+    fresh()?;
+    file(pack, &basename.with_extension("pack"), cancel)?;
+    // Persist the pack name before publishing its index visibility marker.
+    #[cfg(unix)]
+    File::open(basename.parent().expect("pack basename has a directory"))
+        .map_err(Error::Io)?
+        .sync_all()
+        .map_err(Error::Io)?;
+    after_pack();
+    check(cancel)?;
+    fresh()?;
+    file(index, &basename.with_extension("idx"), cancel)?;
+    Ok(())
+}
+
+pub(crate) fn file(
+    temporary: NamedTempFile,
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<(), Error> {
+    match temporary.persist_noclobber(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
+            let mut existing = File::open(path)?;
+            let mut candidate = error.file.reopen()?;
+            if existing.metadata()?.len() != candidate.metadata()?.len() {
+                return Err(Error::Existing(path.into()));
+            }
+            let mut a = [0; 8192];
+            let mut b = [0; 8192];
+            loop {
+                check(cancel)?;
+                let n = existing.read(&mut a)?;
+                candidate.read_exact(&mut b[..n])?;
+                if a[..n] != b[..n] {
+                    return Err(Error::Existing(path.into()));
+                }
+                if n == 0 {
+                    return Ok(());
+                }
+            }
+        }
+        Err(error) => Err(error.error.into()),
+    }
+}
+
+fn check(cancel: &AtomicBool) -> Result<(), Error> {
+    if cancel.load(Ordering::Relaxed) {
+        Err(Error::Cancelled)
+    } else {
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -1,11 +1,13 @@
-use std::fs::{self, File};
-use std::io::{self, BufWriter, Read};
+use std::fs;
+use std::io::{self, BufWriter};
+#[cfg(test)]
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tempfile::NamedTempFile;
 
 use super::{RetentionError, RetentionPolicy};
+use crate::pack::publish::pair_checked as publish_pair_checked;
 use crate::pack::{
     PackObject, PackWriteError, PackWriteLimits, PackWritten, Packed, ReuseError, write_reusing,
 };
@@ -195,6 +197,16 @@ pub enum RepackError {
     /// Temporary artifact creation, synchronization or publication failed.
     #[error(transparent)]
     Io(#[from] io::Error),
+}
+
+impl From<crate::pack::publish::Error> for RepackError {
+    fn from(error: crate::pack::publish::Error) -> Self {
+        match error {
+            crate::pack::publish::Error::Cancelled => Self::Cancelled,
+            crate::pack::publish::Error::Existing(path) => Self::Existing(path),
+            crate::pack::publish::Error::Io(error) => Self::Io(error),
+        }
+    }
 }
 
 impl Repository {
@@ -546,27 +558,6 @@ fn publish_pair(
     publish_pair_checked(pack, index, basename, cancel, after_pack, || Ok(()))
 }
 
-fn publish_pair_checked(
-    pack: NamedTempFile,
-    index: NamedTempFile,
-    basename: &Path,
-    cancel: &AtomicBool,
-    after_pack: impl FnOnce(),
-    mut fresh: impl FnMut() -> Result<(), RepackError>,
-) -> Result<(), RepackError> {
-    check(cancel)?;
-    fresh()?;
-    publish(pack, &basename.with_extension("pack"), cancel)?;
-    // Persist the pack name before publishing its index visibility marker.
-    #[cfg(unix)]
-    File::open(basename.parent().expect("pack basename has a directory"))?.sync_all()?;
-    after_pack();
-    check(cancel)?;
-    fresh()?;
-    publish(index, &basename.with_extension("idx"), cancel)?;
-    Ok(())
-}
-
 fn check(cancel: &AtomicBool) -> Result<(), RepackError> {
     if cancel.load(Ordering::Relaxed) {
         Err(RepackError::Cancelled)
@@ -575,31 +566,9 @@ fn check(cancel: &AtomicBool) -> Result<(), RepackError> {
     }
 }
 
+#[cfg(test)]
 fn publish(temporary: NamedTempFile, path: &Path, cancel: &AtomicBool) -> Result<(), RepackError> {
-    match temporary.persist_noclobber(path) {
-        Ok(_) => Ok(()),
-        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
-            let mut existing = File::open(path)?;
-            let mut candidate = error.file.reopen()?;
-            if existing.metadata()?.len() != candidate.metadata()?.len() {
-                return Err(RepackError::Existing(path.into()));
-            }
-            let mut a = [0; 8192];
-            let mut b = [0; 8192];
-            loop {
-                check(cancel)?;
-                let n = existing.read(&mut a)?;
-                candidate.read_exact(&mut b[..n])?;
-                if a[..n] != b[..n] {
-                    return Err(RepackError::Existing(path.into()));
-                }
-                if n == 0 {
-                    return Ok(());
-                }
-            }
-        }
-        Err(error) => Err(error.error.into()),
-    }
+    crate::pack::publish::file(temporary, path, cancel).map_err(RepackError::from)
 }
 
 #[cfg(test)]
