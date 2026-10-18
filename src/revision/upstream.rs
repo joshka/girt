@@ -9,9 +9,45 @@ impl Resolver<'_> {
     /// `branch@{upstream}`: `branch.<b>.merge` mapped through `branch.<b>.remote`'s fetch
     /// refspecs, or the local branch itself when the remote is `.`.
     pub(super) fn upstream(&self, branch: Option<&str>) -> Result<ObjectId, RevisionError> {
-        let branch = self.branch(branch)?;
-        let tracking = self.upstream_ref(&branch)?;
+        let tracking = self.upstream_name(branch)?;
         self.resolve_ref(&tracking)
+    }
+
+    /// Names the reference `branch@{upstream}` resolves, without reading it.
+    ///
+    /// `None` means the current branch. The name is `branch.<b>.merge` mapped through
+    /// `branch.<b>.remote`'s fetch refspecs, such as `refs/remotes/origin/main`, or the merge
+    /// reference itself when the remote is `.`. It may name a reference that does not exist, as
+    /// after the remote deleted the branch; `git status` reports that upstream as gone.
+    ///
+    /// ```
+    /// use girt::revision::Resolver;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r");
+    /// Repository::init(ObjectFormat::Sha1, &path, InitKind::Worktree)?;
+    /// let config = path.join(".git/config");
+    /// let mut text = std::fs::read_to_string(&config)?;
+    /// text.push_str("[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n");
+    /// text.push_str("[branch \"topic\"]\n\tremote = origin\n\tmerge = refs/heads/main\n");
+    /// std::fs::write(&config, text)?;
+    ///
+    /// let repository = Repository::open(&path)?;
+    /// let objects = repository.objects()?;
+    /// let upstream = Resolver::new(&repository, &objects)?.upstream_name(Some("topic"))?;
+    /// assert_eq!(upstream.as_bytes(), b"refs/remotes/origin/main");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RevisionError::DetachedHead`] when `branch` is `None` and HEAD is detached, and
+    /// [`RevisionError::NoUpstream`] when the branch has no upstream configured or no fetch
+    /// refspec maps it.
+    pub fn upstream_name(&self, branch: Option<&str>) -> Result<RefName, RevisionError> {
+        let branch = self.branch(branch)?;
+        self.upstream_ref(&branch)
     }
 
     /// `branch@{push}`: where `git push` would send the branch, as a remote-tracking branch.

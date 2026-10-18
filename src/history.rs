@@ -83,6 +83,7 @@
 mod path;
 pub use path::PathHistoryError;
 mod range;
+pub use range::AheadBehind;
 mod simplify;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
