@@ -334,15 +334,18 @@ pub enum Comparison {
     /// Literal bytes, owner executable bit and native symlinks; no normalization/config policy.
     RawBytesAndPosixModes,
     /// Working files converted by a [`filter::Pipeline`](crate::filter::Pipeline) before hashing,
-    /// with owner executable bit and native symlinks.
+    /// with repository configuration and index flag policy.
     ConvertedContent,
+    /// Repository configuration and index flags, with literal content bytes.
+    Configured,
 }
 
 /// A read-only observation, not an atomic snapshot or an authorization to overwrite files.
 ///
 /// Paths are sorted by raw bytes within each list. Empty change lists do not establish Git-default
 /// cleanliness: inspect unmerged entries, unchecked gitlinks, boundaries, and untracked policy.
-/// Assume-valid entries are treated exactly like other entries. Index blob targets (including
+/// [`Comparison`] identifies whether index flags and configuration were applied. Raw results treat
+/// assume-valid entries exactly like other entries. Index blob targets (including
 /// conflict stages), baseline leaf targets and gitlink commit targets are not read.
 ///
 /// # Inspect unresolved entries before declaring a worktree clean
@@ -476,7 +479,8 @@ impl WorktreeChange {
     /// Classifies this change as the second column of `git status --porcelain` does, when the
     /// report alone determines it.
     ///
-    /// A deleted path is [`ChangeStatus::Deleted`]; a modified one is compared with
+    /// Intent-to-add content is [`ChangeStatus::Added`]; a deleted path is
+    /// [`ChangeStatus::Deleted`]; a modified one is compared with
     /// [`index`](Self::index) by [`ChangeStatus::between`]. Returns `None` for
     /// [`Change::Obstructed`]: Git reports `D` when a directory occupies the leaf or an ancestor is
     /// blocked, but `M` when a special file such as a FIFO occupies the leaf, and the report does
@@ -485,6 +489,7 @@ impl WorktreeChange {
     #[must_use]
     pub fn status(&self) -> Option<ChangeStatus> {
         match &self.change {
+            Change::Added(_) => Some(ChangeStatus::Added),
             Change::Deleted => Some(ChangeStatus::Deleted),
             Change::Modified(new) => Some(ChangeStatus::between(Some(self.index), Some(*new))),
             Change::Obstructed { .. } => None,
@@ -492,7 +497,7 @@ impl WorktreeChange {
     }
 }
 
-/// Literal worktree difference from one index leaf.
+/// Working-tree difference from one index leaf under the report's comparison policy.
 ///
 /// An obstruction differs from deletion: the tracked path is blocked by a different filesystem
 /// kind or a repository boundary, at the leaf or an ancestor. Keep the first blocking path in
@@ -536,6 +541,8 @@ impl WorktreeChange {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Change {
+    /// Working content at an intent-to-add entry, which has no staged content.
+    Added(TreeValue),
     /// The exact byte name or one of its ancestor directories was absent.
     Deleted,
     /// Content identity and/or leaf mode differ; compare against the index value.

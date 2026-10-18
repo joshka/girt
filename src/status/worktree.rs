@@ -155,6 +155,13 @@ fn scan_with_hook(
     cancel: &AtomicBool,
     after_read: &(dyn Fn(&[u8]) + Sync),
 ) -> Result<Observation, Error> {
+    let configured = matches!(listing, Listing::Ignoring(..));
+    let file_mode = !configured
+        || repo
+            .config()
+            .boolean("core", None, "filemode")
+            .map_err(|_| unsupported(b"", "invalid core.fileMode boolean"))?
+            .unwrap_or(true);
     let root_fd = Arc::new(open_root(root)?);
     let mut metadata = Vec::new();
     for path in [repo.git_dir(), repo.common_dir(), repo.object_dir()] {
@@ -197,6 +204,8 @@ fn scan_with_hook(
         format: repo.object_format(),
         tracked: Tracked::new(entries, directories, names.is_some()),
         names,
+        configured,
+        file_mode,
         metadata,
         index_written,
         policy,
@@ -245,10 +254,21 @@ fn scan_with_hook(
     let mut changes = Vec::new();
     for (position, entry) in entries.iter().enumerate() {
         check(cancel)?;
-        if entry.stage != index::Stage::Normal || entry.mode == index::Mode::Gitlink {
+        if entry.stage != index::Stage::Normal
+            || entry.mode == index::Mode::Gitlink
+            || (configured && (entry.assume_valid || entry.skip_worktree))
+        {
             continue;
         }
-        if let Some(change) = scan.tracked.difference(position, &observed, &directories) {
+        let difference = if configured && entry.intent_to_add {
+            match observed[position] {
+                Some(Observed::Leaf(actual)) => Some(super::Change::Added(actual)),
+                _ => scan.tracked.difference(position, &observed, &directories),
+            }
+        } else {
+            scan.tracked.difference(position, &observed, &directories)
+        };
+        if let Some(change) = difference {
             changes.push(WorktreeChange {
                 path: entry.path.clone(),
                 index: value(entry),
@@ -330,6 +350,8 @@ impl Found {
 
 struct Scan<'a> {
     format: crate::ObjectFormat,
+    configured: bool,
+    file_mode: bool,
     tracked: Tracked<'a>,
     metadata: Vec<Stat>,
     /// Seconds word of the index file's mtime; `None` disables trusting cached stat words.
@@ -630,7 +652,10 @@ impl Scan<'_> {
                     continue;
                 }
             }
-            if tracked.is_some_and(|(_, entry)| entry.mode == index::Mode::Gitlink) {
+            if tracked.is_some_and(|(_, entry)| {
+                entry.mode == index::Mode::Gitlink
+                    || (self.configured && (entry.assume_valid || entry.skip_worktree))
+            }) {
                 continue;
             }
             let slot = Slots {
@@ -785,6 +810,12 @@ impl Scan<'_> {
             return Ok(());
         };
         let mode = match kind {
+            FileType::RegularFile
+                if !self.file_mode
+                    && matches!(entry.mode, index::Mode::Regular | index::Mode::Executable) =>
+            {
+                value(entry).mode
+            }
             FileType::RegularFile if stat.st_mode & 0o100 != 0 => EntryMode::Executable,
             FileType::RegularFile => EntryMode::Blob,
             FileType::Symlink => EntryMode::Symlink,
@@ -793,7 +824,7 @@ impl Scan<'_> {
                 return Ok(());
             }
         };
-        if self.unchanged(entry, stat, mode) {
+        if !entry.intent_to_add && self.unchanged(entry, stat, mode) {
             found.observe(slots, Observed::Leaf(value(entry)));
             return Ok(());
         }

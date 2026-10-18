@@ -2832,16 +2832,17 @@ measurements. No publication, merge or checkout is part of this increment.
 
 ### Ignore-Aware Status
 
-`Repository::status` keeps raw tracked-content comparison and lists untracked paths through Git's
-ignore sources. `Repository::ignore_rules` reads `core.excludesFile` (with `~/` expanded from the
-supplied `HOME` and a relative path resolved against the worktree, as Git resolves it) or the
-`$XDG_CONFIG_HOME/git/ignore` default, then `info/exclude`; `core.ignoreCase` selects ASCII case
-folding. Status reads each visited directory's `.gitignore` through the traversal's no-follow
-descriptors. As in Git, a `.gitignore` symlink is skipped with no rules applied, tracked paths are
-never ignored, an ignored directory hides every untracked descendant, and only regular files,
-symlinks and nested repositories are listed. `UntrackedFiles::All` matches
-`git status --untracked-files=all`; `UntrackedFiles::Collapsed` matches the default listing,
-including Git's omission of a directory that occupies a tracked file's path.
+`Repository::status` applies index flags and `core.fileMode` while comparing literal content bytes,
+and lists untracked paths through Git's ignore sources. `Repository::ignore_rules` reads
+`core.excludesFile` (with `~/` expanded from the supplied `HOME` and a relative path resolved
+against the worktree, as Git resolves it) or the `$XDG_CONFIG_HOME/git/ignore` default, then
+`info/exclude`; `core.ignoreCase` selects ASCII case folding. Status reads each visited directory's
+`.gitignore` through the traversal's no-follow descriptors. As in Git, a `.gitignore` symlink is
+skipped with no rules applied, tracked paths are never ignored, an ignored directory hides every
+untracked descendant, and only regular files, symlinks and nested repositories are listed.
+`UntrackedFiles::All` matches `git status --untracked-files=all`; `UntrackedFiles::Collapsed`
+matches the default listing, including Git's omission of a directory that occupies a tracked file's
+path.
 
 Ignored directories are not entered unless they hold tracked paths, so their contents consume no
 directory-entry budget. `~user/` excludes paths are refused, where Git expands them.
@@ -3422,3 +3423,18 @@ This establishes exact-position text application only. Extended file operations,
 combined diffs are explicitly refused. Offset/fuzz matching, whitespace policy, reverse/recount,
 publication and mail workflows remain [issue 506](https://github.com/joshka/girt/issues/506).
 The `apply` fuzz target exercises bounded parsing and application to independently framed preimages.
+
+### Configured index flags and file modes
+
+`Repository::status` and `status_with` omit intent-to-add entries from staged content and report
+existing working files as unstaged additions, including empty files. Missing intent-to-add files are
+unstaged deletions. Assume-unchanged and skip-worktree suppress working differences while preserving
+staged differences. `core.fileMode=false` ignores only executable-bit differences between regular
+files; content and filesystem type changes still appear. These settings use the configuration loaded
+into the repository handle. `Report::comparison` identifies configured versus raw results.
+
+The original SHA-1 and SHA-256 fixtures in `tests/status.rs` compare these cases with the isolated
+Git executable. Raw status retains its literal mode comparison, verifies assume-unchanged content
+and refuses intent-to-add/skip-worktree. Neither status form authorizes overwriting working files;
+checkout verifies its own baseline independently. Sparse-directory expansion and sparse-checkout
+pattern selection remain separate operations.

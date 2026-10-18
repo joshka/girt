@@ -148,10 +148,14 @@ impl Repository {
         )
     }
 
-    /// Reports status as [`Self::raw_status_with`] does, listing untracked paths through `ignore`.
+    /// Reports configured index and working-tree status, listing untracked paths through `ignore`.
     ///
-    /// Tracked content is still compared as raw bytes and POSIX modes, with every
-    /// [`Self::raw_status_with`] guarantee and limitation; only untracked handling changes.
+    /// Intent-to-add entries have no staged content; their working files are unstaged additions.
+    /// Assume-unchanged and skip-worktree entries retain staged differences but suppress working
+    /// differences. `core.fileMode=false` ignores executable-bit differences on regular files.
+    /// Content bytes remain literal; use [`Self::raw_status_with`] to inspect modes and content
+    /// without these policies. Configuration comes from this repository handle, including layers
+    /// supplied to [`Self::open_with_config`].
     /// [`Report::untracked`] lists the untracked paths Git would show, chosen by `untracked`, and
     /// [`Report::raw_untracked`] stays empty.
     ///
@@ -451,7 +455,7 @@ mod supported {
         let entries = index.as_ref().map_or(&[][..], index::Index::entries);
         for entry in entries {
             check(cancel)?;
-            if entry.intent_to_add || entry.skip_worktree {
+            if matches!(listing, Listing::Raw(_)) && (entry.intent_to_add || entry.skip_worktree) {
                 return Err(Error::Unsupported {
                     path: entry.path.clone(),
                     reason: "extended index flags require caller policy",
@@ -499,7 +503,7 @@ mod supported {
             .any(|entry| entry.stage != index::Stage::Normal);
         let trees = index
             .as_ref()
-            .filter(|_| !conflicted)
+            .filter(|_| !conflicted && !entries.iter().any(|entry| entry.intent_to_add))
             .and_then(|index| index.trees(cancel));
         check(cancel)?;
         let staged = match trees {
@@ -519,8 +523,11 @@ mod supported {
             Listing::Raw(policy) => (*policy, None),
             Listing::Ignoring(_, files, _) => (Untracked::Omit, Some(*files)),
         };
+        let configured = matches!(listing, Listing::Ignoring(..));
         let comparison = if filters.is_some() {
             super::super::Comparison::ConvertedContent
+        } else if configured {
+            super::super::Comparison::Configured
         } else {
             super::super::Comparison::RawBytesAndPosixModes
         };
@@ -588,7 +595,9 @@ mod supported {
         for entry in entries {
             check(cancel)?;
             if entry.stage == index::Stage::Normal {
-                staged.entry(entry.path.clone()).or_default().1 = Some(value(entry));
+                if !entry.intent_to_add {
+                    staged.entry(entry.path.clone()).or_default().1 = Some(value(entry));
+                }
             } else {
                 conflicts.insert(entry.path.clone());
             }

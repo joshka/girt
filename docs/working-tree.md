@@ -1,18 +1,17 @@
 # Working-Tree Status and Checkout
 
-Use these operations when the application owns literal byte and POSIX-mode policy. They run on
-macOS/Linux; Windows status traversal and tree materialization are unsupported. Raw status and
-checkout apply no Git attributes, filters, EOL conversion, or configuration normalization;
-`Repository::status_with_filters` compares working files after the conversions of a
-`filter::Pipeline`, and `Repository::checkout_tree_with_filters` writes them converted. Only
-`Repository::status` applies ignore rules, and only to untracked paths.
+Use status to inspect staged and working changes, and checkout to materialize a tree. They run on
+macOS/Linux; Windows status traversal and tree materialization are unsupported. Raw operations
+compare literal bytes and POSIX modes. `Repository::status` applies index flags, `core.fileMode` and
+ignore rules. `Repository::status_with_filters` also converts content through a `filter::Pipeline`;
+`Repository::checkout_tree_with_filters` writes converted files.
 
 ## Inspect Raw Status
 
 Run `cargo run --example status` for a disposable repository, or add a repository path to inspect an
 existing one. `Repository::raw_status` compares the selected tree, index, and working files. It
 separates staged changes, working-file changes, conflicts, untracked files, and unchecked gitlinks.
-It verifies content instead of trusting cached index stat data and does not refresh the index or
+It reads content when cached index stat data differs or is racy, and does not refresh the index or
 write files. Choose a baseline and untracked-file policy explicitly. The example uses `Head` and
 `Repository::status` with `UntrackedFiles::Collapsed`, which lists untracked paths as `git status`
 does after loading ignore rules with `Repository::ignore_rules`.
@@ -21,6 +20,21 @@ A status report is an observation, not an atomic snapshot or permission to overw
 The [status module contract](../src/status.rs) describes supported paths and modes. The
 [compatibility record](compatibility.md#raw-working-tree-status) retains test scope and platform
 evidence.
+
+## Inspect Configured Status
+
+Use `Repository::status` with rules from `Repository::ignore_rules` for repository policy. Open the
+handle with `Repository::open_with_config` when the application needs system, global or runtime
+configuration layers; `Repository::open` reads repository configuration only.
+
+Intent-to-add entries contribute no staged content. Their existing working files appear as
+`Change::Added`, including empty files; deleted files appear as `Change::Deleted`. Assume-unchanged
+and skip-worktree entries suppress working differences but retain staged differences. These flags
+are promises status trusts, so a clean report does not prove their content unchanged.
+`core.fileMode=false` ignores executable-bit-only changes on regular files. Content changes and
+changes between regular files and symlinks remain visible. Inspect `Report::comparison` when
+consuming reports produced by different entry points. Use raw status when the application needs to
+verify assume-unchanged files or compare literal modes.
 
 ## Check Out a Tree
 
