@@ -209,3 +209,356 @@ fn implicit_strings_and_shadowed_invalid_assignments_match_git_refusal() {
         );
     }
 }
+
+#[test]
+fn repository_sources_select_worktree_index_and_committed_bytes() {
+    use girt::submodule::Source;
+    for format in ["sha1", "sha256"] {
+        let dir = tempfile::tempdir().unwrap();
+        git(
+            dir.path(),
+            &["init", "-q", &format!("--object-format={format}")],
+            b"",
+        );
+        let path = dir.path().join(".gitmodules");
+        let definition = |url| format!("[submodule \"logical\"]\npath = vendor/lib\nurl = {url}\n");
+        std::fs::write(&path, definition("committed")).unwrap();
+        git(dir.path(), &["add", ".gitmodules"], b"");
+        git(dir.path(), &["commit", "-qm", "modules"], b"");
+        let head = git(dir.path(), &["rev-parse", "HEAD"], b"");
+        let head = String::from_utf8_lossy(&head).trim().parse().unwrap();
+        let cacheinfo = format!("160000,{head},vendor/lib");
+        git(
+            dir.path(),
+            &["update-index", "--add", "--cacheinfo", &cacheinfo],
+            b"",
+        );
+        std::fs::write(&path, definition("indexed")).unwrap();
+        git(dir.path(), &["add", ".gitmodules"], b"");
+        std::fs::write(&path, definition("worktree")).unwrap();
+        let repo = girt::Repository::open(dir.path()).unwrap();
+        let objects = repo.objects().unwrap();
+        for (source, expected) in [
+            (Source::Worktree, "worktree"),
+            (Source::WorktreeOrIndex, "worktree"),
+            (Source::Index, "indexed"),
+            (Source::Commit(head), "committed"),
+        ] {
+            let loaded = Modules::read(&repo, &objects, source).unwrap().unwrap();
+            assert_eq!(
+                loaded.get(b"logical").unwrap().url(),
+                Some(expected.as_bytes())
+            );
+        }
+        git(dir.path(), &["submodule", "init"], b"");
+        assert_eq!(
+            git(
+                dir.path(),
+                &["config", "--get", "submodule.logical.url"],
+                b""
+            ),
+            b"worktree\n"
+        );
+        git(
+            dir.path(),
+            &["config", "--remove-section", "submodule.logical"],
+            b"",
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            Modules::read(&repo, &objects, Source::Worktree)
+                .unwrap()
+                .is_none()
+        );
+        let loaded = Modules::read(&repo, &objects, Source::WorktreeOrIndex)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            loaded.get(b"logical").unwrap().url(),
+            Some(b"indexed".as_slice())
+        );
+        git(dir.path(), &["submodule", "init"], b"");
+        assert_eq!(
+            git(
+                dir.path(),
+                &["config", "--get", "submodule.logical.url"],
+                b""
+            ),
+            b"indexed\n"
+        );
+        git(
+            dir.path(),
+            &["update-index", "--force-remove", ".gitmodules"],
+            b"",
+        );
+        assert!(
+            Modules::read(&repo, &objects, Source::WorktreeOrIndex)
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn source_limits_conflicts_and_nonregular_entries_are_explicit() {
+    use girt::submodule::{LoadError, Source};
+    let dir = fixture();
+    let path = dir.path().join(".gitmodules");
+    let bytes = b"[submodule \"logical\"]\npath = vendor/lib\nurl = child\n";
+    std::fs::write(&path, bytes).unwrap();
+    git(dir.path(), &["add", ".gitmodules"], b"");
+    let repo = girt::Repository::open(dir.path()).unwrap();
+    let objects = repo.objects().unwrap();
+    assert!(matches!(
+        Modules::read_with(&repo, &objects, Source::Worktree, 1),
+        Err(LoadError::Limit)
+    ));
+    assert!(matches!(
+        Modules::read_with(&repo, &objects, Source::Index, 1),
+        Err(LoadError::Blob(_))
+    ));
+    let id = girt::ObjectId::for_blob(repo.object_format(), bytes);
+    std::fs::remove_file(&path).unwrap();
+    git(
+        dir.path(),
+        &["update-index", "--force-remove", ".gitmodules"],
+        b"",
+    );
+    let conflict = format!("100644 {id} 2\t.gitmodules\n100644 {id} 3\t.gitmodules\n");
+    git(
+        dir.path(),
+        &["update-index", "--index-info"],
+        conflict.as_bytes(),
+    );
+    assert!(matches!(
+        Modules::read(&repo, &objects, Source::WorktreeOrIndex),
+        Err(LoadError::Conflict)
+    ));
+    git(
+        dir.path(),
+        &["update-index", "--force-remove", ".gitmodules"],
+        b"",
+    );
+    let symlink = format!("120000,{id},.gitmodules");
+    assert!(
+        !attempt(
+            dir.path(),
+            &["update-index", "--add", "--cacheinfo", &symlink],
+            b""
+        )
+        .status
+        .success()
+    );
+    // Git refuses constructing this malicious index entry; exercise imported data independently.
+    let mut edit = repo.edit_index(Default::default()).unwrap();
+    edit.replace_entries(vec![girt::index::Entry::new(
+        b".gitmodules".to_vec(),
+        girt::index::Mode::Symlink,
+        id,
+    )])
+    .unwrap();
+    edit.commit().unwrap();
+    assert!(matches!(
+        Modules::read(&repo, &objects, Source::Index),
+        Err(LoadError::NotRegular)
+    ));
+    std::fs::create_dir(&path).unwrap();
+    assert!(matches!(
+        Modules::read(&repo, &objects, Source::WorktreeOrIndex),
+        Err(LoadError::NotRegular)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn worktree_symlink_is_refused_without_index_fallback() {
+    use girt::submodule::{LoadError, Source};
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join(".gitmodules"),
+        b"[submodule \"n\"]\npath = vendor/lib\nurl = index\n",
+    )
+    .unwrap();
+    git(dir.path(), &["add", ".gitmodules"], b"");
+    std::fs::remove_file(dir.path().join(".gitmodules")).unwrap();
+    std::fs::write(
+        dir.path().join("linked"),
+        b"[submodule \"n\"]\npath = vendor/lib\nurl = linked\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("linked", dir.path().join(".gitmodules")).unwrap();
+    let repo = girt::Repository::open(dir.path()).unwrap();
+    let objects = repo.objects().unwrap();
+    assert!(matches!(
+        Modules::read(&repo, &objects, Source::WorktreeOrIndex),
+        Err(LoadError::NotRegular)
+    ));
+    // This is an intentional safety restriction beyond Git init's observed behavior.
+    git(dir.path(), &["submodule", "init"], b"");
+    assert_eq!(
+        git(dir.path(), &["config", "--get", "submodule.n.url"], b""),
+        b"linked\n"
+    );
+}
+
+#[test]
+fn relative_urls_match_git_init_for_standard_remote_shapes() {
+    let dir = fixture();
+    for remote in [
+        "https://example.com/team/parent.git",
+        "https://example.com/team/parent.git/",
+        "user@host:team/parent.git",
+        "file:///tmp/team/parent.git",
+        "../parent.git",
+        "./parent.git",
+        "parent.git",
+        "a//b",
+        "/tmp/team/parent.git",
+    ] {
+        git(dir.path(), &["config", "remote.origin.url", remote], b"");
+        for url in [
+            "./child.git",
+            "../child.git",
+            "./foo/../child.git",
+            "./../child.git",
+        ] {
+            let bytes = format!("[submodule \"logical\"]\npath = vendor/lib\nurl = {url}\n");
+            std::fs::write(dir.path().join(".gitmodules"), &bytes).unwrap();
+            let modules = Modules::parse(bytes.as_bytes()).unwrap();
+            let resolved = modules
+                .get(b"logical")
+                .unwrap()
+                .resolve_url(remote.as_bytes())
+                .unwrap();
+            git(dir.path(), &["submodule", "init"], b"");
+            let actual = git(
+                dir.path(),
+                &["config", "--get", "submodule.logical.url"],
+                b"",
+            );
+            assert_eq!(
+                actual.strip_suffix(b"\n").unwrap(),
+                resolved,
+                "{remote} + {url}"
+            );
+            git(
+                dir.path(),
+                &["config", "--remove-section", "submodule.logical"],
+                b"",
+            );
+        }
+    }
+}
+
+#[test]
+fn relative_url_endpoint_traversal_is_refused_and_absolute_urls_are_unchanged() {
+    use girt::submodule::UrlError;
+    let modules = Modules::parse(b"[submodule \"n\"]\nurl = ../../child\n").unwrap();
+    for remote in [
+        "https://example.com/parent.git",
+        "user@host:parent.git",
+        "/parent.git",
+        "../parent.git",
+    ] {
+        assert_eq!(
+            modules.get(b"n").unwrap().resolve_url(remote.as_bytes()),
+            Err(UrlError::AboveRoot)
+        );
+    }
+    let modules = Modules::parse(b"[submodule \"n\"]\nurl = https://example.com/child\n").unwrap();
+    assert_eq!(
+        modules.get(b"n").unwrap().resolve_url(b""),
+        Ok(b"https://example.com/child".to_vec())
+    );
+}
+
+#[test]
+fn commit_source_is_available_in_a_bare_repository() {
+    use girt::submodule::{LoadError, Source};
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join(".gitmodules"),
+        b"[submodule \"n\"]\npath = vendor/lib\nurl = child\n",
+    )
+    .unwrap();
+    git(dir.path(), &["add", ".gitmodules"], b"");
+    git(dir.path(), &["commit", "-qm", "modules"], b"");
+    git(
+        dir.path(),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "clone",
+            "--bare",
+            "--quiet",
+            ".",
+            "bare",
+        ],
+        b"",
+    );
+    let repo = girt::Repository::open(dir.path().join("bare")).unwrap();
+    let objects = repo.objects().unwrap();
+    let head = git(dir.path(), &["rev-parse", "HEAD"], b"");
+    let head = String::from_utf8_lossy(&head).trim().parse().unwrap();
+    assert!(
+        Modules::read(&repo, &objects, Source::Commit(head))
+            .unwrap()
+            .unwrap()
+            .get(b"n")
+            .is_some()
+    );
+    assert!(matches!(
+        Modules::read(&repo, &objects, Source::Worktree),
+        Err(LoadError::NoWorktree)
+    ));
+}
+
+#[test]
+fn repeated_remote_separators_match_git_without_crossing_root() {
+    let dir = fixture();
+    let bytes = b"[submodule \"logical\"]\npath = vendor/lib\nurl = ../../child\n";
+    std::fs::write(dir.path().join(".gitmodules"), bytes).unwrap();
+    git(dir.path(), &["config", "remote.origin.url", "a//b"], b"");
+    git(dir.path(), &["submodule", "init"], b"");
+    let modules = Modules::parse(bytes).unwrap();
+    assert_eq!(
+        modules
+            .get(b"logical")
+            .unwrap()
+            .resolve_url(b"a//b")
+            .unwrap(),
+        b"a/child"
+    );
+    assert_eq!(
+        git(
+            dir.path(),
+            &["config", "--get", "submodule.logical.url"],
+            b""
+        ),
+        b"a/child\n"
+    );
+}
+
+#[test]
+fn intent_to_add_metadata_reads_the_empty_index_blob() {
+    use girt::submodule::Source;
+    let dir = fixture();
+    let path = dir.path().join(".gitmodules");
+    std::fs::write(
+        &path,
+        b"[submodule \"n\"]\npath = vendor/lib\nurl = child\n",
+    )
+    .unwrap();
+    git(dir.path(), &["add", "--intent-to-add", ".gitmodules"], b"");
+    assert!(git(dir.path(), &["show", ":.gitmodules"], b"").is_empty());
+    std::fs::remove_file(path).unwrap();
+    let repo = girt::Repository::open(dir.path()).unwrap();
+    let objects = repo.objects().unwrap();
+    assert!(
+        Modules::read(&repo, &objects, Source::WorktreeOrIndex)
+            .unwrap()
+            .unwrap()
+            .definitions()
+            .is_empty()
+    );
+}

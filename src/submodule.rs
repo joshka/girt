@@ -3,7 +3,8 @@
 //! A definition's logical name selects configuration and absorbed repository storage; its path
 //! selects a gitlink in the parent tree or index. They need not be equal. [`Modules::parse`] reads
 //! one byte source without following includes, opening repositories, fetching, or running commands.
-//! The caller chooses worktree, index, or committed blob bytes. No source fallback is performed.
+//! [`Modules::read`] loads a caller-selected [`Source`]: worktree, index, commit, or the explicit
+//! worktree-then-index fallback used by Git init. No loading operation reads ambient configuration.
 //!
 //! Parsing preserves names and paths for inspection. Call [`Definition::validate`] before using
 //! either in a filesystem operation. Validation is lexical; it does not establish that existing
@@ -21,6 +22,11 @@
 //! assert_eq!(math.update(), Update::Checkout);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+
+mod load;
+mod url;
+pub use load::{LoadError, Source};
+pub use url::UrlError;
 
 use crate::config::{Config, ConfigError};
 
