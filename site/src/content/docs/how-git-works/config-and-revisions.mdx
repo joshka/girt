@@ -50,7 +50,7 @@ Each form except the ranges resolves to one object ID, so commands only need to 
 the syntax is parsed. The ranges `A..B` and `A...B` name sets of commits instead; commands pass them
 to a [history walk](#history-walks).
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/364">Missing `@{date}`, `@{-N}`, index paths (`:path`), `:/text`, `^@`, `^!` and describe output.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/364">Missing dated reflogs, previous checkouts, index paths, message searches, range shorthands, pseudorefs and describe output. Cross-worktree aliases are tracked in [#550](https://github.com/joshka/girt/issues/550).</GirtStatus>
 
 ## History walks
 
@@ -66,7 +66,7 @@ reached old dates; it has to know the excluded side's boundary. Without help fro
 [commit-graph](/girt/how-git-works/scale-and-serving/#commit-graph), working out that boundary may
 mean visiting much of the excluded side's history.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/416">The library walk has no date or topological order and isn't lazy; ranges walk the excluded side's whole history.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/416">Git comparisons confirm that the library walk has no date or topological order and isn't lazy; ranges walk the excluded side's whole history.</GirtStatus>
 
 ## Merge bases
 

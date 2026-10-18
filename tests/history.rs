@@ -189,3 +189,33 @@ fn corrupt_parent_preserves_storage_error() {
         Err(HistoryError::Read { .. })
     ));
 }
+
+/// Multiple roots expose the difference between breadth-first and topological traversal (#416).
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn root_order_can_differ_from_git_topological_order(#[case] format: ObjectFormat) {
+    let h = History::with_format(&[vec![], vec![0]], false, format);
+    let output = history_git::git(
+        h.root.path(),
+        &[
+            "rev-list",
+            "--topo-order",
+            &h.ids[0].to_string(),
+            &h.ids[1].to_string(),
+        ],
+        b"",
+    );
+    let expected: Vec<ObjectId> = std::str::from_utf8(&output)
+        .unwrap()
+        .lines()
+        .map(|line| line.parse().unwrap())
+        .collect();
+    assert_eq!(expected, vec![h.ids[1], h.ids[0]]);
+    let actual = h
+        .objects()
+        .walk_with(&h.ids, HistoryLimits::default())
+        .unwrap();
+    assert_eq!(actual, h.ids);
+    assert_ne!(actual, expected);
+}

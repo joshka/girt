@@ -78,6 +78,29 @@ reflogs and conditional precondition checks retain their Supported classificatio
 publication still reports partial I/O effects; this audit does not claim atomic reader visibility
 across separate files or worktree stacks.
 
+## Git Capability Audit: Configuration and Revisions
+
+`tests/config_resolution.rs` compares layered values, include order and conditional includes
+(`gitdir`, case-insensitive `gitdir`, `onbranch`, and remote-URL `hasconfig`) with Git 2.56.0.
+`tests/config_edit.rs` compares edited values with Git and preserves comments, formatting and
+multi-valued ordering. `tests/config_continuation.rs` checks continued values. These comparisons
+retain the Supported layered-configuration classification.
+
+`tests/revisions.rs` compares single-object expressions with `rev-parse` and range membership with
+`rev-list`. [Issue 364](https://github.com/joshka/girt/issues/364) remains the unsupported-syntax
+tracker, including dated reflogs, previous checkouts, index paths, message searches, range
+shorthands, pseudorefs and describe output. [Issue 550](https://github.com/joshka/girt/issues/550)
+adds cross-worktree aliases.
+
+`tests/history.rs::criss_cross_matches_git` compares all best merge bases with `merge-base --all`
+and reachable sets with `rev-list`, for loose and packed objects in both formats. `endpoint_queries`
+compares ancestry with `merge-base --is-ancestor`, including Git exit codes 0 and 1 and disconnected
+histories. Merge bases and ancestry remain Supported. History walks remain partial under
+[issue 416](https://github.com/joshka/girt/issues/416):
+`root_order_can_differ_from_git_topological_order` demonstrates a parent-first girt walk where Git
+`rev-list --topo-order` emits the child first. The current eager walk offers neither date nor
+topological ordering; range exclusion can traverse the whole excluded history.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger
