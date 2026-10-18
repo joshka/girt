@@ -234,6 +234,7 @@ pub mod replace;
 pub mod replay;
 pub mod repo;
 pub mod repository;
+pub mod rerere;
 pub mod reset;
 pub mod retention;
 pub mod revision;

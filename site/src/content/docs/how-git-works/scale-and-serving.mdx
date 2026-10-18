@@ -138,7 +138,7 @@ log₂(n) steps it names the first bad commit. It is mostly history-walk logic p
 [merge conflict](/girt/how-git-works/combining-work/#merging) under `.git/rr-cache/` and resolves
 the same conflict automatically next time, which helps when rebasing a long-lived branch repeatedly.
 
-<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/528" />
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/528">`girt::rerere` records and replays resolutions in Git's `rr-cache`; merge commands and the CLI do not call it yet.</GirtStatus>
 
 ## Replace refs and grafts
 
