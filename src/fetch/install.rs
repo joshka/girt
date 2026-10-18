@@ -86,6 +86,9 @@ pub struct ReceivedFetch {
     pub(super) verified: super::verified::VerifiedObjects,
     /// The server applied an object filter, so the pack may omit objects it references.
     filter_applied: bool,
+    /// The pack came from a promisor remote, so installation publishes a `.promisor` marker even
+    /// when no filter applied.
+    promisor: bool,
 }
 
 pub(crate) enum PackInput<'a> {
@@ -159,6 +162,7 @@ impl ReceivedFetch {
             limits: FetchLimits::default(),
             verified: Default::default(),
             filter_applied: false,
+            promisor: false,
         }
     }
 
@@ -181,6 +185,7 @@ impl ReceivedFetch {
             limits: contents.limits,
             verified: Default::default(),
             filter_applied: false,
+            promisor: false,
         }
     }
 
@@ -268,6 +273,7 @@ impl ReceivedFetch {
             limits,
             depth,
             filter,
+            explicit_wants,
         } = options;
         let cancel = observer.cancel;
         let format = advertisement.object_format()?;
@@ -294,6 +300,11 @@ impl ReceivedFetch {
             targets.sort_unstable();
             targets.dedup();
             history.discover_ancestors(&targets, limits, cancel)?;
+        }
+        let mut wants = wants;
+        if explicit_wants {
+            // A promisor fetch's caller reports the objects the server didn't send.
+            wants.retain(|id| imported.objects.contains_key(id));
         }
         let boundaries =
             super::boundaries::discover(&imported.objects, known.known(), &wants, limits, cancel)?;
@@ -345,6 +356,7 @@ impl ReceivedFetch {
             shallow,
             limits,
             filter_applied: filter.is_some(),
+            promisor: explicit_wants,
         };
         observer.complete();
         Ok(received)
@@ -624,7 +636,7 @@ impl ReceivedFetch {
             index.as_file().sync_all()?;
             let basename = directory.join(format!("pack-{checksum}"));
             check_cancelled(cancel)?;
-            if self.filter_applied {
+            if self.filter_applied || self.promisor {
                 // Readers treat objects missing from a promisor pack's closure as promised, so the
                 // marker must exist before the pack becomes visible.
                 publish_promisor(&basename.with_extension("promisor"))?;
@@ -800,6 +812,7 @@ mod shallow_tests {
                     ..Default::default()
                 },
                 filter: None,
+                explicit_wants: false,
             },
             &mut ValidationObserver::new(&AtomicBool::new(false), &mut |_| {}),
         )

@@ -1724,6 +1724,7 @@ fn fresh_transfer_deltas_obey_the_receiver_depth_limit() {
             },
             depth: None,
             filter: None,
+            explicit_wants: false,
         },
         &mut crate::fetch::ValidationObserver::new(&AtomicBool::new(false), &mut |_| {}),
     )

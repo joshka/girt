@@ -444,3 +444,141 @@ fn retention_refuses_promisor_remote_without_extension() {
         plan.outcome
     );
 }
+
+fn promisor_markers(clone: &Path) -> usize {
+    std::fs::read_dir(clone.join(".git/objects/pack"))
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "promisor")
+        })
+        .count()
+}
+
+/// Fetching promised blobs explicitly from Git's `file://` promisor stores them in a new promisor
+/// pack, and Git reads them without a lazy fetch of its own.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn missing_blobs_fetch_explicitly(#[case] format: ObjectFormat) {
+    use girt::workflow::{self, Environment, NoCallbacks};
+
+    let partial = partial_clone(format);
+    let missing: Vec<ObjectId> = git_missing(&partial.clone).into_iter().collect();
+    let repository = Repository::open(&partial.clone).unwrap();
+    assert_eq!(workflow::promisor_remotes(&repository), ["origin"]);
+
+    let (first, rest) = missing.split_first().unwrap();
+    let report = workflow::fetch_missing(
+        &repository,
+        "origin",
+        &[*first, *first],
+        &Environment::default(),
+        &mut NoCallbacks,
+    )
+    .unwrap();
+    assert_eq!(report.fetched, [*first]);
+    assert!(report.already_present.is_empty());
+    assert_eq!(promisor_markers(&partial.clone), 2);
+    assert_eq!(
+        git_missing(&partial.clone),
+        rest.iter().copied().collect::<BTreeSet<_>>()
+    );
+    let shown = git_offline(&partial.clone, &["cat-file", "-p", &first.to_string()]);
+    assert!(shown.status.success());
+
+    // Objects already stored are reported rather than requested.
+    let repository = Repository::open(&partial.clone).unwrap();
+    let report = workflow::fetch_promised(
+        &repository,
+        &missing,
+        &Environment::default(),
+        &mut NoCallbacks,
+    )
+    .unwrap();
+    assert_eq!(report.already_present, [*first]);
+    assert_eq!(report.fetched, rest);
+    assert!(git_missing(&partial.clone).is_empty());
+    let objects = Repository::open(&partial.clone).unwrap().objects().unwrap();
+    for id in &missing {
+        assert_eq!(objects.read(*id).unwrap().unwrap().kind(), ObjectKind::Blob);
+    }
+
+    let fsck = git_offline(&partial.clone, &["fsck", "--strict"]);
+    assert!(
+        fsck.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fsck.stderr)
+    );
+    // Git can repack the promisor packs together and still sees every object.
+    let repack = git_offline(&partial.clone, &["repack", "-a", "-d", "-q"]);
+    assert!(
+        repack.status.success(),
+        "{}",
+        String::from_utf8_lossy(&repack.stderr)
+    );
+    assert!(
+        git_offline(&partial.clone, &["fsck", "--strict"])
+            .status
+            .success()
+    );
+    assert!(git_missing(&partial.clone).is_empty());
+}
+
+/// Like Git's lazy fetch, promisor remotes are tried in configuration order with the
+/// `extensions.partialClone` remote last, and a failing remote falls through to the next.
+#[test]
+fn promisor_remotes_are_tried_in_git_order() {
+    use girt::workflow::{self, Environment, NoCallbacks, TransferError};
+
+    let partial = partial_clone(ObjectFormat::Sha1);
+    let missing: Vec<ObjectId> = git_missing(&partial.clone).into_iter().collect();
+    let absent = partial.clone.with_file_name("absent");
+    for (name, value) in [
+        ("extensions.partialClone", "origin"),
+        ("remote.broken.url", absent.to_str().unwrap()),
+        ("remote.broken.promisor", "true"),
+        ("remote.plain.url", absent.to_str().unwrap()),
+    ] {
+        git(&partial.clone, &["config", name, value], b"");
+    }
+    let repository = Repository::open(&partial.clone).unwrap();
+    assert_eq!(
+        workflow::promisor_remotes(&repository),
+        ["broken", "origin"]
+    );
+
+    assert!(matches!(
+        workflow::fetch_missing(
+            &repository,
+            "plain",
+            &missing,
+            &Environment::default(),
+            &mut NoCallbacks,
+        ),
+        Err(TransferError::NotPromisor(name)) if name == "plain"
+    ));
+    assert!(
+        workflow::fetch_missing(
+            &repository,
+            "broken",
+            &missing,
+            &Environment::default(),
+            &mut NoCallbacks,
+        )
+        .is_err()
+    );
+    let report = workflow::fetch_promised(
+        &repository,
+        &missing,
+        &Environment::default(),
+        &mut NoCallbacks,
+    )
+    .unwrap();
+    assert_eq!(report.fetched, missing);
+    assert!(git_missing(&partial.clone).is_empty());
+}

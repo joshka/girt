@@ -527,3 +527,125 @@ fn filter_unsupported_by_server_fetches_everything(#[case] version: &str) {
     }));
     git(directory.path(), &["fsck", "--strict"], b"");
 }
+
+fn promisor_packs(directory: &std::path::Path) -> usize {
+    std::fs::read_dir(directory.join(".git/objects/pack"))
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "promisor")
+        })
+        .count()
+}
+
+/// After a blobless fetch, `fetch_missing` asks `git upload-pack` for named blobs and installs
+/// them in a second promisor pack that Git accepts. Protocol v2 allows such wants by default; v0
+/// needs `uploadpack.allowAnySHA1InWant`.
+#[rstest]
+#[case::v0_sha1("0", girt::ObjectFormat::Sha1)]
+#[case::v2_sha1("2", girt::ObjectFormat::Sha1)]
+#[case::v0_sha256("0", girt::ObjectFormat::Sha256)]
+#[case::v2_sha256("2", girt::ObjectFormat::Sha256)]
+fn missing_blobs_fetch_from_upload_pack(#[case] version: &str, #[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 3);
+    git(
+        fixture.root.path(),
+        &["config", "uploadpack.allowFilter", "true"],
+        b"",
+    );
+    let directory = tempfile::tempdir().unwrap();
+    git(
+        directory.path(),
+        &["init", "--quiet", &format!("--object-format={format}"), "."],
+        b"",
+    );
+    let url = format!("mem::{}", fixture.root.path().display());
+    git(directory.path(), &["remote", "add", "origin", &url], b"");
+    for (name, value) in [
+        ("protocol.mem.allow", "always"),
+        ("protocol.version", version),
+    ] {
+        git(directory.path(), &["config", name, value], b"");
+    }
+    let repository = Repository::open(directory.path()).unwrap();
+    girt::workflow::fetch(
+        &repository,
+        "origin",
+        &girt::workflow::FetchOptions::new(["refs/heads/*:refs/remotes/origin/*"])
+            .with_filter(girt::fetch::ObjectFilter::BlobNone),
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(GitService))),
+    )
+    .unwrap();
+    let missing = missing_objects(directory.path());
+    assert!(missing.len() >= 2);
+    let wanted: Vec<girt::ObjectId> = missing[..2].iter().map(|id| id.parse().unwrap()).collect();
+
+    let repository = Repository::open(directory.path()).unwrap();
+    let fetch = || {
+        girt::workflow::fetch_missing(
+            &repository,
+            "origin",
+            &wanted,
+            &Environment::default(),
+            &mut Registered(Some(Arc::new(GitService))),
+        )
+    };
+    if version == "0" {
+        // Git's v0 upload-pack refuses wants no reference advertises.
+        assert!(matches!(fetch(), Err(TransferError::Fetch(_))));
+        assert_eq!(promisor_packs(directory.path()), 1);
+        git(
+            fixture.root.path(),
+            &["config", "uploadpack.allowAnySHA1InWant", "true"],
+            b"",
+        );
+    }
+    let report = fetch().unwrap();
+    assert_eq!(report.fetched, wanted);
+    assert_eq!(promisor_packs(directory.path()), 2);
+    assert_eq!(missing_objects(directory.path()), missing[2..]);
+
+    let objects = Repository::open(directory.path())
+        .unwrap()
+        .objects()
+        .unwrap();
+    for id in &wanted {
+        let expected = fixture
+            .records
+            .iter()
+            .find(|(record, _, _)| record == id)
+            .unwrap();
+        assert_eq!(objects.read(*id).unwrap().unwrap().data(), expected.2);
+        // Git reads the blob itself; it cannot lazily fetch over the `mem::` scheme.
+        assert_eq!(
+            git(
+                directory.path(),
+                &["cat-file", "blob", &id.to_string()],
+                b""
+            ),
+            expected.2
+        );
+    }
+    git(directory.path(), &["fsck", "--strict"], b"");
+}
+
+/// A remote that isn't a promisor is refused before anything is sent.
+#[test]
+fn missing_objects_from_a_non_promisor_are_refused() {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let (_directory, repository) = local(&fixture, &[("protocol.mem.allow", "always")]);
+    let wanted = fixture.records[0].0;
+    let result = girt::workflow::fetch_missing(
+        &repository,
+        "origin",
+        &[wanted],
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(Refusing))),
+    );
+    assert!(matches!(result, Err(TransferError::NotPromisor(name)) if name == "origin"));
+}

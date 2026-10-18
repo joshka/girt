@@ -94,7 +94,8 @@
 //! keeps must still be present. Installation publishes a `.promisor` marker before the pack, so Git
 //! knows the omitted objects can be fetched from the remote later. Native local sources and bundles
 //! ignore filters. [`crate::workflow::fetch`] also records the remote as a promisor in
-//! configuration. Fetching omitted objects on demand is not supported.
+//! configuration. Reading an omitted object never fetches it: [`crate::workflow::fetch_missing`]
+//! fetches a batch of them explicitly.
 //!
 //! # Progress
 //!
@@ -119,7 +120,8 @@
 //!
 //! # Protocol support
 //!
-//! Wants must be advertised reference tips. Transfer requests `side-band-64k` and, when
+//! Wants must be advertised reference tips, except in [`crate::workflow::fetch_missing`], which
+//! names objects directly. Transfer requests `side-band-64k` and, when
 //! available, `ofs-delta`, `thin-pack`, `multi_ack`, `shallow` and the SHA-256 object-format
 //! capability. Thin packs are completed with verified local delta bases and rewritten as
 //! self-contained packs before installation. Every adapter accepts protocol v0, v1 and v2 answers;
@@ -267,6 +269,7 @@ mod promisor;
 pub use object_filter::{ObjectFilter, ObjectFilterParseError};
 pub(crate) use promisor::register_promisor;
 mod local;
+pub(crate) use local::receive_local_observed;
 mod local_native;
 mod protocol;
 mod v2;
@@ -321,6 +324,12 @@ pub struct FetchOptions {
     pub depth: Option<NonZeroU32>,
     /// Objects the server may leave out of the pack, or `None` for a complete fetch.
     pub filter: Option<ObjectFilter>,
+    /// Wants name objects directly rather than advertised tips, as a promisor fetch does.
+    ///
+    /// The server decides whether it allows them. Wants the pack lacks are dropped from
+    /// [`ReceivedFetch::wants`] instead of failing validation, and installation publishes a
+    /// `.promisor` marker.
+    pub(crate) explicit_wants: bool,
 }
 
 impl FetchOptions {

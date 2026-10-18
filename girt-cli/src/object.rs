@@ -230,10 +230,69 @@ fn hash(args: HashArgs, context: &Context) -> Result<ExitCode> {
 /// returning the requested ID with it.
 fn read(context: &Context, rev: &str) -> Result<(ObjectId, Object)> {
     let repository = context.repository()?;
-    let objects = context.replaced_objects(&repository, repository.objects()?)?;
+    let mut objects = context.replaced_objects(&repository, repository.objects()?)?;
     let id = common::resolve_replaced(&repository, &objects, rev, None)?;
-    let object = read_replaced(&objects, id)?.ok_or_else(|| eyre!("missing object {id}"))?;
+    let object = read_or_fetch(context, &repository, &mut objects, id)?
+        .ok_or_else(|| eyre!("missing object {id}"))?;
     Ok((id, object))
+}
+
+/// Reads `id`, fetching it first from the promisor remotes if it is missing from a partial clone,
+/// as Git's lazy fetch does.
+///
+/// Only this CLI fetches on read; the library never does. Setting `GIT_NO_LAZY_FETCH` to a true
+/// value turns it off. A failed fetch is reported as a warning and the object reads as missing.
+/// After a fetch, `objects` is reopened so it sees the new pack.
+fn read_or_fetch(
+    context: &Context,
+    repository: &Repository,
+    objects: &mut ReplacedObjects,
+    id: ObjectId,
+) -> Result<Option<Object>> {
+    let mut fetched = Vec::new();
+    loop {
+        // The object to fetch: `id` itself, or the replacement it resolves to.
+        let missing = match objects.read_with(id, ReadLimits::trusted()) {
+            Ok(Some(object)) => return Ok(Some(object)),
+            Ok(None) => id,
+            Err(girt::ObjectReadError::MissingReplacement(target)) => target,
+            Err(error) => return Err(error).wrap_err_with(|| format!("reading {id}")),
+        };
+        let unfetchable = fetched.contains(&missing)
+            || !repository.is_partial_clone()
+            || lazy_fetch_disabled(context)?;
+        if unfetchable {
+            // Report a missing object, or the replacement error, as an ordinary read does.
+            return read_replaced(objects, id);
+        }
+        let mut callbacks = crate::progress::Progress::new(false);
+        if let Err(error) = girt::workflow::fetch_promised(
+            repository,
+            &[missing],
+            &context.environment,
+            &mut callbacks,
+        ) {
+            eprintln!("warning: could not fetch {missing} from promisor remote: {error}");
+            return read_replaced(objects, id);
+        }
+        fetched.push(missing);
+        *objects = context.replaced_objects(repository, repository.objects()?)?;
+    }
+}
+
+/// Whether `GIT_NO_LAZY_FETCH` is set to a true value. Like Git, an empty value is false and a
+/// value that isn't a boolean is an error.
+fn lazy_fetch_disabled(context: &Context) -> Result<bool> {
+    let Some(value) = context.environment.get("GIT_NO_LAZY_FETCH") else {
+        return Ok(false);
+    };
+    let bytes = value.as_encoded_bytes();
+    girt::config::parse_boolean(bytes).ok_or_else(|| {
+        eyre!(
+            "bad boolean environment value '{}' for 'GIT_NO_LAZY_FETCH'",
+            String::from_utf8_lossy(bytes)
+        )
+    })
 }
 
 /// Reads `id` through replace references; Git's `cat-file` reports the requested ID with the
@@ -295,19 +354,21 @@ fn id(args: RevArgs, context: &Context) -> Result<ExitCode> {
 
 fn exists(args: RevArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = context.replaced_objects(&repository, repository.objects()?)?;
+    let mut objects = context.replaced_objects(&repository, repository.objects()?)?;
     let Ok(id) = common::resolve_replaced(&repository, &objects, &args.rev, None) else {
         return Ok(ExitCode::FAILURE);
     };
-    Ok(match read_replaced(&objects, id)? {
-        Some(_) => ExitCode::SUCCESS,
-        None => ExitCode::FAILURE,
-    })
+    Ok(
+        match read_or_fetch(context, &repository, &mut objects, id)? {
+            Some(_) => ExitCode::SUCCESS,
+            None => ExitCode::FAILURE,
+        },
+    )
 }
 
 fn batch(args: BatchArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
-    let objects = context.replaced_objects(&repository, repository.objects()?)?;
+    let mut objects = context.replaced_objects(&repository, repository.objects()?)?;
     let mut input = io::stdin().lock();
     let mut out = stdout();
     let mut line = String::new();
@@ -318,7 +379,9 @@ fn batch(args: BatchArgs, context: &Context) -> Result<ExitCode> {
         }
         let rev = line.trim_end_matches(['\n', '\r']);
         let object = match common::resolve_replaced(&repository, &objects, rev, None) {
-            Ok(id) => read_replaced(&objects, id)?.map(|object| (id, object)),
+            Ok(id) => {
+                read_or_fetch(context, &repository, &mut objects, id)?.map(|object| (id, object))
+            }
             Err(_) => None,
         };
         let Some((id, object)) = object else {
