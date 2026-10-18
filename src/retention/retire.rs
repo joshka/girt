@@ -416,7 +416,12 @@ impl Repository {
         // The isolated first scan is still current; the post-publication scan rechecks it.
         let (published, held) = current
             .publish_required(first, &keep_all_logs, limits, cancel)
-            .map_err(|error| failed(RetireCause::Repack(Box::new(error)), report.clone()))?;
+            .map_err(|error| {
+                if let RepackError::Bitmap { published, .. } = &error {
+                    report.published = Some(**published);
+                }
+                failed(RetireCause::Repack(Box::new(error)), report.clone())
+            })?;
         let replacement = directory.join(format!("pack-{}", published.written.checksum));
         let replacement_pack = replacement.with_extension("pack");
         let replacement_index = replacement.with_extension("idx");
@@ -454,10 +459,15 @@ impl Repository {
                     report.clone(),
                 )
             })?;
-        if !session.inputs.same_except(
-            &published_inputs,
-            &[replacement_pack.clone(), replacement_index.clone()],
-        ) {
+        let mut replacement_paths = vec![replacement_pack.clone(), replacement_index.clone()];
+        if matches!(published.bitmap, super::BitmapOutcome::Written(_)) {
+            replacement_paths.push(replacement.with_extension("bitmap"));
+            replacement_paths.push(replacement.with_extension("rev"));
+        }
+        if !session
+            .inputs
+            .same_except(&published_inputs, &replacement_paths)
+        {
             return Err(failed(RetireCause::Changed, report));
         }
         session.inputs = published_inputs;
@@ -562,7 +572,7 @@ impl Repository {
 
         let after = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
-        if !same_old_generation(&before, &after, &replacement_pack, &replacement_index) {
+        if !same_old_generation(&before, &after, &replacement_paths) {
             return Err(failed(RetireCause::Changed, report));
         }
         session
@@ -701,15 +711,20 @@ fn snapshot(
 fn same_old_generation(
     before: &BTreeMap<PathBuf, Stamp>,
     after: &BTreeMap<PathBuf, Stamp>,
-    new_pack: &Path,
-    new_index: &Path,
+    replacement_paths: &[PathBuf],
 ) -> bool {
     before
         .iter()
-        .filter(|(path, _)| path.as_path() != new_pack && path.as_path() != new_index)
-        .eq(after
-            .iter()
-            .filter(|(path, _)| path.as_path() != new_pack && path.as_path() != new_index))
+        .filter(|(path, _)| {
+            !replacement_paths
+                .iter()
+                .any(|replacement| path.as_path() == replacement)
+        })
+        .eq(after.iter().filter(|(path, _)| {
+            !replacement_paths
+                .iter()
+                .any(|replacement| path.as_path() == replacement)
+        }))
 }
 
 /// A location-only proof is sufficient for a read-only result. It never authorizes omission

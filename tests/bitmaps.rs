@@ -415,6 +415,10 @@ fn replace_sidecar(path: &std::path::Path, bytes: &[u8]) {
     #[cfg(windows)]
     {
         let mut permissions = fs::metadata(path).unwrap().permissions();
+        #[expect(
+            clippy::permissions_set_readonly_false,
+            reason = "Windows read-only attribute; this block is never compiled on Unix"
+        )]
         permissions.set_readonly(false);
         fs::set_permissions(path, permissions).unwrap();
     }
@@ -879,4 +883,344 @@ fn writer_selects_bounded_commits_across_duplicate_midx_packs(#[case] format: Ob
             b"",
         );
     }
+}
+
+struct IsolatedFixture;
+impl girt::retention::MaintenanceIsolation for IsolatedFixture {
+    type Guard = ();
+    fn acquire(&mut self, _: &girt::Repository) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn published_pack_and_midx_bitmaps_are_idempotent_and_preserve_old_index_on_error(
+    #[case] format: ObjectFormat,
+) {
+    let fixture = pack_git::Fixture::new(format, true, 4);
+    let repo = &fixture.repo;
+    let objects = repo.objects().unwrap();
+    let pack = objects.packs().next().unwrap().checksum();
+    let first = repo
+        .write_pack_bitmap(&mut IsolatedFixture, pack, Default::default())
+        .unwrap();
+    assert_eq!(first.commits, 1);
+    repo.write_pack_bitmap(&mut IsolatedFixture, pack, Default::default())
+        .unwrap();
+    let report = repo
+        .write_multi_pack_bitmap(&mut IsolatedFixture, Default::default(), Default::default())
+        .unwrap();
+    assert_eq!(report.objects, fixture.records.len());
+    assert_eq!(report.packs, 1);
+    let directory = fixture.root.path().join("objects/pack");
+    let old = fs::read(directory.join("multi-pack-index")).unwrap();
+    let mut limits = girt::bitmap::WriteLimits::default();
+    limits.max_bytes = 0;
+    let error = repo
+        .write_multi_pack_bitmap_with(
+            &mut IsolatedFixture,
+            Default::default(),
+            Default::default(),
+            limits,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(!error.published);
+    assert!(error.source.is::<girt::bitmap::WriteError>());
+    assert_eq!(fs::read(directory.join("multi-pack-index")).unwrap(), old);
+    assert!(!directory.join("multi-pack-index.lock").exists());
+    fs::write(directory.join("multi-pack-index.lock"), b"other writer").unwrap();
+    let error = repo
+        .write_multi_pack_bitmap(&mut IsolatedFixture, Default::default(), Default::default())
+        .unwrap_err();
+    assert_eq!(error.operation, "acquire writer lock");
+    assert!(!error.published);
+    fs::remove_file(directory.join("multi-pack-index.lock")).unwrap();
+    assert!(matches!(
+        repo.write_pack_bitmap_with(
+            &mut IsolatedFixture,
+            pack,
+            Default::default(),
+            Default::default(),
+            &AtomicBool::new(true)
+        ),
+        Err(girt::bitmap::InstallError {
+            published: false,
+            ..
+        })
+    ));
+    let commit = fixture
+        .records
+        .iter()
+        .find(|(_, kind, _)| *kind == ObjectKind::Commit)
+        .unwrap()
+        .0;
+    pack_git::git(fixture.root.path(), &["multi-pack-index", "verify"], b"");
+    pack_git::git(
+        fixture.root.path(),
+        &["rev-list", "--test-bitmap", &commit.to_string()],
+        b"",
+    );
+}
+
+fn repack_fixture(
+    bare: bool,
+    modern: Option<&str>,
+    legacy: Option<&str>,
+) -> (tempfile::TempDir, girt::Repository, ObjectId) {
+    let root = tempfile::tempdir().unwrap();
+    let mut init = vec!["init", "--template=", "--initial-branch=main"];
+    if bare {
+        init.push("--bare");
+    }
+    init.push(".");
+    pack_git::git(root.path(), &init, b"");
+    let tree = pack_git::git(root.path(), &["mktree"], b"");
+    let tree = std::str::from_utf8(&tree).unwrap().trim();
+    let commit = pack_git::git(
+        root.path(),
+        &["commit-tree", tree],
+        b"bitmap repack configuration\n",
+    );
+    let commit: ObjectId = std::str::from_utf8(&commit)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    pack_git::git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &commit.to_string()],
+        b"",
+    );
+    for (key, value) in [
+        ("pack.writeBitmaps", legacy),
+        ("repack.writeBitmaps", modern),
+    ] {
+        if let Some(value) = value {
+            pack_git::git(root.path(), &["config", key, value], b"");
+        }
+    }
+    let repo = girt::Repository::open(root.path()).unwrap();
+    (root, repo, commit)
+}
+
+#[rstest]
+#[case::bare_default(true, None, None, true)]
+#[case::nonbare_default(false, None, None, false)]
+#[case::legacy_enable(false, None, Some("true"), true)]
+#[case::legacy_disable(true, None, Some("false"), false)]
+#[case::modern_wins_false(true, Some("false"), Some("true"), false)]
+#[case::modern_wins_true(false, Some("true"), Some("false"), true)]
+fn repack_bitmap_configuration_matches_git(
+    #[case] bare: bool,
+    #[case] modern: Option<&str>,
+    #[case] legacy: Option<&str>,
+    #[case] expected: bool,
+) {
+    let (_root, repo, commit) = repack_fixture(bare, modern, legacy);
+    let report = repo
+        .repack_retained(
+            &Default::default(),
+            Default::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(
+        matches!(report.bitmap, girt::retention::BitmapOutcome::Written(_)),
+        expected
+    );
+    let bitmap = repo
+        .object_dir()
+        .join(format!("pack/pack-{}.bitmap", report.written.checksum));
+    assert_eq!(bitmap.exists(), expected);
+    if expected {
+        pack_git::git(
+            repo.git_dir(),
+            &["rev-list", "--test-bitmap", &commit.to_string()],
+            b"",
+        );
+    }
+    let (git_root, git_repo, _) = repack_fixture(bare, modern, legacy);
+    pack_git::git(git_root.path(), &["repack", "-ad"], b"");
+    let bitmaps = fs::read_dir(git_repo.object_dir().join("pack"))
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "bitmap")
+        })
+        .count();
+    assert_eq!(bitmaps > 0, expected);
+}
+
+#[test]
+fn repack_bitmap_failure_retains_complete_pair_and_config_errors_precede_publication() {
+    let (_root, repo, commit) = repack_fixture(true, None, None);
+    let mut limits = girt::retention::RepackLimits::default();
+    limits.bitmap.max_bytes = 0;
+    limits.write_bitmaps = Some(true);
+    let error = repo
+        .repack_retained(&Default::default(), limits, &AtomicBool::new(false))
+        .unwrap_err();
+    let girt::retention::RepackError::Bitmap { published, source } = error else {
+        panic!("expected bitmap failure")
+    };
+    assert!(!source.published);
+    assert!(matches!(
+        published.bitmap,
+        girt::retention::BitmapOutcome::Failed
+    ));
+    let base = repo
+        .object_dir()
+        .join(format!("pack/pack-{}", published.written.checksum));
+    assert!(base.with_extension("pack").exists());
+    assert!(base.with_extension("idx").exists());
+    assert!(repo.objects().unwrap().read(commit).unwrap().is_some());
+    let (_root, invalid, _) = repack_fixture(true, Some("invalid"), None);
+    assert!(matches!(
+        invalid.repack_retained(
+            &Default::default(),
+            Default::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::retention::RepackError::BitmapConfiguration(_))
+    ));
+    assert!(
+        !invalid.object_dir().join("pack").exists()
+            || fs::read_dir(invalid.object_dir().join("pack"))
+                .unwrap()
+                .next()
+                .is_none()
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn retirement_retains_bitmap_failure_publication_and_accepts_its_own_sidecars() {
+    let (_root, repo, _) = repack_fixture(true, None, None);
+    let mut limits = girt::retention::RepackLimits::default();
+    limits.bitmap.max_bytes = 0;
+    limits.write_bitmaps = Some(true);
+    let error = repo
+        .retire_old_packs(
+            &mut IsolatedFixture,
+            &Default::default(),
+            limits,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(error.report.published.is_some());
+    assert!(error.report.removed.is_empty());
+    let (_root, repo, commit) = repack_fixture(true, None, None);
+    let report = repo
+        .retire_old_packs(
+            &mut IsolatedFixture,
+            &Default::default(),
+            Default::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(matches!(
+        report.published.unwrap().bitmap,
+        girt::retention::BitmapOutcome::Written(_)
+    ));
+    pack_git::git(
+        repo.git_dir(),
+        &["rev-list", "--test-bitmap", &commit.to_string()],
+        b"",
+    );
+}
+
+#[test]
+fn later_legacy_bitmap_assignment_overrides_modern_like_git() {
+    for use_girt in [true, false] {
+        let (root, repo, _) = repack_fixture(false, Some("false"), None);
+        let path = repo.common_dir().join("config");
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.extend_from_slice(b"\n[pack]\nwriteBitmaps = true\n");
+        fs::write(path, bytes).unwrap();
+        let repo = girt::Repository::open(root.path()).unwrap();
+        if use_girt {
+            let report = repo
+                .repack_retained(
+                    &Default::default(),
+                    Default::default(),
+                    &AtomicBool::new(false),
+                )
+                .unwrap();
+            assert!(matches!(
+                report.bitmap,
+                girt::retention::BitmapOutcome::Written(_)
+            ));
+        } else {
+            pack_git::git(root.path(), &["repack", "-ad"], b"");
+        }
+        assert!(
+            fs::read_dir(repo.object_dir().join("pack"))
+                .unwrap()
+                .flatten()
+                .any(|entry| entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "bitmap"))
+        );
+    }
+}
+
+#[test]
+fn configured_bitmap_limits_skip_optional_output_without_failing_repack() {
+    let (_root, repo, _) = repack_fixture(true, Some("true"), None);
+    let mut limits = girt::retention::RepackLimits::default();
+    limits.bitmap.max_bytes = 0;
+    let report = repo
+        .repack_retained(&Default::default(), limits, &AtomicBool::new(false))
+        .unwrap();
+    assert!(matches!(
+        report.bitmap,
+        girt::retention::BitmapOutcome::SkippedLimit { .. }
+    ));
+}
+
+#[test]
+#[cfg(unix)]
+fn default_bitmap_limit_does_not_block_old_pack_retirement() {
+    let (root, repo, commit) = repack_fixture(true, None, None);
+    let orphan = pack_git::git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"unreachable bitmap limit fixture",
+    );
+    let orphan = std::str::from_utf8(&orphan).unwrap().trim();
+    let tree = ObjectFormat::Sha1.hash_object(ObjectKind::Tree, b"");
+    let input = format!("{commit}\n{tree}\n{orphan}\n");
+    let checksum = pack_git::git(
+        root.path(),
+        &["pack-objects", "objects/pack/pack"],
+        input.as_bytes(),
+    );
+    let checksum = std::str::from_utf8(&checksum).unwrap().trim();
+    let old_index = repo.object_dir().join(format!("pack/pack-{checksum}.idx"));
+    let mut limits = girt::retention::RepackLimits::default();
+    limits.bitmap.max_bytes = 0;
+    let policy = girt::retention::RetentionPolicy::default()
+        .with_recent_cutoff(std::time::SystemTime::now() + std::time::Duration::from_secs(60));
+    let report = repo
+        .retire_old_packs(
+            &mut IsolatedFixture,
+            &policy,
+            limits,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(matches!(
+        report.published.unwrap().bitmap,
+        girt::retention::BitmapOutcome::SkippedLimit { .. }
+    ));
+    assert!(!old_index.exists());
+    assert!(report.removed.contains(&old_index));
+    assert!(repo.objects().unwrap().read(commit).unwrap().is_some());
 }

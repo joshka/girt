@@ -225,7 +225,7 @@ use crate::{
 mod error;
 pub use error::{RetentionError, RetentionErrorKind};
 mod repack;
-pub use repack::{RepackError, RepackLimits, RepackPublished};
+pub use repack::{BitmapOutcome, RepackError, RepackLimits, RepackPublished};
 mod prune;
 pub use prune::{MaintenanceIsolation, PruneCause, PruneFailure, PruneReport};
 mod config;

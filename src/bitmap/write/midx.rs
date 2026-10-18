@@ -47,10 +47,13 @@ pub(super) fn encode(
     let (ids, _) = parsed
         .bitmap_inventory()
         .ok_or(WriteError::Limit("MIDX inventory"))?;
+    let preferred_id = midx
+        .preferred_pack
+        .ok_or(crate::multi_pack_index::WriteError::NoObjects)?;
     let preferred = packs
         .iter()
         .position(|(_, pack)| Some(pack.checksum()) == midx.preferred_pack)
-        .ok_or(WriteError::Limit("preferred pack"))?;
+        .ok_or(WriteError::Pack(preferred_id))?;
     let mut locations = Vec::with_capacity(ids.len());
     for position in 0..ids.len() {
         check(cancel)?;

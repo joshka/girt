@@ -27,6 +27,13 @@ pub struct RepackLimits {
     pub write: PackWriteLimits,
     /// Selects delta search among objects not already packed (default: bounded deltas).
     pub compression: PackCompression,
+    /// Whether to write a pack bitmap. `None` uses the last resolved assignment of
+    /// `repack.writeBitmaps` or its deprecated `pack.writeBitmaps` synonym, defaulting to
+    /// true for bare repositories and false otherwise. Configured/default limit exhaustion skips
+    /// optional output; `Some(true)` requests strict writing and returns bitmap limit errors.
+    pub write_bitmaps: Option<bool>,
+    /// Independent graph, traversal and artifact bounds for optional bitmap output.
+    pub bitmap: crate::bitmap::WriteLimits,
 }
 
 impl RepackLimits {
@@ -50,6 +57,8 @@ impl Default for RepackLimits {
         Self {
             write: PackWriteLimits::default(),
             compression: PackCompression::Delta(DeltaOptions::DEFAULT),
+            write_bitmaps: None,
+            bitmap: crate::bitmap::WriteLimits::default(),
         }
     }
 }
@@ -59,10 +68,23 @@ impl RepackLimits {
     ///
     /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
     /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    /// Bitmap graph/input/traversal/output bounds are also effectively unbounded. Encoding retains
+    /// the object graph, one selected-commit bitset at a time, and a traversal stack; choose
+    /// explicit bitmap limits when the repository or available memory is not trusted.
     pub const fn trusted() -> Self {
         Self {
             write: PackWriteLimits::trusted(),
             compression: PackCompression::Delta(DeltaOptions::DEFAULT),
+            write_bitmaps: None,
+            bitmap: crate::bitmap::WriteLimits {
+                max_objects: u32::MAX as usize,
+                max_packs: u32::MAX as usize,
+                max_edges: usize::MAX,
+                max_input_bytes: u64::MAX,
+                max_visits: usize::MAX,
+                max_bytes: usize::MAX,
+                read: crate::ReadLimits::trusted(),
+            },
         }
     }
 }
@@ -73,9 +95,34 @@ impl RepackLimits {
 pub struct RepackPublished {
     /// Identity, count and artifact sizes of the newly published or reused pair.
     pub written: PackWritten,
+    /// Optional bitmap outcome. A completed pack pair remains visible even if later bitmap work
+    /// fails; see [`RepackError::Bitmap`].
+    pub bitmap: BitmapOutcome,
 }
 
-/// Failure before complete pair publication. An unindexed pack may remain after interruption.
+/// Why an additive replacement has, or does not have, a bitmap index.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum BitmapOutcome {
+    /// Configuration or the caller disabled writing.
+    Disabled,
+    /// Complete bitmap and reverse-index sidecars are visible.
+    Written(crate::bitmap::Published),
+    /// Shallow parent boundaries cannot establish a full-DAG bitmap.
+    SkippedShallow,
+    /// Protected pack survivors were omitted from this replacement.
+    SkippedProtected,
+    /// Optional configured/default output exhausted a resource bound; maintenance continues.
+    SkippedLimit {
+        /// Bound that prevented bitmap output.
+        limit: &'static str,
+    },
+    /// Bitmap work failed after complete pair publication; the typed error carries its cause.
+    Failed,
+}
+
+/// Repack failure, retaining complete pair publication when later bitmap work fails.
+/// An unindexed pack may remain after interruption before pair completion.
 ///
 /// This operation leaves old storage intact. An incomplete plan needs its typed retention cause
 /// resolved; missing/corrupt input needs recovery. A publication failure may leave an unindexed
@@ -104,6 +151,18 @@ pub struct RepackPublished {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RepackError {
+    /// Invalid bitmap configuration; checked before pack publication.
+    #[error("invalid bitmap writing configuration")]
+    BitmapConfiguration(#[from] crate::config::InvalidValue),
+    /// A complete pair was published, but optional bitmap work failed. Old storage stays intact.
+    #[error("bitmap writing failed after repack publication")]
+    Bitmap {
+        /// Pair that is already visible, with bitmap outcome `Failed`.
+        published: Box<RepackPublished>,
+        /// Concrete publication/encoding error and bitmap visibility state.
+        #[source]
+        source: Box<crate::bitmap::InstallError>,
+    },
     /// A fresh retention scan did not establish complete reachability.
     #[error("retention scan incomplete")]
     Incomplete(#[source] RetentionError),
@@ -158,6 +217,13 @@ impl Repository {
     /// remain untouched, including protected packs. Readers with pinned generations keep their
     /// handles; new readers discover the indexed pair and existing readers can refresh
     /// explicitly.
+    ///
+    /// Bitmap output follows complete pair publication. By default, bare repositories write it
+    /// and nonbare repositories do not; the last resolved `repack.writeBitmaps`/`pack.writeBitmaps`
+    /// assignment or [`RepackLimits::write_bitmaps`] overrides that choice. This adds verified
+    /// graph reads, traversal work and sidecar disk space. Shallow graphs and replacements omitting
+    /// protected copies report a skip. Bitmap failure retains the published pair in
+    /// [`RepackError::Bitmap`] and never removes old storage.
     ///
     /// The caller must exclude cooperating ref, reflog and object writers when it requires a
     /// stable maintenance observation. Girt has no lock that excludes arbitrary external Git
@@ -259,6 +325,7 @@ impl Repository {
     ) -> Result<(RepackPublished, std::collections::BTreeSet<ObjectId>), RepackError> {
         let _headers = crate::pack::HeaderScope::new();
         check(cancel)?;
+        let write_bitmaps = configured_bitmaps(self, limits.write_bitmaps)?;
         plan.check_packs_unchanged(cancel)?;
         let objects = plan
             .store
@@ -380,8 +447,77 @@ impl Repository {
                     .map_err(RepackError::from)
             },
         )?;
-        Ok((RepackPublished { written }, held))
+        let mut published = RepackPublished {
+            written,
+            bitmap: BitmapOutcome::Disabled,
+        };
+        if write_bitmaps {
+            published.bitmap = if !self.shallow_roots().is_empty() {
+                BitmapOutcome::SkippedShallow
+            } else if !held.is_empty() {
+                BitmapOutcome::SkippedProtected
+            } else {
+                published.bitmap = BitmapOutcome::Failed;
+                match crate::bitmap::write_repack_bitmap(
+                    self,
+                    written.checksum,
+                    limits.bitmap,
+                    cancel,
+                ) {
+                    Ok(bitmap) => BitmapOutcome::Written(bitmap),
+                    Err(source) => {
+                        if limits.write_bitmaps != Some(true)
+                            && let Some(limit) = bitmap_limit(&source.source)
+                        {
+                            BitmapOutcome::SkippedLimit { limit }
+                        } else {
+                            return Err(RepackError::Bitmap {
+                                published: Box::new(published),
+                                source: Box::new(source),
+                            });
+                        }
+                    }
+                }
+            };
+        }
+        Ok((published, held))
     }
+}
+
+fn bitmap_limit(error: &crate::Error) -> Option<&'static str> {
+    use crate::bitmap::WriteError;
+    match error.downcast_ref::<WriteError>() {
+        Some(WriteError::Limit(limit)) => Some(*limit),
+        Some(WriteError::Read(ObjectReadError::Limit(limit))) => Some(*limit),
+        _ => match error.downcast_ref::<ObjectReadError>() {
+            Some(ObjectReadError::Limit(limit)) => Some(*limit),
+            _ => None,
+        },
+    }
+}
+
+fn configured_bitmaps(
+    repository: &Repository,
+    requested: Option<bool>,
+) -> Result<bool, RepackError> {
+    if let Some(requested) = requested {
+        return Ok(requested);
+    }
+    let last = repository.config().entries().iter().rev().find(|entry| {
+        entry.subsection.is_none()
+            && entry.name.eq_ignore_ascii_case(b"writeBitmaps")
+            && (entry.section.eq_ignore_ascii_case(b"repack")
+                || entry.section.eq_ignore_ascii_case(b"pack"))
+    });
+    let section = if last.is_some_and(|entry| entry.section.eq_ignore_ascii_case(b"pack")) {
+        "pack"
+    } else {
+        "repack"
+    };
+    Ok(repository
+        .config()
+        .boolean(section, None, "writeBitmaps")?
+        .unwrap_or(repository.is_bare()))
 }
 
 fn charge_input(len: u64, bytes: &mut u64, limits: PackWriteLimits) -> Result<(), PackWriteError> {

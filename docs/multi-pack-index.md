@@ -51,9 +51,9 @@ previous index. A failure after replacement can leave the new index visible; ins
 before retrying. Neither encoding nor publication deletes objects or packs. Girt's pack retirement
 removes derived MIDX files and their bitmap/chain artifacts before deleting named packs.
 
-Bitmap writing remains in [the bitmap issue](https://github.com/joshka/girt/issues/518). `--bitmap`
-reports that unsupported operation without installing an index. Automatic MIDX writing by gc or
-maintenance is separate from these explicit operations.
+`girt multi-pack-index write --bitmap` publishes a bitmap and reverse index with the new MIDX. It
+verifies full graph closure and selects a bounded set of commits; see [bitmap writing](bitmaps.md).
+Automatic MIDX writing by gc or maintenance is separate from these explicit operations.
 
 ## Measure index searches
 

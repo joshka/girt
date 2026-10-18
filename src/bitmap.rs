@@ -15,6 +15,13 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! [`Objects::encode_pack_bitmap`](crate::Objects::encode_pack_bitmap) and
+//! [`Objects::encode_multi_pack_bitmap`](crate::Objects::encode_multi_pack_bitmap) compute new
+//! artifacts from verified graph contents under independent [`WriteLimits`]. Repository bitmap
+//! publication methods require maintenance exclusion and report post-publication failures through
+//! [`InstallError`]. Default bare-repository repacks also write bitmaps; configure that separately
+//! through [`crate::retention::RepackLimits`].
+//!
 //! A bitmap position names an object in pack order (or MIDX pseudo-pack order), not object-ID
 //! order. [`BitmapIndex`] checks compressed data and its association with a caller-selected pack
 //! or MIDX checksum. [`ReverseIndex`] maps those positions back to ordinary index positions.
@@ -33,6 +40,7 @@
 //! ```
 
 mod ewah;
+mod install;
 mod inventory;
 mod query;
 mod reverse;
@@ -41,6 +49,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ewah::{Ewah, long, word};
+pub(crate) use install::write_repack_bitmap;
+pub use install::{InstallError, Published};
 pub use query::{QueryLimits, Reachability};
 pub use reverse::ReverseIndex;
 pub use write::{MultiPackWritten, WriteError, WriteLimits, WriteOptions, Written};
