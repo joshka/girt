@@ -7,8 +7,8 @@
 //!
 //! Single-part UTF-8/ASCII text mail supports 7bit, 8bit, binary, base64 and quoted-printable
 //! transfer encodings. RFC 2047 metadata additionally supports Latin-1. Other character sets and
-//! multipart MIME are explicit refusals. Scissors accepts standard dashed cut lines; other
-//! marker-bearing lines are refused until broader heuristic compatibility is implemented. Bounds
+//! multipart MIME are explicit refusals. Scissors uses Git's structural cut-line recognition;
+//! marker-bearing lines that do not qualify stay in the log message. Bounds
 //! cover raw input, headers, decoded content and each returned artifact. No partial result is
 //! returned on failure.
 //!

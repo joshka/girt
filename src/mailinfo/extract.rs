@@ -333,45 +333,57 @@ fn after_scissors<'a>(body: &'a [u8], cancel: &AtomicBool) -> Result<&'a [u8], E
             break;
         }
         offset += line.len();
-        if scissors_line(line)? {
+        if scissors_line(line) {
             start = offset;
         }
     }
     Ok(&body[start..])
 }
-// Admit the standard dashed cut line explicitly. Other marker-bearing forms are refused
-// until the broader mailinfo heuristic has independent compatibility coverage.
-fn scissors_line(line: &[u8]) -> Result<bool, Error> {
-    let markers = [b">8", b"8<", b">%", b"%<"];
-    let Some(index) = line
-        .windows(2)
-        .position(|pair| markers.iter().any(|marker| pair == *marker))
-    else {
-        return Ok(false);
+// Original CLI observations: a dash or cut marker starts a perforation run. Whitespace
+// extends that run and counts as a gap; plain text ends it. In particular, trailing blanks
+// can invalidate a cut while leading blanks do not. The visible span excludes edge blanks.
+fn scissors_line(line: &[u8]) -> bool {
+    let whitespace = |byte: &u8| b" \t\r\n".contains(byte);
+    let visible = match (
+        line.iter().position(|byte| !whitespace(byte)),
+        line.iter().rposition(|byte| !whitespace(byte)),
+    ) {
+        (Some(first), Some(last)) => last - first + 1,
+        _ => 0,
     };
-    let mut clean = line.strip_suffix(b"\n").unwrap_or(line);
-    clean = clean.strip_suffix(b"\r").unwrap_or(clean);
-    clean = clean.trim_ascii_start();
-    if let Some(rest) = clean.strip_prefix(b"#") {
-        clean = rest.trim_ascii_start();
+    let mut perforation = 0usize;
+    let mut gap = 0usize;
+    let mut scissors = false;
+    let mut run = false;
+    let mut offset = 0;
+    while offset < line.len() {
+        if [b">8", b"8<", b">%", b"%<"]
+            .iter()
+            .any(|marker| line[offset..].starts_with(*marker))
+        {
+            scissors = true;
+            run = true;
+            perforation += 2;
+            offset += 2;
+            continue;
+        }
+        match line[offset] {
+            b'-' => {
+                perforation += 1;
+                run = true;
+            }
+            byte if run && whitespace(&byte) => {
+                perforation += 1;
+                gap += 1;
+            }
+            _ => run = false,
+        }
+        offset += 1;
     }
-    let marker = &line[index..index + 2];
-    let index = clean
-        .windows(2)
-        .position(|pair| pair == marker)
-        .ok_or(Error::Unsupported("scissors line"))?;
-    let (left, right) = (&clean[..index], &clean[index + 2..]);
-    let left = left.strip_suffix(b" ").unwrap_or(left);
-    let right = right.strip_prefix(b" ").unwrap_or(right);
-    if clean.len() >= 8
-        && left.len() >= 2
-        && right.len() >= 2
-        && left.iter().chain(right).all(|&byte| byte == b'-')
-    {
-        Ok(true)
-    } else {
-        Err(Error::Unsupported("scissors line"))
-    }
+    scissors
+        && visible >= 8
+        && visible < perforation.saturating_mul(3)
+        && gap.saturating_mul(2) < perforation
 }
 
 fn multiple_addresses(value: &[u8]) -> bool {

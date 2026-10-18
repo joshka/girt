@@ -272,17 +272,9 @@ fn standard_scissors_forms_match_git(#[case] line: &[u8]) {
 #[case(b"text -- >8 --")]
 #[case(b"- >8 ---")]
 #[case(b"--   >8 --")]
-fn broader_scissors_forms_are_explicit_refusals(#[case] line: &[u8]) {
+fn broader_scissors_forms_match_git(#[case] line: &[u8]) {
     let input = [HEADERS, b"preamble\n", line, b"\nbody\n---\npatch\n"].concat();
-    assert!(matches!(
-        girt::mailinfo::parse_with(
-            &input,
-            Options::default().with_scissors(true),
-            Limits::default(),
-            &AtomicBool::new(false)
-        ),
-        Err(Error::Unsupported("scissors line"))
-    ));
+    compare(&input, Options::default().with_scissors(true));
 }
 
 #[rstest]
@@ -326,4 +318,68 @@ fn unfinished_encoded_words_match_git_failure_status(#[case] subject: &[u8]) {
         girt::mailinfo::parse(&input),
         Err(Error::Malformed("encoded word"))
     ));
+}
+
+#[rstest]
+#[case(b">8")]
+#[case(b"- >8 -")]
+#[case(b">8 ----")]
+#[case(b">8 ------")]
+#[case(b"---- >8")]
+#[case(b"------ >8")]
+#[case(b"-  >8  -")]
+#[case(b"===== >8 =====")]
+#[case(b"--text>8text--")]
+#[case(b"--abcdefgh>8abcdefgh--")]
+#[case(b"-- >8 -- trailing")]
+#[case(b"-- >8 --                    ")]
+#[case(b"-- >8 --\x0b\x0b\x0b\x0b\x0b\x0b")]
+#[case(b"-- >8 --\x0c\x0c\x0c\x0c\x0c\x0c")]
+#[case(b"\x0b\x0b\x0b\x0b\x0b\x0b-- >8 --")]
+#[case(b"\x0c\x0c\x0c\x0c\x0c\x0c-- >8 --")]
+#[case(b"                    -- >8 --")]
+#[case(b"-- >8 -- >8 --")]
+#[case(b"--   >8 >8   --")]
+#[case(b"--\t>8\t--")]
+#[case("ééé -- >8 -- 界界".as_bytes())]
+#[case(b"--\x0b>8\x0c--")]
+fn scissors_acceptance_and_retained_body_match_git(#[case] line: &[u8]) {
+    let input = [HEADERS, b"preamble\n", line, b"\nbody\n---\npatch\n"].concat();
+    compare(&input, Options::default().with_scissors(true));
+}
+
+#[rstest]
+fn generated_scissors_shapes_match_git(
+    #[values(0, 1, 2, 4)] dashes: usize,
+    #[values(0, 1, 3, 6)] gap: usize,
+    #[values(">8", "8<", ">%", "%<")] marker: &str,
+    #[values(0, 8, 20)] text: usize,
+) {
+    let line = format!(
+        "{}{}{}{marker}{}{}",
+        "x".repeat(text),
+        "-".repeat(dashes),
+        " ".repeat(gap),
+        "y".repeat(gap),
+        "-".repeat(dashes)
+    );
+    let input = [
+        HEADERS,
+        b"preamble\n",
+        line.as_bytes(),
+        b"\nbody\n---\npatch\n",
+    ]
+    .concat();
+    compare(&input, Options::default().with_scissors(true));
+}
+
+#[rstest]
+#[case(b"--abcdefg>8abcdefg--")]
+#[case(b"-- >8 --")]
+#[case(b"-- >8 --\x0b\x0b\x0b\x0b\x0b\x0b")]
+#[case(b"-- >8 --\x0c\x0c\x0c\x0c\x0c\x0c")]
+fn scissors_at_eof_matches_git(#[case] line: &[u8], #[values(false, true)] newline: bool) {
+    let ending: &[u8] = if newline { b"\n" } else { b"" };
+    let input = [HEADERS, b"preamble\n", line, ending].concat();
+    compare(&input, Options::default().with_scissors(true));
 }

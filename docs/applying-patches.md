@@ -284,9 +284,9 @@ for the caller to interpret.
 
 Single-part text mail supports UTF-8/ASCII, RFC 2047 Q/B headers (also Latin-1 metadata), and 7bit,
 8bit, binary, base64 and quoted-printable transfer encodings. Multipart MIME and other character
-sets are explicitly refused. Scissors supports standard dashed cut lines such as `-- >8 --` and
-`-- 8< --`; other marker-bearing lines are explicit refusals when scissors is enabled. Broader
-scissors recognition and multipart extraction remain tracked before `am` integration.
+sets are explicitly refused. Scissors recognizes the structural cut-line forms used by Git,
+including `-- >8 --`, `-- 8< --`, `-- >% --` and `-- %< --`. Marker-bearing text that does not
+qualify stays in the log message. Multipart extraction remains tracked before `am` integration.
 
 Input, raw headers, field count, decoded content, log output and patch output are independently
 bounded. Any metadata, decoding, cancellation or limit error returns no partial result. Unknown

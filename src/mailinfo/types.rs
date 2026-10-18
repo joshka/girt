@@ -17,8 +17,7 @@ pub enum Subject {
 pub struct Options {
     /// Subject prefix handling.
     pub subject: Subject,
-    /// Discard log text preceding a standard dashed scissors line.
-    /// Other marker-bearing forms are explicitly refused.
+    /// Discard log text preceding a recognized scissors line.
     pub scissors: bool,
     /// Append `Message-ID: ...` to the log message when a patch is found.
     pub message_id: bool,
