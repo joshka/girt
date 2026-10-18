@@ -1223,6 +1223,23 @@ operating systems and actual multi-gigabyte packs have not been exercised; small
 [Criterion baseline](benchmarks.md#pack-read-baseline) records opening, indexed misses, ordinary
 reads, and delta reconstruction. `examples/packed_repository.rs` is the runnable consumer.
 
+## Commit Message Cleanup
+
+`tests/message_git.rs` runs an original message corpus through Git 2.56.0 with isolated
+configuration. `git stripspace` and `git stripspace -s` match `Cleanup::Whitespace` and
+`Cleanup::Strip` byte for byte with the `#`, `//` and `;` comment prefixes, including carriage
+returns, form feeds, NUL bytes and non-ASCII whitespace. `git commit -e -F` with
+`commit.cleanup=scissors` stores what `Cleanup::Scissors` returns. Unit tests cover the
+`commit.cleanup` and `core.commentChar`/`core.commentString` configuration rules observed with the
+Git CLI: case-sensitive mode names, `default` and `scissors` acting as `whitespace` for unedited
+messages, and the last of the two comment variables winning.
+
+`CommentPrefix::auto` picks the first of `#;@!$%^&|:` that starts no line and returns `None` when
+all do, where Git refuses to choose. Git 2.56.0's commit command drops trailing `#` comment lines
+from a `-F` message before choosing (`x\n;z\n#z\n` gets `#`, while `x\n#z\n;z\n` gets `@`); callers
+reproducing `git commit -F` drop those lines first. Git deprecates `auto`. Every assignment of
+`core.commentChar` and `core.commentString` is validated, not just the last.
+
 ## Commit History
 
 `tests/support/history_git.rs` generates original commit payloads and stores them through Git
