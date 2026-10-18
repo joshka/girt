@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicBool;
 use clap::Args as ClapArgs;
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
-use girt::fsck::{MessageId, ObjectFinding, Options, Severity};
+use girt::fsck::{Finding, FindingDetail, MessageId, ObjectFinding, Options, Severity};
 
 use crate::Context;
 use crate::common::stdout;
@@ -71,7 +71,7 @@ pub fn run(args: Args, context: &Context) -> Result<ExitCode> {
                 eprintln!(
                     "{severity} in {kind} {id}: {}: {}",
                     finding.message_id.as_str(),
-                    description(finding.message_id)
+                    description(finding)
                 );
             }
             ObjectFinding::BrokenLink {
@@ -139,8 +139,13 @@ pub fn run(args: Args, context: &Context) -> Result<ExitCode> {
     })
 }
 
-fn description(id: MessageId) -> &'static str {
-    match id {
+fn description(finding: &Finding) -> std::borrow::Cow<'_, str> {
+    if finding.message_id == MessageId::NulInHeader
+        && let Some(FindingDetail::ByteOffset(offset)) = &finding.detail
+    {
+        return format!("unterminated header: NUL at offset {offset}").into();
+    }
+    let description = match finding.message_id {
         MessageId::HasDotgit => "contains '.git'",
         MessageId::HasDot => "contains '.'",
         MessageId::HasDotdot => "contains '..'",
@@ -151,6 +156,9 @@ fn description(id: MessageId) -> &'static str {
         MessageId::NullSha1 => "contains entries pointing to null sha1",
         MessageId::EmptyName => "contains empty pathname",
         MessageId::FullPathname => "contains full pathnames",
+        MessageId::MultipleAuthors => "invalid format - multiple 'author' lines",
+        MessageId::NulInCommit => "NUL byte in the commit object body",
+        MessageId::UnterminatedHeader => "unterminated header",
         MessageId::MissingAuthor => "invalid format - expected 'author' line",
         MessageId::MissingCommitter => "invalid format - expected 'committer' line",
         MessageId::MissingTaggerEntry => "invalid format - expected 'tagger' line",
@@ -158,5 +166,6 @@ fn description(id: MessageId) -> &'static str {
         MessageId::BadDate => "invalid author/committer line - bad date",
         MessageId::BadName => "invalid author/committer line - missing name",
         _ => "invalid object payload",
-    }
+    };
+    description.into()
 }

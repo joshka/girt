@@ -147,3 +147,55 @@ fn broken_tree_links_match_git() {
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(actual.stderr, expected.stderr);
 }
+
+fn assert_metadata_payload_matches_git(root: &Path, kind: &str, payload: &[u8]) {
+    support::git(
+        root,
+        &["hash-object", "-t", kind, "--literally", "-w", "--stdin"],
+        payload,
+    );
+    for args in [
+        vec!["fsck", "--no-dangling"],
+        vec!["fsck", "--no-dangling", "--strict"],
+    ] {
+        let expected = support::git_output(root, &args, b"");
+        let actual = girt(root, &args);
+        assert_eq!(actual.status.code(), expected.status.code(), "{payload:?}");
+        assert_eq!(actual.stdout, expected.stdout, "{payload:?}");
+        assert_eq!(actual.stderr, expected.stderr, "{payload:?}");
+    }
+}
+
+fn metadata_fixture() -> (tempfile::TempDir, String) {
+    let root = fixture();
+    let tree = support::git(root.path(), &["rev-parse", "refs/heads/main^{tree}"], b"");
+    let tree = std::str::from_utf8(&tree).unwrap().trim().to_owned();
+    (root, tree)
+}
+
+#[test]
+fn physical_commit_header_diagnostics_match_git_exactly() {
+    for case in [
+        "missing-author",
+        "missing-committer",
+        "duplicate-author",
+        "unterminated",
+        "nul-header",
+        "nul-body",
+    ] {
+        let (root, tree) = metadata_fixture();
+        let t = format!("tree {tree}\n");
+        let a = "author A <a@example.invalid> 1000000000 +0000\n";
+        let c = "committer C <c@example.invalid> 1000000000 +0000\n";
+        let payload = match case {
+            "missing-author" => format!("{t}{c}\nx\n"),
+            "missing-committer" => format!("{t}{a}\nx\n"),
+            "duplicate-author" => format!("{t}{a}{a}{c}\nx\n"),
+            "unterminated" => format!("{t}{a}{}", c.trim_end()),
+            "nul-header" => format!("{t}{}{c}\nx\n", a.replace("A", "A\0")),
+            "nul-body" => format!("{t}{a}{c}\nx\0y\n"),
+            _ => unreachable!(),
+        };
+        assert_metadata_payload_matches_git(root.path(), "commit", payload.as_bytes());
+    }
+}

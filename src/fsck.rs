@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 
 use crate::{ObjectFormat, ObjectKind, Tree};
 
+mod commit;
 mod lost_found;
 mod message;
 mod policy;
@@ -35,6 +36,16 @@ pub struct Finding {
     pub message_id: MessageId,
     /// Effective severity after strict mode and configured overrides.
     pub severity: Severity,
+    /// Additional typed context needed to render the diagnostic without reading the object again.
+    pub detail: Option<FindingDetail>,
+}
+
+/// Additional observed payload data for a diagnostic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum FindingDetail {
+    /// Byte offset of a NUL in a malformed header.
+    ByteOffset(usize),
 }
 
 /// Checks one already bounded payload without resolving its object references.
@@ -59,15 +70,7 @@ fn check_payload(
     let mut ids = BTreeSet::new();
     match kind {
         ObjectKind::Blob => {}
-        ObjectKind::Commit => match crate::Commit::parse(format, data) {
-            Err(_) => {
-                ids.insert(MessageId::BadCommit);
-            }
-            Ok(commit) => {
-                check_identity(commit.author(), MessageId::MissingAuthor, &mut ids);
-                check_identity(commit.committer(), MessageId::MissingCommitter, &mut ids);
-            }
-        },
+        ObjectKind::Commit => commit::check(format, data, &mut ids),
         ObjectKind::Tag => match crate::Tag::parse(format, data) {
             Err(_) => {
                 ids.insert(MessageId::BadTagObject);
@@ -91,6 +94,13 @@ fn check_payload(
         .map(|message_id| Finding {
             message_id,
             severity: message_id.severity(false),
+            detail: if message_id == MessageId::NulInHeader {
+                data.iter()
+                    .position(|byte| *byte == 0)
+                    .map(FindingDetail::ByteOffset)
+            } else {
+                None
+            },
         })
         .collect()
 }
@@ -450,6 +460,7 @@ impl crate::Repository {
                     finding: Finding {
                         message_id,
                         severity: Severity::Error,
+                        detail: None,
                     },
                 });
             }
