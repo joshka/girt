@@ -1,0 +1,94 @@
+{
+  "taken_under_load": true,
+  "source": "git.git local metadata clone",
+  "packed_objects": 431452,
+  "commits": 82450,
+  "source_pack_bytes_mib": 342.33,
+  "rows": [
+    {
+      "block": 0,
+      "bitmaps": false,
+      "load_before": [
+        27.99755859375,
+        26.86083984375,
+        27.9267578125
+      ],
+      "wall_seconds": 10.126824124992709,
+      "exit": 0,
+      "elapsed_ns": 9874709125,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 0,
+      "load_after": [
+        24.85546875,
+        26.22314453125,
+        27.6875
+      ]
+    },
+    {
+      "block": 1,
+      "bitmaps": true,
+      "load_before": [
+        24.85546875,
+        26.22314453125,
+        27.6875
+      ],
+      "wall_seconds": 48.15339983299782,
+      "exit": 0,
+      "elapsed_ns": 48132315917,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 2036560,
+      "load_after": [
+        29.837890625,
+        27.1591796875,
+        27.9423828125
+      ]
+    },
+    {
+      "block": 2,
+      "bitmaps": false,
+      "load_before": [
+        29.837890625,
+        27.1591796875,
+        27.9423828125
+      ],
+      "wall_seconds": 9.524031374996412,
+      "exit": 0,
+      "elapsed_ns": 9515446625,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 0,
+      "load_after": [
+        33.04296875,
+        27.95458984375,
+        28.21630859375
+      ]
+    },
+    {
+      "block": 3,
+      "bitmaps": true,
+      "load_before": [
+        33.04296875,
+        27.95458984375,
+        28.21630859375
+      ],
+      "wall_seconds": 47.392161207986646,
+      "exit": 0,
+      "elapsed_ns": 47371274083,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 2036560,
+      "load_after": [
+        23.97607421875,
+        26.51904296875,
+        27.6845703125
+      ]
+    }
+  ],
+  "writer_revision": "02152465b40a3069d39d02df4b029df9ad6b71b3",
+  "limits": "RepackLimits::trusted with explicit write_bitmaps toggle",
+  "median_off_seconds": 9.695077875,
+  "median_on_seconds": 47.751795,
+  "on_off_ratio": 4.9253647691819085
+}

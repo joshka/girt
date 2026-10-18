@@ -65,7 +65,8 @@ fixture, and `--use-bitmap-index --objects` agrees with decoded girt output. `gi
 `git multi-pack-index verify` also accept their associated inventories. Output uses independent EWAH
 records, lookup tables and reverse indexes; MIDX output includes RIDX/BTMP and unknown (zero)
 pathname-hash hints. This establishes format and graph compatibility, not identical compression or
-selection to Git.
+selection to Git. Graph construction reads each selected inventory copy in pack-offset order while
+retaining sorted-ID graph positions; identity, CRC, kind, closure and resource checks remain.
 
 Bitmap publication is covered by idempotent pack/MIDX writes, shared writer-lock exclusion,
 pre-publication failure preservation and cancellation. The CLI accepts
@@ -105,6 +106,13 @@ bitmap writing has no pathname-hash computation; ordering/selection is included 
 other-artifact stages. Validation dominates and traversal is secondary; encoding is negligible. This
 single instrumented run is diagnostic, not another alternating ratio sample. See
 [comparison and stage evidence](evidence/bitmap-repack-comparison-under-load.json).
+
+After switching verified graph reads to pack-offset order, four alternating runs under load 24–33
+measured median 9.70 seconds plain and 47.75 seconds with bitmaps (4.93 times plain), with the same
+retained object count, output pack bytes and sidecar bytes. This improves the earlier 5.82 ratio but
+remains above the 1.5 target; output stays explicit-only. Load differed between runs, so compare the
+within-run ratios rather than claiming the absolute-time difference as a controlled speedup. See
+[pack-order evidence](evidence/bitmap-repack-pack-order-under-load.json).
 
 ## Multi-pack indexes
 
