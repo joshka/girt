@@ -2307,6 +2307,16 @@ source or tests were copied or adapted. New runtime evidence is macOS arm64, Git
 10.3p1 and Rust 1.98.1. No Linux runtime result or Windows SSH support is claimed. Broader async
 filesystem/object-store architecture remains undecided.
 
+### Host-Key Policy
+
+`tests/ssh_host_keys.rs` connects girt with a `HostKeyPolicy` and `git ls-remote` with the
+equivalent OpenSSH options to the loopback sshd fixture, each on its own copy of a `known_hosts`
+file (Git's copy has a space in its path). A known key with `Reject` succeeds; an unknown key with
+`Reject` fails; an unknown key with `AcceptNew` succeeds and records the same host, key type and key
+in both files; a changed key with `AcceptNew` fails. A relative path is refused before connecting.
+These cases use the restricted policy; the ordinary policy places the same options first. Evidence:
+macOS arm64, Git 2.56.0 with the system OpenSSH, 2026-10-18.
+
 ## Transfer Ownership and Operational Review
 
 The review follow-up preserves exact object bytes, typed graph checks, retained pack snapshots,

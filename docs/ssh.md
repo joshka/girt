@@ -119,6 +119,22 @@ verify config-selected user, port, identity and trust, rejection of unknown/chan
 existing cancellation/reaping boundary. These are bounded compatibility observations rather than
 proof of ordinary interactive SSH parity.
 
+## Host-Key Policy
+
+`SshRemote::with_host_keys(&HostKeyPolicy)` fixes how OpenSSH checks the server's host key, for both
+the restricted and the ordinary policy. Its options come before every other option, and OpenSSH uses
+the first value it sees, so they override `~/.ssh/config` and the restricted policy's defaults.
+`HostKeyPolicy::files` become `UserKnownHostsFile`, quoted, with `%` doubled so OpenSSH does not
+expand tokens, and `GlobalKnownHostsFile=none`; empty keeps OpenSSH's own files.
+`UnknownHost::Reject` is `StrictHostKeyChecking=yes`, and `UnknownHost::AcceptNew` is `accept-new`,
+which records a new key in the first file and still refuses a changed one. `UpdateHostKeys=no` keeps
+OpenSSH from rewriting the files. Paths must be absolute UTF-8 without double quotes or line breaks.
+`workflow` applies the policy from `TransferCallbacks::host_key_policy`.
+
+OpenSSH checks the key before girt sees the connection, so there is no per-key callback. A pure-Rust
+SSH backend that could offer one is compared and deferred in
+[issue 751](https://github.com/joshka/girt/issues/751).
+
 ## Foreground Terminal Leasing
 
 `ForegroundTerminal::prepare(OwnedFd)` returns a non-cloneable attachment and `TerminalEvents`. The

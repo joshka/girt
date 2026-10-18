@@ -161,6 +161,7 @@ impl SshRemote {
             policy: LaunchPolicy::OpenSsh(options.environment),
             terminal: None,
             protocol: crate::transport::RequestedProtocol::V0,
+            host_keys: Vec::new(),
         })
     }
 }
