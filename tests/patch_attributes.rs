@@ -404,3 +404,66 @@ fn tree_source_matches_check_attr() {
         State::Value(b"rust")
     );
 }
+
+/// Parsing all consumer attributes and macros is separate from applying their effects.
+#[test]
+fn consumer_attributes_and_custom_macros_match_git() {
+    let fixture = fixture(&[], &[], &[(".gitattributes", b"[attr]audit text eol=crlf filter=demo merge=custom export-ignore\n*.txt audit\n*.bin binary\n")], &[]);
+    let repo = Repository::open(&fixture.worktree).unwrap();
+    let mut lookup = repo
+        .attributes(&environment(), DirectorySource::Worktree)
+        .unwrap();
+    for path in ["file.txt", "file.bin"] {
+        for attribute in ["text", "eol", "filter", "merge", "export-ignore", "diff"] {
+            let state = lookup.get(path.as_bytes(), attribute.as_bytes()).unwrap();
+            let value = match state {
+                State::Set => "set",
+                State::Unset => "unset",
+                State::Unspecified => "unspecified",
+                State::Value(value) => std::str::from_utf8(value).unwrap(),
+            };
+            assert_eq!(
+                git(
+                    &fixture.worktree,
+                    &["check-attr", attribute, "--", path],
+                    b""
+                ),
+                format!("{path}: {attribute}: {value}\n").as_bytes()
+            );
+        }
+    }
+}
+
+/// The configured-source limitation also affects attributes, independently of ignore matching.
+#[cfg(unix)]
+#[test]
+fn named_user_attribute_file_is_explicitly_refused() {
+    let user = std::process::Command::new("id")
+        .arg("-un")
+        .output()
+        .unwrap();
+    assert!(user.status.success());
+    let user = std::str::from_utf8(&user.stdout).unwrap().trim();
+    let home = std::env::var_os("HOME").unwrap();
+    let source = tempfile::Builder::new()
+        .prefix(".girt-attributes-audit-")
+        .tempdir_in(&home)
+        .unwrap();
+    std::fs::write(source.path().join("attributes"), "*.txt audit=value\n").unwrap();
+    let tail = source.path().file_name().unwrap().to_str().unwrap();
+    let path = format!("~{user}/{tail}/attributes");
+    let fixture = fixture(&[], &[], &[], &[("core.attributesFile", &path)]);
+    assert_eq!(
+        git(
+            &fixture.worktree,
+            &["check-attr", "audit", "--", "file.txt"],
+            b""
+        ),
+        b"file.txt: audit: value\n"
+    );
+    let repo = Repository::open(&fixture.worktree).unwrap();
+    assert!(matches!(
+        repo.attributes(&environment(), DirectorySource::Worktree),
+        Err(girt::attributes::LoadError::Unsupported(_))
+    ));
+}

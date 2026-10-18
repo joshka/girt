@@ -24,11 +24,24 @@ fn branch() -> RefName {
     RefName::new(b"refs/heads/policy-fixture").unwrap()
 }
 
+fn isolated_git(root: &std::path::Path) -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", root.join("absent-config"));
+    command
+}
+
 fn git_orphan_index_bytes(format: ObjectFormat, initial: Option<&[u8]>) -> Vec<u8> {
     let root = tempfile::tempdir().unwrap();
     let repo = root.path().join("git-main");
     let selected = root.path().join("selected.index");
-    let init = std::process::Command::new("git")
+    let init = isolated_git(root.path())
         .arg("init")
         .arg(format!("--object-format={format}"))
         .arg(&repo)
@@ -38,14 +51,14 @@ fn git_orphan_index_bytes(format: ObjectFormat, initial: Option<&[u8]>) -> Vec<u
     if let Some(bytes) = initial {
         fs::write(&selected, bytes).unwrap();
     }
-    let output = std::process::Command::new("git")
+    let output = isolated_git(root.path())
         .arg("-C")
         .arg(&repo)
         .args(["worktree", "add", "--orphan", "-b", "policy-fixture"])
         .arg(root.path().join("git-linked"))
         .env("GIT_INDEX_FILE", &selected)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", root.path().join("absent-config"))
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -58,7 +71,7 @@ fn git_orphan_symlink_index_bytes(format: ObjectFormat, initial: Option<&[u8]>) 
     let repo = root.path().join("git-main");
     let selected = root.path().join("selected.index");
     let referent = root.path().join("referent.index");
-    let init = std::process::Command::new("git")
+    let init = isolated_git(root.path())
         .arg("init")
         .arg(format!("--object-format={format}"))
         .arg(&repo)
@@ -69,14 +82,14 @@ fn git_orphan_symlink_index_bytes(format: ObjectFormat, initial: Option<&[u8]>) 
         fs::write(&referent, bytes).unwrap();
     }
     std::os::unix::fs::symlink("referent.index", &selected).unwrap();
-    let output = std::process::Command::new("git")
+    let output = isolated_git(root.path())
         .arg("-C")
         .arg(&repo)
         .args(["worktree", "add", "--orphan", "-b", "policy-fixture"])
         .arg(root.path().join("git-linked"))
         .env("GIT_INDEX_FILE", &selected)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", root.path().join("absent-config"))
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");

@@ -23,7 +23,13 @@ fn context(host: &str) -> CredentialContext {
 /// Runs `git credential-store --file <file> <action>` with a credential description.
 fn git_store(directory: &Path, file: &Path, action: &str, input: &str) -> String {
     use std::io::Write;
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let mut child = command
         .current_dir(directory)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", directory.join("absent-config"))
@@ -245,5 +251,62 @@ fn git_and_girt_agree_on_line_feed_and_nul_escapes() {
     assert_eq!(
         from_girt.credential().password.as_deref(),
         Some(&b"p%00q"[..])
+    );
+}
+
+/// Git's GIT_ASKPASS fallback and the explicit girt callback consume the same answer protocol.
+#[cfg(unix)]
+#[test]
+fn askpass_answers_match_git_credential_fill() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let script = directory.path().join("askpass");
+    std::fs::write(&script, "#!/bin/sh\nprintf 'audit-answer\\n'\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let mut child = command
+        .current_dir(directory.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", directory.path().join("absent-config"))
+        .env("GIT_ASKPASS", &script)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["credential", "fill"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"protocol=https\nhost=example.invalid\n\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let answer = girt::remote::askpass(
+        &girt::remote::CredentialProgram::new(script),
+        "Password:",
+        &AtomicBool::new(false),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(answer, b"audit-answer");
+    let expected = format!(
+        "username={}\npassword={}\n",
+        String::from_utf8_lossy(&answer),
+        String::from_utf8_lossy(&answer)
+    );
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains(&expected)
     );
 }
