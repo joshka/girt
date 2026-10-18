@@ -6,6 +6,7 @@ use rstest::rstest;
 
 use super::*;
 use crate::InitKind;
+use crate::pathspec::Pathspec;
 use crate::status::Change;
 
 fn fixture(path: &[u8], content: &[u8]) -> (tempfile::TempDir, Repository, Vec<index::Entry>) {
@@ -37,6 +38,7 @@ fn observe(
         entries,
         None,
         Listing::Raw(Untracked::Omit),
+        &Pathspec::all(),
         limits,
         &AtomicBool::new(false),
     )
@@ -190,6 +192,7 @@ fn reports_change_observed_after_content_read() {
         &entries,
         None,
         Listing::Raw(Untracked::Omit),
+        &Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
         &|_| fs::write(root.join("file"), b"different").unwrap(),
@@ -212,6 +215,7 @@ fn reports_directory_mutation_during_scan() {
         &entries,
         None,
         Listing::Raw(Untracked::Omit),
+        &Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
         &|_| fs::write(root.join("new-file"), b"new").unwrap(),
@@ -229,6 +233,7 @@ fn cancellation_during_read_returns_no_partial_report() {
         &entries,
         None,
         Listing::Raw(Untracked::Omit),
+        &Pathspec::all(),
         Limits::default(),
         &cancel,
         &|_| cancel.store(true, Ordering::Relaxed),
@@ -253,6 +258,7 @@ fn skips_nested_repository_and_bare_metadata() {
         &entries,
         None,
         Listing::Raw(Untracked::RawFilesWithoutIgnores),
+        &Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
     )
@@ -311,6 +317,7 @@ fn replaced_parent_is_detected_without_following_new_symlink() {
         &entries,
         None,
         Listing::Raw(Untracked::Omit),
+        &Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
         &|_| {
@@ -399,6 +406,7 @@ fn shared_pattern_budget_admits_exactly_the_limit(#[case] gitignore: &[u8], #[ca
         &entries,
         None,
         Listing::Ignoring(Box::new(rules), UntrackedFiles::All),
+        &Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
     );
@@ -419,6 +427,7 @@ fn directory_names_are_charged_while_they_are_read() {
         &entries,
         None,
         Listing::Raw(Untracked::Omit),
+        &Pathspec::all(),
         Limits::default().with_max_directory_entries(8),
         &AtomicBool::new(false),
     );

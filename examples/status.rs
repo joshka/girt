@@ -57,6 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let report = repository.raw_status_with(
                 Baseline::Head,
                 Untracked::RawFilesWithoutIgnores,
+                &girt::pathspec::Pathspec::all(),
                 limits,
                 &AtomicBool::new(false),
             )?;
@@ -70,6 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Baseline::Head,
         untracked,
         &rules,
+        &girt::pathspec::Pathspec::all(),
         limits,
         &AtomicBool::new(false),
     )?;

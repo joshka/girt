@@ -17,6 +17,7 @@ fn cancellation_precedes_platform_and_storage_access() {
     let result = repo.raw_status_with(
         Baseline::Tree(None),
         Untracked::Omit,
+        &girt::pathspec::Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(true),
     );
@@ -37,6 +38,7 @@ fn unsupported_platform_fails_before_index_read() {
     let result = repo.raw_status_with(
         Baseline::Tree(None),
         Untracked::Omit,
+        &girt::pathspec::Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
     );

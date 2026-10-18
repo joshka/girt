@@ -1,10 +1,12 @@
 //! Shared state and argument helpers for every command.
 
+use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::config::ConfigInputs;
+use girt::pathspec::{self, Pathspec};
 use girt::refs::{RefName, References};
 use girt::revision::{Range, Resolver, Revision, Selection};
 use girt::workflow::Environment;
@@ -79,6 +81,25 @@ impl Context {
     /// System, global and environment configuration, for commands that run outside a repository.
     pub fn user_config(&self) -> Result<Config> {
         Config::resolve(&self.config_inputs()?).wrap_err("reading global config")
+    }
+
+    /// Compiles command-line pathspecs relative to the current directory inside the worktree.
+    ///
+    /// The `GIT_*_PATHSPECS` variables apply. Outside the worktree (or in a bare repository) specs
+    /// resolve from the repository root. No specs select every path, and a list of only excludes
+    /// starts from the whole repository, as `git status`, `git diff` and `git log` do.
+    pub fn pathspec(&self, repository: &Repository, specs: &[OsString]) -> Result<Pathspec> {
+        let mut context =
+            pathspec::Context::from_environment(&self.environment)?.with_excludes_from_root(true);
+        if let Some(worktree) = repository.worktree()
+            && let Ok(worktree) = worktree.canonicalize()
+            && let Ok(current) = self.directory.canonicalize()
+            && let Ok(prefix) = current.strip_prefix(&worktree)
+        {
+            context = context.with_prefix(prefix.as_os_str().as_encoded_bytes());
+        }
+        let specs = specs.iter().map(|spec| spec.as_encoded_bytes());
+        Ok(Pathspec::parse(specs, &context)?)
     }
 }
 

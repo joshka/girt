@@ -337,6 +337,7 @@ fn checkout_drops_git_monitor_caches_and_git_rebuilds_them(
         .raw_status_with(
             girt::status::Baseline::Head,
             girt::status::Untracked::RawFilesWithoutIgnores,
+            &girt::pathspec::Pathspec::all(),
             Default::default(),
             &AtomicBool::new(false),
         )

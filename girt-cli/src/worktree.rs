@@ -13,7 +13,7 @@ use girt::checkout::Action;
 use girt::ignore::{InputKind, SourceFile, WorktreeRules};
 use girt::index::Stage;
 use girt::refs::RefName;
-use girt::status::{Baseline, Change, UntrackedFiles, UntrackedKind, WorktreeChange};
+use girt::status::{Baseline, Change, Limits, UntrackedFiles, UntrackedKind, WorktreeChange};
 use girt::{ChangeStatus, ObjectId, Repository, WorktreeRetirement, WorktreeState};
 
 use crate::common::{display_bytes, resolve_ref, resolve_tree, stdout, write_path};
@@ -50,6 +50,10 @@ pub struct StatusArgs {
     /// core.excludesFile.
     #[arg(short, long)]
     untracked: bool,
+    /// Limit the report to these pathspecs, relative to the current directory: `:/` for the
+    /// repository root, `:!` to exclude, `:(icase)`, `:(glob)`.
+    #[arg(last = true, value_name = "PATHSPEC")]
+    pathspecs: Vec<std::ffi::OsString>,
 }
 
 /// Explain ignore decisions for paths.
@@ -159,8 +163,16 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
     let rules = repository
         .ignore_rules(&context.environment)
         .wrap_err("loading ignore rules")?;
+    let paths = context.pathspec(&repository, &args.pathspecs)?;
     let report = repository
-        .status(Baseline::Head, listing, &rules)
+        .status_with(
+            Baseline::Head,
+            listing,
+            &rules,
+            &paths,
+            Limits::default(),
+            &AtomicBool::new(false),
+        )
         .wrap_err("computing status")?;
 
     let mut lines: BTreeMap<Vec<u8>, [char; 2]> = BTreeMap::new();

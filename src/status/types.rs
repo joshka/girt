@@ -21,6 +21,7 @@ use crate::{ChangeStatus, ObjectId, TreeChange, TreeCompareLimits, TreeValue, in
 /// let report = repo.raw_status_with(
 ///     Baseline::Tree(None),
 ///     Untracked::Omit,
+///     &girt::pathspec::Pathspec::all(),
 ///     Limits::default(),
 ///     &AtomicBool::new(false),
 /// )?;
@@ -60,6 +61,7 @@ pub enum Baseline {
 /// let report = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::RawFilesWithoutIgnores,
+///     &girt::pathspec::Pathspec::all(),
 ///     Limits::default(),
 ///     &AtomicBool::new(false),
 /// )?;
@@ -189,6 +191,7 @@ pub struct UntrackedPath {
 /// let result = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
+///     &girt::pathspec::Pathspec::all(),
 ///     Limits::default()
 ///         .with_max_file_bytes(5)
 ///         .with_max_worktree_bytes(8),
@@ -368,6 +371,7 @@ pub enum Comparison {
 /// let report = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
+///     &girt::pathspec::Pathspec::all(),
 ///     Limits::default(),
 ///     &AtomicBool::new(false),
 /// )?;
@@ -438,6 +442,7 @@ pub struct Report {
 /// let report = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
+///     &girt::pathspec::Pathspec::all(),
 ///     Limits::default(),
 ///     &AtomicBool::new(false),
 /// )?;
@@ -513,6 +518,7 @@ impl WorktreeChange {
 /// let report = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
+///     &girt::pathspec::Pathspec::all(),
 ///     Limits::default(),
 ///     &AtomicBool::new(false),
 /// )?;
@@ -562,6 +568,7 @@ pub enum Change {
 /// let result = repository.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
+///     &girt::pathspec::Pathspec::all(),
 ///     Limits::default(),
 ///     &AtomicBool::new(true),
 /// );

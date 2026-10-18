@@ -16,6 +16,7 @@ use super::{
     Error, Limits, Untracked, UntrackedFiles, UntrackedKind, UntrackedPath, WorktreeChange,
 };
 use crate::ignore::{self, Ignore, InputKind, Source};
+use crate::pathspec::{Pathspec, Prune};
 use crate::{EntryMode, ObjectId, Repository, TreeValue, index};
 
 pub(super) struct Observation {
@@ -40,12 +41,14 @@ enum Policy {
     Ignoring(UntrackedFiles),
 }
 
+#[expect(clippy::too_many_arguments, reason = "one traversal's inputs")]
 pub(super) fn scan(
     repo: &Repository,
     root: &Path,
     entries: &[index::Entry],
     index_written: Option<u32>,
     listing: Listing,
+    paths: &Pathspec,
     limits: Limits,
     cancel: &AtomicBool,
 ) -> Result<Observation, Error> {
@@ -55,6 +58,7 @@ pub(super) fn scan(
         entries,
         index_written,
         listing,
+        paths,
         limits,
         cancel,
         &|_| {},
@@ -69,6 +73,7 @@ fn scan_with_hook(
     entries: &[index::Entry],
     index_written: Option<u32>,
     listing: Listing,
+    paths: &Pathspec,
     limits: Limits,
     cancel: &AtomicBool,
     after_read: &(dyn Fn(&[u8]) + Sync),
@@ -118,6 +123,7 @@ fn scan_with_hook(
         metadata,
         index_written,
         policy,
+        paths,
         max_file_bytes: limits.max_file_bytes,
         max_depth,
         directory_entries: Budget::new(limits.max_directory_entries),
@@ -248,6 +254,8 @@ struct Scan<'a> {
     /// Seconds word of the index file's mtime; `None` disables trusting cached stat words.
     index_written: Option<u32>,
     policy: Policy,
+    /// Paths outside this pathspec are neither read nor listed.
+    paths: &'a Pathspec,
     max_file_bytes: usize,
     max_depth: usize,
     directory_entries: Budget,
@@ -447,6 +455,11 @@ impl Scan<'_> {
             }
             // Validate bytes before constructing an OS string or opening a directory entry.
             validate_path(&child)?;
+            // Nothing at or below a path outside the pathspec is reported, so it is not examined.
+            let selected = self.paths.matches(&child);
+            if !selected && self.paths.directory(&child) == Prune::Skip {
+                continue;
+            }
             let tracked = self.tracked.entry(&child);
             let directory = self.tracked.directory(&child);
             let needed = directory.is_some();
@@ -464,6 +477,9 @@ impl Scan<'_> {
                 .map_err(|source| io(&child, source))?;
             let kind = FileType::from_raw_mode(stat.st_mode);
             if kind != FileType::Directory {
+                if !selected {
+                    continue;
+                }
                 self.leaf(
                     found,
                     fd,
@@ -492,7 +508,13 @@ impl Scan<'_> {
                         found.observe(slot, Observed::Directory);
                         continue;
                     }
-                    if collapsed && inner.collapse.is_none() {
+                    // Under a pathspec Git collapses a directory only when the spec matches the
+                    // directory itself, written with its trailing slash; otherwise it lists the
+                    // matching paths inside.
+                    if collapsed
+                        && inner.collapse.is_none()
+                        && self.paths.matches(&[&child[..], b"/"].concat())
+                    {
                         inner.collapse = Some(found.listed.len());
                     }
                 }

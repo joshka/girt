@@ -17,8 +17,9 @@
 //! match against a directory name does not select its contents.
 //!
 //! A path is selected when at least one include spec matches it and no exclude spec does. A list
-//! made only of excludes first includes everything under the current directory, as Git does. An
-//! empty list selects every path; [`Pathspec::all`] builds that value directly.
+//! made only of excludes first includes everything under the current directory, as `git ls-files`
+//! does, or the whole repository with [`Context::with_excludes_from_root`], as `git status` does.
+//! An empty list selects every path; [`Pathspec::all`] builds that value directly.
 //!
 //! # Magic
 //!
@@ -62,11 +63,12 @@ use std::fmt;
 
 use crate::attributes::State;
 use crate::display::quote_path;
+use crate::workflow::Environment;
 
 /// The directory and environment defaults pathspecs are parsed against.
 ///
 /// [`Context::new`] describes the worktree root with no environment defaults;
-/// [`Context::from_env`] reads `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`,
+/// [`Context::from_environment`] reads `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`,
 /// `GIT_ICASE_PATHSPECS` and `GIT_LITERAL_PATHSPECS` the way Git does.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Context {
@@ -75,6 +77,7 @@ pub struct Context {
     noglob: bool,
     icase: bool,
     literal: bool,
+    excludes_from_root: bool,
 }
 
 impl Context {
@@ -83,24 +86,30 @@ impl Context {
         Self::default()
     }
 
-    /// Reads the `GIT_*_PATHSPECS` defaults from the process environment.
+    /// Reads the `GIT_*_PATHSPECS` defaults from a captured environment.
     ///
     /// Values use Git's boolean spelling (`1`, `true`, `yes`, `on`, `0`, `false`, `no`, `off`,
-    /// empty, or an integer); unset variables are off.
+    /// empty, or an integer); unset variables are off. The prefix stays at the worktree root.
+    ///
+    /// ```
+    /// use girt::pathspec::{Context, Pathspec};
+    /// use girt::workflow::Environment;
+    ///
+    /// let environment = Environment::default().with("GIT_GLOB_PATHSPECS", "1");
+    /// let context = Context::from_environment(&environment)?;
+    /// let spec = Pathspec::parse(["*.rs"], &context)?;
+    /// assert!(spec.matches(b"main.rs"));
+    /// assert!(!spec.matches(b"src/lib.rs"));
+    /// # Ok::<(), girt::pathspec::ParseError>(())
+    /// ```
     ///
     /// # Errors
     ///
     /// Returns [`ParseError::Environment`] for a value that is not a boolean, and
     /// [`ParseError::GlobAndNoglob`] when both glob variables are on.
-    pub fn from_env() -> Result<Self, ParseError> {
-        Self::from_vars(|name| std::env::var_os(name))
-    }
-
-    fn from_vars(
-        mut var: impl FnMut(&str) -> Option<std::ffi::OsString>,
-    ) -> Result<Self, ParseError> {
-        let mut flag = |name: &'static str| -> Result<bool, ParseError> {
-            let Some(value) = var(name) else {
+    pub fn from_environment(environment: &Environment) -> Result<Self, ParseError> {
+        let flag = |name: &'static str| -> Result<bool, ParseError> {
+            let Some(value) = environment.get(name) else {
                 return Ok(false);
             };
             let value = value.as_encoded_bytes().to_vec();
@@ -115,6 +124,7 @@ impl Context {
             noglob: flag("GIT_NOGLOB_PATHSPECS")?,
             icase: flag("GIT_ICASE_PATHSPECS")?,
             literal: flag("GIT_LITERAL_PATHSPECS")?,
+            excludes_from_root: false,
         };
         if context.glob && context.noglob {
             return Err(ParseError::GlobAndNoglob);
@@ -161,6 +171,19 @@ impl Context {
     #[must_use]
     pub fn with_literal(mut self, literal: bool) -> Self {
         self.literal = literal;
+        self
+    }
+
+    /// Makes a list of only excludes start from the whole repository instead of the current
+    /// directory.
+    ///
+    /// Git's commands differ here: `git status`, `git diff` and `git log` report the whole
+    /// repository when given no pathspec, so `:!tests` run from `src` excludes `tests` from the
+    /// whole repository. `git ls-files` and `git grep` default to the current directory, so the
+    /// same spec there selects `src` without `src/tests`. The default is the current directory.
+    #[must_use]
+    pub fn with_excludes_from_root(mut self, excludes_from_root: bool) -> Self {
+        self.excludes_from_root = excludes_from_root;
         self
     }
 
@@ -220,9 +243,12 @@ impl Pathspec {
             }
         }
         if pathspec.includes.is_empty() && !pathspec.excludes.is_empty() {
-            pathspec
-                .includes
-                .push(Item::literal(context.prefix.clone()));
+            let start = if context.excludes_from_root {
+                Vec::new()
+            } else {
+                context.prefix.clone()
+            };
+            pathspec.includes.push(Item::literal(start));
         }
         Ok(pathspec)
     }

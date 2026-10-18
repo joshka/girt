@@ -53,6 +53,7 @@ fn benchmark(c: &mut Criterion) {
             repo.raw_status_with(
                 Baseline::Tree(Some(tree_id)),
                 Untracked::Omit,
+                &girt::pathspec::Pathspec::all(),
                 Limits::default(),
                 &cancel,
             )
@@ -141,6 +142,7 @@ fn stat_cached(c: &mut Criterion) {
             repo.raw_status_with(
                 Baseline::Tree(None),
                 Untracked::Omit,
+                &girt::pathspec::Pathspec::all(),
                 Limits::default(),
                 &cancel,
             )

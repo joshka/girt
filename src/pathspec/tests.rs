@@ -61,27 +61,25 @@ fn invalid(spec: &str, reason: Reason) -> ParseError {
 
 #[test]
 fn environment_booleans() {
-    let vars = |pairs: &'static [(&'static str, &'static str)]| {
-        move |name: &str| {
-            pairs
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| (*value).into())
-        }
+    let read = |pairs: &[(&str, &str)]| {
+        let environment = pairs
+            .iter()
+            .fold(Environment::default(), |environment, (name, value)| {
+                environment.with(*name, *value)
+            });
+        Context::from_environment(&environment)
     };
-    let context = Context::from_vars(vars(&[("GIT_GLOB_PATHSPECS", "on")])).unwrap();
-    assert_eq!(context, Context::new().with_glob(true));
-    let context = Context::from_vars(vars(&[("GIT_ICASE_PATHSPECS", "0")])).unwrap();
-    assert_eq!(context, Context::new());
     assert_eq!(
-        Context::from_vars(vars(&[
-            ("GIT_GLOB_PATHSPECS", "1"),
-            ("GIT_NOGLOB_PATHSPECS", "1")
-        ])),
+        read(&[("GIT_GLOB_PATHSPECS", "on")]),
+        Ok(Context::new().with_glob(true))
+    );
+    assert_eq!(read(&[("GIT_ICASE_PATHSPECS", "0")]), Ok(Context::new()));
+    assert_eq!(
+        read(&[("GIT_GLOB_PATHSPECS", "1"), ("GIT_NOGLOB_PATHSPECS", "1")]),
         Err(ParseError::GlobAndNoglob)
     );
     assert!(matches!(
-        Context::from_vars(vars(&[("GIT_LITERAL_PATHSPECS", "bogus")])),
+        read(&[("GIT_LITERAL_PATHSPECS", "bogus")]),
         Err(ParseError::Environment {
             variable: "GIT_LITERAL_PATHSPECS",
             ..
@@ -142,4 +140,14 @@ fn attributes_never_take_whole_directories() {
         spec(&[":(attr:a,exclude)src"]).directory(b"src"),
         Prune::Descend
     );
+}
+
+#[test]
+fn exclude_only_lists_start_from_prefix_or_root() {
+    let context = Context::new().with_prefix(b"src");
+    let local = Pathspec::parse([":!gen"], &context).unwrap();
+    assert!(local.matches(b"src/a.rs") && !local.matches(b"README"));
+    let whole = Pathspec::parse([":!gen"], &context.with_excludes_from_root(true)).unwrap();
+    assert!(whole.matches(b"src/a.rs") && whole.matches(b"README"));
+    assert!(!whole.matches(b"src/gen/out.rs"));
 }

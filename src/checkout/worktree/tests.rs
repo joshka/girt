@@ -93,6 +93,7 @@ fn updates_raw_content_and_modes(
         .raw_status_with(
             crate::status::Baseline::Tree(Some(target)),
             crate::status::Untracked::Omit,
+            &crate::pathspec::Pathspec::all(),
             crate::status::Limits::default(),
             &AtomicBool::new(false),
         )
