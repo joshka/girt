@@ -68,7 +68,7 @@ stop on the same conflicts as a merge; the provisional tree alone does not resol
 - **Line endings.** With `core.autocrlf` or the `text` and `eol`
   [attributes](/girt/how-git-works/other/#attributes), Git stores LF in the repository and writes
   CRLF on Windows checkouts.
-- **`ident`** expands `$Id$` to `$Id: <blob id> $` on checkout.
+- **`ident`** expands `$Id$` to `$Id: <blob id> $` on checkout and collapses it again when adding.
 - **Clean and smudge drivers** (`filter.<name>.clean` and `.smudge`) run an external program: clean
   when adding a file, smudge when checking it out. Git's long-running filter process protocol keeps
   one program running for many files.
@@ -77,7 +77,7 @@ Git LFS works this way: the repository stores a small pointer file, and the smud
 it with the real file on checkout. Without filters, checkout writes the pointer instead of the file,
 and [status](/girt/how-git-works/working-tree/#status) reports converted files as changed.
 
-<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/496" />
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">Line endings and `ident` in `girt::filter`; no clean/smudge drivers, Git LFS or `working-tree-encoding`, and checkout and status don't apply filters yet.</GirtStatus>
 
 ## Applying patches
 

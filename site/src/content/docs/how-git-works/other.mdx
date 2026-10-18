@@ -30,7 +30,7 @@ the path out of `git archive`). A **macro** names a group of settings: `binary` 
 `-diff -merge -text`. Diffs, merges, checkout, status and archives all consult attributes, and
 `git check-attr -a path` shows what applies to a path.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">Attributes and macros match `git check-attr`; consumer gaps include filters, [merging](https://github.com/joshka/girt/issues/493) and [archive](https://github.com/joshka/girt/issues/526). Named-user `core.attributesFile` paths are refused ([#555](https://github.com/joshka/girt/issues/555)).</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">Attributes and macros match `git check-attr`; `text`, `eol` and `ident` take effect through `girt::filter`. Consumer gaps include filters in checkout and status, [merging](https://github.com/joshka/girt/issues/493) and [archive](https://github.com/joshka/girt/issues/526). Named-user `core.attributesFile` paths are refused ([#555](https://github.com/joshka/girt/issues/555)).</GirtStatus>
 
 ## Tags
 
