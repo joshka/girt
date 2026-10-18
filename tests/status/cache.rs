@@ -355,3 +355,24 @@ fn explicit_refresh_records_monitor_checkpoint_without_hiding_known_changes() {
         .unwrap();
     assert_eq!(report.unstaged.len(), 1);
 }
+
+#[test]
+fn explicit_refresh_populates_reusable_untracked_directories() {
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = Repository::init(ObjectFormat::Sha1, temporary.path().join("r"), InitKind::Worktree).unwrap();
+    let root = repo.worktree().unwrap();
+    for (key, value) in [("core.ignoreCase", "false"), ("core.precomposeUnicode", "false"), ("core.untrackedCache", "true"), ("core.excludesFile", "/girt-absent-excludes")] {
+        oracle::git(root, &["config", key, value], b"");
+    }
+    std::fs::create_dir(root.join("dir")).unwrap();
+    std::fs::write(root.join("dir/tracked"), b"old\n").unwrap();
+    std::fs::write(root.join("dir/new"), b"new\n").unwrap();
+    oracle::git(root, &["add", "dir/tracked"], b"");
+    let repo = Repository::open(root).unwrap();
+    let rules = repo.ignore_rules(&Environment::default()).unwrap();
+    girt::status::Scan::new(&repo, Baseline::Head, UntrackedFiles::Collapsed, &rules).refresh_caches().unwrap();
+    let index = repo.read_index(Default::default()).unwrap().unwrap();
+    let cache = index.untracked_cache(Default::default()).unwrap().unwrap();
+    assert!(cache.directories().iter().any(|directory| directory.name() == b"dir" && directory.untracked().iter().any(|name| name == b"new")));
+    assert!(oracle::git(root, &["status", "--porcelain"], b"").ends_with(b"?? dir/new\n"));
+}
