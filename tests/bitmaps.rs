@@ -1007,13 +1007,17 @@ fn repack_fixture(
 }
 
 #[rstest]
-#[case::bare_default(true, None, None, true)]
+#[case::bare_default(true, None, None, false)]
+#[case::bare_enable(true, Some("true"), None, true)]
+#[case::bare_disable(true, Some("false"), None, false)]
+#[case::nonbare_enable(false, Some("true"), None, true)]
+#[case::nonbare_disable(false, Some("false"), None, false)]
 #[case::nonbare_default(false, None, None, false)]
 #[case::legacy_enable(false, None, Some("true"), true)]
 #[case::legacy_disable(true, None, Some("false"), false)]
 #[case::modern_wins_false(true, Some("false"), Some("true"), false)]
 #[case::modern_wins_true(false, Some("true"), Some("false"), true)]
-fn repack_bitmap_configuration_matches_git(
+fn repack_bitmap_configuration_requires_opt_in(
     #[case] bare: bool,
     #[case] modern: Option<&str>,
     #[case] legacy: Option<&str>,
@@ -1054,7 +1058,13 @@ fn repack_bitmap_configuration_matches_git(
                 .is_some_and(|extension| extension == "bitmap")
         })
         .count();
-    assert_eq!(bitmaps > 0, expected);
+    // Git defaults bare repositories to bitmap writing; girt deliberately requires opt-in.
+    let git_expected = if modern.is_none() && legacy.is_none() {
+        bare
+    } else {
+        expected
+    };
+    assert_eq!(bitmaps > 0, git_expected);
 }
 
 #[test]
@@ -1115,7 +1125,7 @@ fn retirement_retains_bitmap_failure_publication_and_accepts_its_own_sidecars() 
         .unwrap_err();
     assert!(error.report.published.is_some());
     assert!(error.report.removed.is_empty());
-    let (_root, repo, commit) = repack_fixture(true, None, None);
+    let (_root, repo, commit) = repack_fixture(true, Some("true"), None);
     let report = repo
         .retire_old_packs(
             &mut IsolatedFixture,
@@ -1187,8 +1197,8 @@ fn configured_bitmap_limits_skip_optional_output_without_failing_repack() {
 
 #[test]
 #[cfg(unix)]
-fn default_bitmap_limit_does_not_block_old_pack_retirement() {
-    let (root, repo, commit) = repack_fixture(true, None, None);
+fn configured_bitmap_limit_does_not_block_old_pack_retirement() {
+    let (root, repo, commit) = repack_fixture(true, Some("true"), None);
     let orphan = pack_git::git(
         root.path(),
         &["hash-object", "-w", "--stdin"],

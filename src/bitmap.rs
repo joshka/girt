@@ -19,7 +19,7 @@
 //! [`Objects::encode_multi_pack_bitmap`](crate::Objects::encode_multi_pack_bitmap) compute new
 //! artifacts from verified graph contents under independent [`WriteLimits`]. Repository bitmap
 //! publication methods require maintenance exclusion and report post-publication failures through
-//! [`InstallError`]. Default bare-repository repacks also write bitmaps; configure that separately
+//! [`InstallError`]. Repacks write bitmaps only when explicitly enabled; configure that separately
 //! through [`crate::retention::RepackLimits`].
 //!
 //! A bitmap position names an object in pack order (or MIDX pseudo-pack order), not object-ID

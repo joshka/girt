@@ -159,11 +159,11 @@ girt -C repo.git multi-pack-index verify
 ```
 
 Repacking uses the last resolved assignment of `repack.writeBitmaps` or its deprecated synonym
-`pack.writeBitmaps`. The default is true for bare repositories and false for nonbare repositories,
-as in Git.
-**Bare-repository repack and gc operations that publish a replacement now write bitmaps by default**,
-adding graph verification, traversal time and sidecar disk space. Set either config key to false, or
-set `RepackLimits::write_bitmaps = Some(false)`, to disable it. Explicit caller settings override
+`pack.writeBitmaps`. Unset means disabled for both bare and nonbare repositories. This deliberately
+and temporarily differs from Git's bare default: completed bitmap writing measured 5.82 times a
+plain repack on a git.git-sized fixture under load. Restore Git's bare default once the writer is
+within about 1.5 times a plain repack. Set either config key to true, or set
+`RepackLimits::write_bitmaps = Some(true)`, to opt in. Explicit caller settings override
 configuration; `RepackLimits::bitmap` controls the writer's independent bounds.
 
 `RepackPublished::bitmap` reports written, disabled, shallow, protected-survivor or limit-skip

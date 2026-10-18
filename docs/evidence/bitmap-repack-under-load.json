@@ -1,0 +1,94 @@
+{
+  "taken_under_load": true,
+  "source": "git.git local metadata clone",
+  "packed_objects": 431452,
+  "commits": 82450,
+  "source_pack_bytes_mib": 342.33,
+  "rows": [
+    {
+      "block": 0,
+      "bitmaps": false,
+      "load_before": [
+        29.236328125,
+        30.38720703125,
+        31.5703125
+      ],
+      "wall_seconds": 12.703903540997999,
+      "exit": 0,
+      "elapsed_ns": 12439043416,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 0,
+      "load_after": [
+        32.671875,
+        31.1650390625,
+        31.8310546875
+      ]
+    },
+    {
+      "block": 1,
+      "bitmaps": true,
+      "load_before": [
+        32.671875,
+        31.1650390625,
+        31.8310546875
+      ],
+      "wall_seconds": 77.05041599999822,
+      "exit": 0,
+      "elapsed_ns": 77039450500,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 2036560,
+      "load_after": [
+        30.732421875,
+        30.96875,
+        31.7060546875
+      ]
+    },
+    {
+      "block": 2,
+      "bitmaps": false,
+      "load_before": [
+        30.732421875,
+        30.96875,
+        31.7060546875
+      ],
+      "wall_seconds": 15.689626666993718,
+      "exit": 0,
+      "elapsed_ns": 15679332000,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 0,
+      "load_after": [
+        32.02197265625,
+        31.28515625,
+        31.80322265625
+      ]
+    },
+    {
+      "block": 3,
+      "bitmaps": true,
+      "load_before": [
+        32.02197265625,
+        31.28515625,
+        31.80322265625
+      ],
+      "wall_seconds": 86.51034183299635,
+      "exit": 0,
+      "elapsed_ns": 86500114834,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 2036560,
+      "load_after": [
+        30.625,
+        30.4794921875,
+        31.40625
+      ]
+    }
+  ],
+  "writer_revision": "171be1d76310b7f81861fa5536b2ea3cbe51350d",
+  "limits": "RepackLimits::trusted with explicit write_bitmaps toggle",
+  "median_off_seconds": 14.059187708,
+  "median_on_seconds": 81.769782667,
+  "on_off_ratio": 5.81611003176742
+}
