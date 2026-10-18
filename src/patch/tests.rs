@@ -114,9 +114,11 @@ fn cancellation_writes_nothing() {
     assert!(out.is_empty());
 }
 
-/// A content limit names the entry's path; the headers already written stay in the output.
-#[test]
-fn limit_failure_names_the_path_after_headers() {
+/// A content limit names the entry's path and retains the entry header already written.
+#[rstest]
+#[case::text(false)]
+#[case::binary_encoding(true)]
+fn limit_failure_names_the_path_after_headers(#[case] binary_patch: bool) {
     let (_directory, repo) = repository();
     let entries = entries(&repo, b"a\n", b"b\n");
     let mut out = Vec::new();
@@ -127,14 +129,15 @@ fn limit_failure_names_the_path_after_headers() {
         .write_patch_with(
             &mut out,
             &entries,
-            Options::default(),
+            Options::default().with_binary_patch(binary_patch),
             None,
             limits,
             &AtomicBool::new(false),
         )
         .unwrap_err();
     assert!(matches!(&error, Error::Read { path, .. } if path == b"file"));
-    assert!(out.starts_with(b"diff --git a/file b/file\nindex "));
+    // The index header waits for content classification: encoded binary patches need full IDs.
+    assert_eq!(out, b"diff --git a/file b/file\n");
 }
 
 /// A tree referencing a missing blob reports the read failure instead of an empty side.
