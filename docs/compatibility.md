@@ -3514,8 +3514,8 @@ conservative refusal separately.
 
 ## Signed payloads
 
-`girt::signing` splits a commit or tag into its signature and the exact bytes the signature covers.
-Nothing is verified and no program runs; signing and verification are tracked in
+`girt::signing` splits a commit or tag into its signature and the exact bytes the signature covers,
+and signs and verifies SSH signatures. OpenPGP and X.509 signing and verification are tracked in
 [the signatures issue](https://github.com/joshka/girt/issues/510).
 
 `Commit::signed_payload` reads the signature header for the commit's own format (`gpgsig` for SHA-1,
@@ -3536,3 +3536,23 @@ recorder and compares the payload and signature Git hands them during `verify-co
 signatures. A second test signs commits, a tag and a merge of that tag through Git with a throwaway
 ed25519 key and checks each split with `ssh-keygen -Y verify`. The recorder test needs a POSIX
 shell; the ssh test skips when `ssh-keygen` is absent.
+
+### SSH signing and verification
+
+`SshSigner` runs `ssh-keygen -Y sign -n git -f <key>` with the payload on standard input, adding
+`-U` and a temporary key file for a literal `key::` signing key, as Git does. `SshVerifier` follows
+the sequence Git runs: `ssh-keygen -Y find-principals` against `gpg.ssh.allowedSignersFile`, then
+`-Y verify` for the first principal printed, with `gpg.ssh.revocationFile` as `-r`; with no
+principal, `-Y check-novalidate` without the revocation file. Both pass the committer or tagger date
+as `-Overify-time`. Git formats that time in the local time zone; girt passes UTC with a `Z` suffix,
+which `ssh-keygen` reads as the same instant. Nothing runs under `Programs::Refuse`, the default.
+
+`tests/signing.rs` signs commits and tags through Git with throwaway ed25519 keys. Because ed25519
+signatures are deterministic, it requires girt's signature and re-signed tag to equal Git's byte for
+byte, in SHA-1 and SHA-256 repositories. It compares `Status::letter`, signer, fingerprint and trust
+with `git log --format=%G?|%GS|%GF|%GT` for a good signature, an unknown key, `valid-before` and
+`valid-after` outside and around the commit date, a disallowed namespace, several principals, a
+revoked key with and without an owning principal, a missing allowed signers file, and a tampered
+commit, and compares tags with `git verify-tag`'s exit status. Without `gpg.ssh.allowedSignersFile`,
+girt returns `Error::NoAllowedSigners` where Git reports `N`. The `gpg.ssh.defaultKeyCommand` and
+literal-key paths are not compared with Git, because they need an SSH agent.

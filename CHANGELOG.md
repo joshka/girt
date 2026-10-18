@@ -12,6 +12,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `girt::signing` splits signed commits and tags into the signature and the exact payload it
   signs, matching what Git passes to `gpg`, `gpgsm` and `ssh-keygen` when verifying.
   `Commit::merge_tags` reads the tags a merge recorded in `mergetag` headers.
+- `signing::SshSigner` and `signing::SshVerifier` sign and verify SSH signatures with
+  `ssh-keygen`, configured from `user.signingKey` and `gpg.ssh.*`, and only when the caller passes
+  `Programs::Run`. Verification returns a typed `Verification` matching Git's `%G?` letters.
+  `Tag::new_signed` signs a tag as `git tag -s` does.
 
 ## [0.16.0](https://github.com/joshka/girt/compare/girt-v0.15.0...girt-v0.16.0) - 2026-10-18
 

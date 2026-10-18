@@ -6,7 +6,9 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use girt::signing::SignatureFormat;
+use girt::signing::{
+    Programs, SignatureFormat, Signer, SshKey, SshSigner, SshVerifier, Verification,
+};
 use girt::{Commit, ObjectFormat, Tag};
 use rstest::rstest;
 
@@ -181,7 +183,14 @@ fn commit_payload_matches_git_verify_input(
     );
     let id = git_line(
         &repo,
-        &["hash-object", "-t", "commit", "-w", "--literally", "--stdin"],
+        &[
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            "--literally",
+            "--stdin",
+        ],
         bytes.as_bytes(),
     );
     let commit = Commit::parse(format, bytes.as_bytes()).unwrap();
@@ -327,4 +336,279 @@ fn git_ssh_signed_objects_verify_from_split_payloads(
     let merged: Vec<Tag> = merge.merge_tags().collect::<Result<_, _>>().unwrap();
     assert_eq!(merged, [tag]);
     verify(merged[0].signed_payload().unwrap());
+}
+
+/// A repository with commits and a tag signed through Git by a throwaway ed25519 key.
+struct SshRepo {
+    root: tempfile::TempDir,
+    repo: std::path::PathBuf,
+    format: ObjectFormat,
+}
+
+impl SshRepo {
+    fn new(format: ObjectFormat) -> Option<Self> {
+        if !has_program("ssh-keygen", "-?") {
+            eprintln!("skipping: ssh-keygen not installed");
+            return None;
+        }
+        let root = tempfile::tempdir().unwrap();
+        for (name, comment) in [("key", "test"), ("other", "other")] {
+            let path = root.path().join(name);
+            let output = run(
+                "ssh-keygen",
+                root.path(),
+                &[
+                    "-q",
+                    "-t",
+                    "ed25519",
+                    "-N",
+                    "",
+                    "-C",
+                    comment,
+                    "-f",
+                    path.to_str().unwrap(),
+                ],
+                b"",
+            );
+            assert!(output.status.success());
+        }
+        let repo = init(root.path(), format);
+        let this = Self { root, repo, format };
+        this.allow("allowed", "a@example.com", "", "key");
+        let key = this.path("key");
+        let allowed = this.path("allowed");
+        for (name, value) in [
+            ("gpg.format", "ssh"),
+            ("user.signingKey", key.as_str()),
+            ("gpg.ssh.allowedSignersFile", allowed.as_str()),
+        ] {
+            git(&this.repo, &["config", name, value], b"");
+        }
+        git(
+            &this.repo,
+            &["commit", "-qS", "--allow-empty", "-m", "signed"],
+            b"",
+        );
+        git(
+            &this.repo,
+            &["tag", "-s", "-m", "signed tag", "signed-tag"],
+            b"",
+        );
+        Some(this)
+    }
+
+    fn path(&self, name: &str) -> String {
+        self.root.path().join(name).display().to_string()
+    }
+
+    /// Writes an allowed signers file `name` with one line for `key`'s public key.
+    fn allow(&self, name: &str, principals: &str, options: &str, key: &str) {
+        let public = std::fs::read_to_string(self.root.path().join(format!("{key}.pub"))).unwrap();
+        std::fs::write(
+            self.root.path().join(name),
+            format!("{principals} {options}{public}"),
+        )
+        .unwrap();
+    }
+
+    fn commit(&self, rev: &str) -> Commit {
+        Commit::parse(
+            self.format,
+            &git(&self.repo, &["cat-file", "commit", rev], b""),
+        )
+        .unwrap()
+    }
+
+    fn tag(&self, rev: &str) -> Tag {
+        Tag::parse(
+            self.format,
+            &git(&self.repo, &["cat-file", "tag", rev], b""),
+        )
+        .unwrap()
+    }
+
+    /// Git's `%G?|%GS|%GF|%GT` for `rev` under extra `-c` settings.
+    fn git_verdict(&self, settings: &[String], rev: &str) -> String {
+        let mut args: Vec<&str> = settings.iter().flat_map(|s| ["-c", s.as_str()]).collect();
+        args.extend(["log", "-1", "--format=%G?|%GS|%GF|%GT", rev]);
+        let output = run("git", &self.repo, &args, b"");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn verifier(&self, settings: &[String]) -> Result<SshVerifier, girt::signing::Error> {
+        let mut config = format!(
+            "[gpg \"ssh\"]\nallowedSignersFile = {}\n",
+            self.path("allowed")
+        );
+        for setting in settings {
+            let (name, value) = setting.split_once('=').unwrap();
+            let name = name.strip_prefix("gpg.ssh.").unwrap();
+            config.push_str(&format!("{name} = {value}\n"));
+        }
+        let config = girt::Config::parse(config.as_bytes()).unwrap();
+        let environment: girt::workflow::Environment =
+            [("HOME", self.root.path())].into_iter().collect();
+        SshVerifier::from_config(&config, &environment, Programs::Run)
+            .map(|verifier| verifier.with_environment(isolated(self.root.path())))
+    }
+}
+
+/// A program environment with no agent, keyring or real home.
+fn isolated(home: &Path) -> girt::workflow::Environment {
+    let mut environment: girt::workflow::Environment = [("HOME", home)].into_iter().collect();
+    // Windows programs also need SYSTEMROOT to start.
+    for name in ["PATH", "SYSTEMROOT"] {
+        if let Some(value) = std::env::var_os(name) {
+            environment = environment.with(name, value);
+        }
+    }
+    environment.with("GNUPGHOME", home.join("gnupg"))
+}
+
+fn verdict(verification: &Verification) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        verification.status.letter(),
+        verification.signer.as_deref().unwrap_or(""),
+        verification.fingerprint.as_deref().unwrap_or(""),
+        verification.trust.as_str()
+    )
+}
+
+#[rstest]
+fn ssh_signatures_match_git_signatures(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let Some(repo) = SshRepo::new(format) else {
+        return;
+    };
+    let signer = SshSigner::new(SshKey::Path(repo.path("key").into()))
+        .with_programs(Programs::Run)
+        .with_environment(isolated(repo.root.path()));
+    assert_eq!(signer.format(), SignatureFormat::Ssh);
+
+    // ed25519 signatures are deterministic, so girt's must equal Git's byte for byte.
+    let commit = repo.commit("HEAD");
+    let signed = commit.signed_payload().unwrap();
+    assert_eq!(signer.sign(signed.payload()).unwrap(), signed.signature());
+
+    let tag = repo.tag("signed-tag");
+    let mut fields = tag.to_fields().unwrap();
+    let signed = tag.signed_payload().unwrap();
+    fields
+        .message
+        .truncate(fields.message.len() - signed.signature().len());
+    let resigned = Tag::new_signed(fields, |payload| signer.sign(payload)).unwrap();
+    assert_eq!(resigned, tag);
+}
+
+#[test]
+fn programs_are_refused_by_default() {
+    let signer = SshSigner::new(SshKey::Path("key".into()));
+    assert!(matches!(
+        signer.sign(b"payload"),
+        Err(girt::signing::Error::Refused { .. })
+    ));
+}
+
+#[rstest]
+#[case::good(&[], 'G')]
+#[case::unknown_key(&["allowedSignersFile=unknown"], 'U')]
+#[case::expired(&["allowedSignersFile=expired"], 'U')]
+#[case::not_yet_valid(&["allowedSignersFile=future"], 'U')]
+#[case::still_valid(&["allowedSignersFile=window"], 'G')]
+#[case::wrong_namespace(&["allowedSignersFile=namespace"], 'B')]
+#[case::several_principals(&["allowedSignersFile=several"], 'G')]
+#[case::revoked(&["revocationFile=key.pub"], 'B')]
+#[case::revoked_unknown(&["allowedSignersFile=unknown", "revocationFile=key.pub"], 'U')]
+#[case::missing_file(&["allowedSignersFile=absent"], 'U')]
+fn ssh_verification_matches_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] settings: &[&str],
+    #[case] letter: char,
+    #[values("HEAD", "signed-tag", "tampered")] rev: &str,
+) {
+    let Some(repo) = SshRepo::new(format) else {
+        return;
+    };
+    repo.allow("unknown", "b@example.com", "", "other");
+    repo.allow(
+        "expired",
+        "a@example.com",
+        "valid-before=\"20200101\" ",
+        "key",
+    );
+    repo.allow(
+        "future",
+        "a@example.com",
+        "valid-after=\"20300101\" ",
+        "key",
+    );
+    repo.allow(
+        "window",
+        "a@example.com",
+        "valid-after=\"20231114\",valid-before=\"20231116\" ",
+        "key",
+    );
+    repo.allow("namespace", "a@example.com", "namespaces=\"file\" ", "key");
+    repo.allow("several", "a@example.com,c@example.com", "", "key");
+    let settings: Vec<String> = settings
+        .iter()
+        .map(|setting| {
+            let (name, file) = setting.split_once('=').unwrap();
+            format!("gpg.ssh.{name}={}", repo.path(file))
+        })
+        .collect();
+
+    let (rev, signed) = match rev {
+        "signed-tag" => (rev.to_owned(), repo.tag(rev).signed_payload().unwrap()),
+        "tampered" => {
+            let bytes = git(&repo.repo, &["cat-file", "commit", "HEAD"], b"");
+            let mut tampered = bytes.clone();
+            tampered.extend_from_slice(b"tampered\n");
+            let id = git_line(
+                &repo.repo,
+                &["hash-object", "-t", "commit", "-w", "--stdin"],
+                &tampered,
+            );
+            let commit = Commit::parse(format, &tampered).unwrap();
+            (id, commit.signed_payload().unwrap())
+        }
+        _ => (rev.to_owned(), repo.commit(rev).signed_payload().unwrap()),
+    };
+    // `log --format` shows a tag's target, so compare tags through verify-tag's exit status.
+    let verification = repo.verifier(&settings).unwrap().verify(&signed).unwrap();
+    if rev == "signed-tag" {
+        let mut args: Vec<&str> = settings.iter().flat_map(|s| ["-c", s.as_str()]).collect();
+        args.extend(["verify-tag", "signed-tag"]);
+        let status = run("git", &repo.repo, &args, b"").status;
+        assert_eq!(verification.is_good(), status.success());
+    } else {
+        assert_eq!(verdict(&verification), repo.git_verdict(&settings, &rev));
+    }
+    let expected = if rev == "HEAD" || rev == "signed-tag" {
+        letter
+    } else {
+        'B'
+    };
+    assert_eq!(verification.status.letter(), expected);
+}
+
+#[test]
+fn ssh_verification_needs_allowed_signers() {
+    let config = girt::Config::parse(b"").unwrap();
+    let verifier = SshVerifier::from_config(&config, &Default::default(), Programs::Run).unwrap();
+    let tag = Tag::parse(
+        ObjectFormat::Sha1,
+        format!(
+            "object {}\ntype commit\ntag t\n\n-----BEGIN SSH SIGNATURE-----\n",
+            "1".repeat(40)
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    assert!(matches!(
+        verifier.verify(&tag.signed_payload().unwrap()),
+        Err(girt::signing::Error::NoAllowedSigners)
+    ));
 }

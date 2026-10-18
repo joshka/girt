@@ -10,7 +10,10 @@
 //! returns them as [`Tag`] values whose own signatures are available through
 //! [`Tag::signed_payload`].
 //!
-//! Nothing here runs a program or checks a signature cryptographically.
+//! [`SshSigner`] makes SSH signatures and [`SshVerifier`] checks them against an allowed signers
+//! file, both by running `ssh-keygen -Y` as Git does. Running programs is opt-in through
+//! [`Programs`]. Other signers plug in through [`Signer`] or a closure. A check returns a
+//! [`Verification`] whose [`Status`] matches Git's `%G?` letters.
 //!
 //! # Split a signed tag
 //!
@@ -39,7 +42,14 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::{Commit, CommitPayload, ObjectFormat, Tag, TagError};
+use std::ffi::{OsStr, OsString};
+use std::process::{ExitStatus, Output};
+
+use crate::{Commit, CommitPayload, ObjectFormat, Tag, TagError, TagFields};
+
+mod ssh;
+
+pub use ssh::{SshKey, SshSigner, SshVerifier};
 
 /// Header holding a SHA-1 object's signature.
 const SHA1_HEADER: &[u8] = b"gpgsig";
@@ -117,6 +127,7 @@ impl SignatureFormat {
 pub struct SignedPayload {
     payload: Vec<u8>,
     signature: Vec<u8>,
+    signed_at: Option<i64>,
 }
 
 impl SignedPayload {
@@ -135,6 +146,13 @@ impl SignedPayload {
     /// Git refuses to verify a commit whose signature has no known armor line.
     pub fn format(&self) -> Option<SignatureFormat> {
         SignatureFormat::detect(&self.signature)
+    }
+
+    /// The committer or tagger date in Unix seconds, when it can be read.
+    ///
+    /// Verifiers check key validity periods at this time, as Git does.
+    pub fn signed_at(&self) -> Option<i64> {
+        self.signed_at
     }
 
     /// Splits into the payload and the signature.
@@ -200,7 +218,17 @@ impl Commit {
             return None;
         }
         let payload = view.without_headers(&removed)?;
-        Some(SignedPayload { payload, signature })
+        let signed_at = self
+            .committer()
+            .ok()
+            .flatten()
+            .and_then(|identity| identity.date().ok())
+            .map(|date| date.seconds);
+        Some(SignedPayload {
+            payload,
+            signature,
+            signed_at,
+        })
     }
 
     /// Tags embedded in `mergetag` headers, in header order.
@@ -304,10 +332,285 @@ impl Tag {
                 is_signature.get(index) == Some(&true) && is_signature.get(index + 1) != Some(&true)
             })
             .collect();
+        let signed_at = self
+            .tagger()
+            .ok()
+            .flatten()
+            .and_then(|identity| identity.date().ok())
+            .map(|date| date.seconds);
         Some(SignedPayload {
             payload: view.without_headers(&removed)?,
             signature: signature.to_vec(),
+            signed_at,
         })
+    }
+
+    /// Builds a tag and appends the signature `sign` returns for it, as `git tag -s` does.
+    ///
+    /// `sign` receives the exact unsigned tag, which is also the signed payload of the result.
+    /// The message must be empty or end with LF so the signature starts on its own line.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SignTagError::Tag`] for invalid fields, [`SignTagError::MessageNewline`] for a
+    /// message without a final LF, [`SignTagError::ExistingSignature`] when the message already
+    /// contains signature armor or a header is named `gpgsig` or `gpgsig-sha256`, and the
+    /// signer's error.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    ///
+    /// let fields = TagFields {
+    ///     target: ObjectId::for_blob(ObjectFormat::Sha1, b"release"),
+    ///     target_kind: ObjectKind::Blob,
+    ///     name: b"v1".to_vec(),
+    ///     tagger: None,
+    ///     extra_headers: vec![],
+    ///     message: b"Release\n".to_vec(),
+    /// };
+    /// let tag = Tag::new_signed(fields, |_payload| {
+    ///     Ok::<_, std::io::Error>(
+    ///         b"-----BEGIN SSH SIGNATURE-----\nU1NI\n-----END SSH SIGNATURE-----\n".to_vec(),
+    ///     )
+    /// })?;
+    /// let signed = tag.signed_payload().ok_or("unsigned")?;
+    /// assert!(signed.payload().ends_with(b"\n\nRelease\n"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn new_signed<E>(
+        mut fields: TagFields,
+        sign: impl FnOnce(&[u8]) -> Result<Vec<u8>, E>,
+    ) -> Result<Self, SignTagError<E>> {
+        if !fields.message.is_empty() && !fields.message.ends_with(b"\n") {
+            return Err(SignTagError::MessageNewline);
+        }
+        let signature_header = fields
+            .extra_headers
+            .iter()
+            .filter_map(|line| crate::bytes::split_once(line, b' '))
+            .any(|(name, _)| name == SHA1_HEADER || name == SHA256_HEADER);
+        let unsigned = Self::new(fields.clone()).map_err(SignTagError::Tag)?;
+        if signature_header || unsigned.signed_payload().is_some() {
+            return Err(SignTagError::ExistingSignature);
+        }
+        let signature = sign(unsigned.as_bytes()).map_err(SignTagError::Signer)?;
+        fields.message.extend_from_slice(&signature);
+        Self::new(fields).map_err(SignTagError::Tag)
+    }
+}
+
+/// Tag construction or signing failed; nothing has been stored.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum SignTagError<E> {
+    /// Invalid tag fields.
+    #[error(transparent)]
+    Tag(TagError),
+    /// The message does not end with LF, so a signature would not start its own line.
+    #[error("tag message must end with a newline before it is signed")]
+    MessageNewline,
+    /// The message already contains signature armor, or a header carries a signature.
+    #[error("tag already contains a signature")]
+    ExistingSignature,
+    /// The signer failed.
+    #[error("signing tag")]
+    Signer(#[source] E),
+}
+
+/// Whether girt may run the programs that make and check signatures.
+///
+/// Signing and verifying run `gpg`, `gpgsm` or `ssh-keygen` (or the program configured in
+/// their place) with the permissions of the current process, and may reach the user's keyring,
+/// agent or hardware keys. Git runs them whenever it signs or shows a signature. girt refuses
+/// until the caller opts in.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum Programs {
+    /// Return [`Error::Refused`] instead of running a program.
+    #[default]
+    Refuse,
+    /// Run programs as Git does.
+    Run,
+}
+
+impl Programs {
+    fn check(self, program: &OsStr) -> Result<(), Error> {
+        match self {
+            Self::Refuse => Err(Error::Refused {
+                program: program.to_owned(),
+            }),
+            Self::Run => Ok(()),
+        }
+    }
+}
+
+/// Something that turns a payload into signature armor.
+///
+/// [`SshSigner`] is the built-in implementation. Pass a signer to
+/// [`crate::commit::CommitBuilder::build_signed`] or [`Tag::new_signed`] as
+/// `|payload| signer.sign(payload)`.
+pub trait Signer {
+    /// The format of the signatures this signer makes.
+    fn format(&self) -> SignatureFormat;
+
+    /// Signs `payload` and returns the armored signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the signature could not be made.
+    fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, Error>;
+}
+
+/// The outcome of checking a signature, matching what Git reports with `%G?`, `%GS`, `%GF` and
+/// `%GT`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct Verification {
+    /// Whether the signature is good, and how far its key is trusted.
+    pub status: Status,
+    /// Who signed: the matching SSH principal, or the OpenPGP user ID.
+    pub signer: Option<String>,
+    /// The signing key's fingerprint, such as `SHA256:…` for SSH keys.
+    pub fingerprint: Option<String>,
+    /// How far the key is trusted.
+    pub trust: Trust,
+    /// The verifying program's output, as `git verify-commit --raw` prints it.
+    pub output: Vec<u8>,
+}
+
+impl Verification {
+    /// Whether Git would accept the signature: `verify-commit` and `verify-tag` exit with 0.
+    pub fn is_good(&self) -> bool {
+        self.status == Status::Good
+    }
+}
+
+/// The verdict on one signature, one per `%G?` letter.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum Status {
+    /// `G`: a good signature from a trusted key.
+    Good,
+    /// `B`: the signature does not match the payload, or the key is not allowed to make it.
+    Bad,
+    /// `U`: a good signature from a key with unknown validity, such as an SSH key no allowed
+    /// signer owns.
+    UnknownValidity,
+    /// `X`: a good signature that has expired.
+    ExpiredSignature,
+    /// `Y`: a good signature from an expired key.
+    ExpiredKey,
+    /// `R`: a good signature from a revoked key.
+    RevokedKey,
+    /// `E`: the signature cannot be checked, for example because the key is missing.
+    CannotCheck,
+}
+
+impl Status {
+    /// The letter `git log --format=%G?` prints.
+    ///
+    /// ```
+    /// use girt::signing::Status;
+    ///
+    /// assert_eq!(Status::UnknownValidity.letter(), 'U');
+    /// ```
+    pub fn letter(self) -> char {
+        match self {
+            Self::Good => 'G',
+            Self::Bad => 'B',
+            Self::UnknownValidity => 'U',
+            Self::ExpiredSignature => 'X',
+            Self::ExpiredKey => 'Y',
+            Self::RevokedKey => 'R',
+            Self::CannotCheck => 'E',
+        }
+    }
+}
+
+/// How far a signing key is trusted, as `%GT` prints it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum Trust {
+    /// `undefined`.
+    Undefined,
+    /// `never`.
+    Never,
+    /// `marginal`.
+    Marginal,
+    /// `fully`.
+    Fully,
+    /// `ultimate`.
+    Ultimate,
+}
+
+impl Trust {
+    /// The word `git log --format=%GT` prints.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Undefined => "undefined",
+            Self::Never => "never",
+            Self::Marginal => "marginal",
+            Self::Fully => "fully",
+            Self::Ultimate => "ultimate",
+        }
+    }
+}
+
+/// Signing or verifying could not run to a verdict.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    /// A program would run under [`Programs::Refuse`].
+    #[error("running {program:?} is not allowed")]
+    Refused {
+        /// The program or command that would have run.
+        program: OsString,
+    },
+    /// Neither `user.signingKey` nor `gpg.ssh.defaultKeyCommand` gives a key.
+    #[error("either user.signingKey or gpg.ssh.defaultKeyCommand needs to be configured")]
+    NoSigningKey,
+    /// `gpg.ssh.allowedSignersFile` is not configured, so SSH signatures cannot be checked.
+    #[error("gpg.ssh.allowedSignersFile needs to be configured for ssh signature verification")]
+    NoAllowedSigners,
+    /// The signature is not an SSH signature.
+    #[error("signature is not an ssh signature")]
+    NotSsh,
+    /// A configured path or program cannot be used.
+    #[error("unusable path: {0}")]
+    Path(&'static str),
+    /// A program could not be started or talked to.
+    #[error("running {program:?}")]
+    Spawn {
+        /// The program.
+        program: OsString,
+        /// Why it failed.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A signing program exited unsuccessfully.
+    #[error("{program:?} failed with {status}: {stderr}")]
+    Failed {
+        /// The program.
+        program: OsString,
+        /// Its exit status.
+        status: ExitStatus,
+        /// Its standard error, lossily decoded.
+        stderr: String,
+    },
+    /// A temporary key or signature file could not be written.
+    #[error("writing a temporary file")]
+    Temporary(#[source] std::io::Error),
+}
+
+impl Error {
+    fn failed(program: &OsStr, output: &Output) -> Self {
+        Self::Failed {
+            program: program.to_owned(),
+            status: output.status,
+            stderr: String::from_utf8_lossy(&output.stderr)
+                .trim_end()
+                .to_owned(),
+        }
     }
 }
 
@@ -425,6 +728,22 @@ gpgsig -----BEGIN PGP SIGNATURE-----\n A";
         let commit = Commit::parse(ObjectFormat::Sha1, bytes.as_bytes()).unwrap();
         let merged = commit.merge_tags().next().unwrap().unwrap();
         assert_eq!(merged.message(), b"Release");
+    }
+
+    #[test]
+    fn signing_refuses_tags_with_signature_headers() {
+        for header in [&b"gpgsig old"[..], b"gpgsig-sha256 old"] {
+            let fields = TagFields {
+                target: "1".repeat(40).parse().unwrap(),
+                target_kind: crate::ObjectKind::Commit,
+                name: b"t".to_vec(),
+                tagger: None,
+                extra_headers: vec![header.to_vec()],
+                message: b"msg\n".to_vec(),
+            };
+            let signed = Tag::new_signed(fields, |_| Ok::<_, std::io::Error>(Vec::new()));
+            assert!(matches!(signed, Err(SignTagError::ExistingSignature)));
+        }
     }
 
     #[test]
