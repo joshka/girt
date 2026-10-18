@@ -3423,9 +3423,22 @@ postimage. Focused cases cover insertion, deletion, exact context, CR/non-UTF-8 
 LF, quoted paths, malformed/truncated counts, overflow, limits and late-hunk failure.
 
 This establishes exact-position text application only. Extended file operations, binary and combined
-diffs are explicitly refused. Offset/fuzz matching, whitespace policy, reverse/recount, publication
-and mail workflows remain [issue 506](https://github.com/joshka/girt/issues/506). The `apply` fuzz
-target exercises bounded parsing and application to independently framed preimages.
+diffs are explicitly refused. Offset/fuzz matching, whitespace policy, reverse/recount,
+index/worktree publication and mail workflows remain
+[issue 506](https://github.com/joshka/girt/issues/506). The `apply` fuzz target exercises bounded
+parsing and application to independently framed preimages.
+
+`tests/apply_tree.rs` compares in-memory tree application and explicit object installation with
+`git apply --cached` tree IDs in SHA-1 and SHA-256 repositories. It also covers nested additions,
+parent pruning, executable-mode preservation, mapped paths, collision refusals, late-hunk failure,
+aggregate bounds, cancellation and cross-format installation refusal. Computation leaves generated
+blobs and trees absent until installation. A separate test checks that opaque empty subtrees remain
+present; Git's index cannot preserve these entries, so this case uses direct tree assertions.
+
+The tree layer rejects `.git` components case-insensitively, as Git's cached application does. It
+currently refuses replacing a directory emptied by earlier edits in the same patch; an oracle test
+records Git accepting this transition. This remains part of issue 506. Metadata aliases that depend
+on a filesystem are checked by checkout rather than interpreted by this tree operation.
 
 ### Configured index flags and file modes
 
