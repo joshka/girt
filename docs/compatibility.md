@@ -1467,8 +1467,19 @@ in the reference table there.
 Observed with the Git CLI and matched: every commit reset, including one to the current commit,
 writes `ORIG_HEAD` and a `reset: moving to <revision>` reflog entry; path resets write neither and
 leave operation files alone; rebase and sequencer directories are not touched. girt refuses indexes
-with skip-worktree entries or sparse directories instead of resetting them partially; hard, keep and
-merge resets are not implemented yet.
+with skip-worktree entries or sparse directories instead of resetting them partially; keep and merge
+resets are not implemented yet.
+
+Hard resets are compared the same way, adding every working file's content and executable bit:
+discarding staged, unstaged and added changes, restoring a deleted file, keeping untracked files,
+replacing an untracked file where the target has a file or needs a directory, keeping a clean file
+whose attributes change while its blob does not, a hard reset on a branch with no commits
+(`Repository::reset_unborn`), and resetting out of a conflicted merge to a commit with a mode
+change. Hard resets go through checkout's discard policy, so they share its path, symlink and
+platform rules (Linux and macOS). Two deliberate differences: Git deletes an untracked directory,
+with its contents, where the target has a file, while girt refuses before changing any working file;
+and girt leaves directories emptied by removed files in place, as its checkout does, where Git
+removes them.
 
 ## Describe
 

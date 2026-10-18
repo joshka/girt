@@ -20,6 +20,17 @@ use crate::worktree_names::{NamePolicy, Protection};
 use crate::{EntryMode, ObjectId, ObjectKind, Repository, TreeValue, index};
 
 type Leaves = BTreeMap<Vec<u8>, TreeValue>;
+
+/// What checkout does with local changes to tracked paths.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Local {
+    /// Refuse staged, conflicted or modified tracked paths; the baseline must match exactly.
+    Refuse,
+    /// Discard them, as `git reset --hard` does: every path in the current index, at any stage,
+    /// is replaced or removed whatever its content, missing tracked files are restored, and an
+    /// untracked file where the target needs a file is replaced. The baseline tree is unused.
+    Discard,
+}
 type Hook<'a> = dyn FnMut(&str, &[u8]) -> Result<(), Error> + 'a;
 
 #[cfg(test)]
@@ -60,6 +71,7 @@ pub(super) fn run_observed(
         filters.is_none() || configured_symlinks(repo)?,
         None,
         filters,
+        Local::Refuse,
         limits,
         cancel,
         hook,
@@ -81,6 +93,7 @@ pub(crate) fn run_with_index(
         true,
         Some(entries),
         None,
+        Local::Refuse,
         limits,
         cancel,
         &mut |_, _| Ok(()),
@@ -102,6 +115,35 @@ pub(super) fn run_configured(
         symlinks,
         None,
         None,
+        Local::Refuse,
+        limits,
+        cancel,
+        &mut |_, _| Ok(()),
+        &mut |_, _| {},
+    )
+}
+
+/// Checks out `target` over whatever the index and tracked files hold, as `git reset --hard`
+/// does; see [`Local::Discard`].
+pub(crate) fn run_discarding(
+    repo: &Repository,
+    target: Option<ObjectId>,
+    filters: Option<&mut crate::filter::Pipeline>,
+    limits: Limits,
+    cancel: &AtomicBool,
+) -> Result<Report, Failure> {
+    let symlinks = filters.is_none() || configured_symlinks(repo)?;
+    let filters = filters.map(|target| Filters {
+        baseline: None,
+        target,
+    });
+    run_inner(
+        repo,
+        [None, target],
+        symlinks,
+        None,
+        filters,
+        Local::Discard,
         limits,
         cancel,
         &mut |_, _| Ok(()),
@@ -130,6 +172,7 @@ fn run_inner(
     symlinks: bool,
     replacement: Option<&[index::Entry]>,
     filters: Option<Filters<'_>>,
+    local: Local,
     limits: Limits,
     cancel: &AtomicBool,
     hook: &mut Hook<'_>,
@@ -161,6 +204,7 @@ fn run_inner(
             symlinks,
             edit,
             filters,
+            local,
             limits,
             cancel,
         )?;
@@ -215,7 +259,8 @@ fn run_inner(
 
 /// The conversions for each side of a filtered checkout.
 pub(super) struct Filters<'a> {
-    pub(super) baseline: &'a mut crate::filter::Pipeline,
+    /// `None` with [`Local::Discard`], which never compares old content.
+    pub(super) baseline: Option<&'a mut crate::filter::Pipeline>,
     pub(super) target: &'a mut crate::filter::Pipeline,
 }
 
@@ -255,6 +300,15 @@ struct Plan<'a> {
     /// Target paths sharing one name on the volume; `old` and `target` hold one path per set.
     collisions: Vec<Collision>,
     policy: NamePolicy,
+    local: Local,
+    /// With [`Local::Discard`], old paths whose working file differs from the index, including
+    /// untracked files in the target's way.
+    dirty: BTreeSet<Vec<u8>>,
+    /// With [`Local::Discard`], old paths with no working file.
+    missing: BTreeSet<Vec<u8>>,
+    /// With [`Local::Discard`], kept files holding the blob's raw bytes rather than the bytes the
+    /// target's attributes would write; publication accepts them as they are.
+    kept_raw: BTreeSet<Vec<u8>>,
 }
 
 impl<'a> Plan<'a> {
@@ -266,18 +320,22 @@ impl<'a> Plan<'a> {
         symlinks: bool,
         edit: &mut index::IndexEdit,
         filters: Option<Filters<'_>>,
+        local: Local,
         mut limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
         let [baseline, target] = roots;
         let objects = repo.objects_with(limits.packs)?;
-        let old = flatten(&objects, baseline, limits, cancel)?;
         let target = flatten(&objects, target, limits, cancel)?;
         let entries = edit.index().entries();
-        if entries.len() != old.len() {
+        let old = match local {
+            Local::Refuse => flatten(&objects, baseline, limits, cancel)?,
+            Local::Discard => tracked(entries, cancel)?,
+        };
+        if local == Local::Refuse && entries.len() != old.len() {
             return Err(refused(b"", "index differs from explicit baseline"));
         }
-        for entry in entries {
+        for entry in entries.iter().filter(|_| local == Local::Refuse) {
             check(cancel)?;
             if entry.intent_to_add || entry.skip_worktree {
                 return Err(refused(
@@ -348,7 +406,18 @@ impl<'a> Plan<'a> {
             }
         }
         let mut blobs = BTreeMap::new();
-        for leaf in old.values().chain(target.values()) {
+        // Discarding never compares old content, so old blobs, which may be absent (as for
+        // intent-to-add entries), are not read.
+        let compared = if local == Local::Refuse {
+            Some(&old)
+        } else {
+            None
+        };
+        for leaf in compared
+            .into_iter()
+            .flat_map(Leaves::values)
+            .chain(target.values())
+        {
             check(cancel)?;
             if leaf.mode == EntryMode::Gitlink {
                 return Err(refused(b"", "gitlinks are unsupported"));
@@ -374,7 +443,11 @@ impl<'a> Plan<'a> {
             )?;
             blobs.insert(leaf.id, object.data().to_vec());
         }
-        for leaf in old.values().chain(target.values()) {
+        for leaf in compared
+            .into_iter()
+            .flat_map(Leaves::values)
+            .chain(target.values())
+        {
             let bytes = &blobs[&leaf.id];
             if leaf.mode == EntryMode::Symlink
                 && (bytes.is_empty() || bytes.contains(&0) || bytes.len() > 1024)
@@ -390,9 +463,14 @@ impl<'a> Plan<'a> {
         if let Some(filters) = filters {
             let sides = [
                 (Side::Baseline, &old, filters.baseline),
-                (Side::Target, &target, filters.target),
+                (Side::Target, &target, Some(filters.target)),
             ];
             for (side, leaves, pipeline) in sides {
+                let Some(pipeline) =
+                    pipeline.filter(|_| local == Local::Refuse || side == Side::Target)
+                else {
+                    continue;
+                };
                 for (path, leaf) in leaves {
                     check(cancel)?;
                     if leaf.mode == EntryMode::Symlink {
@@ -467,16 +545,24 @@ impl<'a> Plan<'a> {
             limits,
             chain: RefCell::default(),
             listings: RefCell::new(Some(BTreeMap::new())),
+            local,
+            dirty: BTreeSet::new(),
+            missing: BTreeSet::new(),
+            kept_raw: BTreeSet::new(),
         };
         for path in paths {
             check(cancel)?;
             let stat = plan.inspect_initial(&path, cancel)?;
             plan.expected.insert(path, stat);
         }
-        let mut budget = plan.limits.max_worktree_bytes;
-        for (path, leaf) in &plan.old {
-            let parent = plan.parent(path, cancel)?;
-            plan.verify_leaf(Side::Baseline, &parent, path, *leaf, &mut budget, cancel)?;
+        if local == Local::Discard {
+            plan.observe_discarded(cancel)?;
+        } else {
+            let mut budget = plan.limits.max_worktree_bytes;
+            for (path, leaf) in &plan.old {
+                let parent = plan.parent(path, cancel)?;
+                plan.verify_leaf(Side::Baseline, &parent, path, *leaf, &mut budget, cancel)?;
+            }
         }
         plan.build_operations(cancel)?;
         plan.check_planned_markers(cancel)?;
@@ -519,9 +605,83 @@ impl<'a> Plan<'a> {
         Ok(stat)
     }
 
+    /// Records which old leaves are missing or modified instead of refusing them, and adopts
+    /// untracked files where the target needs a file so they are replaced.
+    fn observe_discarded(&mut self, cancel: &AtomicBool) -> Result<(), Error> {
+        // Untracked files where the target needs a file or a directory are replaced, as Git
+        // replaces them; their adopted value is never compared.
+        let blocked: Vec<(Vec<u8>, TreeValue)> = self
+            .target
+            .iter()
+            .flat_map(|(path, leaf)| {
+                prefixes(path)
+                    .map(|prefix| prefix.to_vec())
+                    .map(move |prefix| (prefix, *leaf))
+            })
+            .filter(|(path, _)| !self.old.contains_key(path))
+            .filter(|(path, _)| {
+                self.expected
+                    .get(path)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|stat| {
+                        matches!(kind(&stat), FileType::RegularFile | FileType::Symlink)
+                    })
+            })
+            .collect();
+        for (path, leaf) in blocked {
+            let value = TreeValue {
+                id: leaf.id,
+                mode: EntryMode::Blob,
+            };
+            self.old.entry(path.clone()).or_insert(value);
+            self.dirty.insert(path);
+        }
+        let mut budget = self.limits.max_worktree_bytes;
+        let old: Vec<_> = self.old.iter().map(|(p, l)| (p.clone(), *l)).collect();
+        for (path, leaf) in old {
+            check(cancel)?;
+            let Some(stat) = self.expected[&path] else {
+                self.missing.insert(path);
+                continue;
+            };
+            match kind(&stat) {
+                FileType::RegularFile | FileType::Symlink => {}
+                _ => return Err(refused(&path, "tracked path is not a file or symlink")),
+            }
+            if self.dirty.contains(&path) || !self.target.contains_key(&path) {
+                continue;
+            }
+            if self.target.get(&path) != Some(&leaf) {
+                self.dirty.insert(path);
+                continue;
+            }
+            // Only the target's blob is loaded; the index entry equals it here. A file holding the
+            // blob's bytes, or the bytes the target's attributes would write, is clean: Git keeps a
+            // clean file when only its attributes change.
+            let parent = self.parent(&path, cancel)?;
+            match self.read_tracked(&parent, &path, leaf, &mut budget, cancel) {
+                Ok((mode, bytes)) if mode == leaf.mode => {
+                    if bytes != self.content(Side::Target, &path, leaf) {
+                        if bytes == self.blobs[&leaf.id] {
+                            self.kept_raw.insert(path);
+                        } else {
+                            self.dirty.insert(path);
+                        }
+                    }
+                }
+                _ => {
+                    self.dirty.insert(path);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn build_operations(&mut self, cancel: &AtomicBool) -> Result<(), Error> {
         for (path, old) in &self.old {
-            if self.target.get(path) != Some(old) {
+            let changed = self.target.get(path) != Some(old) || self.dirty.contains(path);
+            if changed && !self.missing.contains(path) {
                 self.operations.push(op(path, Action::Remove));
             }
         }
@@ -557,7 +717,10 @@ impl<'a> Plan<'a> {
             }
         }
         for (path, leaf) in &self.target {
-            if self.old.get(path) != Some(leaf) {
+            if self.old.get(path) != Some(leaf)
+                || self.dirty.contains(path)
+                || self.missing.contains(path)
+            {
                 self.operations.push(op(path, Action::Install));
             }
         }
@@ -750,6 +913,22 @@ impl<'a> Plan<'a> {
         budget: &mut usize,
         cancel: &AtomicBool,
     ) -> Result<(), Error> {
+        let (mode, bytes) = self.read_tracked(fd, path, leaf, budget, cancel)?;
+        if mode != leaf.mode || bytes != self.content(side, path, leaf) {
+            return Err(refused(path, "local tracked modification"));
+        }
+        Ok(())
+    }
+
+    /// The mode and bytes of the tracked file at `path`, checked against its expected identity.
+    fn read_tracked(
+        &self,
+        fd: &OwnedFd,
+        path: &[u8],
+        leaf: TreeValue,
+        budget: &mut usize,
+        cancel: &AtomicBool,
+    ) -> Result<(EntryMode, Vec<u8>), Error> {
         self.verify_expected(fd, path)?;
         let stat = optional_stat(fd, name(path), path)?
             .ok_or_else(|| refused(path, "tracked file is missing"))?;
@@ -765,10 +944,7 @@ impl<'a> Plan<'a> {
             FileType::Symlink => EntryMode::Symlink,
             _ => return Err(refused(path, "tracked path is not a file or symlink")),
         };
-        if mode != leaf.mode || bytes != self.content(side, path, leaf) {
-            return Err(refused(path, "local tracked modification"));
-        }
-        Ok(())
+        Ok((mode, bytes))
     }
 
     fn apply(
@@ -784,15 +960,25 @@ impl<'a> Plan<'a> {
         self.verify_expected(&fd, path)?;
         match operation.action {
             Action::Remove => {
-                let mut budget = self.limits.max_worktree_bytes;
-                self.verify_leaf(
-                    Side::Baseline,
-                    &fd,
-                    path,
-                    self.old[path],
-                    &mut budget,
-                    cancel,
-                )?;
+                if self.local == Local::Discard {
+                    // The file's identity still matches preparation (checked above); its content
+                    // is discarded, so only its kind is rechecked.
+                    let stat = optional_stat(&fd, name(path), path)?
+                        .ok_or_else(|| refused(path, "tracked file is missing"))?;
+                    if !matches!(kind(&stat), FileType::RegularFile | FileType::Symlink) {
+                        return Err(refused(path, "tracked path is not a file or symlink"));
+                    }
+                } else {
+                    let mut budget = self.limits.max_worktree_bytes;
+                    self.verify_leaf(
+                        Side::Baseline,
+                        &fd,
+                        path,
+                        self.old[path],
+                        &mut budget,
+                        cancel,
+                    )?;
+                }
                 hook("before delete", path)?;
                 self.recheck_boundary(&fd, path, cancel)?;
                 rustix::fs::unlinkat(&*fd, OsStr::from_bytes(name(path)), AtFlags::empty())
@@ -939,6 +1125,13 @@ impl<'a> Plan<'a> {
             check(cancel)?;
             let fd = self.parent(path, cancel)?;
             self.check_name(&fd, path, cancel)?;
+            if self.kept_raw.contains(path) {
+                let (mode, bytes) = self.read_tracked(&fd, path, *leaf, &mut budget, cancel)?;
+                if mode != leaf.mode || bytes != self.blobs[&leaf.id] {
+                    return Err(refused(path, "local tracked modification"));
+                }
+                continue;
+            }
             self.verify_leaf(Side::Target, &fd, path, *leaf, &mut budget, cancel)?;
         }
         // Removed paths not reused as directories/leaves must still be absent.
@@ -1038,6 +1231,24 @@ fn reject_marker_set(path: &[u8], counts: &[usize; 3]) -> Result<(), Error> {
         return Err(refused(path, "planned nested repository markers"));
     }
     Ok(())
+}
+
+/// Every path the index tracks, at any stage, for [`Local::Discard`].
+fn tracked(entries: &[index::Entry], cancel: &AtomicBool) -> Result<Leaves, Error> {
+    let mut leaves = Leaves::new();
+    for entry in entries {
+        check(cancel)?;
+        if entry.skip_worktree || entry.mode == index::Mode::SparseDirectory {
+            return Err(refused(
+                &entry.path,
+                "sparse checkout entries require caller policy",
+            ));
+        }
+        leaves
+            .entry(entry.path.clone())
+            .or_insert_with(|| value(entry));
+    }
+    Ok(leaves)
 }
 
 fn flatten(
