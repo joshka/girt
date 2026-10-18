@@ -624,7 +624,10 @@ Reads require canonical decimal lengths and complete zlib streams. They reject m
 rather than emulate Git's tolerance for unusual inputs. Compressed bytes can differ from Git's
 output; identity and decoded bytes must agree. This slice does not implement collision detection,
 packed objects, alternates, power-loss durability, shared-repository permissions, or protection
-against a hostile filesystem owner. File publication requires hard-link support.
+against a hostile filesystem owner. Files are published with a rename that refuses to replace an
+existing path (`renameat2` on Linux, `renamex_np` on macOS), or with a hard link and unlink where
+that rename is unavailable. New files use zlib's best-speed level, Git's default for loose objects
+when `core.looseCompression` and `core.compression` are unset; girt does not read those settings.
 
 Performance commands, cache conditions, results, and limitations are recorded in the
 [blob benchmark baseline](benchmarks.md).
@@ -710,9 +713,9 @@ fixture, checksum damage, trailing data, and concatenated streams through the sh
 The executable `examples/loose_tree.rs` writes two blobs, constructs and stores a tree referencing
 them, then reads and checks the tree and both blobs. The size limit bounds decompressed payload, not
 total heap use: parsing additionally owns entries and names proportional to the payload. Storage
-shares blob publication and filesystem assumptions, including hard-link requirements and no
-power-loss durability guarantee. Validated with Git 2.55.0 on macOS arm64; other platforms remain
-untested. No dependencies were added.
+shares blob publication and filesystem assumptions, including the no-replace publication requirement
+and no power-loss durability guarantee. Validated with Git 2.55.0 on macOS arm64; other platforms
+remain untested. No dependencies were added.
 
 ## SHA-1 Commits and Loose Storage
 
@@ -777,8 +780,8 @@ mismatch, parser errors with retained causes, missing storage, duplicate/concurr
 corruption, and publication cleanup. The shared blob decoder tests cover truncated zlib streams,
 invalid checksums, concatenated streams, and trailing compressed bytes. Size limits bound
 decompressed payload, not total heap use: parsed commits also own decoded fields and retained bytes.
-Publication inherits the documented hard-link and trusted-filesystem assumptions and does not
-promise power-loss durability.
+Publication inherits the documented no-replace publication and trusted-filesystem assumptions and
+does not promise power-loss durability.
 
 `examples/loose_commit.rs` exercises blob-to-tree-to-commit storage and reads the referenced
 snapshot back in disposable storage. Validated with Git 2.55.0 on macOS 26.6.2 arm64; other
@@ -833,11 +836,11 @@ preserving existing corrupt files. Existing shared decoder tests cover zlib trun
 data. The example `loose_tag` demonstrates storage without tag refs.
 
 Validated with Git 2.55.0 on macOS arm64; other platforms are untested. No dependencies were added.
-Storage retains the existing trusted-directory, hard-link, synchronous I/O, and durability limits.
-The read limit bounds decompressed payload bytes, not the additional owned fields and payload
-copies. SHA-256, tag refs, peeling/traversal, signature verification, discovery, packs, and
-transport remain outside scope. [Performance evidence](benchmarks.md#tag-baseline) records the tag
-baseline.
+Storage retains the existing trusted-directory, no-replace publication, synchronous I/O, and
+durability limits. The read limit bounds decompressed payload bytes, not the additional owned fields
+and payload copies. SHA-256, tag refs, peeling/traversal, signature verification, discovery, packs,
+and transport remain outside scope. [Performance evidence](benchmarks.md#tag-baseline) records the
+tag baseline.
 
 ## Repository Opening and Configuration
 

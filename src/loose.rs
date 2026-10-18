@@ -32,8 +32,9 @@
 //!
 //! Operations block the calling thread. Reads allocate up to the selected payload limit; writes
 //! encode and compress caller bytes. The directory and ancestors must be trusted against hostile
-//! replacement. Publishing requires hard links, does not promise power-loss durability, and does
-//! not implement Git's shared-repository permission policy. See [`LooseObjects`] for the full
+//! replacement. Publishing needs a rename that refuses to replace an existing path, or hard links
+//! where the platform lacks one; it does not promise power-loss durability and does not implement
+//! Git's shared-repository permission policy. See [`LooseObjects`] for the full
 //! storage contract.
 
 #![warn(
@@ -50,9 +51,13 @@ use std::path::PathBuf;
 
 use flate2::write::ZlibEncoder;
 use flate2::{Compression, Decompress, FlushDecompress, Status};
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, PersistError};
 
 use crate::object::object_header;
+
+/// zlib level for new loose objects: best speed, Git's default when neither `core.looseCompression`
+/// nor `core.compression` is set. Loose objects are short-lived until a repack recompresses them.
+const LOOSE_COMPRESSION: Compression = Compression::fast();
 use crate::{
     Commit, CommitError, ObjectFormat, ObjectId, ObjectKind, Tag, TagError, Tree, TreeError,
 };
@@ -91,8 +96,9 @@ use crate::{
 /// # Filesystem assumptions
 ///
 /// The object directory and its ancestors must be trusted. This API does not protect against
-/// symlink replacement or hostile concurrent filesystem mutation. Writes require hard-link support
-/// and do not promise power-loss durability or honor Git's shared-repository permission settings.
+/// symlink replacement or hostile concurrent filesystem mutation. Writes need a rename that refuses
+/// to replace an existing path, or hard-link support where the platform lacks one. They do not
+/// promise power-loss durability or honor Git's shared-repository permission settings.
 #[derive(Clone, Debug)]
 pub struct LooseObjects {
     directory: PathBuf,
@@ -361,17 +367,20 @@ impl LooseObjects {
     /// Writes exact blob bytes and returns their selected-format identity.
     ///
     /// An existing object is read and compared first, so rewriting stored content costs one
-    /// decompression and no filesystem writes. Otherwise creates missing directories, compresses
-    /// to a private temporary file in the destination directory, then publishes with a hard link
-    /// that cannot overwrite an existing path. Concurrent writers of identical content can
-    /// succeed. Corrupt or conflicting objects are left untouched. Temporary files are removed on
-    /// normal error paths.
+    /// decompression and no filesystem writes. Otherwise compresses at zlib's best-speed level,
+    /// as Git does by default, to a private temporary file in the destination directory, creating
+    /// that directory if missing. It then publishes with a rename that cannot replace an existing
+    /// path (`renameat2` on Linux, `renamex_np` on macOS), or a hard link and unlink where that
+    /// rename is unavailable. Concurrent writers of identical content can succeed. Corrupt or
+    /// conflicting objects are left untouched. Temporary files are removed on normal error
+    /// paths.
     ///
     /// # Errors
     ///
     /// Returns read errors when an existing object cannot be validated,
     /// [`Error::ConflictingObject`] when existing content differs, or [`Error::Io`] on
-    /// filesystem/compression failures (including filesystems without hard-link support).
+    /// filesystem/compression failures (including filesystems that support neither publishing
+    /// method).
     /// Failed operations may leave created directories. No directory synchronization is
     /// performed, so success does not guarantee power-loss durability.
     ///
@@ -529,13 +538,31 @@ impl LooseObjects {
             let parent = path
                 .parent()
                 .ok_or(Error::Corrupt("object path has no parent directory"))?;
-            fs::create_dir_all(parent)?;
-            let mut temporary = NamedTempFile::new_in(parent)?;
-            let mut encoder = ZlibEncoder::new(temporary.as_file_mut(), Compression::default());
+            // Fan-out directories usually exist already, so create one only when it is missing.
+            let mut temporary = match NamedTempFile::new_in(parent) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    fs::create_dir_all(parent)?;
+                    NamedTempFile::new_in(parent)?
+                }
+                temporary => temporary?,
+            };
+            let mut encoder = ZlibEncoder::new(temporary.as_file_mut(), LOOSE_COMPRESSION);
             encoder.write_all(object_header(kind.as_str(), bytes.len()).as_bytes())?;
             encoder.write_all(bytes)?;
             encoder.finish()?;
-            match fs::hard_link(temporary.path(), &path) {
+            // One no-replace rename where the platform has it, otherwise a hard link and unlink.
+            let published = match temporary.persist_noclobber(&path) {
+                Ok(_) => Ok(()),
+                // Some filesystems refuse an exclusive rename but still support hard links. The
+                // temporary file is removed when `file` drops.
+                Err(PersistError { error, file })
+                    if error.kind() == std::io::ErrorKind::Unsupported =>
+                {
+                    fs::hard_link(file.path(), &path)
+                }
+                Err(PersistError { error, .. }) => Err(error),
+            };
+            match published {
                 Ok(()) => Ok(id),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     self.read_existing(id, kind, bytes).map(|()| id)
@@ -1401,6 +1428,19 @@ mod dual_format_tests {
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(rewritten.unwrap(), id);
         assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+    }
+
+    /// New objects use zlib's best-speed level, Git's default for loose objects, whose zlib
+    /// header is `78 01`.
+    #[test]
+    fn writes_at_gits_default_loose_compression() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
+        let id = objects.write_blob(&[b'x'; 4096]).unwrap();
+        assert_eq!(
+            fs::read(objects.object_path(id)).unwrap()[..2],
+            [0x78, 0x01]
+        );
     }
 
     #[rstest]

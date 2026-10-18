@@ -15,6 +15,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Handles from one `Repository` reuse the parsed `packed-refs` while the file keeps its identity,
   and a local fetch into a new repository no longer probes for a loose copy of every object it
   walks. A `jj git clone` of git/git is about 15% faster.
+- Loose object writes compress at zlib's best-speed level, Git's default for loose objects, and
+  publish with one rename that cannot replace an existing object (hard link and unlink where the
+  platform or filesystem lacks that rename). Fan-out directories are created only when missing. On
+  macOS, writing 16,000 trees into an empty store takes about 290 µs per object instead of about
+  790 µs, and a `jj status` that snapshots 10,000 new files in git/git took 2.2 s instead of 3.9 s
+  in one heavily loaded run.
 
 ## [0.15.0](https://github.com/joshka/girt/compare/girt-v0.14.0...girt-v0.15.0) - 2026-10-18
 
