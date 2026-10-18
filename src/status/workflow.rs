@@ -18,8 +18,11 @@ impl Repository {
     /// uid and gid) and its mode. As in Git, a racily clean entry is read instead: one whose cached
     /// mtime or ctime falls in or after the second the index file was last modified, when a later
     /// change in that second could leave every word equal. A zero cached size and a split index
-    /// always force reads. Assume-valid is ignored. Like Git, status compares identities without
-    /// reading index blobs, and skips baseline subtrees whose identity equals the index's.
+    /// always force reads. A trusted entry therefore compares equal even when its raw bytes differ
+    /// from the index blob because Git stored it through a filter or EOL conversion, as
+    /// `git status` reports it. Assume-valid is ignored. Like Git, status compares identities
+    /// without reading index blobs, and skips baseline subtrees whose identity equals the
+    /// index's.
     ///
     /// Intent-to-add and skip-worktree entries are refused pending explicit consumer policy.
     ///

@@ -411,6 +411,7 @@ impl Repository {
     /// Compares the file's bytes with the encoding `index` retained, which costs a read rather
     /// than a parse. An index without a retained encoding, or a split index (whose shared file
     /// could change separately), is reread and compared entry by entry instead.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn index_unchanged(
         &self,
         index: Option<&Index>,

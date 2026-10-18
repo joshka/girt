@@ -72,8 +72,13 @@ fn benchmark(c: &mut Criterion) {
     group.finish();
 }
 
+/// Status walks only macOS and Linux working trees, and stat words come from `MetadataExt`.
+#[cfg(not(unix))]
+fn stat_cached(_: &mut Criterion) {}
+
 /// A clean tree whose index caches each file's stat words, so status trusts them instead of
 /// reading files. Files spread over directories, as the parallel walk expects.
+#[cfg(unix)]
 fn stat_cached(c: &mut Criterion) {
     use std::os::unix::fs::MetadataExt as _;
 
