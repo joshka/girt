@@ -209,9 +209,8 @@ fn human_stat_matches_git_width_scaling() {
         &["-c", "commit.gpgsign=false", "commit", "-qm", "base"],
         b"",
     );
-    let new = (100..200)
-        .map(|line| format!("old{line}\n"))
-        .chain((0..200).map(|line| format!("new{line}\n")))
+    let new = (0..200)
+        .map(|line| format!("new{line}\n"))
         .collect::<String>();
     std::fs::write(root.join(path), new).unwrap();
     let short_new = (6..12)
@@ -248,7 +247,7 @@ fn human_stat_matches_git_width_scaling() {
                 None,
                 Counts::Text {
                     added: 200,
-                    removed: 100,
+                    removed: 200,
                 },
             ),
         ],
@@ -264,6 +263,51 @@ fn human_stat_matches_git_width_scaling() {
             "width={width}"
         );
     }
+}
+
+#[test]
+fn human_stat_aligns_combined_counts_that_are_wider_than_either_side() {
+    use girt::diffstat::StatLayout;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    oracle::git(root, &["init", "-q"], b"");
+    std::fs::write(root.join("b"), "old\n".repeat(4)).unwrap();
+    oracle::git(root, &["add", "."], b"");
+    oracle::git(
+        root,
+        &["-c", "commit.gpgsign=false", "commit", "-qm", "base"],
+        b"",
+    );
+    std::fs::write(root.join("a"), "new\n".repeat(9)).unwrap();
+    std::fs::write(root.join("b"), "new\n".repeat(6)).unwrap();
+    oracle::git(root, &["add", "."], b"");
+    let stat = Diffstat::new(
+        vec![
+            file(
+                b"a",
+                None,
+                Counts::Text {
+                    added: 9,
+                    removed: 0,
+                },
+            ),
+            file(
+                b"b",
+                None,
+                Counts::Text {
+                    added: 6,
+                    removed: 4,
+                },
+            ),
+        ],
+        Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        stat.stat(StatLayout::default()).unwrap(),
+        oracle::git(root, &["diff", "--cached", "--stat"], b"")
+    );
 }
 
 #[test]
