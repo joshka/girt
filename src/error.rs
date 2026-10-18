@@ -121,6 +121,7 @@ from_domain_errors! {
     crate::clone::ClonePlanError,
     crate::clone::CloneTransferError,
     crate::CommitError,
+    crate::commit_graph::GraphError,
     crate::config::ConfigError,
     crate::config::EditError,
     crate::config::InvalidValue,

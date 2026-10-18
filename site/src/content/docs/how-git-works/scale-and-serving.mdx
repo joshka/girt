@@ -8,11 +8,11 @@ import GirtStatus from '../../../components/GirtStatus.astro';
 Git keeps several optional files next to its objects that make large repositories fast. None of them
 hold new information; each is a cache of something Git could compute from objects, and Git falls
 back to computing it when the file is missing. This page also covers serving transfers and Git's
-standalone tools. girt doesn't cover these yet.
+standalone tools.
 
 ## commit-graph
 
-`.git/objects/info/commit-graph` lists every commit's parents, root tree, commit date and
+`.git/objects/info/commit-graph` indexes a set of commits by parents, root tree, commit date and
 **generation number** in a compact indexed table. Without it, each step of a
 [history walk](/girt/how-git-works/config-and-revisions/#history-walks) finds, decompresses and
 parses a commit object; with it, a step is an array lookup.
@@ -24,7 +24,7 @@ record which paths each commit touched, so `git log -- path` and blame skip comm
 writes the file during `git gc` and `git maintenance` by default, so reading it is enough to
 benefit.
 
-<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/492" />
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/492">Standalone metadata reading; split chains, indexed walks, Bloom queries and writing remain.</GirtStatus>
 
 ## Multi-pack index
 
