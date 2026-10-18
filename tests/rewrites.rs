@@ -967,3 +967,60 @@ fn empty_basename_collisions_follow_git_rename_empty_policy(
     assert_eq!(detection.inexact_skipped.is_none(), paired);
     assert_eq!(detection.rewrites.len(), usize::from(paired));
 }
+
+/// Git derives its limit from configuration; the object API requires an explicit option.
+#[test]
+fn configured_rename_limit_requires_caller_options() {
+    let f = Fixture::new("sha1");
+    let old = f.tree(&[("100644", f.blob(b"a\nb\nc\nd\n"), b"source")]);
+    let new = f.tree(&[
+        ("100644", f.blob(b"a\nb\nc\nx\n"), b"edited"),
+        ("100644", f.blob(b"one\n"), b"new1"),
+        ("100644", f.blob(b"two\n"), b"new2"),
+    ]);
+    git(f.root.path(), &["config", "diff.renameLimit", "1"], b"");
+    let observed = git_output(
+        f.root.path(),
+        &[
+            "diff-tree",
+            "-r",
+            "--no-commit-id",
+            "--name-status",
+            "-M50%",
+            &old.to_string(),
+            &new.to_string(),
+        ],
+        b"",
+    );
+    assert!(observed.status.success());
+    assert!(
+        !String::from_utf8_lossy(&observed.stdout)
+            .lines()
+            .any(|line| line.starts_with('R'))
+    );
+    assert!(String::from_utf8_lossy(&observed.stderr).contains("rename detection was skipped"));
+    let objects = f.objects();
+    let detected = objects
+        .detect_rewrites_or_exact(
+            Some(old),
+            Some(new),
+            Options::default(),
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(detected.rewrites.len(), 1);
+    let configured = objects
+        .detect_rewrites_or_exact(
+            Some(old),
+            Some(new),
+            Options::default().with_candidate_limit(1),
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(configured.rewrites.is_empty());
+    assert!(configured.inexact_skipped.is_some());
+}

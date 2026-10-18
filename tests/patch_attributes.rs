@@ -328,6 +328,43 @@ fn blame_applies_textconv_policy() {
     assert_eq!(handle.blame("HEAD", b"bin").unwrap()[0].line_count, 2);
 }
 
+/// Git's Python driver recognizes an indented function; girt only has the Rust built-in (#460).
+#[test]
+fn python_builtin_function_header_differs_from_git() {
+    let old = b"class C:\n    def method(self):\n        one()\n        two()\n        three()\n        four()\n        five()\n        six()\n        seven()\n";
+    let new = b"class C:\n    def method(self):\n        one()\n        two()\n        three()\n        four()\n        five()\n        six()\n        SEVEN()\n";
+    let fixture = fixture(
+        &[("f.py", old)],
+        &[("f.py", new)],
+        &[(".gitattributes", b"*.py diff=python\n")],
+        &[],
+    );
+    let ours = ours(&fixture);
+    let theirs = theirs(&fixture, &[]);
+    assert_ne!(ours, theirs);
+    assert!(String::from_utf8_lossy(&theirs).contains("def method(self):"));
+}
+
+/// Git renders a patch with back-reference configuration that girt refuses explicitly (#461).
+#[test]
+fn posix_function_back_reference_is_refused() {
+    let old = b"BEGIN BEGIN\none\ntwo\nthree\nfour\nfive\nsix\nseven\n";
+    let new = b"BEGIN BEGIN\none\ntwo\nthree\nfour\nfive\nsix\nSEVEN\n";
+    let fixture = fixture(
+        &[("f", old)],
+        &[("f", new)],
+        &[(".gitattributes", b"f diff=custom\n")],
+        &[("diff.custom.xfuncname", r"^(BEGIN) \1")],
+    );
+    let theirs = theirs(&fixture, &[]);
+    assert!(String::from_utf8_lossy(&theirs).contains("@@"));
+    assert!(
+        handle(&fixture.worktree)
+            .write_patch(Vec::new(), fixture.old, fixture.new)
+            .is_err()
+    );
+}
+
 /// Attributes from a tree source are read lazily per directory, as `git check-attr
 /// --source` reports them.
 #[test]
