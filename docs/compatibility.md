@@ -4260,3 +4260,9 @@ Message-ID, scissors and quiet are compared individually and together, including
 and explicit overrides. Malformed persisted values and invalid config booleans refuse without
 advancing progress. Signoff, three-way/apply flags, quoted-CR policies, output encodings and unborn
 sessions remain unsupported.
+
+`tests/am_unborn.rs` compares final root-mail continue, skip and abort with Git in both object
+formats/ref backends. It checks HEAD identity and symbolic target, staged entries, cleanliness and
+operation retirement. Changed checkpoint/original HEAD, queued continuation, independently born or
+retargeted HEAD, foreign repository and changed metadata preserve source mail. This covers a
+still-unborn destination; abort after earlier commits and queued unborn progression remain refused.

@@ -53,7 +53,7 @@ impl State {
             return Err(Error::Unsupported(PathBuf::from("rebase-apply/next")));
         }
         let options = self.am_mailinfo_options(repository)?;
-        let mut plan = self.prepare_inner(action, head, true)?;
+        let mut plan = self.prepare_inner(action, Some(head), true)?;
         let name = PathBuf::from(format!("rebase-apply/{:04}", next + 1));
         let raw = self
             .files
@@ -190,5 +190,91 @@ impl State {
             b"f\n" => Ok(false),
             _ => Err(Error::Unsupported(Path::new("rebase-apply").join(name))),
         }
+    }
+}
+
+/// Final-mail recovery on a branch that has no commit yet.
+///
+/// A continuation names a root commit; skip/abort retain an unborn branch. The caller owns
+/// checkout/index restoration, object installation and conditional branch creation. Publish the
+/// metadata only after those steps. This type retains the observed symbolic HEAD target and uses
+/// the same bounded snapshot verification and rename-before-cleanup as [`Recovery`].
+#[derive(Clone, Debug)]
+pub struct UnbornAmRecovery {
+    recovery: Recovery,
+    branch: crate::refs::RefName,
+}
+
+impl State {
+    /// Prepares final am recovery while HEAD still names an unborn branch.
+    ///
+    /// Requires no original HEAD and an exactly empty abort-safety checkpoint. Continue names a
+    /// caller-prepared root commit; skip/abort keep the branch unborn. Queued continuation and
+    /// abort after earlier commits are unsupported. No repository data is changed here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for a foreign repository, born/detached HEAD, incompatible state, nonempty
+    /// checkpoint, original HEAD, unsupported action or queued continuation.
+    pub fn prepare_unborn_am(
+        &self,
+        repository: &crate::Repository,
+        action: Action,
+    ) -> Result<UnbornAmRecovery, Error> {
+        if repository.git_dir() != self.git_dir || repository.object_format() != self.format {
+            return Err(Error::Changed);
+        }
+        if self.kind != Kind::Am
+            || repository.head()?.id.is_some()
+            || self.original_head.is_some()
+            || super::state::am_original_head(repository, self.limits)?.is_some()
+            || matches!(action, Action::Continue(id) if id.is_null())
+        {
+            return Err(Error::Unsupported(PathBuf::from("HEAD")));
+        }
+        let Some(crate::refs::Target::Symbolic(branch)) =
+            repository.references()?.read(&crate::refs::RefName::HEAD)?
+        else {
+            return Err(Error::Unsupported(PathBuf::from("HEAD")));
+        };
+        let recovery = self.prepare_inner(action, None, false)?;
+        Ok(UnbornAmRecovery { recovery, branch })
+    }
+}
+
+impl UnbornAmRecovery {
+    /// Required HEAD after caller-owned publication; `None` preserves the unborn branch.
+    pub fn destination(&self) -> Option<ObjectId> {
+        (!self.recovery.destination.is_null()).then_some(self.recovery.destination)
+    }
+
+    /// Borrows proposed operation-file bytes, or `None` for absent metadata.
+    pub fn file_after(&self, path: impl AsRef<Path>) -> Option<&[u8]> {
+        self.recovery.file_after(path)
+    }
+
+    /// Returns the continuation reflog message for the caller's root commit.
+    pub fn reflog_for(&self, commit: &crate::Commit) -> Vec<u8> {
+        self.recovery.reflog_for(commit)
+    }
+
+    /// Retires mail state after the caller installs the required HEAD and index/worktree state.
+    ///
+    /// Requires exclusive operation/reference ownership. Verifies the exact metadata snapshot,
+    /// original-HEAD absence, destination and captured symbolic branch. Cleanup failure reports
+    /// retained mail outside the active namespace through [`Error::Partial`]. Caller-owned effects
+    /// remain on error; there is no automatic rollback or cross-file crash transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for changed HEAD/branch/location/metadata, I/O or partial cleanup.
+    pub fn publish_metadata(&self, repository: &crate::Repository) -> Result<(), Error> {
+        if repository.references()?.read(&crate::refs::RefName::HEAD)?
+            != Some(crate::refs::Target::Symbolic(self.branch.clone()))
+        {
+            return Err(Error::Changed);
+        }
+        self.recovery
+            .publish_metadata_at(repository, self.destination())
     }
 }

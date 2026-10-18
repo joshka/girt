@@ -378,15 +378,17 @@ impl State {
     /// Returns [`Error`] for unsupported flags/topology, absent abort identity, stale abort-safety
     /// or malformed state. Preparing the plan changes no repository data.
     pub fn prepare(&self, action: Action, head: ObjectId) -> Result<Recovery, Error> {
-        self.prepare_inner(action, head, false)
+        self.prepare_inner(action, Some(head), false)
     }
 
     pub(super) fn prepare_inner(
         &self,
         action: Action,
-        head: ObjectId,
+        head: Option<ObjectId>,
         queued_am: bool,
     ) -> Result<Recovery, Error> {
+        let unborn = head.is_none();
+        let head = head.unwrap_or_else(|| ObjectId::null(self.format));
         if head.format() != self.format
             || matches!(action, Action::Continue(id) if id.format() != self.format)
         {
@@ -397,13 +399,30 @@ impl State {
             if matches!(action, Action::Continue(_) | Action::Skip) && next != last && !queued_am {
                 return Err(Error::Unsupported(PathBuf::from("rebase-apply/next")));
             }
-            if matches!(action, Action::Abort) && self.original_head.is_none_or(|id| id.is_null()) {
+            if matches!(action, Action::Abort)
+                && !unborn
+                && self.original_head.is_none_or(|id| id.is_null())
+            {
                 return Err(Error::Unsupported(PathBuf::from("ORIG_HEAD")));
             }
-            let safe = parse_optional_id(&self.files, "rebase-apply/abort-safety", self.format)?
-                .ok_or_else(|| Error::Unsupported(PathBuf::from("rebase-apply/abort-safety")))?;
-            if safe != head {
-                return Err(Error::HeadChanged);
+            if unborn {
+                if self
+                    .files
+                    .get(Path::new("rebase-apply/abort-safety"))
+                    .map(Vec::as_slice)
+                    != Some(b"".as_slice())
+                {
+                    return Err(Error::HeadChanged);
+                }
+            } else {
+                let safe =
+                    parse_optional_id(&self.files, "rebase-apply/abort-safety", self.format)?
+                        .ok_or_else(|| {
+                            Error::Unsupported(PathBuf::from("rebase-apply/abort-safety"))
+                        })?;
+                if safe != head {
+                    return Err(Error::HeadChanged);
+                }
             }
         }
         if self.files.contains_key(Path::new("sequencer/opts")) {
