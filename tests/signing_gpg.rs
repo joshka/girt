@@ -564,12 +564,29 @@ fn x509_signatures_match_git() {
     let fixture = Fixture::new();
     fixture.home("signer");
     std::fs::create_dir(fixture.path("repo")).unwrap();
+    // gpgsm 2.4 ignores %no-protection. Supply an empty passphrase through loopback
+    // instead, keeping the key parameters in a separate file so stdin carries only it.
+    let parameters = fixture.path("x509-parameters");
+    std::fs::write(
+        &parameters,
+        b"Key-Type: RSA\nKey-Length: 2048\nKey-Usage: sign, cert\nSerial: random\n\
+Name-DN: CN=Test,O=girt\nName-Email: a@example.com\n",
+    )
+    .unwrap();
     let certificate = fixture.ok(
         "signer",
         "gpgsm",
-        &["--batch", "--armor", "--gen-key"],
-        b"Key-Type: RSA\nKey-Length: 2048\nKey-Usage: sign, cert\nSerial: random\n\
-Name-DN: CN=Test,O=girt\nName-Email: a@example.com\n%no-protection\n",
+        &[
+            "--batch",
+            "--armor",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase-fd",
+            "0",
+            "--gen-key",
+            parameters.to_str().unwrap(),
+        ],
+        b"\n",
     );
     fixture.ok("signer", "gpgsm", &["--batch", "--import"], &certificate);
     let fingerprint =
