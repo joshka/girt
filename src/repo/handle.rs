@@ -41,6 +41,7 @@ pub struct Repo {
     loose: LooseObjects,
     environment: Environment,
     filter_commands: crate::filter::Commands,
+    hooks: crate::hooks::Policy,
 }
 
 /// A convenience-policy refusal or a switch that failed after checkout.
@@ -114,6 +115,20 @@ pub enum Error {
         /// Driver name from the `diff` attribute.
         driver: Vec<u8>,
     },
+    /// `post-checkout` could not run or failed after the checkout and HEAD update completed.
+    ///
+    /// As with `git checkout`, the switch is not undone; the error carries its effects.
+    #[error("post-checkout hook failed after switching")]
+    PostCheckout {
+        /// Completed checkout effects.
+        checkout: Box<crate::checkout::Report>,
+        /// The hook failure.
+        #[source]
+        source: Box<crate::Error>,
+    },
+    /// The commit hooks left an empty message; Git aborts such commits too.
+    #[error("aborting commit due to empty commit message")]
+    EmptyMessage,
 }
 
 impl Repo {
@@ -128,6 +143,7 @@ impl Repo {
             loose,
             environment: Environment::from_process(),
             filter_commands: crate::filter::Commands::Run,
+            hooks: crate::hooks::Policy::Ignore,
         }
     }
 
@@ -179,6 +195,22 @@ impl Repo {
     #[must_use]
     pub fn with_filter_commands(mut self, commands: crate::filter::Commands) -> Self {
         self.filter_commands = commands;
+        self
+    }
+
+    /// Chooses whether [`Self::commit`], [`Self::switch`] and [`Self::push`] run the repository's
+    /// hooks.
+    ///
+    /// The default, [`Policy::Ignore`](crate::hooks::Policy::Ignore), runs none: hooks are
+    /// programs the repository chooses, so running them is the caller's decision. With
+    /// [`Policy::Run`](crate::hooks::Policy::Run), `commit` runs `pre-commit`,
+    /// `prepare-commit-msg <file> message`, `commit-msg <file>` and `post-commit` (whose
+    /// failures, as in Git, are not reported once the commit is published), `switch` runs
+    /// `post-checkout <old> <new> 1`, and `push` runs `pre-push`, with Git's arguments, working
+    /// directory, `GIT_INDEX_FILE` and `GIT_EDITOR=:`. See [`crate::hooks`].
+    #[must_use]
+    pub fn with_hooks(mut self, policy: crate::hooks::Policy) -> Self {
+        self.hooks = policy;
         self
     }
 
@@ -416,7 +448,8 @@ impl Repo {
         let refs = self.reader.repository.references()?;
         let parent = refs.resolve(&RefName::HEAD)?.id;
         let expected = parent.map_or(Expected::Absent, |id| Expected::Value(Target::Direct(id)));
-        let commit = Commit::builder(tree, author, message.as_ref())
+        let message = self.run_commit_hooks(message.as_ref())?;
+        let commit = Commit::builder(tree, author, &message)
             .committer(committer.clone())
             .parents(parent)
             .build()?;
@@ -435,7 +468,83 @@ impl Repo {
         );
         let edit = edit.with_dereference(Dereference::Follow);
         refs.transaction(&[edit])?;
+        if self.hooks != crate::hooks::Policy::Ignore {
+            // The commit is published. As in Git, `post-commit` cannot undo it, so neither its
+            // exit status nor a failure to run it is reported; an error here would invite a
+            // retry that commits twice.
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            if let Ok(hooks) = self.hook_runner() {
+                let _ = hooks.run(
+                    "post-commit",
+                    &self.commit_invocation(),
+                    self.hooks,
+                    crate::transport::TransportControl::new(&cancel),
+                );
+            }
+        }
         Ok(id)
+    }
+
+    fn hook_runner(&self) -> crate::Result<crate::hooks::Hooks> {
+        Ok(crate::hooks::Hooks::new(
+            &self.reader.repository,
+            &self.environment,
+        )?)
+    }
+
+    fn commit_invocation(&self) -> crate::hooks::Invocation {
+        crate::hooks::Invocation::new()
+            .with_env("GIT_INDEX_FILE", self.index_argument())
+            .with_env("GIT_EDITOR", ":")
+    }
+
+    fn index_argument(&self) -> std::ffi::OsString {
+        let index = self.reader.repository.git_dir().join("index");
+        match self.hook_runner() {
+            Ok(hooks) => hooks.argument_path(&index),
+            Err(_) => index.into_os_string(),
+        }
+    }
+
+    /// Runs `pre-commit`, `prepare-commit-msg` and `commit-msg`, returning the message the hooks
+    /// leave in `COMMIT_EDITMSG`, or `message` unchanged when hooks are ignored.
+    fn run_commit_hooks(&self, message: &[u8]) -> crate::Result<Vec<u8>> {
+        use crate::hooks::{Found, Policy};
+        if self.hooks == Policy::Ignore {
+            return Ok(message.to_vec());
+        }
+        let hooks = self.hook_runner()?;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let control = || crate::transport::TransportControl::new(&cancel);
+        hooks.run_blocking(
+            "pre-commit",
+            &self.commit_invocation(),
+            self.hooks,
+            control(),
+        )?;
+        // Git always records the message here; `post-commit` hooks may read it.
+        let path = self.reader.repository.git_dir().join("COMMIT_EDITMSG");
+        std::fs::write(&path, message)?;
+        let message_hooks = ["prepare-commit-msg", "commit-msg"];
+        if message_hooks
+            .iter()
+            .all(|name| !matches!(hooks.find(name), Found::Executable(_)))
+        {
+            return Ok(message.to_vec());
+        }
+        let argument = hooks.argument_path(&path);
+        let prepare = self
+            .commit_invocation()
+            .with_argument(argument.clone())
+            .with_argument("message");
+        hooks.run_blocking("prepare-commit-msg", &prepare, self.hooks, control())?;
+        let check = self.commit_invocation().with_argument(argument);
+        hooks.run_blocking("commit-msg", &check, self.hooks, control())?;
+        let edited = std::fs::read(&path)?;
+        if edited.iter().all(u8::is_ascii_whitespace) {
+            return Err(Error::EmptyMessage.into());
+        }
+        Ok(edited)
     }
 
     /// Checks out an existing local branch through [`Repository::checkout_tree_with_filters`] and
@@ -530,6 +639,29 @@ impl Repo {
             }
             .into());
         }
+        if self.hooks != crate::hooks::Policy::Ignore {
+            let null = crate::ObjectId::null(repository.object_format());
+            let invocation = crate::hooks::Invocation::new()
+                .with_argument(old.unwrap_or(null).to_string())
+                .with_argument(target.to_string())
+                .with_argument("1");
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let result = self.hook_runner().and_then(|hooks| {
+                Ok(hooks.run_blocking(
+                    "post-checkout",
+                    &invocation,
+                    self.hooks,
+                    crate::transport::TransportControl::new(&cancel),
+                )?)
+            });
+            if let Err(source) = result {
+                return Err(Error::PostCheckout {
+                    checkout: Box::new(checkout),
+                    source: source.into(),
+                }
+                .into());
+            }
+        }
         Ok(checkout)
     }
 
@@ -593,7 +725,9 @@ impl Repo {
         commands: Vec<crate::push::PushCommand>,
     ) -> crate::Result<crate::push::PushReport> {
         let identity = Signature::committer(self.reader.repository.config(), &self.environment)?;
-        let options = PushOptions::default().with_identity(identity);
+        let options = PushOptions::default()
+            .with_identity(identity)
+            .with_hooks(self.hooks);
         Ok(workflow::push(
             &self.reader.repository,
             remote,

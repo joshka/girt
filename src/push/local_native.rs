@@ -21,6 +21,23 @@ pub(crate) struct LocalAdvertisement<'a> {
 }
 
 impl LocalAdvertisement<'_> {
+    /// The direct target of `name` as receive-pack would advertise it; hidden and symbolic
+    /// references read as absent.
+    pub(crate) fn target(
+        &self,
+        name: &crate::refs::RefName,
+    ) -> Result<Option<crate::ObjectId>, PushFailure> {
+        if self.hide.matches(name) {
+            return Ok(None);
+        }
+        Ok(
+            match self.refs.read(name).map_err(PushFailure::reference)? {
+                Some(Target::Direct(id)) => Some(id),
+                Some(Target::Symbolic(_)) | None => None,
+            },
+        )
+    }
+
     /// Targets of the visible direct references, sorted and deduplicated. Like receive-pack, refs
     /// hidden by `receive.hideRefs` or `transfer.hideRefs` are not offered.
     pub(crate) fn receiver_roots(&self) -> Result<Vec<crate::ObjectId>, PushFailure> {

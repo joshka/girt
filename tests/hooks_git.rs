@@ -346,3 +346,362 @@ fn home_relative_hooks_path_expands_from_the_supplied_environment() {
         Err(Error::HooksPath(_))
     ));
 }
+
+/// A hook that logs its arguments, `GIT_INDEX_FILE`, `GIT_EDITOR` and input, then exits `exit`.
+fn logging_hook(path: &Path, name: &str, log: &Path, extra: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        path,
+        format!(
+            "#!/bin/sh\n{{ echo \"{name} cwd=$(pwd -P) index=[$GIT_INDEX_FILE] editor=[$GIT_EDITOR] args=$*\"; if [ {name} = pre-push ]; then cat; fi; }} >> '{}'\n{extra}\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn identity(environment: Environment) -> Environment {
+    environment
+        .with("GIT_AUTHOR_NAME", "Hook Author")
+        .with("GIT_AUTHOR_EMAIL", "hook@example.com")
+        .with("GIT_AUTHOR_DATE", "@1700000000 +0000")
+        .with("GIT_COMMITTER_NAME", "Hook Author")
+        .with("GIT_COMMITTER_EMAIL", "hook@example.com")
+        .with("GIT_COMMITTER_DATE", "@1700000000 +0000")
+}
+
+#[test]
+fn repo_commit_runs_commit_hooks_as_git_commit_does() {
+    let fixture = Fixture::new();
+    let repo = fixture.repo();
+    let log = fixture.log();
+    let hooks = repo.join(".git/hooks");
+    for name in ["pre-commit", "prepare-commit-msg", "post-commit"] {
+        logging_hook(&hooks.join(name), name, &log, "");
+    }
+    logging_hook(
+        &hooks.join("commit-msg"),
+        "commit-msg",
+        &log,
+        "echo edited >> \"$1\"",
+    );
+
+    git(
+        &repo,
+        fixture.home(),
+        &["commit", "-q", "--allow-empty", "-m", "subject"],
+    );
+    let expected = take_log(&log);
+    let git_message = run_git(&repo, fixture.home(), &["log", "-1", "--format=%B"]).stdout;
+
+    let mut handle = girt::Repo::new(Repository::open(&repo).unwrap())
+        .with_environment(identity(environment(&repo)))
+        .with_hooks(Policy::Run);
+    let tree = handle
+        .repository()
+        .objects()
+        .unwrap()
+        .read_commit(handle.rev_parse("HEAD").unwrap())
+        .unwrap()
+        .tree();
+    let id = handle.commit(tree, "subject\n").unwrap();
+    assert_eq!(take_log(&log), expected);
+    let message = handle
+        .repository()
+        .objects()
+        .unwrap()
+        .read_commit(id)
+        .unwrap()
+        .message()
+        .to_vec();
+    assert_eq!(
+        String::from_utf8(message).unwrap() + "\n",
+        String::from_utf8(git_message).unwrap()
+    );
+
+    // A failing pre-commit stops the commit before anything is published.
+    logging_hook(&hooks.join("pre-commit"), "pre-commit", &log, "exit 1");
+    let error = handle.commit(tree, "refused\n").unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<Error>(),
+        Some(Error::Rejected { hook, code: Some(1), .. }) if hook == "pre-commit"
+    ));
+    assert_eq!(handle.rev_parse("HEAD").unwrap(), id);
+    take_log(&log);
+
+    // Ignoring hooks, the default, runs none.
+    let mut quiet = girt::Repo::new(Repository::open(&repo).unwrap())
+        .with_environment(identity(environment(&repo)));
+    quiet.commit(tree, "quiet\n").unwrap();
+    assert_eq!(take_log(&log), "");
+}
+
+#[test]
+fn repo_switch_runs_post_checkout_as_git_switch_does() {
+    let fixture = Fixture::new();
+    let repo = fixture.repo();
+    let log = fixture.log();
+    git(&repo, fixture.home(), &["branch", "topic"]);
+    git(
+        &repo,
+        fixture.home(),
+        &["commit", "-q", "--allow-empty", "-m", "second"],
+    );
+    logging_hook(
+        &repo.join(".git/hooks/post-checkout"),
+        "post-checkout",
+        &log,
+        "exit 3",
+    );
+
+    let output = run_git(&repo, fixture.home(), &["switch", "-q", "topic"]);
+    assert!(!output.status.success());
+    let expected = take_log(&log);
+    git(
+        &repo,
+        fixture.home(),
+        &["-c", "core.hooksPath=/nonexistent", "switch", "-q", "main"],
+    );
+
+    let mut handle = girt::Repo::new(Repository::open(&repo).unwrap())
+        .with_environment(identity(environment(&repo)))
+        .with_hooks(Policy::Run);
+    let error = handle.switch("topic").unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<girt::repo::Error>(),
+        Some(girt::repo::Error::PostCheckout { .. })
+    ));
+    assert_eq!(take_log(&log), expected);
+    assert_eq!(
+        handle.repository().head().unwrap().name,
+        girt::refs::RefName::branch("topic").unwrap()
+    );
+}
+
+#[test]
+fn push_runs_pre_push_as_git_push_does() {
+    use girt::push::PushCommand;
+    use girt::workflow::{NoCallbacks, PushOptions};
+    let fixture = Fixture::new();
+    let repo = fixture.repo();
+    let log = fixture.log();
+    let bare = fixture.home().join("remote.git");
+    git(
+        fixture.home(),
+        fixture.home(),
+        &["init", "-q", "--bare", "remote.git"],
+    );
+    git(
+        &repo,
+        fixture.home(),
+        &["remote", "add", "origin", "../remote.git"],
+    );
+    git(&repo, fixture.home(), &["push", "-q", "origin", "main:old"]);
+    let head = run_git(&repo, fixture.home(), &["rev-parse", "HEAD"]).stdout;
+    let head: girt::ObjectId = String::from_utf8(head).unwrap().trim().parse().unwrap();
+    logging_hook(
+        &repo.join(".git/hooks/pre-push"),
+        "pre-push",
+        &log,
+        "exit 0",
+    );
+
+    git(
+        &repo,
+        fixture.home(),
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{head}:refs/heads/new"),
+            ":refs/heads/old",
+            "main:refs/heads/main",
+        ],
+    );
+    let expected = take_log(&log);
+    git(
+        &bare,
+        fixture.home(),
+        &["update-ref", "-d", "refs/heads/new"],
+    );
+    git(
+        &bare,
+        fixture.home(),
+        &["update-ref", "-d", "refs/heads/main"],
+    );
+    git(
+        &bare,
+        fixture.home(),
+        &["update-ref", "refs/heads/old", &head.to_string()],
+    );
+
+    let repository = Repository::open(&repo).unwrap();
+    let null = girt::ObjectId::null(repository.object_format());
+    let name = |name: &str| girt::refs::RefName::branch(name).unwrap();
+    let commands = vec![
+        PushCommand::new(name("new"), None, head),
+        PushCommand::new(name("old"), Some(head), null),
+        PushCommand::new(name("main"), None, head),
+    ];
+    let options = PushOptions::default().with_hooks(Policy::Run);
+    let environment = environment(&repo);
+    girt::workflow::push(
+        &repository,
+        "origin",
+        commands.clone(),
+        &options,
+        &environment,
+        &mut NoCallbacks,
+    )
+    .unwrap();
+    // Git names `main` by its local reference; girt pushes IDs, so it names the ID instead.
+    let expected = expected.replace(
+        &format!("refs/heads/main {head}"),
+        &format!("{head} {head}"),
+    );
+    // Line order is not part of the contract; Git's differs.
+    let lines = |text: &str| {
+        let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+        lines.sort();
+        lines
+    };
+    assert_eq!(lines(&take_log(&log)), lines(&expected));
+
+    // A failing pre-push stops the push before anything is sent.
+    logging_hook(
+        &repo.join(".git/hooks/pre-push"),
+        "pre-push",
+        &log,
+        "exit 1",
+    );
+    let again = vec![PushCommand::new(name("blocked"), None, head)];
+    let error = girt::workflow::push(
+        &repository,
+        "origin",
+        again,
+        &options,
+        &environment,
+        &mut NoCallbacks,
+    )
+    .unwrap_err();
+    assert!(matches!(error, girt::workflow::TransferError::Hook(_)));
+    assert!(
+        run_git(
+            &bare,
+            fixture.home(),
+            &["rev-parse", "--verify", "-q", "refs/heads/blocked"]
+        )
+        .stdout
+        .is_empty()
+    );
+}
+
+#[test]
+fn pre_push_sees_the_resolved_url_and_omits_stale_leases_as_git_does() {
+    use girt::push::PushCommand;
+    use girt::workflow::{NoCallbacks, PushOptions};
+    let fixture = Fixture::new();
+    let repo = fixture.repo();
+    let log = fixture.log();
+    git(
+        fixture.home(),
+        fixture.home(),
+        &["init", "-q", "--bare", "remote.git"],
+    );
+    git(
+        &repo,
+        fixture.home(),
+        &["config", "url.../remote.git.pushInsteadOf", "alias:"],
+    );
+    // `pushInsteadOf` rewrites `remote.<name>.url` for pushes, never an explicit `pushurl`.
+    git(
+        &repo,
+        fixture.home(),
+        &["remote", "add", "origin", "alias:"],
+    );
+    git(
+        &repo,
+        fixture.home(),
+        &["push", "-q", "origin", "main:taken"],
+    );
+    git(
+        &repo,
+        fixture.home(),
+        &["commit", "-q", "--allow-empty", "-m", "newer"],
+    );
+    let head = run_git(&repo, fixture.home(), &["rev-parse", "HEAD"]).stdout;
+    let head: girt::ObjectId = String::from_utf8(head).unwrap().trim().parse().unwrap();
+    logging_hook(
+        &repo.join(".git/hooks/pre-push"),
+        "pre-push",
+        &log,
+        "exit 0",
+    );
+
+    // Expect `taken` to be absent although it exists: Git's lease check leaves it out.
+    let output = run_git(
+        &repo,
+        fixture.home(),
+        &[
+            "push",
+            "-q",
+            "--force-with-lease=refs/heads/taken:",
+            "origin",
+            &format!("{head}:refs/heads/taken"),
+        ],
+    );
+    assert!(!output.status.success());
+    let expected = take_log(&log);
+    assert!(
+        expected.contains("args=origin ../remote.git\n"),
+        "{expected}"
+    );
+
+    let repository = Repository::open(&repo).unwrap();
+    let name = girt::refs::RefName::branch("taken").unwrap();
+    let commands = vec![PushCommand::new(name, None, head)];
+    let options = PushOptions::default().with_hooks(Policy::Run);
+    let report = girt::workflow::push(
+        &repository,
+        "origin",
+        commands,
+        &options,
+        &environment(&repo),
+        &mut NoCallbacks,
+    )
+    .unwrap();
+    assert!(!report.all_succeeded());
+    assert_eq!(take_log(&log), expected);
+}
+
+#[test]
+fn post_commit_failures_do_not_fail_a_published_commit() {
+    let fixture = Fixture::new();
+    let repo = fixture.repo();
+    let hook = repo.join(".git/hooks/post-commit");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    // A missing interpreter makes the hook fail to start at all.
+    std::fs::write(&hook, "#!/nonexistent/interpreter\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(repo.join(".git/COMMIT_EDITMSG"), "stale\n").unwrap();
+
+    let mut handle = girt::Repo::new(Repository::open(&repo).unwrap())
+        .with_environment(identity(environment(&repo)))
+        .with_hooks(Policy::Run);
+    let head = handle.rev_parse("HEAD").unwrap();
+    let tree = handle
+        .repository()
+        .objects()
+        .unwrap()
+        .read_commit(head)
+        .unwrap()
+        .tree();
+    let id = handle.commit(tree, "published\n").unwrap();
+    assert_eq!(handle.rev_parse("HEAD").unwrap(), id);
+    // Git records every commit message, hooks or not.
+    assert_eq!(
+        std::fs::read(repo.join(".git/COMMIT_EDITMSG")).unwrap(),
+        b"published\n"
+    );
+}
