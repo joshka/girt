@@ -177,6 +177,47 @@ mod tests {
     use crate::bitmap::write::reachable::Closures;
 
     #[test]
+    fn already_reached_targets_are_charged_without_redundant_queue_pops() {
+        let ids: Vec<_> = (0..5)
+            .map(|number| ObjectFormat::Sha1.hash_object(ObjectKind::Commit, &[number]))
+            .collect();
+        let graph = Graph {
+            ids: &ids,
+            kinds: vec![
+                ObjectKind::Commit,
+                ObjectKind::Tree,
+                ObjectKind::Commit,
+                ObjectKind::Tree,
+                ObjectKind::Blob,
+            ],
+            edges: vec![0..2, 2..3, 3..4, 4..5, 5..5],
+            targets: vec![1, 2, 4, 3, 4],
+            parents: vec![false; 5],
+        };
+        let inverse = vec![0, 1, 2, 3, 4];
+        let cancel = AtomicBool::new(false);
+        let limits = WriteLimits {
+            max_visits: 10,
+            ..WriteLimits::default()
+        };
+        let mut closures = Closures::new(&graph, &inverse, limits);
+        // Both trees name the same blob: five distinct pops plus all five inspected edges.
+        assert_eq!(closures.reachable(0, &cancel).unwrap(), [31]);
+        let mut closures = Closures::new(
+            &graph,
+            &inverse,
+            WriteLimits {
+                max_visits: 9,
+                ..limits
+            },
+        );
+        assert!(matches!(
+            closures.reachable(0, &cancel),
+            Err(WriteError::Limit("reachability visits"))
+        ));
+    }
+
+    #[test]
     fn retained_closures_obey_word_capacity_and_charge_multiword_unions() {
         let ids: Vec<_> = (0..70)
             .map(|number| ObjectFormat::Sha1.hash_object(ObjectKind::Commit, &[number]))
