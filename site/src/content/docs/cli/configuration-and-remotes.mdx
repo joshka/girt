@@ -1,63 +1,108 @@
 ---
 title: Configuration and remotes
-description: Inspect configuration provenance and remote endpoints.
-tableOfContents: false
+description: Read and edit configuration and manage remotes with girt.
 ---
 
-import CommandExample from '../../../components/CommandExample.astro';
+import CliNotice from '../../../components/CliNotice.astro';
+import Example from '../../../components/Example.astro';
 
-`config get` reads the effective value; `list --show-origin` explains its source. `set` and `unset`
-edit local configuration. `remote list`, `add` and `show` manage endpoint configuration;
-`remote heads` queries advertised references without fetching. Run `girt help config` and
-`girt help remote` for flags.
+<CliNotice />
 
-:::caution[Experimental CLI]
-The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
-testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
-may change; the library is the core deliverable.
-:::
+Configuration is read the way Git reads it: the system, global and repository files, a worktree's
+`config.worktree` when enabled, then settings passed in `GIT_CONFIG_COUNT` and its companion
+variables; the last value wins. Remotes are configuration too, and the
+[transfer commands](/girt/cli/fetch-push-clone/) use what they describe. The library side is in
+[Configuration and provenance](/girt/guides/configuration/).
 
-## Read an effective value
+## Read configuration (`girt config get` and `list`)
 
-<CommandExample
-  command="girt config get core.bare"
-  api="Config::value"
-  apiPath="config/struct.Config.html#method.value"
-  git="git config --get core.bare"
-  note="Reads the effective value after combining configuration sources."
->
+<Example cmd="config read">
 
-Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
+`girt config get` prints the effective value of a key and exits 1 when it isn't set. `girt config
+list` prints every entry as `key=value`, lowest precedence first; `--show-origin` prefixes each
+with the file it came from.
 
-```text
+```console
 $ girt config get core.bare
 false
+$ girt config list --show-origin
+file:.git/config	core.repositoryformatversion=0
+file:.git/config	core.filemode=true
+file:.git/config	core.bare=false
+…
 ```
 
-`false` means the repository is not bare. `config get` returns the last effective value after
-configuration sources have been combined; use `config list --show-origin` to see where entries came
-from.
+</Example>
 
-The corresponding Git commands are `git config --get`, `git config --list`,
-`git config --local <key> <value>`, `git config --local --unset-all <key>`, `git remote -v`,
-`git remote add` and `git ls-remote`. `remote show` prints configured URLs and refspecs; it does not
-perform all the queries of `git remote show`.
+Section and variable names are printed lowercased and subsections keep their case, as in Git. A key
+written without a value, an implicit `true`, prints as `true` from `get` and as the bare key from
+`list`.
 
-</CommandExample>
+## Change configuration (`girt config set` and `unset`)
 
-## Library API and limits
+<Example cmd="config write">
 
-Reads use
-[Repository::config](https://docs.rs/girt/latest/girt/repository/struct.Repository.html#method.config)
-and [Config](https://docs.rs/girt/latest/girt/config/struct.Config.html) (`value` and `entries`).
-Writes use
-[Repository::edit_config](https://docs.rs/girt/latest/girt/repository/struct.Repository.html#method.edit_config)
-and a configuration document. Remote lookup uses
-[Remote](https://docs.rs/girt/latest/girt/remote/struct.Remote.html) (`find` and `names`); local,
-HTTP and SSH discovery use functions in [fetch](https://docs.rs/girt/latest/girt/fetch/index.html).
+`girt config set` writes a key to the repository's own config file, replacing its last occurrence
+there or adding it. `girt config unset` removes every occurrence from that file and exits 5 when
+there is none, as `git config --unset-all` does. Neither touches global or system files. The last
+`get` above prints nothing and exits 1.
 
-An unset key exits 1. Edits affect the local file, while reads include the configured source stack.
-HTTP `remote heads` uses anonymous discovery; SSH uses system OpenSSH on macOS/Linux with no
-terminal prompts. Trust configured SSH command strings because they execute through the shell. See
-[Configuration and provenance](/girt/guides/configuration/) and
-[Credentials and transports](/girt/guides/credentials-and-transports/).
+```console
+$ girt config set demo.colour blue
+$ girt config get demo.colour
+blue
+$ girt config unset demo.colour
+$ girt config get demo.colour
+```
+
+</Example>
+
+Edits change only the bytes of the entry they touch. Comments, spacing, ordering and unknown
+variables elsewhere in the file stay exactly as they were.
+
+## Manage remotes (`girt remote`)
+
+<Example cmd="remote">
+
+`girt remote list` prints remote names, and `--urls` adds their fetch and push URLs, as
+`git remote -v` does. `girt remote
+add` adds a remote that fetches every branch into `refs/remotes/<name>/`. `girt remote show`
+prints one remote's URLs and refspecs from configuration, without contacting it.
+
+```console
+$ girt remote add upstream https://github.com/joshka/girt.git
+$ girt remote list --urls
+upstream	https://github.com/joshka/girt.git (fetch)
+upstream	https://github.com/joshka/girt.git (push)
+$ girt remote show upstream
+name	upstream
+url	https://github.com/joshka/girt.git
+pushurl	https://github.com/joshka/girt.git
+fetch	+refs/heads/*:refs/remotes/upstream/*
+```
+
+</Example>
+
+## List what a remote advertises (`girt remote heads`)
+
+<Example cmd="remote heads">
+
+`girt remote heads` connects to a remote and lists what it advertises, without downloading
+anything. It takes a configured remote name or a path or URL directly. Annotated tags are followed
+by a `^{}` line with the commit they point at.
+
+```console
+$ girt remote heads upstream
+c050596ed88f5a60d7f41dbfd80735065ccd05ff	HEAD
+c050596ed88f5a60d7f41dbfd80735065ccd05ff	refs/heads/main
+…
+```
+
+</Example>
+
+Over HTTP(S), `remote heads` is anonymous; `fetch`, `clone` and `push` use configured credential
+helpers, including `store`. SSH remotes are written `ssh://[user@]host[:port]/path` or
+`[user@]host:path`, and girt runs `GIT_SSH_COMMAND`, `core.sshCommand`, `GIT_SSH` or `ssh` from
+`PATH`, in that order. A configured command string runs through `/bin/sh`, so configuration that
+sets one must be trusted. Non-OpenSSH variants, percent-encoded SSH URLs, query or fragment parts
+and `~` paths are refused.

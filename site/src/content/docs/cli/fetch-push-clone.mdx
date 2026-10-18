@@ -1,65 +1,91 @@
 ---
 title: Fetch, push and clone
-description: Exercise the library transfer workflows on disposable repositories.
-tableOfContents: false
+description: Clone repositories and move objects and references between them with girt.
 ---
 
-import CommandExample from '../../../components/CommandExample.astro';
+import CliNotice from '../../../components/CliNotice.astro';
+import Example from '../../../components/Example.astro';
 
-`clone` creates a repository and normally checks out HEAD. `fetch` updates configured refspecs;
-`push` publishes explicit refspecs with a lease based on remote-tracking state. Use disposable
-repositories to experiment with writes. Run `girt help clone`, `girt help fetch` and
-`girt help push` for effects and options.
+<CliNotice />
 
-:::caution[Experimental CLI]
-The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
-testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
-may change; the library is the core deliverable.
-:::
+Transfer commands move objects and references between repositories. They speak to local paths,
+`file://` URLs, smart HTTP(S) and, on macOS and Linux, system OpenSSH. The examples publish the demo
+repository as a bare repository next to it, clone that, and move commits between the three. The
+remotes they use come from [configuration](/girt/cli/configuration-and-remotes/). The library side
+is in [Fetch, push and clone](/girt/guides/fetch-push-clone/) and
+[Credentials and transports](/girt/guides/credentials-and-transports/).
 
-## Clone locally
+## Copy a repository (`girt clone`)
 
-<CommandExample
-  command="girt clone . ../cli-example-clone"
-  api="workflow::clone_with"
-  apiPath="workflow/fn.clone_with.html"
-  git="git clone . ../cli-example-clone"
-  note="Transfers perform real writes. girt prints its own result format."
->
+<Example cmd="clone">
 
-Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
+`girt clone <url> [directory]` copies a repository and checks out its `HEAD`. The directory
+defaults to the URL's last component without `.git`. `--bare` makes a bare clone and
+`--no-checkout` leaves the index and working tree empty for a later `girt checkout HEAD`.
 
-Clone the current repository into a new sibling directory. The source directory in the absolute
-destination path is shown as `/path/to/cli-example`. The result goes to stdout; live progress goes
-to stderr when it is a terminal.
-
-```text
-$ girt clone . ../cli-example-clone
-cloned into /path/to/cli-example/../cli-example-clone
-HEAD -> refs/heads/main e5d83fbd011e44793ba5f60d5091bb569e12352f
+```console
+$ git clone -q --bare . ../demo.git
+$ cd ..
+$ girt clone demo.git copy
+cloned into /home/me/copy
+HEAD -> refs/heads/main 7ed7a0cc68995713f52d973e6adfd3d9e667324f
 ```
 
-The result names the destination and the branch and commit selected for HEAD. The clone includes a
-working tree unless you pass `--bare` or `--no-checkout`.
+</Example>
 
-`girt clone` corresponds to `git clone`; `girt fetch origin` corresponds to `git fetch origin` for
-the configured refspecs. `girt push origin main:main` corresponds to
-`git push --force-with-lease origin main:main` for the CLI's lease check, though a non-fast-forward
-update also needs girt's `+` refspec prefix. Fetch first if the lease rejects stale state.
+If the transfer succeeds and the checkout fails, the clone is kept and girt says so, so you can fix
+the cause and run `girt -C <dir> checkout HEAD` instead of downloading again.
 
-</CommandExample>
+## Download from a remote (`girt fetch`)
 
-## Library API and limits
+<Example cmd="fetch">
 
-The commands use
-[workflow::clone_with](https://docs.rs/girt/latest/girt/workflow/fn.clone_with.html),
-[workflow::fetch](https://docs.rs/girt/latest/girt/workflow/fn.fetch.html) and
-[workflow::push](https://docs.rs/girt/latest/girt/workflow/fn.push.html) with an explicit
-environment and options. These workflows compose discovery, transfer, publication and checkout; Rust
-callers can inspect structured outcomes and partial-failure information.
+`girt fetch [remote]` downloads from a configured remote, `origin` by default, using its fetch
+refspecs, and prints each reference it changed as `<old>..<new> <name>`. Here `demo` publishes a new
+commit and the copy fetches it.
 
-Local paths, HTTP(S) credential helpers and system OpenSSH on macOS/Linux are supported. Interactive
-credential and SSH terminal prompts are unavailable. Fetch does not automatically follow tags.
-`--git` suppresses progress but keeps girt's result format; byte-for-byte output comparison with Git
-is not available for these commands. See [Fetch, push and clone](/girt/guides/fetch-push-clone/) for
-publication and recovery boundaries.
+```console
+$ git -C demo commit -q --allow-empty -m "Upstream change"
+$ git -C demo push -q ../demo.git main
+$ cd copy
+$ girt fetch
+7ed7a0cc68995713f52d973e6adfd3d9e667324f..47faceec37e8ce5e789f39ed43a4233d71202051 refs/remotes/origin/main
+```
+
+</Example>
+
+Unlike Git, fetch doesn't follow tags automatically. A non-fast-forward update is refused unless the
+refspec allows it with a leading `+`. Interactive password and SSH prompts aren't available, and
+neither is job control: use a credential helper, an SSH agent or `SSH_ASKPASS`. SSH URL forms and
+command selection are on
+[Configuration and remotes](/girt/cli/configuration-and-remotes/#list-what-a-remote-advertises-girt-remote-heads).
+For all three transfer commands, `--git` only hides progress: results keep girt's format, so they
+can't be byte-compared with Git's.
+
+## Publish references (`girt push`)
+
+<Example cmd="push">
+
+`girt push <remote> <refspec>…` publishes references. Every update is conditional on the
+remote-tracking value you last fetched, like `git push --force-with-lease`: if the remote has
+moved since, the push is rejected as stale and you fetch first. A leading `+` permits a
+non-fast-forward update. Here the copy commits on top of the old `main`, so pushing it to `main`
+would discard the upstream commit it just fetched.
+
+```console
+$ git commit -q --allow-empty -m "From the copy"
+$ girt push origin main:refs/heads/review
+ok	refs/heads/review
+$ girt push origin main
+Error:
+   0: pushing to origin
+   1: push not sent
+   2: replacement requires explicit force for RefName([114, 101, 102, 115, 47, 104, 101, 97, 100, 115, 47, 109, 97, 105, 110])
+$ girt push origin +main
+ok	refs/heads/main
+```
+
+</Example>
+
+A destination without `refs/` is taken as a branch under `refs/heads/`. girt exits 1 unless every
+reference was accepted.

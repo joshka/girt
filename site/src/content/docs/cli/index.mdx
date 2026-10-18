@@ -1,0 +1,179 @@
+---
+title: The girt command
+description: What the girt CLI is for, how to install it and how its commands are organised.
+---
+
+import CliNotice from '../../../components/CliNotice.astro';
+
+<CliNotice />
+
+`girt` is a small command-line program built on the girt library. Each command is a thin layer over
+one or two library calls, so running it against a real repository shows what the library does with
+that repository: which objects it reads, how it resolves a name, what it writes. That makes it
+useful in three ways:
+
+- **A proof of reach.** If a Git operation can be written as a `girt` command, the library has the
+  pieces a Rust program needs to do the same thing.
+- **Worked examples.** Every command page lists the library items the command calls, linked to their
+  API docs. Read the command's source in
+  [`girt-cli/src`](https://github.com/joshka/girt/tree/main/girt-cli/src) for the full program.
+- **A comparison target.** With `--git`, most commands print exactly what their Git counterpart
+  prints, so the two can be diffed byte for byte and timed against each other.
+
+It is not a day-to-day Git client. There is no `commit`, `merge`, `rebase` or `add`; the library's
+consumers, such as jj, build those workflows themselves.
+
+## Install
+
+```sh
+cargo install girt-cli
+```
+
+[Getting started](/girt/cli/getting-started/) covers installing in more detail and builds the small
+repository the command pages use for their examples.
+
+## How commands are named
+
+Commands are grouped by the Git concept they work on, not by Git's command names. Reading an object
+is `girt object show`, not `cat-file -p`; listing references is `girt ref list`, not `for-each-ref`.
+Where Git's name is unclear or overloaded, girt picks a plainer one, and options follow the same
+rule. Each command's help names its nearest Git counterpart.
+
+| Area          | girt commands                                                  | Page                                                              |
+| ------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Repository    | `init`, `repo info`                                            | [Repositories and objects](/girt/cli/objects/)                    |
+| Objects       | `object id`, `show`, `info`, `cat`, `hash`, `batch`, `list`, … | [Repositories and objects](/girt/cli/objects/)                    |
+| Trees         | `tree list`                                                    | [Repositories and objects](/girt/cli/objects/)                    |
+| References    | `ref list`, `show`, `set`, `delete`, `log`                     | [References](/girt/cli/references/)                               |
+| History       | `log`, `history count`, `merge-base`, `contains`, `blame`      | [History and blame](/girt/cli/history/)                           |
+| Diffs         | `diff`                                                         | [Diffs](/girt/cli/diffs/)                                         |
+| Working tree  | `index list`, `status`, `ignore check`, `checkout`, `worktree` | [Index and working tree](/girt/cli/index-and-working-tree/)       |
+| Configuration | `config get`, `list`, `set`, `unset`, `remote`                 | [Configuration and remotes](/girt/cli/configuration-and-remotes/) |
+| Transfer      | `clone`, `fetch`, `push`                                       | [Fetch, push and clone](/girt/cli/fetch-push-clone/)              |
+| Storage       | `pack list`, `verify`, `reindex`, `maintenance`                | [Packs and maintenance](/girt/cli/storage-and-maintenance/)       |
+
+`girt help <command>` and `girt <command> --help` give the full option list.
+
+## Coming from Git
+
+Type a Git command or flag that girt spells differently and girt runs nothing, but the error ends
+with a tip naming the girt command to use instead. Every command in `git help -a` has an entry:
+
+```console
+$ girt cat-file -p HEAD
+error: unrecognized subcommand 'cat-file'
+
+  tip: for 'git cat-file -p', use 'girt object show'
+  tip: for 'git cat-file -t / -s', use 'girt object info'
+  tip: for 'git cat-file -e', use 'girt object exists'
+  tip: for 'git cat-file --batch', use 'girt object batch'
+  tip: for 'git cat-file --batch-all-objects', use 'girt object list'
+
+Usage: girt [OPTIONS] <COMMAND>
+
+For more information, try '--help'.
+```
+
+A Git feature girt doesn't have yet links to the issue tracking it, and a workflow girt leaves to
+the tools built on it links to the issue that says why:
+
+```console
+$ girt log --graph
+error: unexpected argument '--graph' found
+
+  tip: girt has no 'git log --graph' yet; see https://github.com/joshka/girt/issues/484
+
+Usage: girt log [OPTIONS] [REVS]...
+
+For more information, try '--help'.
+$ girt rebase main
+error: unrecognized subcommand 'rebase'
+
+  tip: girt does not plan 'git rebase'; https://github.com/joshka/girt/issues/488 explains why
+
+Usage: girt [OPTIONS] <COMMAND>
+
+For more information, try '--help'.
+```
+
+## Options every command takes
+
+| Option                          | Effect                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `-C <path>`                     | Run as if started in `<path>`.                                                                                      |
+| `--git`                         | Print what the Git counterpart prints, where there is one. See [Comparing with Git](/girt/cli/comparing-with-git/). |
+| `--color <auto\|always\|never>` | Colour output, help and diagnostics. See [Colour](#colour).                                                         |
+| `-q`, `--quiet`                 | Hide progress on stderr. See [Progress](#progress).                                                                 |
+| `-v`, `-vv`, `-vvv`             | Log library spans and events to stderr at info, debug or trace level.                                               |
+
+`GIRT_LOG` takes
+[tracing filter directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html)
+and overrides `-v`; `GIRT_LOG=girt=debug` shows the library's spans without those of its
+dependencies, and an invalid value is an error. `RUST_LOG` is ignored, so filters meant for other
+programs don't leak in. Errors print the chain of causes from the library, outermost first; from
+`-vv` up they also show the spans that were active when the error happened.
+
+Output is one record per line with full object IDs, for reading and for simple pipelines. There is
+no JSON mode.
+
+## Colour
+
+`--color auto`, the default, decides separately for stdout and stderr. A non-empty `NO_COLOR` turns
+colour off; otherwise a non-empty `CLICOLOR_FORCE` other than `0` turns it on, then `CLICOLOR=0`
+turns it off. Without any of those, colour needs a terminal and a `TERM` other than `dumb`. `always`
+and `never` override the environment.
+
+Status shows staged changes green and unstaged and untracked ones red. Patches use bold headers,
+cyan hunk headers, green additions and red deletions, and `log` shows commit IDs in yellow. `--git`
+output is never coloured.
+
+## Progress
+
+`clone`, `fetch`, `push` and `checkout` show their phases and object counts on stderr while it is a
+terminal, with a percentage when the total is known and the server's messages as `remote:` lines.
+`pack verify`, `pack reindex`, `maintenance repack` and `maintenance run` show elapsed time and
+their final totals only; the library doesn't report their intermediate counts yet
+([#371](https://github.com/joshka/girt/issues/371)). `-q`, `--git` or redirecting stderr turns
+progress off. Results always go to stdout, so progress never mixes with them.
+
+## Revisions
+
+Commands that take a revision accept Git's revision language as the library's
+[`revision`](https://docs.rs/girt/latest/girt/revision/index.html) module parses it:
+
+- full object IDs, and abbreviations of at least four hex digits that name one object;
+- reference names, expanded in Git's order, with `@` for `HEAD`;
+- `~N`, `^N`, `^{}`, `^{tree}` and the other peels, and `rev:path` for a tree entry;
+- reflog entries (`main@{2}`, `@{1}`) and the upstream and push branches (`@{u}`, `@{push}`);
+- for history commands, `^A`, `A..B` and `A...B`.
+
+A reference name wins over an abbreviated ID that looks the same, without Git's ambiguity warning.
+Pseudo-references other than `HEAD` (such as `FETCH_HEAD`), dated reflog entries, `@{-N}`, index
+lookups (`:path`, `:1:path`) and message searches (`:/text`) are refused with an error, never
+guessed at.
+
+Abbreviated IDs in output honour `core.abbrev` and grow until they are unique among loose objects,
+indexed packs and alternates. Packs without an `.idx` aren't consulted.
+
+## Shell completion
+
+```sh
+source <(girt completions zsh)     # in ~/.zshrc
+source <(girt completions bash)    # in ~/.bashrc
+girt completions fish | source     # in ~/.config/fish/config.fish
+```
+
+`elvish` and `powershell` work too. The script calls back into `girt` on each Tab, so it completes
+reference names, remotes, worktrees and configuration keys from the repository you're in. It reads
+only references, configuration and worktree registrations, never objects, and offers no values
+outside a repository or for a `-C` directory. `COMPLETE=<shell> girt` prints the same script;
+`--static` prints one that completes only commands and options, for packaging.
+
+## Man pages
+
+`girt man` prints `girt.1`. `--out <dir>` writes it and one page per subcommand:
+
+```sh
+girt man --out ~/.local/share/man/man1
+man girt-diff
+```

@@ -1,0 +1,85 @@
+---
+title: Comparing with Git
+description: Diff girt's output against Git's byte for byte, and time the two on the same repository.
+---
+
+import CliNotice from '../../../components/CliNotice.astro';
+
+<CliNotice />
+
+The library's job is to read and write exactly what Git reads and writes. The CLI gives two ways to
+check that from the outside: diff a command's output against Git's, and time the two on the same
+repository.
+
+## Diff output with `--git`
+
+A command's default output is laid out for people and simple scripts. `--git` switches it to the
+exact bytes its Git counterpart prints, including Git's quoting, abbreviation and ordering, so the
+two can be compared with `cmp`:
+
+```sh
+cmp <(girt --git ref list) <(git for-each-ref)
+cmp <(girt --git log main) <(git log main)
+cmp <(girt --git diff HEAD~2 HEAD --patch) <(git diff --no-renames HEAD~2 HEAD)
+```
+
+No output means the bytes match. Each command's `--help` names the Git command and options it
+matches; `girt diff --patch`, for example, matches `git diff --no-renames`, or `git diff -M` with
+`--renames`. The `girt-cli/tests/git_parity.rs` tests check these pairings against Git.
+
+Some commands have no byte-for-byte counterpart, and their help says so:
+
+- `clone`, `fetch` and `push` keep girt's result format; `--git` only hides progress.
+- `blame` prints ranges and refuses `--git`.
+- `pack list`, `pack verify` and the `maintenance` commands have no exact Git equivalent and ignore
+  `--git`.
+
+`--git` also turns off colour and progress so the output stays byte-comparable, and makes the exit
+status follow Git's where the two differ: run inside a worktree's `.git` directory,
+`girt --git repo info` stops with Git's `fatal:` message and exit status 128, as
+`git rev-parse --show-toplevel` does.
+
+Git's output also depends on configuration that girt may not read yet, such as `log.date`. To rule
+that out, compare under a plain configuration by setting `GIT_CONFIG_GLOBAL=/dev/null` for both
+commands.
+
+An error or refusal from girt marks the edge of what it supports, not a difference to diff; the
+[limits and trust](/girt/guides/limits-and-trust/) guide describes those edges for the library. Some
+differences are deliberate and documented in the help. `girt ref set` writes reflog times in UTC,
+for example, where Git uses the local time zone. Anything else is a bug; please
+[open an issue](https://github.com/joshka/girt/issues) with both outputs and the repository, or a
+script that builds it.
+
+## Time the two
+
+Because each command does one library operation, timing it against Git's equivalent measures the
+library on that operation, without a larger program in the way.
+[hyperfine](https://github.com/sharkdp/hyperfine) runs both and reports the ratio:
+
+```sh
+hyperfine --warmup 3 -N \
+  'girt --git log -n 1000 main' \
+  'git log -n 1000 main'
+```
+
+`-N` runs the commands without a shell, which matters for commands that finish in a few
+milliseconds. Use `--quiet` or `--git` so progress output isn't timed, and run against a repository
+large enough to be realistic: a fresh clone of a project you know is a good start. Keep the
+repository fixed between runs, reset a disposable copy before each run of a command that writes, and
+record both versions and whether the caches were warm.
+
+For whole-workflow timings, the [jj on girt benchmark](/girt/performance/jj-benchmark/) runs jj
+built on girt against stock jj and Git on several repository sizes.
+
+## See what the library did
+
+`-v`, `-vv` and `-vvv` print the library's tracing spans to stderr, which shows which stores and
+files a command touched and where the time went:
+
+```sh
+girt -vv object show HEAD
+GIRT_LOG='girt=trace' girt log -n 10
+```
+
+Errors print their chain of causes from the outermost operation inward, so a failed reference update
+reports the update, the transaction and the precondition that failed.

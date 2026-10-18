@@ -1,0 +1,79 @@
+---
+title: Getting started
+description: Install the girt CLI, build the example repository the CLI pages use, and take a first look at it.
+---
+
+import CliNotice from '../../../components/CliNotice.astro';
+
+<CliNotice />
+
+## Install
+
+```sh
+cargo install girt-cli
+```
+
+The crate is [`girt-cli`](https://crates.io/crates/girt-cli); the installed binary is `girt`. It is
+built with the library's `http`, `ssh` and `tracing` features, so it can fetch, clone and push over
+HTTP(S) and system OpenSSH. Status and checkout work on macOS and Linux only, as in the library. To
+build from a checkout of the repository instead, run `cargo install --path girt-cli` at its root.
+
+## Build the example repository
+
+The CLI pages run their examples against one small repository. This script builds it with the `git`
+executable, using a fixed identity and fixed dates so that every object ID matches the pages.
+`GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` keep your own configuration, such as commit signing or
+`log.date`, out of it; keep them set in the shell you try the examples in.
+
+```sh
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME="A. Writer" GIT_AUTHOR_EMAIL=a@example.com
+export GIT_COMMITTER_NAME="A. Writer" GIT_COMMITTER_EMAIL=a@example.com
+export GIT_AUTHOR_DATE=2026-10-01T12:00:00Z GIT_COMMITTER_DATE=2026-10-01T12:00:00Z
+git init -q -b main demo && cd demo
+git config user.name "A. Writer" && git config user.email a@example.com
+printf 'hello\n' > README.md && mkdir src && printf 'fn main() {}\n' > src/main.rs
+git add . && git commit -qm "Initial commit"
+printf 'hello\nworld\n' > README.md && git commit -qam "Add a second line"
+git switch -qc topic && git mv src/main.rs src/lib.rs && git commit -qm "Rename main to lib"
+git switch -q main
+printf 'target/\n' > .gitignore && git add .gitignore && git commit -qm "Ignore target"
+git tag -a v0.1 -m "First"
+```
+
+The result has four commits on two branches and an annotated tag:
+
+```console
+$ girt log --oneline main topic
+7ed7a0cc68995713f52d973e6adfd3d9e667324f Ignore target
+90772130c5df4563a3c4c46956d4120724dfed1a Rename main to lib
+3dc25d2e2eeed699cba1e1ea0314dd88299f9b02 Add a second line
+e896f1ed22a211bd58c4b542fba2323ad09a52b0 Initial commit
+```
+
+`main` adds a `.gitignore`; `topic` forks from `main~1` and renames `src/main.rs` to `src/lib.rs`.
+Paths in the pages' output appear as `/home/me/demo`; yours will be wherever you ran the script.
+Examples that change the repository, such as moving a branch, are written to run in page order.
+Commands that write go through the same checks as the library, but try them on a disposable copy
+before pointing them at a repository you care about.
+
+## A first look
+
+Each command is a thin layer over the library, so its output is close to what the library returns.
+`tree list` shows the entries of a commit's tree, and `object cat` writes one object's bytes:
+
+```console
+$ girt tree list HEAD
+100644 blob 2f7896d1d1365eafb0da03d9fe456fac81408487	.gitignore
+100644 blob 94954abda49de8615a048f8d2e64b5de848e27a1	README.md
+040000 tree 5d90422423db5ef6b431e8b9e60e0baf04b8742a	src
+$ girt object cat HEAD:README.md
+hello
+world
+```
+
+Every command page pairs its examples with a command reference: the library calls the command makes,
+linked to their API documentation, and the Git command it corresponds to. `girt help <command>`
+gives the full option list. To check girt's output or speed against Git's on your own repositories,
+see
+[Comparing with Git](/girt/cli/comparing-with-git/).

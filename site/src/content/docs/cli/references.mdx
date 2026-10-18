@@ -1,58 +1,121 @@
 ---
 title: References
-description: Read names and reflogs and make guarded reference updates.
-tableOfContents: false
+description: List, resolve, move and delete references, and read reflogs, with girt.
 ---
 
-import CommandExample from '../../../components/CommandExample.astro';
+import CliNotice from '../../../components/CliNotice.astro';
+import Example from '../../../components/Example.astro';
 
-`ref list` lists names, `show` follows symbolic references, and `log` reads reflogs. `set` and
-`delete` change references; use `--expect` or `--create-only` where applicable to guard against a
-stale value. Run `girt help ref set` before writing.
+<CliNotice />
 
-:::caution[Experimental CLI]
-The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
-testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
-may change; the library is the core deliverable.
-:::
+References are the names that point into the object graph: branches, tags, remote-tracking branches
+and `HEAD`. `girt ref` reads them from whichever backend the repository uses, loose files with a
+`packed-refs` file or reftables, and changes them only through checked transactions. The library
+side is in [Read and update refs](/girt/guides/refs/).
 
-## Inspect branch names
+## List references (`girt ref list`)
 
-<CommandExample
-  command="girt ref list"
-  api="Repository::references"
-  apiPath="repository/struct.Repository.html#method.references"
-  git="git for-each-ref"
-  note="Same operation; the default record formats differ."
->
+<Example cmd="ref list">
 
-Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
+`girt ref list` prints `<id> <name>` for every reference, sorted by name. Give one or more prefixes
+to narrow the list; `--symbolic` shows only symbolic references, with `-> <target>` appended.
 
-```text
+```console
 $ girt ref list
-e5d83fbd011e44793ba5f60d5091bb569e12352f refs/heads/main
+7ed7a0cc68995713f52d973e6adfd3d9e667324f refs/heads/main
+90772130c5df4563a3c4c46956d4120724dfed1a refs/heads/topic
+2e689a32bdb3c8620a41217104519c8fac9d029e refs/tags/v0.1
+$ girt ref list refs/heads
+7ed7a0cc68995713f52d973e6adfd3d9e667324f refs/heads/main
+90772130c5df4563a3c4c46956d4120724dfed1a refs/heads/topic
 ```
 
-Each record contains the target object ID and full reference name. Here `refs/heads/main` points to
-the latest commit. `ref show HEAD` also shows the symbolic chain from HEAD to the branch.
+</Example>
 
-The Git equivalents are `git for-each-ref` for listing, `git rev-parse` for resolving a name,
-`git update-ref` for setting a value, `git update-ref -d` for deleting it and `git reflog show` for
-reading its log.
+## Resolve a name (`girt ref show`)
 
-</CommandExample>
+<Example cmd="ref show">
 
-## Library API and limits
+`girt ref show` expands a short name the way Git does and prints each hop of a symbolic chain,
+ending at the object ID. It is a quick way to see what `HEAD` means in a repository.
 
-The commands open
-[Repository::references](https://docs.rs/girt/latest/girt/repository/struct.Repository.html#method.references)
-and use [References](https://docs.rs/girt/latest/girt/refs/struct.References.html) for lookup,
-iteration and edits. Updates compose
-[RefEdit](https://docs.rs/girt/latest/girt/refs/struct.RefEdit.html) with
-[Expected](https://docs.rs/girt/latest/girt/refs/enum.Expected.html) guards; log reading uses
-[Reflog](https://docs.rs/girt/latest/girt/refs/enum.Reflog.html).
+```console
+$ girt ref show HEAD
+HEAD -> refs/heads/main
+refs/heads/main -> 7ed7a0cc68995713f52d973e6adfd3d9e667324f
+```
 
-`set` follows symbolic references, requires the target object to exist and refuses non-commit branch
-targets. Logged updates use the configured committer identity and UTC timestamps. Deleting a
-reference also deletes its reflog. See [Read and update refs](/girt/guides/refs/) for transaction
-and concurrency guarantees; a CLI write has the same obligations as a library write.
+</Example>
+
+## Move a reference safely (`girt ref set`)
+
+<Example cmd="ref set">
+
+`girt ref set <name> <revision>` points a reference at an object. Pass the full ID you last saw with
+`--expect` and the update happens only if the reference still has that value; `--create-only`
+refuses to overwrite an existing reference. Either way a concurrent writer can't be silently
+overwritten.
+
+```console
+$ girt ref set refs/heads/release main~1 --create-only -m "start release"
+$ girt ref set refs/heads/release main \
+    --expect 3dc25d2e2eeed699cba1e1ea0314dd88299f9b02 -m "advance release"
+$ girt ref set refs/heads/release main~1 \
+    --expect 3dc25d2e2eeed699cba1e1ea0314dd88299f9b02
+Error:
+   0: updating refs/heads/release
+   1: reference transaction preparation failed
+   2: reference value did not match the expected value (found 7ed7a0cc68995713f52d973e6adfd3d9e667324f)
+```
+
+The third command fails because the second already moved `release`: the ID it expected is stale.
+`ref set` also refuses an object that doesn't exist, and anything but a commit when the reference,
+after following symbolic references, is a branch.
+`girt ref log release` now shows both updates:
+
+```console
+$ girt ref log release
+7ed7a0cc68995713f52d973e6adfd3d9e667324f 3dc25d2e2eeed699cba1e1ea0314dd88299f9b02 advance release
+3dc25d2e2eeed699cba1e1ea0314dd88299f9b02 0000000000000000000000000000000000000000 start release
+```
+
+</Example>
+
+Setting a symbolic reference such as `HEAD` updates the branch it points at. When
+`core.logAllRefUpdates` says the reference is logged, girt appends a reflog entry with `-m`'s
+message and the committer from `user.name` and `user.email` (or `GIT_COMMITTER_NAME` and
+`GIT_COMMITTER_EMAIL`). The entry's time is in UTC; girt doesn't read the local time zone.
+
+## Delete a reference (`girt ref delete`)
+
+<Example cmd="ref delete">
+
+`girt ref delete` removes a reference and its reflog. `--expect` makes the deletion conditional on
+the current value, as with `ref set`.
+
+```console
+$ girt ref delete refs/heads/release --expect 7ed7a0cc68995713f52d973e6adfd3d9e667324f
+$ girt ref list refs/heads
+7ed7a0cc68995713f52d973e6adfd3d9e667324f refs/heads/main
+90772130c5df4563a3c4c46956d4120724dfed1a refs/heads/topic
+```
+
+</Example>
+
+## Read a reflog (`girt ref log`)
+
+<Example cmd="ref log">
+
+`girt ref log` prints a reference's reflog newest first, as `<new-id> <old-id> <message>`.
+
+```console
+$ girt ref log main
+7ed7a0cc68995713f52d973e6adfd3d9e667324f 3dc25d2e2eeed699cba1e1ea0314dd88299f9b02 commit: Ignore target
+3dc25d2e2eeed699cba1e1ea0314dd88299f9b02 e896f1ed22a211bd58c4b542fba2323ad09a52b0 commit: Add a second line
+e896f1ed22a211bd58c4b542fba2323ad09a52b0 0000000000000000000000000000000000000000 commit (initial): Initial commit
+```
+
+</Example>
+
+With `--git` it prints Git's `<abbrev> main@{N}: <message>` form, with abbreviations as long as
+`core.abbrev` and the repository's size require.

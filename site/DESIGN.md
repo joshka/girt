@@ -372,8 +372,9 @@ squiggles:
 
 There are three tiers. Primary is ivory text on `rust-700`, with a `rust-600` border and hover.
 Secondary is ivory text with a `graph-line` outline and a `surface-raised` hover. Plain text links
-are ivory, or `rust-700` in light mode, with a 2px rust underline. Every interactive element has a
-visible focus ring: a 2px `on-surface-strong` outline, offset 2px.
+are ivory, or `rust-700` in light mode, with a 2px rust underline. Links that leave the site end in
+a muted `↗`, outside the underline, with "(external)" for screen readers. Every interactive element
+has a visible focus ring: a 2px `on-surface-strong` outline, offset 2px.
 
 ### Code blocks
 
@@ -389,12 +390,13 @@ fill on the whole box beyond these.
 
 ### Command references
 
-CLI command examples pair the prose and output with a contextual reference in the right margin. The
-reference groups the girt command, the linked library API it exercises and the corresponding Git
-operation. Use a small branch icon, muted uppercase mono labels, a surface fill and a hairline
-border; keep commands in neutral mono text. These references replace the fixed table of contents on
-command pages. Below 80rem viewport width, place each reference after its example. Long commands
-wrap inside the card so the page never scrolls horizontally.
+Each CLI section heading names the task, then the command in parentheses
+(`` Move a reference safely (`girt ref set`) ``), with the command in plain mono without the
+inline-code chip. Under the heading, a compact strip on a surface fill with a hairline border gives
+the girt command (or the family of commands the section covers), then the corresponding Git command,
+then the linked library APIs the example exercises, with muted uppercase mono labels. Long entries
+wrap inside the strip so the page never scrolls horizontally, and pages keep their table of
+contents, which becomes an index of commands.
 
 ### Tables
 

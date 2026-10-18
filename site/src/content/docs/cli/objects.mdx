@@ -1,0 +1,163 @@
+---
+title: Repositories and objects
+description: Create a repository, describe its layout, and read, hash and list objects and trees with girt.
+---
+
+import CliNotice from '../../../components/CliNotice.astro';
+import Example from '../../../components/Example.astro';
+
+<CliNotice />
+
+These commands work on the object store: the blobs, trees, commits and tags a repository is made of.
+Most of them are read-only; `init` and `object hash --write` are the only ones that write. The
+library side is covered in [Open a repository](/girt/guides/open-a-repository/) and
+[Read objects and history](/girt/guides/objects-and-history/).
+
+## Create a repository (`girt init`)
+
+<Example cmd="init">
+
+`girt init` creates a directory that must not exist yet and writes a new repository into it.
+`--bare` leaves out the worktree, `--sha256` uses SHA-256 object IDs, `--reftable` stores
+references in reftables instead of loose files, and `-b` names the unborn first branch. Git's templates are never read, so a new repository has no sample hooks
+or `info/exclude`.
+
+```console
+$ girt init ../scratch
+/home/me/scratch/.git
+```
+
+</Example>
+
+## Describe a repository (`girt repo info`)
+
+<Example cmd="repo info">
+
+`girt repo info` reports what girt found when it opened the repository: the object format, the
+reference backend, where each directory is, whether history is shallow, and any operation in
+progress, such as a merge or rebase Git left unfinished.
+
+```console
+$ girt repo info
+object-format: sha1
+ref-backend: files
+bare: false
+git-dir: /home/me/demo/.git
+common-dir: /home/me/demo/.git
+object-dir: /home/me/demo/.git/objects
+worktree: /home/me/demo
+shallow: false
+operation: none
+```
+
+</Example>
+
+In a linked worktree, `git-dir` and `common-dir` differ: the first holds that worktree's `HEAD` and
+index, the second the objects and references every worktree shares.
+
+## Name and read an object (`girt object show`)
+
+<Example cmd="object read">
+
+`girt object id` resolves a revision to an object ID. `object info` adds the object's kind and
+size, and `object show` prints it: trees as one entry per line, everything else as stored.
+
+```console
+$ girt object id HEAD
+7ed7a0cc68995713f52d973e6adfd3d9e667324f
+$ girt object info HEAD
+7ed7a0cc68995713f52d973e6adfd3d9e667324f commit 212
+$ girt object show HEAD
+tree eee938ebbce95f103bbcff61c15fade79deeaeb4
+parent 3dc25d2e2eeed699cba1e1ea0314dd88299f9b02
+author A. Writer <a@example.com> 1790856000 +0000
+committer A. Writer <a@example.com> 1790856000 +0000
+
+Ignore target
+```
+
+</Example>
+
+`object cat` writes the payload bytes and nothing else, which suits piping a blob into another
+program. `object exists` prints nothing and exits 0 or 1, for scripts. Each corresponds to one form
+of a Git command: `object id` to `git rev-parse --verify`, `info` to `git cat-file -t` and `-s`,
+`show` to `cat-file -p`, `exists` to `cat-file -e`.
+
+## Read many objects at once (`girt object batch`)
+
+<Example cmd="object batch">
+
+`girt object batch` reads revisions from stdin, one per line, and prints a `<id> <kind> <size>`
+header followed by each payload. `--check` prints only the headers. Input that doesn't name an
+object prints `<input> missing` and the batch carries on.
+
+```console
+$ printf 'HEAD\nHEAD:README.md\nnope\n' | girt object batch --check
+7ed7a0cc68995713f52d973e6adfd3d9e667324f commit 212
+94954abda49de8615a048f8d2e64b5de848e27a1 blob 12
+nope missing
+```
+
+</Example>
+
+Batch mode opens the repository once, so it is the form to use when timing object reads against
+`git cat-file --batch`.
+
+## Hash content (`girt object hash`)
+
+<Example cmd="object hash">
+
+`girt object hash` computes the ID a file's contents would have as a blob, without storing it.
+`--stdin` reads the contents from stdin, `-t` hashes them as another kind (trees, commits and tags
+must parse), and `-w` also writes the object into the loose store.
+
+```console
+$ printf 'hello\n' | girt object hash --stdin
+ce013625030ba8dba906f756967f9e9ca394464a
+```
+
+</Example>
+
+## List and count objects (`girt object list`)
+
+<Example cmd="object list">
+
+`girt object list` prints every object in the repository and its alternates, sorted by ID.
+`--loose` and `--packed` limit it to one store. Kinds and sizes come from the stored headers;
+payloads aren't decoded. `girt object count` summarises the primary store.
+
+```console
+$ girt object count
+loose 15
+loose-bytes 61440
+packed 0
+packs 0
+pack-bytes 0
+prune-packable 0
+```
+
+</Example>
+
+`object count --git` prints Git's `count-objects -v` lines without `garbage` and `size-garbage`,
+because girt doesn't classify stray files. Both commands see only packs with their own `.idx`:
+multi-pack indexes aren't read, and an `.idx` without its `.pack` is an error rather than garbage.
+
+## List a tree (`girt tree list`)
+
+<Example cmd="tree list">
+
+`girt tree list` prints a tree's entries as `<mode> <kind> <id>` and the path. Commits and tags
+peel to their tree. `-r` recurses and lists only files, with full paths; `--name-only` prints just
+the paths.
+
+```console
+$ girt tree list -r HEAD
+100644 blob 2f7896d1d1365eafb0da03d9fe456fac81408487	.gitignore
+100644 blob 94954abda49de8615a048f8d2e64b5de848e27a1	README.md
+100644 blob f328e4d9d04c31d0d70d16d21a07d1613be9d577	src/main.rs
+```
+
+</Example>
+
+Paths are printed as raw bytes. With `--git`, unusual paths are quoted as Git quotes them under the
+default `core.quotePath`.
