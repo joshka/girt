@@ -126,6 +126,16 @@ plain and 33.30 seconds with bitmaps (3.33 times plain), retaining the same inve
 sizes. This remains above the 1.5 target. Different load again limits comparisons to the measured
 within-run ratios; see [ID-map evidence](evidence/bitmap-repack-id-map-under-load.json).
 
+Selected-closure reuse is limited to one independently verified in-memory graph and its bit order;
+output records remain independent. SHA-1/SHA-256 ancestor fixtures compare closures with Git and
+exercise exact shared work limits. A multiword unit fixture checks both union-word accounting and
+the retained-word cap. Cache exhaustion walks instead; source verification is unchanged. Four
+alternating release blocks under load 22–30 measured median 10.32 seconds plain and 30.41 seconds
+with bitmaps (2.95 times plain), with identical inventory/artifact sizes. The previous within-run
+ratio was 3.33; load differs, so this does not establish a controlled absolute-time speedup. Output
+stays explicit-only and the 1.5 target is not met. See
+[closure-reuse evidence](evidence/bitmap-repack-closure-under-load.json).
+
 ## Multi-pack indexes
 
 The MIDX fixtures in `tests/multi_pack_index.rs` use isolated Git configuration and original pack
