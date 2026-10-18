@@ -1,0 +1,78 @@
+---
+title: Diffs and blame
+description: How Git compares trees and files, detects renames, applies diff attributes and attributes lines to commits.
+---
+
+import GirtStatus from '../../../components/GirtStatus.astro';
+
+Git stores snapshots, not changes. Every diff you see is computed on demand by comparing two
+snapshots, first as trees and then line by line.
+
+## Tree diff
+
+A **tree diff** compares two [trees](/girt/how-git-works/storage/#objects) entry by entry. Tree
+entries are sorted by name, so Git walks both lists together like a merge of two sorted lists. Where
+both trees have an entry with the same ID, the contents are identical, and for a subdirectory Git
+skips it entirely without reading it. That shortcut is why `git diff HEAD~1 HEAD` is fast even in a
+repository with millions of files: only the directories on the path to a changed file are read.
+
+The result is a list of added, deleted and modified paths, which `git diff --raw` prints.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/tree_diff/index.html" />
+
+## Rename and copy detection
+
+A raw tree diff sees a moved file as "deleted `a.rs`, added `b.rs`". **Rename detection** pairs
+deleted and added files by how similar their contents are and reports a rename with a similarity
+score, `R087 a.rs b.rs` for 87% similar. The default threshold is 50% (`-M50%`). Identical contents
+are found first by comparing IDs, which is cheap.
+
+**Copy detection** (`-C`) also compares added files with files that still exist, to report "`b.rs`
+was copied from `a.rs`". It costs more because there are more candidates.
+
+The cost grows with the number of candidate pairs, so Git caps it with `diff.renameLimit` and falls
+back to plain adds and deletes beyond it.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/rewrites/index.html">The caller sets the rename limit; `diff.renameLimit` isn't read.</GirtStatus>
+
+## Content diff
+
+A **content diff** compares two versions of a file line by line and finds a short set of inserted
+and deleted lines. Git offers several algorithms:
+
+- **Myers**, the default, finds a minimal edit.
+- **Patience** first matches lines that appear exactly once in each version, which keeps unrelated
+  braces and blank lines from being paired.
+- **Histogram** extends patience and is often the most readable (`diff.algorithm=histogram`).
+
+The output is the **unified diff** format: hunks of changes with a few unchanged context lines
+around them, each headed by `@@ -10,4 +10,6 @@`, meaning "four lines starting at line 10 in the old
+version became six lines starting at line 10 in the new one".
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/502">Myers with unified output; no patience or histogram.</GirtStatus>
+
+## Diff attributes
+
+[Attributes](/girt/how-git-works/other/#attributes) in `.gitattributes` can change how a path is
+diffed:
+
+- `-diff` or `binary` marks a path as binary, so Git prints "Binary files differ" instead of lines.
+- `diff=rust` chooses a **diff driver**. A driver's `xfuncname` regex finds the enclosing function
+  for each hunk header, `@@ -10,4 +10,6 @@ fn parse(input: &str)`. Git has built-in drivers for many
+  languages; others are configured as `diff.<driver>.xfuncname`.
+- A driver's `textconv` command converts the file to text before diffing, for example to diff the
+  text of PDFs or the metadata of images.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/462">Patches apply binary flags and `xfuncname`; blame ignores them and refuses `textconv` drivers.</GirtStatus>
+
+## Blame
+
+`git blame` finds, for each line of a file, the commit that last changed it. It walks history
+backwards from the starting commit. At each commit it diffs the file against the parent's version:
+lines unchanged from the parent are passed on to the parent to keep looking, and lines the commit
+changed are assigned to it. The walk ends when every line has an owner.
+
+With `-M`, blame follows lines moved within the file; with `-C`, lines moved or copied from other
+files. `--ignore-rev` skips commits such as mass reformatting.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/503">Follows renames; no move or copy detection, ignore-revs or textconv.</GirtStatus>

@@ -1,0 +1,176 @@
+---
+title: Combining and exchanging work
+description: Merging, filters, patches, submodules, notes, mailmap, signatures and the other features that change or annotate history.
+---
+
+import GirtStatus from '../../../components/GirtStatus.astro';
+
+The previous pages cover reading and recording history. This page covers combining it, transforming
+files on the way in and out, and attaching extra meaning to commits. girt doesn't cover most of
+these yet.
+
+## Merging
+
+A **merge** combines two lines of work. Git finds their
+[merge base](/girt/how-git-works/config-and-revisions/#merge-bases), diffs each side against it, and
+keeps both sets of changes. A file changed on only one side takes that side's version. Where both
+sides changed the same lines differently, Git records a **conflict**: the
+[index](/girt/how-git-works/working-tree/#the-index) holds all three versions in stages 1–3, and the
+working file gets markers:
+
+```text
+<<<<<<< HEAD
+let limit = 10;
+=======
+let limit = 20;
+>>>>>>> feature
+```
+
+When there are several merge bases, Git's default strategy first merges the bases together into a
+virtual base. Cherry-pick, revert, rebase and stash are all merges underneath: cherry-picking C is a
+merge whose base is C's parent. Without merging, a tool can read history but can't combine work.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/493" />
+
+## Filters
+
+**Filters** transform file contents between the repository and the working tree:
+
+- **Line endings.** With `core.autocrlf` or the `text` and `eol`
+  [attributes](/girt/how-git-works/other/#attributes), Git stores LF in the repository and writes
+  CRLF on Windows checkouts.
+- **`ident`** expands `$Id$` to `$Id: <blob id> $` on checkout.
+- **Clean and smudge drivers** (`filter.<name>.clean` and `.smudge`) run an external program: clean
+  when adding a file, smudge when checking it out. Git's long-running filter process protocol keeps
+  one program running for many files.
+
+Git LFS works this way: the repository stores a small pointer file, and the smudge filter replaces
+it with the real file on checkout. Without filters, checkout writes the pointer instead of the file,
+and [status](/girt/how-git-works/working-tree/#status) reports converted files as changed.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/496" />
+
+## Applying patches
+
+Applying a patch takes a [unified diff](/girt/how-git-works/diff/#content-diff) and changes files to
+match: `git apply` edits the working tree or index, checking that each hunk's context lines still
+match. `git format-patch` turns commits into mail-ready patch files, and `git am` parses a mailbox
+and recreates the commits with their authors and messages. Patch-based review, moving changes
+between repositories, and tools that edit code by generating diffs all depend on applying them.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/506" />
+
+## Submodules
+
+A **submodule** embeds another repository at a fixed commit. The parent's
+[tree](/girt/how-git-works/storage/#objects) has a **gitlink** entry (mode `160000`) holding a
+commit ID from the other repository, and `.gitmodules` says where to fetch it:
+
+```ini
+[submodule "vendor/lib"]
+	path = vendor/lib
+	url = https://example.com/lib.git
+```
+
+`git submodule update --init` clones the submodule and checks out the recorded commit. Status
+reports whether a submodule's checkout matches the recorded commit.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/507" />
+
+## Notes
+
+**Notes** attach text to a commit after it was made, without changing its ID. They live in an
+ordinary commit history under `refs/notes/commits`, whose trees map commit IDs to note blobs, split
+into fanout directories (`ab/cdef…`) once there are many. Review sign-offs, CI results and links to
+review pages are stored this way.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/508" />
+
+## Mailmap
+
+`.mailmap` (or the file in `mailmap.file`, or the blob in `mailmap.blob`) maps old or inconsistent
+names and emails to one canonical identity:
+
+```text
+Jane Doe <jane@example.com> <jdoe@old-employer.example>
+```
+
+`git log`, `git blame` and `git shortlog` use it, so one person doesn't appear as several.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/509" />
+
+## Signatures
+
+Commits and tags can carry a signature proving who made them, stored as a `gpgsig` header in the
+commit or appended to the tag message. Signing calls `gpg`, or `ssh-keygen -Y sign` when
+`gpg.format=ssh`. Verifying (`git verify-commit`, `git log --show-signature`) checks the signature
+against trusted keys: the GPG keyring, or for SSH the allowed signers file in
+`gpg.ssh.allowedSignersFile`. Forges and security-conscious tools need verification.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/510">Commits can be signed by a caller-supplied signer; no verification.</GirtStatus>
+
+## Describe
+
+`git describe` names a commit by the nearest earlier tag: `v1.2.0-14-gabc1234` means 14 commits
+after `v1.2.0`, at commit `abc1234`. Build tools use it for version strings.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/511" />
+
+## Pathspecs
+
+A **pathspec** is the mini-language commands use to choose paths: `src/*.rs`, `':(exclude)tests'`,
+`':(icase)readme'`, and `':/'` for the repository root from anywhere inside it. Status, diff, log,
+add and checkout all take pathspecs, so they need one shared implementation that matches identically
+everywhere.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/495" />
+
+## Commit message cleanup and trailers
+
+Before committing, Git **cleans up** the message according to `commit.cleanup`. By default, when the
+message was edited in an editor, it strips lines starting with `#`, trailing whitespace, and leading
+and trailing blank lines, and collapses runs of blank lines; a message given with `-m` keeps `#`
+lines. **Trailers** are the `Key: value` lines at the end of a message, such as `Signed-off-by:` and
+`Co-authored-by:`; `git interpret-trailers` parses and adds them. Both are pure text functions that
+commit tools need.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/512" />
+
+## Ahead/behind counts
+
+"3 ahead, 5 behind `origin/main`" counts the commits each side has that the other doesn't, measured
+from their [merge base](/girt/how-git-works/config-and-revisions/#merge-bases)
+(`git rev-list --left-right --count main...origin/main`). Every status bar and branch list shows it.
+Counted naively, it walks both histories; a
+[commit-graph](/girt/how-git-works/scale-and-serving/#commit-graph) lets the walk stop early.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/513" />
+
+## Reset modes
+
+`git reset` moves the current branch, at one of three depths: `--soft` moves the branch only;
+`--mixed` (the default) also resets the index; `--hard` also resets the working files.
+`git reset -- path` resets one path's index entry, which is how a file gets unstaged. Each is a
+combination of [ref updates](/girt/how-git-works/references/#conditional-ref-transactions), index
+writes and [checkout](/girt/how-git-works/working-tree/#checkout-of-a-tree), done in a safe order.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/514" />
+
+## Pluggable backends
+
+Git itself assumes objects live in `.git/objects/` and refs in `.git/refs/` or reftable. Libraries
+can instead let callers supply storage: an in-memory repository for tests, a database or object
+store on a server, or another tool's own storage. Every read path goes through that interface, so it
+is a design decision before it is code.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/515" />
+
+## Transport hooks
+
+Applications often need to customise remote access: handle a custom URL scheme, inspect a TLS
+certificate or SSH host key and decide whether to accept it, route through a proxy, or supply
+credentials their own way. Git does this with `remote-<scheme>` helper programs, `http.proxy`,
+`http.sslCAInfo` and SSH configuration; a library needs callbacks for the same decisions. Enterprise
+networks, custom authentication and tests depend on them.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/516">HTTP proxies are configurable; no custom URL schemes or certificate and host-key callbacks.</GirtStatus>

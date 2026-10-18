@@ -1,0 +1,152 @@
+---
+title: Scale, serving and tooling
+description: commit-graph, multi-pack indexes, bitmaps, fsmonitor, the server side of transfer, and tools such as fsck, grep, archive and bisect.
+---
+
+import GirtStatus from '../../../components/GirtStatus.astro';
+
+Git keeps several optional files next to its objects that make large repositories fast. None of them
+hold new information; each is a cache of something Git could compute from objects, and Git falls
+back to computing it when the file is missing. This page also covers serving transfers and Git's
+standalone tools. girt doesn't cover these yet.
+
+## commit-graph
+
+`.git/objects/info/commit-graph` lists every commit's parents, root tree, commit date and
+**generation number** in a compact indexed table. Without it, each step of a
+[history walk](/girt/how-git-works/config-and-revisions/#history-walks) finds, decompresses and
+parses a commit object; with it, a step is an array lookup.
+
+A commit's generation number is one more than its parents' highest. A commit can't be an ancestor of
+a commit with a lower or equal generation, so walks can stop as soon as they pass below the target's
+generation instead of visiting the whole excluded history. Optional **changed-path Bloom filters**
+record which paths each commit touched, so `git log -- path` and blame skip commits that didn't. Git
+writes the file during `git gc` and `git maintenance` by default, so reading it is enough to
+benefit.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/492" />
+
+## Multi-pack index
+
+Repositories collect many [packs](/girt/how-git-works/storage/#packs), roughly one per fetch, and an
+object lookup checks each pack's index in turn. A **multi-pack index**
+(`.git/objects/pack/multi-pack-index`) is one index across all packs, so a lookup is a single binary
+search however many packs there are.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/517" />
+
+## Reachability bitmaps
+
+A **reachability bitmap** stores, for selected commits, one bit per object in a pack saying whether
+it is reachable from that commit. "Which objects does this client need?" becomes bitwise operations
+(reachable from the wants, minus reachable from the haves) instead of a graph walk. Bitmaps make
+serving clones and fetches fast, and speed up counting objects and repacking.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/518" />
+
+## fsmonitor and the untracked cache
+
+[Status](/girt/how-git-works/working-tree/#status) checks every tracked file's stat data and scans
+every directory for untracked files. On a monorepo that takes seconds. **fsmonitor**
+(`core.fsmonitor=true`) asks a file-watcher daemon which paths changed since the last query, so Git
+only checks those. The **untracked cache** (`core.untrackedCache`), an index extension, remembers
+directory listings so finding new files doesn't rescan unchanged directories. Together they make
+status take milliseconds.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/519" />
+
+## Serving
+
+The server side of [transfer](/girt/how-git-works/transfer/) runs `git-upload-pack` for fetch and
+clone and `git-receive-pack` for push: advertise refs, negotiate, build a pack, or receive one and
+apply ref updates. A Rust forge, a jj server or self-contained test fixtures need this.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/520" />
+
+## Partial clone
+
+`git clone --filter=blob:none` downloads every commit and tree but no file contents. The repository
+records the remote as a **promisor**, and any later read of a missing blob fetches it on demand.
+Large repositories clone in a fraction of the time. Everything that reads objects has to know a
+missing object may be promised rather than lost.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/521" />
+
+## Bundles
+
+A **bundle** (`git bundle create repo.bundle --all`) is one file holding a pack plus a list of refs:
+a portable snapshot of some or all of a repository. You can clone or fetch from it like a remote. It
+is used to move repositories without a network and for **bundle URIs**, where a server points
+clients at a prebuilt bundle on a CDN to download first, then fetches the rest.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/523" />
+
+## fsck
+
+`git fsck` checks a repository's integrity: every object parses and hashes to its ID, every ref
+points at an existing object, and every object reachable from a ref is present. It also reports
+unreachable ("dangling") objects.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/524">Pack verification and connectivity checks on fetch; no whole-repository check.</GirtStatus>
+
+## grep
+
+`git grep` searches file contents in the working tree, the index, or any commit's tree, limited by
+pathspecs. By default it searches tracked files, including tracked files that match `.gitignore`;
+[ignore rules](/girt/how-git-works/working-tree/#ignore-rules) only matter with `--untracked`.
+Searching a commit reads blobs straight from the object database, without a checkout.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/525" />
+
+## archive
+
+`git archive --format=tar v1.0` exports a tree as a tar or zip file, leaving out paths with the
+`export-ignore` [attribute](/girt/how-git-works/other/#attributes). Release tooling uses it to build
+source tarballs.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/526" />
+
+## bisect
+
+`git bisect` binary-searches history for the commit that introduced a bug. You mark one commit good
+and one bad; Git checks out a commit halfway between, you test it and mark it, and after about
+log₂(n) steps it names the first bad commit. It is mostly history-walk logic plus a little state in
+`.git/BISECT_*` files.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/527" />
+
+## rerere
+
+**rerere** ("reuse recorded resolution", `rerere.enabled=true`) records how you resolved a
+[merge conflict](/girt/how-git-works/combining-work/#merging) under `.git/rr-cache/` and resolves
+the same conflict automatically next time, which helps when rebasing a long-lived branch repeatedly.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/528" />
+
+## Replace refs and grafts
+
+A ref `refs/replace/<id>` makes Git transparently use another object wherever `<id>` is read, for
+example to stitch an imported old history onto a newer one. Grafts (`.git/info/grafts`) are the
+older, deprecated form. Where they are used, a tool that ignores them shows different history from
+Git.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/529" />
+
+## Hooks
+
+**Hooks** are programs Git runs at set points: `pre-commit` and `commit-msg` before a commit,
+`post-checkout` after checkout, `pre-push` before a push. They live in `.git/hooks/` or the
+directory in `core.hooksPath`, and a non-zero exit from a `pre-` hook stops the operation. Tools
+that commit or push on a user's behalf may need to run a repository's hooks the way Git does.
+
+<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/530" />
+
+## Automatic maintenance
+
+`git gc --auto` runs after many commands and repacks when there are more than `gc.auto` loose
+objects (6700 by default) or `gc.autoPackLimit` packs (50). `git maintenance` schedules tasks such
+as writing the commit-graph, prefetching and incremental repacking. Both decide when the individual
+operations ([repacking](/girt/how-git-works/storage/#repacking-and-pruning), packing refs, pruning)
+should run.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/531">`gc.auto` applies to packing refs only; no policy for repacking or pruning.</GirtStatus>

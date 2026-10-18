@@ -1,0 +1,77 @@
+---
+title: References
+description: How Git names commits with branches, tags and HEAD, keeps a history of each name, and updates names safely.
+---
+
+import GirtStatus from '../../../components/GirtStatus.astro';
+
+[Objects](/girt/how-git-works/storage/#objects) never change, so on their own they can't say "the
+latest version". That job belongs to references: small, mutable names that point at objects.
+
+## Refs
+
+A **reference** (ref) maps a name to an object ID. The name says what kind of ref it is:
+
+- `refs/heads/main` is a **branch**.
+- `refs/tags/v1.0` is a **tag**.
+- `refs/remotes/origin/main` is a **remote-tracking ref**: your copy of where `main` was on the
+  remote `origin` at your last fetch.
+
+Each ref is stored either as a small file (`.git/refs/heads/main` contains one object ID and a
+newline) or as a line in `.git/packed-refs`, a single sorted text file that holds many refs at once.
+`git pack-refs` moves loose ref files into `packed-refs` so that repositories with thousands of tags
+don't need thousands of files. A loose file, when present, wins over the packed line.
+
+A **symbolic ref** points at another ref instead of an object. `HEAD` is the important one:
+`.git/HEAD` usually contains `ref: refs/heads/main`, which is how Git knows the current branch.
+Commit on `main` and Git updates `refs/heads/main`; `HEAD` follows because it names the branch. When
+`HEAD` holds an object ID directly, you have a **detached HEAD**. A new repository's `HEAD` names a
+branch that doesn't exist yet, called an **unborn** branch, until the first commit creates it.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/refs/index.html" />
+
+## Reftable
+
+**Reftable** is a newer ref storage format that replaces loose ref files and `packed-refs` with
+sorted binary files under `.git/reftable/`. The files form a stack listed in `tables.list`: each
+update writes a small new table on top, readers merge the stack, and Git compacts tables together
+from time to time.
+
+It fixes several problems with the files format. An update to many refs is one atomic table write,
+so readers never see half of it. Lookups stay fast with millions of refs. Ref names no longer become
+file names, which avoids clashes on case-insensitive file systems (`refs/heads/Main` and
+`refs/heads/main`). Reflogs are stored in the same tables. You choose it with
+`git init --ref-format=reftable`, and Git is moving toward it as the default.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/refs/reftable/index.html" />
+
+## Reflogs
+
+A **reflog** is a per-ref history of the values a ref has held. Each entry records the old ID, the
+new ID, who made the change, when, and a short reason such as `commit: fix typo` or
+`reset: moving to HEAD~1`. In the files format each ref's reflog is a text file under `.git/logs/`,
+for example `.git/logs/refs/heads/main`.
+
+Reflogs power the `@{…}` syntax: `main@{1}` is where `main` pointed before its last change, and
+`HEAD@{yesterday}` is where `HEAD` pointed a day ago. They are the main way people recover from a
+bad reset or rebase: `git reflog` shows the commit you lost, and you point a branch back at it.
+Reflog entries also count as references for
+[pruning](/girt/how-git-works/storage/#repacking-and-pruning), so the commits they name stay in the
+repository until the entries expire (90 days by default for reachable commits, 30 for others).
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/refs/index.html" />
+
+## Conditional ref transactions
+
+Several processes can update refs at once: a fetch in one terminal, a commit in another, an editor
+plugin in the background. A **ref transaction** updates several refs together, each with an optional
+check like "only if it currently points at X". If any check fails, nothing changes. This
+compare-and-swap is how `git push` and `git fetch` avoid overwriting a change someone else made
+between reading a ref and updating it.
+
+In the files format Git creates `refs/heads/main.lock` for each ref (with `O_EXCL`, so only one
+process can hold it), checks each ref's current value, writes each new value into its lock file, and
+then renames every lock file over its ref. In reftable, one lock on the stack covers the whole
+update. You can run a transaction yourself with `git update-ref --stdin`.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/refs/index.html">A files-backed batch can partly publish if a rename fails; outcomes are reported per ref.</GirtStatus>

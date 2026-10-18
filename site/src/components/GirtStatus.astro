@@ -1,0 +1,74 @@
+---
+// One line per "How Git works" area saying how far girt supports it. Each area's line is edited
+// on its own as support lands, so keep the shape: a status, one link and optional detail text.
+//
+//   <GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/..." />
+//   <GirtStatus status="partial" href="https://github.com/joshka/girt/issues/N">What's missing.</GirtStatus>
+//   <GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/N" />
+interface Props {
+  status: 'supported' | 'partial' | 'not-yet';
+  href: string;
+}
+
+const { status, href } = Astro.props;
+const labels = { supported: 'Supported', partial: 'Partial', 'not-yet': 'Not yet' };
+const issue = href.match(/\/issues\/(\d+)$/);
+const linkText = issue ? `issue #${issue[1]}` : 'API docs';
+const detail = Astro.slots.has('default') ? await Astro.slots.render('default') : '';
+---
+
+<p class={`girt-status girt-status--${status}`}>
+  <span class="label">girt</span>
+  <span class="chip">{labels[status]}</span>
+  {detail && <span class="detail" set:html={detail} />}
+  <a href={href}>{linkText}</a>
+</p>
+
+<style>
+  .girt-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.6rem;
+    margin-block: 1rem 0;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+
+  .label {
+    font-family: var(--__sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .chip {
+    padding: 1px 8px;
+    border: 1px solid var(--girt-graph-line);
+    border-radius: 4px;
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  .girt-status--supported .chip {
+    background: var(--girt-verdigris-900);
+    border-color: var(--girt-verdigris-700);
+    color: var(--girt-on-fill);
+  }
+
+  .girt-status--not-yet .chip {
+    background: var(--girt-rust-950);
+    border-color: var(--girt-rust-800);
+  }
+
+  :root[data-theme='light'] .girt-status--supported .chip {
+    background: var(--girt-verdigris-700);
+  }
+
+  :root[data-theme='light'] .girt-status--not-yet .chip {
+    background: #f8ece8;
+    border-color: #e9c9bf;
+    color: #1b1a17;
+  }
+</style>

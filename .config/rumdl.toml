@@ -15,3 +15,5 @@ style = "aligned"
 "**/CHANGELOG.md" = ["MD013"]
 # The benchmark MDX page embeds summary cards and layouts as HTML.
 "**/site/src/content/docs/performance/jj-benchmark.mdx" = ["MD033"]
+# The merging section shows Git's conflict markers as an example.
+"**/site/src/content/docs/how-git-works/combining-work.mdx" = ["MD092"]

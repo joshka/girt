@@ -1,0 +1,43 @@
+---
+title: How Git works
+description: A guide to what Git stores, how it names and moves it, and why each piece exists.
+---
+
+You can use Git every day without knowing what `git commit` writes or what `git fetch` sends over
+the wire. This guide is for that reader. It explains, piece by piece, what Git keeps in `.git/`, how
+the commands you already use read and change it, and what problem each piece solves.
+
+The pages build on each other, so read them in order the first time:
+
+1. [Storage](/girt/how-git-works/storage/): objects, the IDs that name them, and the loose files and
+   packs that hold them.
+2. [References](/girt/how-git-works/references/): branch and tag names, `HEAD`, reflogs and safe
+   concurrent updates.
+3. [Configuration and revisions](/girt/how-git-works/config-and-revisions/): layered config files,
+   the syntax for naming commits, and walking history.
+4. [The working tree](/girt/how-git-works/working-tree/): the index, status, ignore rules and
+   checkout.
+5. [Diffs and blame](/girt/how-git-works/diff/): comparing trees and files, finding renames, and
+   attributing lines to commits.
+6. [Tags, worktrees and other pieces](/girt/how-git-works/other/): attributes, tags, linked
+   worktrees, shallow history and credentials.
+7. [Transfer](/girt/how-git-works/transfer/): fetch, clone and push, and the transports that carry
+   them.
+8. [Combining and exchanging work](/girt/how-git-works/combining-work/): merging, filters, patches,
+   submodules, signatures and the other features that change or annotate history.
+9. [Scale, serving and tooling](/girt/how-git-works/scale-and-serving/): the auxiliary indexes that
+   keep big repositories fast, the server side of transfer, and tools such as `fsck` and `bisect`.
+
+The first seven pages cover areas girt already implements at least in part. The last two cover areas
+girt doesn't cover yet; they are still part of how Git works.
+
+## girt's support
+
+girt is a Rust library that reads and writes the same files Git does. Each section ends with a line
+saying how far girt supports that area: **Supported**, **Partial** (with what's missing), or
+**Not yet**. Supported areas link to girt's API docs; the others link to the issue tracking the gap.
+The [Git capability program](https://github.com/joshka/girt/issues/534) issue lists every area as a
+checklist.
+
+For how girt's own types model objects and references, see
+[The Git model](/girt/concepts/git-model/). This guide stays with Git itself.

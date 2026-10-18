@@ -113,6 +113,21 @@ export default defineConfig({
           ],
         },
         {
+          label: 'How Git works',
+          items: [
+            { label: 'Overview', slug: 'how-git-works' },
+            { label: 'Storage', slug: 'how-git-works/storage' },
+            { label: 'References', slug: 'how-git-works/references' },
+            { label: 'Configuration and revisions', slug: 'how-git-works/config-and-revisions' },
+            { label: 'The working tree', slug: 'how-git-works/working-tree' },
+            { label: 'Diffs and blame', slug: 'how-git-works/diff' },
+            { label: 'Tags, worktrees and more', slug: 'how-git-works/other' },
+            { label: 'Transfer', slug: 'how-git-works/transfer' },
+            { label: 'Combining and exchanging work', slug: 'how-git-works/combining-work' },
+            { label: 'Scale, serving and tooling', slug: 'how-git-works/scale-and-serving' },
+          ],
+        },
+        {
           label: 'Concepts',
           items: [
             { label: 'Design principles', slug: 'concepts/design-principles' },

@@ -1,0 +1,91 @@
+---
+title: Configuration and revisions
+description: How Git layers configuration files, the syntax for naming commits, and how it walks history.
+---
+
+import GirtStatus from '../../../components/GirtStatus.astro';
+
+Almost every Git command reads configuration and takes a commit from you, and many then walk history
+from it. This page covers those shared pieces, which later pages build on.
+
+## Layered configuration
+
+Git reads configuration from several files in order, and a later value for the same key wins over an
+earlier one:
+
+1. System: `/etc/gitconfig`, for every user on the machine.
+2. Global: `~/.gitconfig` or `~/.config/git/config`, for you.
+3. Repository: `.git/config`, for this repository.
+4. Worktree: `.git/config.worktree`, for one
+   [linked worktree](/girt/how-git-works/other/#linked-worktrees) when `extensions.worktreeConfig`
+   is on.
+5. The command line: `git -c key=value`, for one command.
+
+`git config --list --show-origin` prints every value with the file it came from. Files can pull in
+other files: `include.path` always does, and `includeIf.gitdir:~/work/.path` does only for
+repositories under `~/work/`, which is how people use a different email for work repositories.
+
+Some keys hold several values rather than overriding each other. A remote's `fetch` lines are
+[refspecs](/girt/how-git-works/transfer/#fetch-and-clone), and a remote can have many. Tools that
+edit configuration must also preserve comments, blank lines and the order of entries, because people
+edit these files by hand.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/config/index.html">Edits preserve formatting but don't follow includes.</GirtStatus>
+
+## Revision syntax
+
+Any command that takes a commit from a user accepts Git's revision syntax (`git help revisions`):
+
+- `main~2`: two commits back from `main`, following first parents.
+- `main^2`: the second parent of the merge commit at `main`.
+- `v1^{tree}`: the tree of the commit that `v1` points at.
+- `HEAD:src/lib.rs`: the blob for `src/lib.rs` in the current commit.
+- `@{u}`: the current branch's upstream, such as `origin/main`.
+- `main@{1}` and `HEAD@{yesterday}`: previous values from the
+  [reflog](/girt/how-git-works/references/#reflogs).
+- `A..B`: commits reachable from `B` but not from `A`. `A...B`: commits reachable from either but
+  not both.
+
+Each form except the ranges resolves to one object ID, so commands only need to understand IDs once
+the syntax is parsed. The ranges `A..B` and `A...B` name sets of commits instead; commands pass them
+to a [history walk](#history-walks).
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/364">Missing `@{date}`, `@{-N}`, index paths (`:path`), `:/text`, `^@`, `^!` and describe output.</GirtStatus>
+
+## History walks
+
+A **history walk** visits the ancestors of some commits, optionally excluding everything reachable
+from others: `git log A..B` visits commits reachable from `B` and stops at those reachable from `A`.
+`git rev-list` prints the same walk as bare IDs. Log, blame, push (to work out what the server
+lacks) and ahead/behind counts all depend on it.
+
+Walks have an order. Date order follows commit timestamps, newest first. Topological order
+(`--topo-order`) guarantees no parent is shown before all of its children, which `git log --graph`
+needs to draw lines correctly. Timestamps can be wrong, so a walk can't stop just because it has
+reached old dates; it has to know the excluded side's boundary. Without help from a
+[commit-graph](/girt/how-git-works/scale-and-serving/#commit-graph), working out that boundary may
+mean visiting much of the excluded side's history.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/416">The library walk has no date or topological order and isn't lazy; ranges walk the excluded side's whole history.</GirtStatus>
+
+## Merge bases
+
+The **merge base** of two commits is their best common ancestor: the last commit both lines of work
+share, where they split. "Best" means no other common ancestor is a descendant of it. After
+criss-cross merges, where two branches have each merged the other, there can be several best common
+ancestors. `git merge-base --all A B` lists them.
+
+[Merging](/girt/how-git-works/combining-work/#merging) uses the merge base as the starting point
+both sides changed from. `A...B` means commits on either side of it, and ahead/behind counts are
+measured from it.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/history/index.html">Returns every best common ancestor.</GirtStatus>
+
+## Ancestry checks
+
+"Is X an ancestor of Y?" (`git merge-base --is-ancestor X Y`) answers whether moving a ref from X to
+Y is a **fast-forward**: the new commit builds on the old one, so the move discards nothing. Push
+refuses non-fast-forward updates unless forced, and `git merge` can simply move the branch when the
+merge is a fast-forward.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/history/index.html" />
