@@ -30,6 +30,11 @@
 //! assume-unchanged and skip-worktree promises; raw status inspects those files. No index
 //! refresh, locks, hooks, writes, rename detection, staging or checkout occur.
 //!
+//! Status never writes back the stat words it could have learned, so a file whose stat went stale
+//! but whose content did not is read by every call.
+//! [`Repository::refresh_index`](crate::Repository::refresh_index) is the explicit write that
+//! records them, as `git update-index --refresh` does.
+//!
 //! Traversal is supported on Linux and macOS. Linux preserves non-UTF-8 filename bytes; macOS
 //! accepts ASCII paths only because Unicode normalization aliases are not implemented. Exact
 //! directory-name matching prevents case-folded aliases from being mistaken for tracked names.
@@ -76,6 +81,7 @@
 //! assert_eq!(report.raw_untracked, [b"scratch.txt".to_vec()]);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+mod refresh;
 mod types;
 mod workflow;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -83,4 +89,5 @@ pub(crate) use workflow::nested_status;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod worktree;
 
+pub use refresh::Refresh;
 pub use types::*;

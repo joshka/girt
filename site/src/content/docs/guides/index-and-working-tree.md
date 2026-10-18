@@ -204,6 +204,18 @@ even if a preceding status succeeded. Limits bound reads, visited names, paths a
 Cancellation is cooperative; these synchronous APIs belong on the application's blocking worker when
 used from an async runtime.
 
+### Record fresh stat data explicitly
+
+Because status never writes, a file whose stat data went stale while its content did not (after
+`touch`, a build tool, a branch switch, or a girt checkout, which records no stat data) is read
+again by every status call. `Repository::refresh_index` is the explicit write, like
+`git update-index --refresh`. It holds `index.lock` for the whole scan, compares files as
+`Repository::status` does, and records stat data only for files whose content it read and found
+equal to the index. Pass a filter pipeline to `refresh_index_with` to compare converted content, as
+`status_with_filters` does. A file modified in the second the refresh began is recorded with a zero
+size, so the next status still reads it. When nothing needs recording, nothing is written. A held
+lock is reported as `StorageError::Locked` rather than waited for or skipped.
+
 ### Interpret every status category
 
 A path with unresolved stages appears in `unmerged`, not in either change list. Present the

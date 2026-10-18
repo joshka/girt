@@ -657,16 +657,46 @@ impl Index {
 
     /// Zeroes the cached size of entries modified at or after `threshold`, as Git does for
     /// racily clean entries (see Git's racy-git notes), so readers recheck their contents.
-    pub(super) fn smudge_racy_entries(&mut self, threshold: crate::index::Timestamp) {
+    /// Zeroes the size of entries modified at or after `threshold`, except at the sorted
+    /// positions in `verified`, whose racy rule [`Self::record_stat`] has already applied.
+    pub(super) fn smudge_racy_entries(
+        &mut self,
+        threshold: crate::index::Timestamp,
+        verified: &[usize],
+    ) {
         let key = |time: crate::index::Timestamp| (time.seconds, time.nanoseconds);
         let mut changed = false;
-        for entry in &mut self.entries {
+        let mut verified = verified.iter().peekable();
+        for (position, entry) in self.entries.iter_mut().enumerate() {
+            if verified.next_if_eq(&&position).is_some() {
+                continue;
+            }
             if entry.stat.size != 0 && key(entry.stat.mtime) >= key(threshold) {
                 entry.stat.size = 0;
                 changed = true;
             }
         }
         if changed {
+            self.original = None;
+        }
+    }
+
+    /// Replaces the stat words of the entries at the given positions, zeroing the size of each
+    /// whose mtime is in or after the whole second `started`.
+    ///
+    /// Stat words are fixed-width, so entry offsets recorded by `EOIE` and `IEOT` remain valid,
+    /// and no identity changes, so `TREE` does too.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn record_stat(&mut self, verified: &[(usize, crate::index::Stat)], started: u32) {
+        for &(position, mut stat) in verified {
+            if stat.mtime.seconds >= started {
+                stat.size = 0;
+            }
+            if let Some(entry) = self.entries.get_mut(position) {
+                entry.stat = stat;
+            }
+        }
+        if !verified.is_empty() {
             self.original = None;
         }
     }

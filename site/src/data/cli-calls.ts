@@ -169,6 +169,13 @@ export const calls: Record<string, CliCalls> = {
     git: 'git ls-files',
     api: [repository('read_index'), method('Index', 'index/struct.Index.html', 'entries')],
   },
+  'index refresh': {
+    git: 'git update-index --refresh',
+    api: [
+      unreleased('Repository::refresh_index', 653),
+      unreleased('Repository::refresh_index_with', 653),
+    ],
+  },
   status: {
     git: 'git status --porcelain',
     api: [

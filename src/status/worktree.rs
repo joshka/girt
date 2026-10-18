@@ -27,6 +27,9 @@ pub(super) struct Observation {
     pub untracked: Vec<Vec<u8>>,
     pub listed: Vec<UntrackedPath>,
     pub boundaries: Vec<Vec<u8>>,
+    /// Stage-zero entries whose content this scan read and found equal to the index, by
+    /// position, with the stat words observed before the read; sorted by position.
+    pub verified: Vec<(usize, index::Stat)>,
 }
 
 /// Conversion applied to tracked regular files before comparing them with the index.
@@ -187,6 +190,11 @@ fn scan_with_hook(
             .boolean("core", None, "symlinks")
             .map_err(|_| unsupported(b"", "invalid core.symlinks boolean"))?
             .unwrap_or(true);
+    let stat_policy = if configured {
+        StatPolicy::configured(repo)?
+    } else {
+        StatPolicy::default()
+    };
     let root_fd = Arc::new(open_root(root)?);
     let mut metadata = Vec::new();
     for path in [repo.git_dir(), repo.common_dir(), repo.object_dir()] {
@@ -236,6 +244,7 @@ fn scan_with_hook(
         ignored_gitlinks,
         file_mode,
         symlinks,
+        stat_policy,
         metadata,
         index_written,
         policy,
@@ -281,6 +290,10 @@ fn scan_with_hook(
     same(b"", &original, &current)?;
     let observed = scan.tracked.collect(found.observations);
     let directories = scan.tracked.directory_states(&observed);
+    let mut read = found.verified;
+    read.sort_unstable_by_key(|(position, _)| *position);
+    let mut read = read.into_iter().peekable();
+    let mut verified = Vec::new();
     let mut changes = Vec::new();
     for (position, entry) in entries.iter().enumerate() {
         check(cancel)?;
@@ -310,12 +323,23 @@ fn scan_with_hook(
         } else {
             scan.tracked.difference(position, &observed, &directories)
         };
+        // A path observed more than once (two index names the volume stores as one file) has
+        // its stat recorded only when every read agrees.
+        let mut stats = Vec::new();
+        while let Some((_, stat)) = read.next_if(|(slot, _)| *slot <= position) {
+            stats.push(stat);
+        }
         if let Some(change) = difference {
             changes.push(WorktreeChange {
                 path: entry.path.clone(),
                 index: value(entry),
                 change,
             });
+        } else if let Some(first) = stats.first()
+            && !(configured && entry.intent_to_add)
+            && stats.iter().all(|stat| stat == first)
+        {
+            verified.push((position, *first));
         }
     }
     let Found {
@@ -333,6 +357,7 @@ fn scan_with_hook(
         untracked,
         listed,
         boundaries,
+        verified,
     })
 }
 
@@ -373,6 +398,8 @@ struct Found {
     untracked: Vec<Vec<u8>>,
     listed: Vec<UntrackedPath>,
     boundaries: Vec<Vec<u8>>,
+    /// Entries whose content was read and matched the index, with their pre-read stat words.
+    verified: Vec<(usize, index::Stat)>,
 }
 
 impl Found {
@@ -387,6 +414,7 @@ impl Found {
         self.untracked.extend(other.untracked);
         self.listed.extend(other.listed);
         self.boundaries.extend(other.boundaries);
+        self.verified.extend(other.verified);
     }
 }
 
@@ -396,6 +424,7 @@ struct Scan<'a> {
     ignored_gitlinks: HashSet<Vec<u8>>,
     file_mode: bool,
     symlinks: bool,
+    stat_policy: StatPolicy,
     tracked: Tracked<'a>,
     metadata: Vec<Stat>,
     /// Seconds word of the index file's mtime; `None` disables trusting cached stat words.
@@ -955,31 +984,44 @@ impl Scan<'_> {
         let after = statat(fd, OsStr::from_bytes(name), AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|source| io(path, source))?;
         same(path, stat, &after)?;
-        let Some(filters) = self.filters.filter(|_| kind == FileType::RegularFile) else {
-            let id = ObjectId::for_blob(self.format, &bytes);
-            found.observe(slots, Observed::Leaf(TreeValue { id, mode }));
-            return Ok(());
+        let (observed, resized) = match self.filters.filter(|_| kind == FileType::RegularFile) {
+            None => (
+                TreeValue {
+                    id: ObjectId::for_blob(self.format, &bytes),
+                    mode,
+                },
+                false,
+            ),
+            Some(filters) => {
+                let staged = (entry.mode != index::Mode::Gitlink).then_some(entry.id);
+                let id = ObjectId::for_blob(self.format, &filters.convert(path, &bytes, staged)?);
+                let cached = entry.stat.size;
+                (
+                    TreeValue { id, mode },
+                    cached != 0 && cached != stat.st_size as u32,
+                )
+            }
         };
-        let staged = (entry.mode != index::Mode::Gitlink).then_some(entry.id);
-        let id = ObjectId::for_blob(self.format, &filters.convert(path, &bytes, staged)?);
-        let value = TreeValue { id, mode };
-        let cached = entry.stat.size;
-        let resized = cached != 0 && cached != stat.st_size as u32;
-        found.observe(
-            slots,
-            if resized {
-                Observed::Resized(value)
-            } else {
-                Observed::Leaf(value)
-            },
-        );
+        if resized {
+            found.observe(slots, Observed::Resized(observed));
+            return Ok(());
+        }
+        found.observe(slots, Observed::Leaf(observed));
+        // `same` showed the bytes were read from the file these words describe.
+        if let Some(position) = slots.entry
+            && entry.stage == index::Stage::Normal
+            && observed == value(entry)
+        {
+            found.verified.push((position, index_stat(stat)));
+        }
         Ok(())
     }
 
     /// Whether the index's cached stat words show this leaf unchanged, so its content need not be
     /// read.
     ///
-    /// Every cached word must equal the observed one and the mode must match. An entry is racily
+    /// The cached words [`StatPolicy`] selects must equal the observed ones and the mode must
+    /// match. An entry is racily
     /// clean, and is read, when its cached mtime or ctime is in or after the second the index was
     /// written: a change within that second could leave every word equal. Git's rule compares
     /// the mtime with nanoseconds; comparing whole seconds of both times rereads a superset of
@@ -1000,16 +1042,25 @@ impl Scan<'_> {
             nanoseconds: stat.st_ctime_nsec as u32,
         };
         let cached = &entry.stat;
+        let policy = self.stat_policy;
+        let time = |cached: index::Timestamp, actual: index::Timestamp| {
+            if policy.minimal {
+                cached.seconds == actual.seconds
+            } else {
+                cached == actual
+            }
+        };
         entry.stage == index::Stage::Normal
             && value(entry).mode == mode
             && cached.size != 0
             && cached.size == stat.st_size as u32
-            && cached.mtime == mtime
-            && cached.ctime == ctime
-            && cached.device == stat.st_dev as u32
-            && cached.inode == stat.st_ino as u32
-            && cached.uid == stat.st_uid
-            && cached.gid == stat.st_gid
+            && time(cached.mtime, mtime)
+            && (!policy.trust_ctime || time(cached.ctime, ctime))
+            && (policy.minimal
+                || (cached.device == stat.st_dev as u32
+                    && cached.inode == stat.st_ino as u32
+                    && cached.uid == stat.st_uid
+                    && cached.gid == stat.st_gid))
             && cached.mtime.seconds < written
             && cached.ctime.seconds < written
     }
@@ -1068,6 +1119,67 @@ impl Scan<'_> {
             return Err(Error::Changed(path.to_vec()));
         }
         Ok(bytes)
+    }
+}
+
+/// Which cached stat words decide that a file is unchanged without reading it.
+///
+/// Raw status compares every word. Configured status follows Git's `core.checkStat` and
+/// `core.trustCtime`: `minimal` compares only the size and the whole seconds of the mtime (and of
+/// the ctime, when trusted); an untrusted ctime is never compared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StatPolicy {
+    minimal: bool,
+    trust_ctime: bool,
+}
+
+impl Default for StatPolicy {
+    fn default() -> Self {
+        Self {
+            minimal: false,
+            trust_ctime: true,
+        }
+    }
+}
+
+impl StatPolicy {
+    fn configured(repo: &Repository) -> Result<Self, Error> {
+        let config = repo.config();
+        let trust_ctime = config
+            .boolean("core", None, "trustctime")
+            .map_err(|_| unsupported(b"", "invalid core.trustCtime boolean"))?
+            .unwrap_or(true);
+        // Git accepts either value in any case and refuses anything else, including no value.
+        let minimal = match config.value("core", None, "checkstat") {
+            None => false,
+            Some(Some(value)) if value.eq_ignore_ascii_case(b"default") => false,
+            Some(Some(value)) if value.eq_ignore_ascii_case(b"minimal") => true,
+            Some(_) => return Err(unsupported(b"", "invalid core.checkStat value")),
+        };
+        Ok(Self {
+            minimal,
+            trust_ctime,
+        })
+    }
+}
+
+/// The index's stat words for `stat`: the low 32 bits of each value, as Git writes them.
+fn index_stat(stat: &Stat) -> index::Stat {
+    // Field types differ by platform, so each is truncated directly.
+    index::Stat {
+        ctime: index::Timestamp {
+            seconds: stat.st_ctime as u32,
+            nanoseconds: stat.st_ctime_nsec as u32,
+        },
+        mtime: index::Timestamp {
+            seconds: stat.st_mtime as u32,
+            nanoseconds: stat.st_mtime_nsec as u32,
+        },
+        device: stat.st_dev as u32,
+        inode: stat.st_ino as u32,
+        uid: stat.st_uid,
+        gid: stat.st_gid,
+        size: stat.st_size as u32,
     }
 }
 
