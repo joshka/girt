@@ -41,6 +41,99 @@ pub struct CloneArgs {
     /// Leave the working tree and index empty (`girt checkout HEAD` fills them later).
     #[arg(short, long)]
     no_checkout: bool,
+    #[command(flatten)]
+    filter: FilterArgs,
+}
+
+/// `--filter` and `--no-filter`, shared by clone and fetch.
+///
+/// As in Git, repeated `--filter` values combine into one `combine:` filter, and `--no-filter`
+/// discards the values before it.
+#[derive(Debug, Default)]
+struct FilterArgs {
+    /// Filters given after the last `--no-filter`, in order.
+    filters: Vec<girt::fetch::ObjectFilter>,
+    /// `--no-filter` appeared after every `--filter`.
+    no_filter: bool,
+}
+
+impl FilterArgs {
+    /// The combined filter, or `None` without one.
+    fn filter(&self) -> Option<girt::fetch::ObjectFilter> {
+        use girt::fetch::ObjectFilter;
+        match self.filters.as_slice() {
+            [] => None,
+            [one] => Some(one.clone()),
+            many => Some(ObjectFilter::Combine(
+                many.iter()
+                    .flat_map(|filter| match filter {
+                        ObjectFilter::Combine(parts) => parts.clone(),
+                        other => vec![other.clone()],
+                    })
+                    .collect(),
+            )),
+        }
+    }
+}
+
+impl clap::FromArgMatches for FilterArgs {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        let mut args = Self::default();
+        args.update_from_arg_matches(matches)?;
+        Ok(args)
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        // A count flag has a default value; only command-line occurrences clear filters.
+        let cleared = (matches.value_source("no_filter")
+            == Some(clap::parser::ValueSource::CommandLine))
+        .then(|| matches.indices_of("no_filter").and_then(Iterator::max))
+        .flatten();
+        let values = matches
+            .get_many::<girt::fetch::ObjectFilter>("filter")
+            .into_iter()
+            .flatten();
+        let indices = matches.indices_of("filter").into_iter().flatten();
+        self.filters = values
+            .zip(indices)
+            .filter(|(_, index)| cleared.is_none_or(|cleared| *index > cleared))
+            .map(|(filter, _)| filter.clone())
+            .collect();
+        self.no_filter = cleared.is_some() && self.filters.is_empty();
+        Ok(())
+    }
+}
+
+impl clap::Args for FilterArgs {
+    fn augment_args(command: clap::Command) -> clap::Command {
+        command
+            .arg(
+                clap::Arg::new("filter")
+                    .long("filter")
+                    .value_name("SPEC")
+                    .action(clap::ArgAction::Append)
+                    .value_parser(clap::value_parser!(girt::fetch::ObjectFilter))
+                    .help(
+                        "Leave out objects the filter matches, such as `blob:none`, and record \
+                         the remote as a promisor. Repeated filters combine. Only girt's object \
+                         commands fetch the missing objects later; local paths and `file://` \
+                         URLs are read directly and ignore the filter",
+                    ),
+            )
+            .arg(
+                clap::Arg::new("no_filter")
+                    .long("no-filter")
+                    .action(clap::ArgAction::Count)
+                    .help(
+                        "Fetch every object, discarding earlier `--filter` values and the \
+                         remote's `partialclonefilter`",
+                    ),
+            )
+    }
+
+    fn augment_args_for_update(command: clap::Command) -> clap::Command {
+        Self::augment_args(command)
+    }
 }
 
 /// Fetch a remote's configured refspecs, printing each updated ref as `<old>..<new> <ref>`.
@@ -54,6 +147,8 @@ pub struct FetchArgs {
     /// Configured remote name.
     #[arg(default_value = "origin", add = ArgValueCandidates::new(complete::remotes))]
     remote: String,
+    #[command(flatten)]
+    filter: FilterArgs,
 }
 
 /// Receive pushes into a repository.
@@ -152,7 +247,11 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
     let destination = std::fs::canonicalize(context.directory())
         .wrap_err_with(|| format!("reading {}", context.directory().display()))?
         .join(directory);
-    let options = workflow::CloneOptions::default()
+    let filter = args.filter.filter();
+    if filter.is_some() && is_plain_path(&args.url) {
+        eprintln!("warning: --filter is ignored in local clones; use file:// instead.");
+    }
+    let mut options = workflow::CloneOptions::default()
         .with_kind(if args.bare {
             InitKind::Bare
         } else {
@@ -161,6 +260,9 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         .with_checkout(!args.no_checkout)
         .with_fetch_limits(girt::fetch::FetchLimits::trusted())
         .with_update_limits(girt::fetch::FetchUpdateLimits::trusted());
+    if let Some(filter) = filter.clone() {
+        options = options.with_filter(filter);
+    }
     let mut progress = crate::progress::Progress::new(context.progress);
     let outcome = workflow::clone_with(
         &args.url,
@@ -171,7 +273,9 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         &mut progress,
     )
     .map_err(|error| match &error {
-        workflow::CloneError::Checkout { .. } | workflow::CloneError::Read { .. } =>
+        workflow::CloneError::Checkout { .. }
+        | workflow::CloneError::Read { .. }
+        | workflow::CloneError::FetchPromised { .. } =>
             eyre!(error).wrap_err(format!(
                 "clone completed at {}; inspect files and index before recovery with `girt -C {} checkout HEAD`",
                 destination.display(), destination.display(),
@@ -182,6 +286,9 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         _ => eyre!(error).wrap_err("cloning"),
     })?;
     progress.finish();
+    if filter.is_some() && !outcome.filter_applied && !is_local(&args.url) {
+        eprintln!("warning: filtering not recognized by server, ignoring");
+    }
     let report = outcome.clone;
     let mut out = stdout();
     writeln!(out, "cloned into {}", destination.display())?;
@@ -197,6 +304,22 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
     }
     out.flush()?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// A clone source Git treats as a local path rather than a URL, where it ignores `--filter`.
+fn is_plain_path(url: &str) -> bool {
+    !url.contains("://") && !is_scp_like(url)
+}
+
+/// A source girt reads directly: a plain path or a `file://` URL.
+fn is_local(url: &str) -> bool {
+    url.starts_with("file://") || is_plain_path(url)
+}
+
+/// `[user@]host:path`, Git's SSH shorthand: a colon before any slash.
+fn is_scp_like(url: &str) -> bool {
+    url.find(':')
+        .is_some_and(|colon| !url[..colon].contains('/') && colon > 1)
 }
 
 /// Git's default clone directory: the last path component, without `.git` unless bare.
@@ -235,16 +358,31 @@ pub fn fetch(args: FetchArgs, context: &Context) -> Result<ExitCode> {
     if refspecs.is_empty() {
         bail!("remote {} has no fetch refspecs", args.remote);
     }
+    let mut options = FetchOptions::new(refspecs);
+    if args.filter.no_filter {
+        options = options.without_filter();
+    } else if let Some(filter) = args.filter.filter() {
+        options = options.with_filter(filter);
+    }
+    let filtered = !args.filter.no_filter
+        && (!args.filter.filters.is_empty()
+            || repository
+                .config()
+                .string("remote", Some(args.remote.as_bytes()), "partialclonefilter")
+                .is_some_and(|spec| !spec.is_empty()));
     let mut progress = crate::progress::Progress::new(context.progress);
     let outcome = workflow::fetch(
         &repository,
         &args.remote,
-        &FetchOptions::new(refspecs),
+        &options,
         &environment(context)?,
         &mut progress,
     )
     .wrap_err_with(|| format!("fetching {}", args.remote))?;
     progress.finish();
+    if filtered && !outcome.filter_applied && !is_local(&remote_url(&remote)) {
+        eprintln!("warning: filtering not recognized by server, ignoring");
+    }
     let null = ObjectId::null(repository.object_format());
     let mut out = stdout();
     for change in &outcome.updated {
@@ -259,6 +397,14 @@ pub fn fetch(args: FetchArgs, context: &Context) -> Result<ExitCode> {
         eprintln!("warning: remote has no {}", display_bytes(source));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The remote's fetch URL as text, or empty when it has none.
+fn remote_url(remote: &girt::remote::Remote) -> String {
+    remote
+        .fetch_url()
+        .map(|url| display_bytes(url).into_owned())
+        .unwrap_or_default()
 }
 
 pub fn push(args: PushArgs, context: &Context) -> Result<ExitCode> {

@@ -112,12 +112,16 @@ impl CloneDownload {
         progress: impl FnMut(&[u8]) -> ControlFlow<()>,
         observe: impl FnMut(crate::fetch::ValidationProgress),
     ) -> Result<CloneReady, CloneTransferError> {
+        let mut received = self
+            .downloaded
+            .validate_with_progress(cancel, progress, observe)?;
+        if self.request.filter.is_some() {
+            received.mark_clone_promisor();
+        }
         Ok(CloneReady {
             request: self.request,
             head: self.head,
-            received: self
-                .downloaded
-                .validate_with_progress(cancel, progress, observe)?,
+            received,
         })
     }
 }
@@ -161,11 +165,13 @@ impl CloneRequest {
         progress: impl FnMut(&[u8]),
     ) -> Result<CloneDownload, CloneTransferError> {
         let mut saved = None;
-        let download = crate::fetch::receive_http_with_progress(
+        let download = crate::fetch::receive_http_with_options(
             remote,
             |ad| plan::select(self.plan(ad), &mut saved),
             None,
-            limits,
+            crate::fetch::FetchOptions::default()
+                .with_limits(limits)
+                .with_filter(self.filter.clone()),
             control,
             progress,
         )
@@ -196,7 +202,7 @@ impl CloneRequest {
             crate::fetch::FetchOptions {
                 limits,
                 depth: None,
-                filter: None,
+                filter: self.filter.clone(),
                 explicit_wants: false,
             },
             cancel,
@@ -259,7 +265,7 @@ impl CloneRequest {
             crate::fetch::FetchOptions {
                 limits,
                 depth: None,
-                filter: None,
+                filter: self.filter.clone(),
                 explicit_wants: false,
             },
             control,

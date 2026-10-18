@@ -299,11 +299,19 @@ export const calls: Record<string, CliCalls> = {
       ['workflow::clone_with', 'workflow/fn.clone_with.html'],
       method('CloneOptions', 'workflow/struct.CloneOptions.html', 'with_checkout'),
       ['clone::CloneHead', 'clone/enum.CloneHead.html'],
+      unreleased('CloneOptions::with_filter', 521),
+      unreleased('workflow::fetch_promised', 521),
     ],
   },
   fetch: {
     git: 'git fetch',
-    api: [['workflow::fetch', 'workflow/fn.fetch.html'], method('FetchOptions', 'workflow/struct.FetchOptions.html', 'new'), remote('fetch_refspecs')],
+    api: [
+      ['workflow::fetch', 'workflow/fn.fetch.html'],
+      method('FetchOptions', 'workflow/struct.FetchOptions.html', 'new'),
+      remote('fetch_refspecs'),
+      unreleased('FetchOptions::with_filter', 521),
+      unreleased('FetchOptions::without_filter', 521),
+    ],
   },
   push: {
     git: 'git push --force-with-lease',

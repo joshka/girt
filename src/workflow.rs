@@ -1077,9 +1077,9 @@ impl FetchOptions {
     /// The remote becomes a promisor, as with `git clone --filter`: the fetch writes
     /// `remote.<name>.promisor = true` and `remote.<name>.partialclonefilter = <spec>`, and raises
     /// `core.repositoryformatversion` to 1. Git then fetches omitted objects from that remote on
-    /// demand; girt does not yet. Without this or [`Self::without_filter`], a fetch reuses the
-    /// remote's configured `partialclonefilter`, if any, so later fetches of a partial clone stay
-    /// partial.
+    /// demand; girt reads never do, and [`fetch_promised`] fetches them explicitly. Without this or
+    /// [`Self::without_filter`], a fetch reuses the remote's configured `partialclonefilter`,
+    /// if any, so later fetches of a partial clone stay partial.
     ///
     /// A remote that does not support filtering sends every object instead, which
     /// [`FetchOutcome::filter_applied`] reports. girt fetches local remotes, both paths and

@@ -156,8 +156,8 @@ const ENTRIES: &[Entry] = &[
     ], QUERIES),
     under("checkout", &["-b", "-B", "--orphan", "--detach", "-p", "--patch"], PORCELAIN),
     under("clone", &[
-        "--depth", "--shallow-since", "-b", "--branch", "--single-branch", "--mirror", "--filter",
-        "-o", "--origin", "--reference", "--sparse", "--separate-git-dir",
+        "--depth", "--shallow-since", "-b", "--branch", "--single-branch", "--mirror", "-o",
+        "--origin", "--reference", "--sparse", "--separate-git-dir",
     ], TRANSFER),
     under("clone", &["--recurse-submodules", "--recursive"], SETUP),
     under("config", &["--get"], use_(&[("config --get", "config get")])),

@@ -89,7 +89,11 @@ records the remote as a **promisor**, and any later read of a missing blob fetch
 Large repositories clone in a fraction of the time. Everything that reads objects has to know a
 missing object may be promised rather than lost.
 
-<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/521" />
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/521">Filtered fetch and
+clone with promisor packs and Git's promisor configuration, and explicit batched fetches of missing
+objects. Library reads never fetch; the CLI's `girt object` commands fetch missing objects on
+demand, and a filtered clone fetches the blobs it checks out. Other commands fail on missing
+objects. Serving filters is in progress, and gc refuses partial clones.</GirtStatus>
 
 ## Bundles
 

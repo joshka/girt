@@ -649,3 +649,180 @@ fn missing_objects_from_a_non_promisor_are_refused() {
     );
     assert!(matches!(result, Err(TransferError::NotPromisor(name)) if name == "origin"));
 }
+
+/// A blobless clone from `git upload-pack` writes Git's promisor configuration and marker, then
+/// fetches only the checked-out files' blobs in a second promisor pack before checking out. A
+/// branch the checkout doesn't touch keeps its blob promised. Without checkout, nothing more is
+/// fetched.
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn blobless_clone_fetches_checkout_blobs(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 3);
+    let root = fixture.root.path();
+    git(root, &["config", "uploadpack.allowFilter", "true"], b"");
+    let other = git(
+        root,
+        &["hash-object", "-w", "--stdin"],
+        b"only on the side branch\n",
+    );
+    let other = String::from_utf8(other).unwrap().trim().to_owned();
+    let tree = git(
+        root,
+        &["mktree"],
+        format!("100644 blob {other}\tside\n").as_bytes(),
+    );
+    let tree = String::from_utf8(tree).unwrap().trim().to_owned();
+    let side = git(root, &["commit-tree", &tree], b"side\n");
+    let side = String::from_utf8(side).unwrap().trim().to_owned();
+    git(root, &["update-ref", "refs/heads/side", &side], b"");
+
+    let scratch = tempfile::tempdir().unwrap();
+    let inputs = girt::config::ConfigInputs::default().with_command(Some(
+        girt::Config::parse(b"[protocol \"mem\"]\nallow = always\n").unwrap(),
+    ));
+    let url = format!("mem::{}", root.display());
+    let clone = |name: &str, checkout: bool| {
+        girt::workflow::clone_with(
+            &url,
+            scratch.path().join(name),
+            &girt::workflow::CloneOptions::default()
+                .with_checkout(checkout)
+                .with_filter(girt::fetch::ObjectFilter::BlobNone),
+            &inputs,
+            &Environment::default(),
+            &mut Registered(Some(Arc::new(GitService))),
+        )
+        .unwrap()
+    };
+
+    let outcome = clone("checkout", true);
+    assert!(outcome.filter_applied);
+    let mut head_blobs: Vec<girt::ObjectId> = fixture
+        .records
+        .iter()
+        .filter(|(_, kind, _)| *kind == girt::ObjectKind::Blob)
+        .map(|(id, _, _)| *id)
+        .collect();
+    let promised = outcome.promised.unwrap();
+    let mut fetched = promised.fetched.clone();
+    fetched.sort();
+    head_blobs.sort();
+    assert_eq!(fetched, head_blobs);
+    assert!(outcome.checkout.unwrap().index_published);
+    let directory = scratch.path().join("checkout");
+    assert_eq!(missing_objects(&directory), std::slice::from_ref(&other));
+    assert_eq!(promisor_packs(&directory), 2);
+    let config =
+        |name: &str| String::from_utf8(git(&directory, &["config", "get", name], b"")).unwrap();
+    assert_eq!(config("remote.origin.promisor"), "true\n");
+    assert_eq!(config("remote.origin.partialclonefilter"), "blob:none\n");
+    assert_eq!(config("core.repositoryformatversion"), "1\n");
+    // Like Git's clone, the first marker lists the advertised tips.
+    let markers: Vec<String> = std::fs::read_dir(directory.join(".git/objects/pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "promisor")
+        })
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect();
+    assert!(
+        markers
+            .iter()
+            .any(|marker| marker.contains(&format!("{side} refs/heads/side\n"))),
+        "{markers:?}"
+    );
+    assert!(git(&directory, &["status", "--porcelain"], b"").is_empty());
+    git(&directory, &["fsck", "--strict"], b"");
+
+    let outcome = clone("bare-tree", false);
+    assert!(outcome.promised.is_none() && outcome.checkout.is_none());
+    let directory = scratch.path().join("bare-tree");
+    let mut all_blobs: Vec<String> = head_blobs.iter().map(ToString::to_string).collect();
+    all_blobs.push(other);
+    all_blobs.sort();
+    assert_eq!(missing_objects(&directory), all_blobs);
+    assert_eq!(promisor_packs(&directory), 1);
+    git(&directory, &["fsck", "--strict"], b"");
+}
+
+/// The checkout prefetch walks nested trees, fetches symlink targets like file contents, and
+/// skips gitlinks, which name commits in another repository.
+#[cfg(unix)]
+#[test]
+fn blobless_clone_prefetches_nested_trees_and_symlinks() {
+    let source = tempfile::tempdir().unwrap();
+    let root = source.path();
+    git(
+        root,
+        &["init", "--quiet", "--initial-branch=main", "."],
+        b"",
+    );
+    git(root, &["config", "uploadpack.allowFilter", "true"], b"");
+    std::fs::create_dir_all(root.join("dir/sub")).unwrap();
+    std::fs::write(root.join("dir/sub/deep"), "deep\n").unwrap();
+    std::fs::write(root.join("top"), "top\n").unwrap();
+    std::os::unix::fs::symlink("dir/sub/deep", root.join("link")).unwrap();
+    git(root, &["add", "."], b"");
+    let gitlink = "1111111111111111111111111111111111111111";
+    git(
+        root,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{gitlink},module"),
+        ],
+        b"",
+    );
+    git(
+        root,
+        &[
+            "-c",
+            "user.name=A",
+            "-c",
+            "user.email=a@example.com",
+            "commit",
+            "--quiet",
+            "--no-gpg-sign",
+            "-m",
+            "nested",
+        ],
+        b"",
+    );
+
+    let scratch = tempfile::tempdir().unwrap();
+    let inputs = girt::config::ConfigInputs::default().with_command(Some(
+        girt::Config::parse(b"[protocol \"mem\"]\nallow = always\n").unwrap(),
+    ));
+    let outcome = girt::workflow::clone_with(
+        &format!("mem::{}", root.display()),
+        scratch.path().join("clone"),
+        &girt::workflow::CloneOptions::default().with_filter(girt::fetch::ObjectFilter::BlobNone),
+        &inputs,
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(GitService))),
+    )
+    .unwrap();
+    let rev = |path: &str| {
+        let id = git(root, &["rev-parse", &format!("HEAD:{path}")], b"");
+        String::from_utf8(id).unwrap().trim().parse().unwrap()
+    };
+    let mut expected: Vec<girt::ObjectId> = ["dir/sub/deep", "top", "link"].map(rev).to_vec();
+    expected.sort();
+    let mut fetched = outcome.promised.unwrap().fetched;
+    fetched.sort();
+    assert_eq!(fetched, expected);
+    let clone = scratch.path().join("clone");
+    assert!(missing_objects(&clone).is_empty());
+    assert_eq!(
+        std::fs::read_link(clone.join("link")).unwrap(),
+        std::path::Path::new("dir/sub/deep")
+    );
+    assert_eq!(
+        std::fs::read(clone.join("dir/sub/deep")).unwrap(),
+        b"deep\n"
+    );
+}
