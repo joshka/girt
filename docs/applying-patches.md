@@ -92,6 +92,15 @@ checks that the patch's hash format agrees with storage. Malformed base85, zlib 
 declarations fail during parsing; delta instructions and result identity are checked when applying
 against a preimage. Binary diff summaries without encoded content remain unsupported.
 
+To generate an encoded patch, pass `patch::Options::default().with_binary_patch(true)` to
+`Objects::write_patch_with`. Binary files then use full object IDs and forward/reverse
+`GIT binary patch` blocks, while ordinary text hunks retain their existing rendering. The default
+still prints binary summary lines. `patch::Limits::binary_delta_work` bounds matching across both
+blocks; zero selects literals. Exhaustion falls back to a literal block without losing content.
+Compressed bytes and delta choices may differ from Git, but both tools reconstruct the same blob
+identities. The writer streams output and can retain a partial patch after I/O failure or
+cancellation; discard it before retrying.
+
 The extended parser currently expects default `a/` and `b/` prefixes for rename/copy metadata;
 non-default and omitted prefixes can be refused before path mapping. Dissimilarity headers from
 Git's break-rewrite output are explicitly unsupported. Binary blocks require their terminating blank

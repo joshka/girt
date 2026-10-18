@@ -358,3 +358,16 @@ fn indent_placement_matches_git(
     );
     assert_same(&ours, &theirs);
 }
+
+#[test]
+fn binary_payload_option_keeps_text_index_abbreviations() {
+    let (ours, theirs) = patches(
+        ObjectFormat::Sha1,
+        &[blob(b"text", b"old\n")],
+        &[blob(b"text", b"new\n")],
+        Pairing::Exact,
+        Options::default().with_binary_patch(true),
+        &["--binary"],
+    );
+    assert_same(&ours, &theirs);
+}

@@ -82,6 +82,7 @@
 //! ```
 
 mod compression;
+pub(crate) use compression::instructions_with as binary_delta;
 pub(crate) mod delta;
 mod file;
 #[cfg(feature = "tracing")]

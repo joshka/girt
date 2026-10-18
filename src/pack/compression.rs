@@ -234,6 +234,16 @@ pub(super) fn instructions(
     remaining: &mut u64,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
 ) -> Result<Option<Vec<u8>>, PackWriteError> {
+    instructions_with(base, target, remaining, check)
+}
+
+/// Shared bounded instruction builder; the caller owns cancellation and its error type.
+pub(crate) fn instructions_with<E>(
+    base: &[u8],
+    target: &[u8],
+    remaining: &mut u64,
+    check: &mut impl FnMut() -> Result<(), E>,
+) -> Result<Option<Vec<u8>>, E> {
     let mut anchors = [usize::MAX; 4096];
     for offset in (0..base.len().saturating_sub(7)).step_by(16) {
         if !charge(remaining, check)? {
@@ -278,10 +288,7 @@ pub(super) fn instructions(
     Ok(Some(out))
 }
 
-fn charge(
-    remaining: &mut u64,
-    check: &mut impl FnMut() -> Result<(), PackWriteError>,
-) -> Result<bool, PackWriteError> {
+fn charge<E>(remaining: &mut u64, check: &mut impl FnMut() -> Result<(), E>) -> Result<bool, E> {
     if *remaining == 0 {
         return Ok(false);
     }

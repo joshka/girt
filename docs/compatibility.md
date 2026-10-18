@@ -4175,3 +4175,12 @@ pin owner-only executable detection and explicit no-write refusal of `core.fileM
 `tests/diffstat.rs` compares human `--stat` and `--numstat` output byte for byte with isolated Git.
 Fixtures cover width scaling across files with different change sizes, combined insertion/deletion
 counts, zero-side summary omission, binary rows and renamed paths.
+
+### Binary patch output
+
+`tests/patch_binary.rs` generates original literal and delta fixtures in both object formats and
+checks forward/reverse application with isolated `git apply --cached` and girt tree application.
+Addition/deletion cases exercise null identities; exhausted delta work produces valid literal
+blocks. A small literal fixture compares encoded bytes with Git at a fixed compression level. Base85
+vectors and cancellation checks cover the encoder independently. Compression and delta selection are
+not promised to match Git for every input or compression backend version.
