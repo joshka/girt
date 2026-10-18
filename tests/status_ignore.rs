@@ -9,7 +9,7 @@ use std::process::Command;
 use girt::Repository;
 use girt::config::ConfigInputs;
 use girt::ignore::{InputKind, LoadError, SourceKind};
-use girt::status::{Baseline, Error, Limits, Report, UntrackedFiles, UntrackedKind};
+use girt::status::{Baseline, Change, Error, Limits, Report, UntrackedFiles, UntrackedKind};
 use girt::workflow::Environment;
 use rstest::rstest;
 
@@ -44,13 +44,44 @@ impl Fixture {
     }
 
     fn git(&self, directory: &Path, args: &[&str]) -> Vec<u8> {
+        let output = self.command(directory, args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    }
+
+    /// Runs Git in the repository with `input` on standard input, returning its trimmed output.
+    fn git_stdin(&self, args: &[&str], input: &str) -> String {
+        use std::io::Write as _;
+        use std::process::Stdio;
+        let mut child = self
+            .command(&self.root, args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn command(&self, directory: &Path, args: &[&str]) -> Command {
         let mut command = Command::new("git");
         for (key, _) in std::env::vars_os() {
             if key.to_string_lossy().starts_with("GIT_") || key == "XDG_CONFIG_HOME" {
                 command.env_remove(key);
             }
         }
-        let output = command
+        command
             .current_dir(directory)
             .args(["-c", "commit.gpgsign=false", "-c", "core.fsmonitor=false"])
             .args(args)
@@ -61,15 +92,8 @@ impl Fixture {
             .env("GIT_COMMITTER_NAME", "Status Fixture")
             .env("GIT_COMMITTER_EMAIL", "status@example.invalid")
             .env("GIT_OPTIONAL_LOCKS", "0")
-            .env("LC_ALL", "C")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        output.stdout
+            .env("LC_ALL", "C");
+        command
     }
 
     fn git_in_repo(&self, args: &[&str]) -> Vec<u8> {
@@ -521,4 +545,135 @@ fn existing_user_home_excludes_are_a_git_compatibility_gap() {
         fixture.repository().ignore_rules(&fixture.environment()),
         Err(LoadError::Unsupported(_))
     ));
+}
+
+/// Git's porcelain lines for working-tree changes and untracked files, sorted.
+fn git_lines(fixture: &Fixture) -> Vec<Vec<u8>> {
+    let output = fixture.git_in_repo(&["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+    let mut lines: Vec<Vec<u8>> = output
+        .split(|byte| *byte == 0)
+        .filter(|line| !line.is_empty())
+        .map(<[u8]>::to_vec)
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// Girt's report rendered as [`git_lines`] renders Git's.
+fn girt_lines(report: &Report) -> Vec<Vec<u8>> {
+    assert!(report.staged.is_empty());
+    let mut lines: Vec<Vec<u8>> = report
+        .unstaged
+        .iter()
+        .map(|change| {
+            let code = match change.change {
+                Change::Deleted => " D ",
+                Change::Modified(_) => " M ",
+                ref other => panic!("unexpected change {other:?}"),
+            };
+            [code.as_bytes(), &change.path].concat()
+        })
+        .chain(
+            report
+                .untracked
+                .iter()
+                .map(|entry| [b"?? ".as_slice(), &entry.path].concat()),
+        )
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// Settings of `core.ignoreCase` and `core.precomposeUnicode` to compare under; `None` unsets.
+fn name_settings() -> Vec<(Option<&'static str>, Option<&'static str>)> {
+    let values = [None, Some("true"), Some("false")];
+    values
+        .iter()
+        .flat_map(|case| values.iter().map(move |compose| (*case, *compose)))
+        .collect()
+}
+
+fn configure_names(fixture: &Fixture, case: Option<&str>, compose: Option<&str>) {
+    for (key, value) in [
+        ("core.ignoreCase", case),
+        ("core.precomposeUnicode", compose),
+    ] {
+        match value {
+            Some(value) => fixture.git_in_repo(&["config", key, value]),
+            // Exits 5 when the key is already absent.
+            None => {
+                let status = fixture
+                    .command(&fixture.root, &["config", "--unset-all", key])
+                    .status()
+                    .unwrap();
+                assert!(matches!(status.code(), Some(0 | 5)));
+                Vec::new()
+            }
+        };
+    }
+}
+
+/// Renames tracked paths to other case and normalization spellings, then compares status with Git
+/// under every `core.ignoreCase` and `core.precomposeUnicode` setting. On a case-insensitive macOS
+/// volume the renamed files are aliases of their index paths; on Linux they are new names.
+#[test]
+fn renamed_spellings_match_git_under_name_settings() {
+    let composed = "caf\u{e9}";
+    let decomposed = "cafe\u{301}";
+    for (case, compose) in name_settings() {
+        let fixture = Fixture::new();
+        // Track the composed spelling exactly as written.
+        fixture.git_in_repo(&["config", "core.precomposeUnicode", "false"]);
+        fixture.write(&[
+            ("file", "same"),
+            ("Dir/f", "same"),
+            (composed, "same"),
+            ("keep", "same"),
+        ]);
+        fixture.track(&["file", "Dir/f", composed, "keep"]);
+        fixture.git_in_repo(&["commit", "-qm", "spellings"]);
+        let root = &fixture.root;
+        fs::rename(root.join("file"), root.join("FILE")).unwrap();
+        fs::rename(root.join("Dir"), root.join("dir")).unwrap();
+        fs::rename(root.join(composed), root.join(decomposed)).unwrap();
+        configure_names(&fixture, case, compose);
+        let report = fixture.status(UntrackedFiles::All);
+        assert_eq!(
+            girt_lines(&report),
+            git_lines(&fixture),
+            "ignoreCase={case:?} precomposeUnicode={compose:?}"
+        );
+    }
+}
+
+/// After Git checks out colliding paths, status reports each shadowed path as Git does.
+#[test]
+fn collision_shadows_match_git_under_name_settings() {
+    for (case, compose) in name_settings() {
+        let fixture = Fixture::new();
+        let mut info = String::new();
+        for (path, content) in [
+            ("Dir/f", "upper dir"),
+            ("X.h", "upper"),
+            ("caf\u{e9}", "composed"),
+            ("cafe\u{301}", "decomposed"),
+            ("dir/f", "lower dir"),
+            ("same", "same"),
+            ("x.h", "lower"),
+        ] {
+            let blob = fixture.git_stdin(&["hash-object", "-w", "--stdin"], content);
+            info.push_str(&format!("100644 {}\t{path}\0", blob.trim()));
+        }
+        fixture.git_stdin(&["update-index", "-z", "--index-info"], &info);
+        fixture.git_in_repo(&["commit", "-qm", "collisions"]);
+        fs::remove_file(fixture.root.join(".git/index")).unwrap();
+        fixture.git_in_repo(&["read-tree", "--reset", "-u", "HEAD"]);
+        configure_names(&fixture, case, compose);
+        let report = fixture.status(UntrackedFiles::All);
+        assert_eq!(
+            girt_lines(&report),
+            git_lines(&fixture),
+            "ignoreCase={case:?} precomposeUnicode={compose:?}"
+        );
+    }
 }

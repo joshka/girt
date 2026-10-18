@@ -962,7 +962,8 @@ fn configured_symlink_override_is_not_applied() {
     assert_eq!(status(&repo).unstaged.len(), 1);
 }
 
-/// Git treats an unambiguous case alias as the same path when core.ignoreCase is true.
+/// Raw status compares exact bytes even where Git, with core.ignoreCase, treats a case alias as
+/// the same path; `status_with` follows Git (see `tests/status_ignore.rs`).
 #[cfg(target_os = "macos")]
 #[test]
 fn case_alias_status_requires_git_policy() {

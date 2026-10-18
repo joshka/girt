@@ -167,6 +167,18 @@ impl Repository {
     /// pathspec matches the directory itself (its path with a trailing `/`), as Git does:
     /// `new`, `new/` and `n*` list `new`, while `*.txt` lists the matching files inside it.
     ///
+    /// Names follow Git's `core.precomposeUnicode` and `core.ignoreCase`. An index path missing
+    /// from its directory listing is looked up by its own name, as Git does, so a volume that
+    /// merges names still finds the file: `README` renamed to `readme` on a case-insensitive
+    /// volume is clean, and of two index paths the volume stores as one file, the shadowed one
+    /// is reported modified when its content differs. With `core.precomposeUnicode`, listed
+    /// names are composed (NFC) before comparison and reporting on macOS, the only platform where
+    /// Git reads that option. With `core.ignoreCase`, an
+    /// untracked name is hidden when an index path in its directory matches it ignoring ASCII
+    /// case, even on a volume that stores the two as different files, as Git hides it. Without it
+    /// the name is listed, as Git lists `readme` beside a clean `README` on a case-insensitive
+    /// volume.
+    ///
     /// A tracked path is never ignored. An ignored directory is not entered unless it holds tracked
     /// paths, and then only to inspect them: its untracked contents stay ignored, as in Git.
     /// Ignored directories therefore cost nothing beyond one directory entry. A `.gitignore`
@@ -247,7 +259,11 @@ impl Repository {
         return supported::run(
             self,
             baseline,
-            super::worktree::Listing::Ignoring(Box::new(ignore.base().clone()), untracked),
+            super::worktree::Listing::Ignoring(
+                Box::new(ignore.base().clone()),
+                untracked,
+                supported::git_names(self)?,
+            ),
             paths,
             limits,
             cancel,
@@ -304,7 +320,11 @@ impl Repository {
         return supported::run_with_checkpoint(
             self,
             baseline,
-            super::worktree::Listing::Ignoring(Box::new(ignore.base().clone()), untracked),
+            super::worktree::Listing::Ignoring(
+                Box::new(ignore.base().clone()),
+                untracked,
+                supported::git_names(self)?,
+            ),
             paths,
             Some(filters),
             limits,
@@ -356,6 +376,29 @@ mod supported {
     use crate::status::types::{charge, check, value};
     use crate::status::worktree::Listing;
     use crate::{Commit, ObjectId, ObjectKind, Objects, TreeChange, TreeValue, index, refs};
+
+    /// Git's `core.ignoreCase` and `core.precomposeUnicode` for name comparison; unset is false.
+    pub(super) fn git_names(repo: &Repository) -> Result<super::super::worktree::GitNames, Error> {
+        let config = repo.config();
+        let setting = |name: &str, reason: &'static str| {
+            config
+                .boolean("core", None, name)
+                .map(|value| value == Some(true))
+                .map_err(|_| Error::Unsupported {
+                    path: vec![],
+                    reason,
+                })
+        };
+        Ok(super::super::worktree::GitNames {
+            ignore_case: setting("ignorecase", "core.ignoreCase is not a boolean")?,
+            // Git reads this option only on macOS.
+            precompose: cfg!(target_os = "macos")
+                && setting(
+                    "precomposeunicode",
+                    "core.precomposeUnicode is not a boolean",
+                )?,
+        })
+    }
 
     pub(super) fn run(
         repo: &Repository,
@@ -474,7 +517,7 @@ mod supported {
         staged.retain(|change| paths.matches_unchecked(&change.path));
         let (untracked_policy, untracked_files) = match &listing {
             Listing::Raw(policy) => (*policy, None),
-            Listing::Ignoring(_, files) => (Untracked::Omit, Some(*files)),
+            Listing::Ignoring(_, files, _) => (Untracked::Omit, Some(*files)),
         };
         let comparison = if filters.is_some() {
             super::super::Comparison::ConvertedContent

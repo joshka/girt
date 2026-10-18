@@ -18,9 +18,92 @@ pub(super) struct Tracked<'a> {
     pub(super) entries: &'a [index::Entry],
     /// Every ancestor of an entry path, sorted and unique.
     pub(super) directories: Vec<&'a [u8]>,
+    /// Number of distinct children of the root, then of each directory; empty when not needed.
+    child_counts: Vec<usize>,
 }
 
-impl Tracked<'_> {
+impl<'a> Tracked<'a> {
+    /// Indexes `entries`, counting each directory's children when `count_children` is set.
+    pub(super) fn new(
+        entries: &'a [index::Entry],
+        directories: Vec<&'a [u8]>,
+        count_children: bool,
+    ) -> Self {
+        let mut tracked = Self {
+            entries,
+            directories,
+            child_counts: Vec::new(),
+        };
+        if count_children {
+            let mut counts = vec![0; tracked.directories.len() + 1];
+            let mut previous: Option<&[u8]> = None;
+            for entry in entries {
+                // Stages of one path are adjacent and count once.
+                if previous != Some(&entry.path[..]) {
+                    counts[tracked.parent_slot(&entry.path)] += 1;
+                }
+                previous = Some(&entry.path);
+            }
+            for directory in &tracked.directories {
+                counts[tracked.parent_slot(directory)] += 1;
+            }
+            tracked.child_counts = counts;
+        }
+        tracked
+    }
+
+    /// Position in `child_counts` of the directory holding `path`.
+    fn parent_slot(&self, path: &[u8]) -> usize {
+        path.iter()
+            .rposition(|byte| *byte == b'/')
+            .and_then(|end| self.directory(&path[..end]))
+            .map_or(0, |directory| directory + 1)
+    }
+
+    /// Number of distinct tracked entries and directories directly inside `directory`.
+    pub(super) fn child_count(&self, directory: &[u8]) -> usize {
+        let slot = if directory.is_empty() {
+            Some(0)
+        } else {
+            self.directory(directory).map(|position| position + 1)
+        };
+        slot.and_then(|slot| self.child_counts.get(slot).copied())
+            .unwrap_or(0)
+    }
+
+    /// Names of the tracked entries and directories directly inside `directory`, in index order.
+    pub(super) fn children(&self, directory: &[u8]) -> Vec<&'a [u8]> {
+        let mut prefix = directory.to_vec();
+        if !prefix.is_empty() {
+            prefix.push(b'/');
+        }
+        let mut names: Vec<&'a [u8]> = Vec::new();
+        let mut position = self
+            .entries
+            .partition_point(|entry| entry.path.as_slice() < prefix.as_slice());
+        while let Some(entry) = self.entries.get(position) {
+            let Some(rest) = entry.path.strip_prefix(prefix.as_slice()) else {
+                break;
+            };
+            let name = rest.split(|byte| *byte == b'/').next().unwrap_or(rest);
+            if names.last() != Some(&name) {
+                names.push(name);
+            }
+            // Skip the rest of a subdirectory: `0` follows `/` in byte order.
+            let mut next = prefix.clone();
+            next.extend_from_slice(name);
+            if name.len() < rest.len() {
+                next.push(b'0');
+                position = self
+                    .entries
+                    .partition_point(|entry| entry.path.as_slice() < next.as_slice());
+            } else {
+                position += 1;
+            }
+        }
+        names
+    }
+
     /// Positions of every stage recorded at `path`.
     fn stages(&self, path: &[u8]) -> std::ops::Range<usize> {
         let start = self

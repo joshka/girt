@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
@@ -10,6 +12,7 @@ use parallel::{Budget, Open, Queue, Task};
 use rustix::fd::OwnedFd;
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat, fstat, openat, statat};
 use tracked::{Slots, Tracked};
+use unicode_normalization::UnicodeNormalization as _;
 
 use super::types::{charge, check, value};
 use super::{
@@ -61,8 +64,35 @@ pub(crate) type Filters<'a> = &'a dyn Convert;
 pub(super) enum Listing {
     /// Raw status: list every leaf or none, never consulting ignore rules.
     Raw(Untracked),
-    /// Ignore-aware status: these rules plus each visited directory's `.gitignore`.
-    Ignoring(Box<Ignore>, UntrackedFiles),
+    /// Ignore-aware status: these rules plus each visited directory's `.gitignore`, and Git's
+    /// name policy.
+    Ignoring(Box<Ignore>, UntrackedFiles, GitNames),
+}
+
+/// How Git's `core.precomposeUnicode` and `core.ignoreCase` relate working-tree names to index
+/// paths during ignore-aware status.
+///
+/// As in Git, an index path missing from its directory's listing is looked up by its own name,
+/// so a volume that merges names still finds it. With `precompose`, listed names are composed
+/// (NFC) before comparison and reporting, as Git composes them. With `ignore_case`, an untracked
+/// listed name is hidden when an index path in the same directory matches it ignoring ASCII case,
+/// even if the volume stores them as different files, as Git hides it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GitNames {
+    pub(crate) ignore_case: bool,
+    pub(crate) precompose: bool,
+}
+
+impl GitNames {
+    /// The name Git compares and reports for a listed `name`.
+    fn logical(self, name: &[u8]) -> Cow<'_, [u8]> {
+        match std::str::from_utf8(name) {
+            Ok(text) if self.precompose && !text.is_ascii() => {
+                Cow::Owned(text.nfc().collect::<String>().into_bytes())
+            }
+            _ => Cow::Borrowed(name),
+        }
+    }
 }
 
 /// [`Listing`] without its rules, which travel with each directory instead.
@@ -70,6 +100,19 @@ pub(super) enum Listing {
 enum Policy {
     Raw(Untracked),
     Ignoring(UntrackedFiles),
+}
+
+/// One child of a directory being walked: its name on disk, the path Git reports for it, and the
+/// index records at that path.
+struct Child<'a, 'n> {
+    name: Cow<'n, [u8]>,
+    path: Vec<u8>,
+    tracked: Option<(usize, &'a index::Entry)>,
+    directory: Option<usize>,
+    /// Looked up by its index name rather than listed under it.
+    resolved: bool,
+    /// Matched by the pathspec itself, not only as an ancestor of matched paths.
+    selected: bool,
 }
 
 #[expect(clippy::too_many_arguments, reason = "one traversal's inputs")]
@@ -142,18 +185,18 @@ fn scan_with_hook(
         previous = &entry.path;
     }
     directories.sort_unstable();
-    let (policy, rules) = match listing {
-        Listing::Raw(policy) => (Policy::Raw(policy), None),
-        Listing::Ignoring(rules, files) => (Policy::Ignoring(files), Some(Arc::new(*rules))),
+    let (policy, rules, names) = match listing {
+        Listing::Raw(policy) => (Policy::Raw(policy), None, None),
+        Listing::Ignoring(rules, files, names) => {
+            (Policy::Ignoring(files), Some(Arc::new(*rules)), Some(names))
+        }
     };
     let ignore_limits = rules.as_ref().map(|rules| rules.limits());
     let ignore_usage = rules.as_ref().map(|rules| rules.usage());
     let scan = Scan {
         format: repo.object_format(),
-        tracked: Tracked {
-            entries,
-            directories,
-        },
+        tracked: Tracked::new(entries, directories, names.is_some()),
+        names,
         metadata,
         index_written,
         policy,
@@ -295,6 +338,8 @@ struct Scan<'a> {
     /// Paths outside this pathspec are neither read nor listed.
     paths: &'a Pathspec,
     filters: Option<Filters<'a>>,
+    /// Git's name policy; `None` compares exact bytes, as raw status does.
+    names: Option<GitNames>,
     max_file_bytes: usize,
     max_depth: usize,
     directory_entries: Budget,
@@ -316,6 +361,19 @@ impl Scan<'_> {
     /// how Git decides to list an untracked directory or nested repository as one entry.
     fn selects_directory(&self, path: &[u8]) -> bool {
         self.paths.matches_unchecked(&[path, b"/"].concat())
+    }
+
+    /// Under core.ignoreCase, the ASCII-lowercased names of `directory`'s tracked children;
+    /// otherwise empty.
+    fn case_folded_children(&self, directory: &[u8]) -> HashSet<Vec<u8>> {
+        if !self.names.is_some_and(|names| names.ignore_case) {
+            return HashSet::new();
+        }
+        self.tracked
+            .children(directory)
+            .into_iter()
+            .map(<[u8]>::to_ascii_lowercase)
+            .collect()
     }
 
     /// Whether untracked paths are listed at all.
@@ -481,23 +539,19 @@ impl Scan<'_> {
             rules => rules,
         };
         let collapsed = self.policy == Policy::Ignoring(UntrackedFiles::Collapsed);
+        let mut children = Vec::new();
         for name in names.iter() {
             self.check()?;
-            // A collapsed directory needs only one visible untracked path.
-            if walk.collapse.is_some_and(|mark| found.listed.len() > mark) {
-                break;
-            }
-            let mut child = path.to_vec();
-            if !child.is_empty() {
-                child.push(b'/');
-            }
-            child.extend_from_slice(name);
             if name.eq_ignore_ascii_case(b".git") {
                 if name != b".git" {
-                    return Err(unsupported(&child, "metadata name alias"));
+                    return Err(unsupported(&join(path, name), "metadata name alias"));
                 }
                 continue;
             }
+            let logical = self
+                .names
+                .map_or(Cow::Borrowed(name), |names| names.logical(name));
+            let child = join(path, &logical);
             // Validate bytes before constructing an OS string or opening a directory entry.
             validate_path(&child)?;
             // Nothing at or below a path outside the pathspec is reported, so it is not examined.
@@ -505,11 +559,76 @@ impl Scan<'_> {
             if !selected && self.paths.directory(&child) == Prune::Skip {
                 continue;
             }
-            let tracked = self.tracked.entry(&child);
-            let directory = self.tracked.directory(&child);
+            children.push(Child {
+                tracked: self.tracked.entry(&child),
+                directory: self.tracked.directory(&child),
+                name: Cow::Borrowed(name),
+                path: child,
+                resolved: false,
+                selected,
+            });
+        }
+        if self.names.is_some() {
+            let listed = children
+                .iter()
+                .filter(|child| child.tracked.is_some() || child.directory.is_some())
+                .count();
+            if listed < self.tracked.child_count(path) {
+                let seen: HashSet<&[u8]> = children.iter().map(|child| &child.path[..]).collect();
+                let mut missing = Vec::new();
+                for name in self.tracked.children(path) {
+                    let child = join(path, name);
+                    if !seen.contains(&child[..]) {
+                        missing.push((name.to_vec(), child));
+                    }
+                }
+                for (name, child) in missing {
+                    self.check()?;
+                    let selected = self.paths.matches_unchecked(&child);
+                    if !selected && self.paths.directory(&child) == Prune::Skip {
+                        continue;
+                    }
+                    if optional_stat(fd, &name, &child)?.is_none() {
+                        continue;
+                    }
+                    children.push(Child {
+                        tracked: self.tracked.entry(&child),
+                        directory: self.tracked.directory(&child),
+                        name: Cow::Owned(name),
+                        path: child,
+                        resolved: true,
+                        selected,
+                    });
+                }
+            }
+        }
+        let mut case_folded: Option<HashSet<Vec<u8>>> = None;
+        for Child {
+            name,
+            path: child,
+            tracked,
+            directory,
+            resolved,
+            selected,
+        } in children
+        {
+            self.check()?;
+            // A collapsed directory needs only one visible untracked path.
+            if walk.collapse.is_some_and(|mark| found.listed.len() > mark) {
+                break;
+            }
+            let name = &name[..];
             let needed = directory.is_some();
             if tracked.is_none() && !needed && (!self.lists_untracked() || walk.excluded) {
                 continue;
+            }
+            // With core.ignoreCase, Git never lists a name an index path matches ignoring case,
+            // even when the volume stores them as different files.
+            if tracked.is_none() && !needed && !resolved {
+                let folded = case_folded.get_or_insert_with(|| self.case_folded_children(path));
+                if folded.contains(&name.to_ascii_lowercase()) {
+                    continue;
+                }
             }
             if tracked.is_some_and(|(_, entry)| entry.mode == index::Mode::Gitlink) {
                 continue;
@@ -956,6 +1075,14 @@ pub(crate) fn same(path: &[u8], before: &Stat, after: &Stat) -> Result<(), Error
     } else {
         Ok(())
     }
+}
+fn join(parent: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut path = parent.to_vec();
+    if !path.is_empty() {
+        path.push(b'/');
+    }
+    path.extend_from_slice(name);
+    path
 }
 fn io(path: &[u8], source: impl Into<std::io::Error>) -> Error {
     Error::Io {
