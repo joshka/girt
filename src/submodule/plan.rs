@@ -79,6 +79,7 @@ pub struct UpdatePlan {
     recorded: ObjectId,
     url: Vec<u8>,
     method: UpdateMethod,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) expected: [Values; 2],
 }
 
@@ -241,6 +242,7 @@ impl Definition {
             recorded,
             url,
             method,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             expected: update_values(config, self.name()),
         })
     }
@@ -324,6 +326,7 @@ pub(super) fn init_values(config: &Config, name: &[u8]) -> [Values; 4] {
         values(config, None, "active"),
     ]
 }
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn update_values(config: &Config, name: &[u8]) -> [Values; 2] {
     [
         values(config, Some(name), "url"),
