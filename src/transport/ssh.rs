@@ -65,6 +65,7 @@
 //! }
 //! ```
 
+mod host_keys;
 mod openssh;
 mod process;
 mod terminal;
@@ -72,6 +73,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub use host_keys::{HostKeyPolicy, UnknownHost};
 pub use openssh::OpenSshOptions;
 pub(crate) use process::Session;
 pub use terminal::{ForegroundTerminal, StoppedTerminal, TerminalEvents};
@@ -380,6 +382,8 @@ pub struct SshRemote {
     policy: LaunchPolicy,
     terminal: Option<std::sync::Arc<ForegroundTerminal>>,
     protocol: super::RequestedProtocol,
+    // `-o` options from a host-key policy, placed before every other option.
+    host_keys: Vec<String>,
 }
 
 enum LaunchPolicy {
@@ -532,6 +536,7 @@ impl SshRemote {
             arguments: Vec::new(),
             terminal: None,
             protocol: super::RequestedProtocol::V0,
+            host_keys: Vec::new(),
             policy: LaunchPolicy::Restricted {
                 config: config.into(),
                 agent_socket: None,
@@ -614,6 +619,19 @@ impl SshRemote {
             *askpass = environment.askpass;
         }
         Ok(remote)
+    }
+
+    /// Checks the server's host key with `policy`, overriding the user's OpenSSH configuration.
+    ///
+    /// See [`HostKeyPolicy`]. Works with both the restricted and the ordinary OpenSSH policy.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a `known_hosts` path that is relative, not UTF-8, or contains a double quote or
+    /// line break.
+    pub fn with_host_keys(mut self, policy: &HostKeyPolicy) -> Result<Self, SshError> {
+        self.host_keys = policy.options()?;
+        Ok(self)
     }
 
     /// Attaches exclusive foreground terminal ownership to an ordinary OpenSSH remote.
@@ -700,6 +718,10 @@ impl SshRemote {
                     command.env("SSH_ASKPASS_REQUIRE", "never");
                 }
                 command.args(["-T", "-F"]).arg(config);
+                // OpenSSH uses the first value it sees for an option.
+                for option in &self.host_keys {
+                    command.args(["-o", option]);
+                }
                 command.args([
                     "-o",
                     if askpass.is_some() {
@@ -760,6 +782,9 @@ impl SshRemote {
                 command.envs(environment);
                 // An approved command is `/bin/sh -c '<command> "$@"'`; options follow it.
                 command.args(&self.arguments);
+                for option in &self.host_keys {
+                    command.args(["-o", option]);
+                }
                 if let Some(version) = version {
                     command.env("GIT_PROTOCOL", version);
                     command.args(["-o", "SendEnv=GIT_PROTOCOL"]);

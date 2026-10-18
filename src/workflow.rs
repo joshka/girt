@@ -889,6 +889,16 @@ pub trait TransferCallbacks {
         None
     }
 
+    /// Returns how SSH remotes check the server's host key, overriding the user's OpenSSH
+    /// configuration.
+    ///
+    /// The default, `None`, leaves host-key checking to OpenSSH and the user's `~/.ssh/config`,
+    /// as `git` does. See [`HostKeyPolicy`](crate::transport::ssh::HostKeyPolicy).
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    fn host_key_policy(&self) -> Option<crate::transport::ssh::HostKeyPolicy> {
+        None
+    }
+
     /// Returns the check that decides whether HTTPS server certificates are acceptable.
     ///
     /// Called once per HTTPS transfer, before connecting. The default, `None`, keeps girt's own
@@ -1896,7 +1906,14 @@ fn configured_endpoint(
     direction: Direction,
     base: &Path,
     environment: &Environment,
-    #[cfg_attr(not(feature = "http"), expect(unused_variables))] callbacks: &dyn TransferCallbacks,
+    #[cfg_attr(
+        not(any(
+            feature = "http",
+            all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+        )),
+        expect(unused_variables)
+    )]
+    callbacks: &dyn TransferCallbacks,
 ) -> Result<(Endpoint, Destination), TransferError> {
     let protocol_environment =
         ProtocolEnvironment::from_environment(|name| environment.bytes(name))
@@ -1946,10 +1963,16 @@ fn configured_endpoint(
             Endpoint::Http(Box::new(http))
         }
         #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-        Protocol::Ssh => Endpoint::Ssh(Box::new(
-            ssh_endpoint(config, &destination, environment)?
-                .with_protocol(requested_protocol(config)?),
-        )),
+        Protocol::Ssh => {
+            let mut ssh = ssh_endpoint(config, &destination, environment)?
+                .with_protocol(requested_protocol(config)?);
+            if let Some(policy) = callbacks.host_key_policy() {
+                ssh = ssh
+                    .with_host_keys(&policy)
+                    .map_err(|error| TransferError::Configuration(error.to_string()))?;
+            }
+            Endpoint::Ssh(Box::new(ssh))
+        }
         _ => return Err(TransferError::UnsupportedTransport(remote_name.to_owned())),
     };
     Ok((endpoint, destination))
