@@ -198,6 +198,7 @@ pub mod locks;
 pub mod loose;
 pub mod mailmap;
 pub mod merge;
+pub mod message;
 pub mod notes;
 pub mod object;
 pub mod objects;
