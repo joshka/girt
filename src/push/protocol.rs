@@ -114,6 +114,84 @@ pub fn send(
         };
         let caps = advertise(&mut wire, prepared).map_err(PushError::NotSent)?;
         check_cancelled(cancel).map_err(|error| PushError::NotSent(error.into()))?;
+        send_advertised(&mut wire, writer, prepared, caps, cancel)
+    };
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = { operation }();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
+    #[cfg(feature = "tracing")]
+    if let Ok(report) = &result {
+        crate::trace::push_report(&span, report);
+    }
+
+    result
+}
+
+/// Reads the advertisement, prepares the push from it with `prepare`, and sends it on the same
+/// stream, as the SSH transport does. `format` and `limits` bound advertisement parsing and must
+/// match the prepared push's.
+pub(crate) fn send_preparing(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    format: crate::ObjectFormat,
+    limits: super::PushLimits,
+    cancel: &AtomicBool,
+    prepare: impl FnOnce(&super::PushAdvertisement) -> Result<PreparedPush, Error>,
+) -> Result<PushReport, PushError> {
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "push.stream",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+        accepted = tracing::field::Empty,
+        rejected = tracing::field::Empty,
+        pending = tracing::field::Empty,
+        unpack = tracing::field::Empty,
+    );
+    let operation = || {
+        let mut wire = Wire {
+            reader,
+            remaining: limits.max_advertisement_bytes,
+            cancel,
+        };
+        let (offered, advertisement) =
+            advertise_for_selection(&mut wire, format, limits).map_err(PushError::NotSent)?;
+        check_cancelled(cancel).map_err(|error| PushError::NotSent(error.into()))?;
+        let prepared = prepare(&advertisement).map_err(PushError::NotSent)?;
+        let caps = offered
+            .validate(&prepared, &prepared.commands, cancel)
+            .map_err(PushError::NotSent)?;
+        check_cancelled(cancel).map_err(|error| PushError::NotSent(error.into()))?;
+        send_advertised(&mut wire, writer, &prepared, caps, cancel)
+    };
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = { operation }();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
+    #[cfg(feature = "tracing")]
+    if let Ok(report) = &result {
+        crate::trace::push_report(&span, report);
+    }
+
+    result
+}
+
+// Sends the request and pack after a validated advertisement, and reads the status report.
+fn send_advertised(
+    wire: &mut Wire<'_, impl Read>,
+    writer: &mut impl Write,
+    prepared: &PreparedPush,
+    caps: Capabilities,
+    cancel: &AtomicBool,
+) -> Result<PushReport, PushError> {
+    {
         let request = prepared
             .request_for(caps.report_v2, caps.sideband)
             .map_err(PushError::NotSent)?;
@@ -124,7 +202,7 @@ pub fn send(
             written: 0,
         };
         let result = transmit(
-            &mut wire,
+            wire,
             &mut counted,
             &request,
             prepared,
@@ -143,19 +221,7 @@ pub fn send(
                 report: Box::new(report),
             }),
         }
-    };
-    #[cfg(feature = "tracing")]
-    let result = span.in_scope(operation);
-    #[cfg(not(feature = "tracing"))]
-    let result = { operation }();
-    #[cfg(feature = "tracing")]
-    crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
-    #[cfg(feature = "tracing")]
-    if let Ok(report) = &result {
-        crate::trace::push_report(&span, report);
     }
-
-    result
 }
 
 struct CountingWriter<'a, W> {

@@ -526,9 +526,11 @@ the repository, under `protocol.version` 0 and 2, and reports the version the se
 `workflow::fetch` over the same transport, under v0 and v2, writes the same `refs/remotes/origin/*`
 as `git fetch` from the repository's path and passes `git fsck --strict`. `workflow::clone_with`
 gives the same references and `HEAD` as `git clone`, apart from the `origin/HEAD` alias girt's clone
-never creates. Further cases cover an unregistered scheme, `protocol.mem.allow` still being
-required, a connection failure keeping the application's error as the source, and a service that
-exits without a listing. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
+never creates. `workflow::push` of a new commit over the transport, served by `git receive-pack`,
+publishes the branch, and the destination passes `git fsck --strict`. Further cases cover an
+unregistered scheme, `protocol.mem.allow` still being required, a connection failure keeping the
+application's error as the source, and a service that exits without a listing. Evidence: macOS
+arm64, Git 2.56.0, 2026-10-18.
 
 ## Git Capability Audit: Transfer
 
