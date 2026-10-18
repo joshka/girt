@@ -44,6 +44,22 @@ merge whose base is C's parent. Without merging, a tool can read history but can
   bases, directory-stage expansion and ambiguous rename layouts remain limited.
 </GirtStatus>
 
+## Cherry-pick, revert, rebase and stash
+
+Cherry-pick applies a commit's change to a new destination. The selected parent supplies the base,
+the destination supplies ours, and the picked commit supplies theirs. Revert swaps the commit and
+its parent to apply the inverse change. A merge commit needs a mainline parent so Git knows which
+change to replay. Rebase repeats cherry-picking onto each newly created destination commit.
+
+Stash records working files and the index as commits, with an optional extra parent for untracked
+files. Applying a stash merges those saved changes into the current checkout. These operations can
+stop on the same conflicts as a merge; the provisional tree alone does not resolve them.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/608">
+  Object-only cherry-pick and revert with mainline selection, commit metadata and explicit empty
+  policies. Rebase sequences, Git sequencer state and stash operations are planned.
+</GirtStatus>
+
 ## Filters
 
 **Filters** transform file contents between the repository and the working tree:
