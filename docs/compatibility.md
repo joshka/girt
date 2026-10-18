@@ -4131,3 +4131,12 @@ text rename preserves missing final newlines, and reversing twice restores forwa
 Reverse copies exchange paths and retain copy behavior; both implementations refuse an occupied
 reversed destination, and Git leaves its index unchanged. Missing reverse binary blocks are refused.
 The existing directory-to-file limitation also applies to reversed patches.
+
+### Working-file patch preparation
+
+`tests/apply_worktree.rs` compares filtered CRLF postimages and unchanged index data with isolated
+`git apply`. Original fixtures cover no-write preparation, snapshot changes, late hunk failure,
+missing directories, symlink leaves/ancestors, metadata aliases, traversal and projected nested
+repositories. Existing tree/index tests cover the shared mapping extraction. The first guarded
+working-file implementation is Linux/macOS regular-file-only; other platforms, symlink edits and
+directory/file transitions are explicit refusals tracked in issue 506.

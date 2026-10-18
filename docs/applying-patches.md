@@ -139,3 +139,35 @@ contents are read. The default 16 MiB aggregate path budget can be reached befor
 one-million-entry index limit; raise it explicitly for large repositories. Existing tree-application
 restrictions also apply. Publishing in another object store requires retaining the unchanged source
 objects, just as for a computed tree.
+
+## Prepare working-file edits
+
+On Linux and macOS, `patch.prepare_worktree(&repository, &mut filters)` computes edits against the
+actual affected regular files, including dirty or untracked sources. Supply the repository's filter
+pipeline with an explicit command policy. Preimages are converted to stored form before matching;
+postimages are converted to working form before the plan returns. The optional index supplies staged
+context for `text=auto` and is never changed. Attributes use the supplied pipeline's view
+throughout.
+
+Inspect `plan.files()` for final bytes, hunk locations and conversion warnings. `plan.verify()`
+reopens the root and ancestors without following links and checks original identities and content
+again. Dropping the plan writes nothing. All hunk and filter processing completes before publication
+can begin. Authorized filter commands can have external effects of their own.
+
+Paths use the existing component-stripping and directory-prefix options. Preparation checks the
+volume name policy, metadata aliases, nested-repository markers and projected nested bare-repository
+markers. Existing symlink leaves, symlink ancestors, special files and directory/file transitions
+are refused; missing parent directories are planned without creating them. The initial form handles
+regular-file text/binary, mode changes, additions/deletions, renames and copies. Guarded
+working-file operations return an unsupported-platform error elsewhere.
+
+`WorktreeLimits` bounds mapped paths, planned prefixes, directories, directory inspections and
+aggregate payloads. Both original and converted bytes count. Filter conversions also have their
+pipeline's driver bounds and deterministic builtin expansion; output budgets are checked after
+conversion, rather than acting as a process-wide allocation quota. Cancellation is checked between
+entries and I/O chunks; individual syscalls and conversions cannot be interrupted.
+
+The caller must exclude other working-tree writers, root/ancestor renames and repository metadata or
+mount replacement throughout use. Snapshot checks detect observed changes, but do not exclude a
+writer racing a final check; hardlink/mount attacks and ABA replacements remain outside the
+contract.

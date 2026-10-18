@@ -91,7 +91,7 @@ match. `git format-patch` turns commits into mail-ready patch files, and `git am
 and recreates the commits with their authors and messages. Patch-based review, moving changes
 between repositories, and tools that edit code by generating diffs all depend on applying them.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/506">Bounded unified text parsing, exact-position byte-content application and in-memory tree composition with explicit object installation in `girt::apply`. Mode changes, new/deleted files, renames/copies and Git binary literal/delta patches are supported, including reverse application. Index drafts are computed for explicit publication through the index lock API. Combined diffs, working-file publication and mail workflows remain unsupported.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/506">Bounded unified text parsing, exact-position byte-content application and in-memory tree composition with explicit object installation in `girt::apply`. Mode changes, new/deleted files, renames/copies and Git binary literal/delta patches are supported, including reverse application. Index drafts are computed for explicit publication through the index lock API. Working-file preparation uses filters and snapshot guards on Linux/macOS. Combined diffs, working-file publication and mail workflows remain unsupported.</GirtStatus>
 
 ## Submodules
 

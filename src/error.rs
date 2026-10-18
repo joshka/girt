@@ -128,6 +128,7 @@ from_domain_errors! {
     crate::submodule::RecursiveError,
     crate::submodule::RecursiveFailure,
     crate::apply::Error,
+    crate::apply::WorktreeError,
     crate::apply::IndexError,
     crate::mailmap::Error,
     crate::notes::Error,
