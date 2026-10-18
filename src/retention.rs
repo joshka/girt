@@ -700,6 +700,24 @@ impl Repository {
         fold_recent_packs: bool,
         cancel: &AtomicBool,
     ) -> RetentionPlan {
+        self.observe_roots(policy, fold_recent_packs, cancel, true)
+    }
+
+    fn observe_integrity_roots(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+    ) -> RetentionPlan {
+        self.observe_roots(policy, false, cancel, false)
+    }
+
+    fn observe_roots(
+        &self,
+        policy: &RetentionPolicy,
+        fold_recent_packs: bool,
+        cancel: &AtomicBool,
+        include_recent: bool,
+    ) -> RetentionPlan {
         let mut plan = RetentionPlan {
             roots: policy.heads.iter().copied().collect(),
             strong_roots: policy.heads.iter().copied().collect(),
@@ -728,11 +746,23 @@ impl Repository {
             plan.fail(RetentionError::CallerHeadLimit);
             return plan;
         }
-        if let Err(reason) = collect_roots(self, policy, cancel, &mut plan) {
+        if let Err(reason) = collect_roots(self, policy, cancel, &mut plan, include_recent) {
             plan.fail(reason);
             return plan;
         }
         plan
+    }
+
+    pub(crate) fn integrity_roots(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+    ) -> Result<BTreeSet<ObjectId>, RetentionError> {
+        let plan = self.observe_integrity_roots(policy, cancel);
+        match plan.outcome {
+            RetentionOutcome::Complete => Ok(plan.roots),
+            RetentionOutcome::Incomplete(error) => Err(error),
+        }
     }
 
     /// Collects conservative retention roots and their reachable object closure.
@@ -1050,6 +1080,7 @@ fn collect_roots(
     policy: &RetentionPolicy,
     cancel: &AtomicBool,
     plan: &mut RetentionPlan,
+    include_recent: bool,
 ) -> Result<(), RetentionError> {
     // Git's hook can designate otherwise old, unreachable objects as recent. Running a hook is
     // outside this read-only library operation, so its presence prevents a complete plan.
@@ -1189,7 +1220,9 @@ fn collect_roots(
             return Err(RetentionError::AggregateRootLimit);
         }
     }
-    recent_objects(repository, policy, cancel, plan)?;
+    if include_recent {
+        recent_objects(repository, policy, cancel, plan)?;
+    }
     Ok(())
 }
 

@@ -194,6 +194,7 @@ pub use error::{Error, Result};
 pub mod apply;
 pub mod fetch;
 pub mod filter;
+pub mod fsck;
 pub mod fsmonitor;
 #[cfg(any(fuzzing, test))]
 #[doc(hidden)]
