@@ -330,8 +330,9 @@ pub struct Report {
     /// True only after successful index publication. On failure the prior index remains, apart
     /// from independent writers; completed working-tree changes are not rolled back.
     pub index_published: bool,
-    /// Paths written unconverted because a filter driver that is not `filter.<name>.required`
-    /// failed, as Git writes them; only filtered checkouts fill this.
+    /// Paths written partly unconverted, as Git writes them: a filter driver that is not
+    /// `filter.<name>.required` failed, or the blob is not valid UTF-8 for its
+    /// `working-tree-encoding`. Only filtered checkouts fill this.
     pub unfiltered: Vec<Vec<u8>>,
 }
 

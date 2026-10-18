@@ -2577,6 +2577,15 @@ two pipelines: the baseline is verified with the attributes in the working tree
 it checks out. A file whose attributes change between the trees, such as `eol=lf` to `eol=crlf`, is
 accepted as clean and rewritten.
 
+`working-tree-encoding` converts the UTF-16 and UTF-32 families natively, after the clean driver
+when storing and before the smudge driver when writing. `UTF-16` and `UTF-32` require a byte order
+mark when storing and write one in the platform `iconv`'s order (big-endian on macOS, the machine's
+order with glibc); the `LE`/`BE` forms refuse a leading mark; `UTF-16LE-BOM` accepts either and
+writes one. Empty files stay empty. A file that is invalid in its encoding, or breaks the mark rule,
+is refused with `filter::Error::Encoding`, as `git add` exits 128. A blob that is not valid UTF-8 is
+written unencoded and flagged in `Converted::unencoded`, as Git reports an error and writes it.
+Other encodings are refused ([issue 593](https://github.com/joshka/girt/issues/593)).
+
 ### Content Filters Evidence
 
 `tests/filter_eol.rs` compares `Pipeline::to_repository` with the blobs `git add` stores and its
@@ -2606,7 +2615,10 @@ clones and compares every file byte for byte under four `core.autocrlf`/`core.eo
 `text`, `eol=crlf`, `text=auto`, `-text`, `ident`, a clean/smudge driver, a symlink and a removed
 file; `git status` then reports girt's checkout clean. It also checks an attribute change between
 the trees, refusal of a locally changed converted file, that refused commands leave the working tree
-empty, and a Git LFS checkout.
+empty, and a Git LFS checkout. `tests/filter_encoding.rs` writes blobs with `git checkout-index` and
+stores them back with `git add` for seven encodings alone and combined with `text eol=crlf`,
+including non-BMP text and an empty file, and checks Git's refusals and the unencoded write of an
+invalid blob.
 
 ## Working-Tree Index
 

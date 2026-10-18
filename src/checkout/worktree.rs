@@ -322,7 +322,7 @@ impl<'a> Plan<'a> {
                             path: path.clone(),
                             source: Box::new(source),
                         })?;
-                    if written.skipped.is_some() && side == Side::Target {
+                    if (written.skipped.is_some() || written.unencoded) && side == Side::Target {
                         unfiltered.push(path.clone());
                     }
                     if let std::borrow::Cow::Owned(bytes) = written.bytes {

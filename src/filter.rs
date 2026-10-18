@@ -24,8 +24,10 @@
 //!   reported in [`Converted::skipped`], unless `filter.<name>.required` makes it an
 //!   [`Error::Driver`].
 //!
-//! `working-tree-encoding` is not applied yet: a path with it is refused with
-//! [`Error::Unsupported`] rather than converted partially.
+//! - **`working-tree-encoding`.** Working files in UTF-16 or UTF-32 (`UTF-16`, `UTF-16LE`,
+//!   `UTF-16BE`, `UTF-16LE-BOM`, `UTF-32`, `UTF-32LE`, `UTF-32BE`, ignoring case) are stored as
+//!   UTF-8, between the driver and line-ending steps. Other encodings, which Git converts with
+//!   `iconv`, are refused with [`Error::Unsupported`] rather than converted partially.
 //!
 //! ```
 //! use std::borrow::Cow;
@@ -60,6 +62,7 @@ use crate::workflow::Environment;
 use crate::{ObjectId, Objects, ReadBlobError, Repository};
 
 mod driver;
+mod encoding;
 mod eol;
 mod ident;
 mod process;
@@ -244,6 +247,7 @@ pub struct Plan {
     ident: bool,
     safecrlf: SafeCrlf,
     driver: Option<Vec<u8>>,
+    encoding: Option<(Vec<u8>, encoding::Encoding)>,
 }
 
 impl Plan {
@@ -258,6 +262,12 @@ impl Plan {
     /// and `false` follows `core.eol`. Storing always converts CRLF to LF.
     pub fn eol(&self) -> LineEnding {
         self.eol
+    }
+
+    /// The `working-tree-encoding` attribute's value, when it names an encoding other than
+    /// UTF-8.
+    pub fn encoding(&self) -> Option<&[u8]> {
+        self.encoding.as_ref().map(|(name, _)| name.as_slice())
     }
 
     /// Whether the `ident` attribute is set.
@@ -292,6 +302,25 @@ impl Plan {
             }
         };
         eol::convert_if(bytes, needed, eol::lf_to_crlf)
+    }
+
+    /// Decodes `bytes` from the path's `working-tree-encoding`, if any.
+    fn decode<'a>(&self, path: &[u8], bytes: Cow<'a, [u8]>) -> Result<Cow<'a, [u8]>, Error> {
+        let Some((name, encoding)) = &self.encoding else {
+            return Ok(bytes);
+        };
+        encoding
+            .decode(&bytes)
+            .map(Cow::Owned)
+            .map_err(|failure| Error::Encoding {
+                path: path.to_vec(),
+                encoding: name.clone(),
+                reason: match failure {
+                    encoding::Failure::BomRequired => "BOM is required",
+                    encoding::Failure::BomProhibited => "BOM is prohibited",
+                    encoding::Failure::Invalid => "invalid content",
+                },
+            })
     }
 
     fn builtin_to_repository<'a>(
@@ -388,6 +417,9 @@ pub struct Converted<'a> {
     /// A driver that is not `filter.<name>.required` failed, and its conversion was skipped as
     /// Git skips it. Git reports this as an error message and continues.
     pub skipped: Option<DriverError>,
+    /// The stored bytes were not valid UTF-8, so they were written without
+    /// `working-tree-encoding`, as Git writes them after reporting an error.
+    pub unencoded: bool,
 }
 
 /// How writing a stored file back would change its line endings.
@@ -454,6 +486,22 @@ pub enum Error {
     /// Reading the staged blob for [`Text::Auto`] failed.
     #[error("reading the staged blob")]
     Staged(#[source] Box<ReadBlobError>),
+    /// A working file is not valid in its `working-tree-encoding`, or lacks or has a byte order
+    /// mark the encoding requires or forbids. Git refuses to add such a file.
+    #[error(
+        "{} in {} as {}",
+        reason,
+        String::from_utf8_lossy(path),
+        String::from_utf8_lossy(encoding)
+    )]
+    Encoding {
+        /// The path being stored.
+        path: Vec<u8>,
+        /// The `working-tree-encoding` value.
+        encoding: Vec<u8>,
+        /// What is wrong: `"BOM is required"`, `"BOM is prohibited"` or `"invalid content"`.
+        reason: &'static str,
+    },
     /// The path needs a conversion girt does not perform yet.
     #[error(
         "unsupported conversion for {}: {attribute}",
@@ -548,14 +596,24 @@ impl Pipeline {
     /// # Errors
     ///
     /// Returns [`Error::Attributes`] when attributes cannot be read and [`Error::Unsupported`]
-    /// when the path has a `working-tree-encoding` attribute.
+    /// when the path's `working-tree-encoding` is not in the UTF-16 or UTF-32 families.
     pub fn plan(&mut self, path: &[u8]) -> Result<Plan, Error> {
-        if matches!(self.get(path, b"working-tree-encoding")?, State::Value(_)) {
-            return Err(Error::Unsupported {
-                path: path.to_vec(),
-                attribute: "working-tree-encoding",
-            });
-        }
+        let encoding = match self.get(path, b"working-tree-encoding")? {
+            State::Value(name) => {
+                let name = name.to_vec();
+                match encoding::Encoding::parse(&name) {
+                    Ok(Some(encoding)) => Some((name, encoding)),
+                    Ok(None) => None,
+                    Err(()) => {
+                        return Err(Error::Unsupported {
+                            path: path.to_vec(),
+                            attribute: "working-tree-encoding",
+                        });
+                    }
+                }
+            }
+            _ => None,
+        };
         let driver = match self.get(path, b"filter")? {
             State::Value(name) => Some(name.to_vec()),
             _ => None,
@@ -587,12 +645,14 @@ impl Pipeline {
             ident,
             safecrlf: settings.safecrlf,
             driver,
+            encoding,
         })
     }
 
     /// Converts `blob`, a stored blob with ID `id`, to the bytes Git writes at `path`.
     ///
-    /// Applies `ident`, then line endings, then the `filter` driver's smudge command.
+    /// Applies `ident`, then line endings, then `working-tree-encoding`, then the `filter`
+    /// driver's smudge command.
     ///
     /// # Errors
     ///
@@ -606,17 +666,26 @@ impl Pipeline {
     ) -> Result<Converted<'a>, Error> {
         let plan = self.plan(path)?;
         let bytes = plan.builtin_to_worktree(Cow::Borrowed(blob), id);
+        let (bytes, unencoded) = match &plan.encoding {
+            Some((_, encoding)) => match encoding.encode(&bytes) {
+                Ok(encoded) => (Cow::Owned(encoded), false),
+                Err(_) => (bytes, true),
+            },
+            None => (bytes, false),
+        };
         let (bytes, skipped) = self.drive(&plan, path, Direction::Smudge, Some(id), bytes)?;
         Ok(Converted {
             bytes,
             warning: None,
             skipped,
+            unencoded,
         })
     }
 
     /// Converts `file`, the working file at `path`, to the content Git stores.
     ///
-    /// Applies the `filter` driver's clean command, then line endings, then `ident`. `staged`
+    /// Applies the `filter` driver's clean command, then `working-tree-encoding`, then line
+    /// endings, then `ident`. `staged`
     /// supplies what [`Text::Auto`] consults: the path's currently staged blob.
     ///
     /// # Errors
@@ -624,7 +693,8 @@ impl Pipeline {
     /// Returns the errors of [`Self::plan`], [`Error::Refused`] when a clean command would run
     /// under [`Commands::Refuse`], [`Error::Driver`] when a required driver fails,
     /// [`Error::UnsafeCrlf`] under [`SafeCrlf::Refuse`] when the result would not be written back
-    /// as the file, and [`Error::Staged`] when reading the staged blob fails.
+    /// as the file, [`Error::Encoding`] when the file is not valid in its
+    /// `working-tree-encoding`, and [`Error::Staged`] when reading the staged blob fails.
     pub fn to_repository<'a>(
         &mut self,
         path: &[u8],
@@ -634,11 +704,13 @@ impl Pipeline {
         let plan = self.plan(path)?;
         let (bytes, skipped) =
             self.drive(&plan, path, Direction::Clean, None, Cow::Borrowed(file))?;
+        let bytes = plan.decode(path, bytes)?;
         let (bytes, warning) = plan.builtin_to_repository(path, bytes, staged)?;
         Ok(Converted {
             bytes,
             warning,
             skipped,
+            unencoded: false,
         })
     }
 
@@ -761,6 +833,7 @@ impl Pipeline {
         let mut plan = self.plan(path)?;
         plan.safecrlf = SafeCrlf::Allow;
         let (bytes, _) = self.drive(&plan, path, Direction::Clean, None, Cow::Borrowed(file))?;
+        let bytes = plan.decode(path, bytes)?;
         Ok(plan.builtin_to_repository(path, bytes, staged)?.0)
     }
 }
