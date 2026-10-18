@@ -171,3 +171,26 @@ fn listed_lookups_open_only_loose_files_present_when_their_directory_was_listed(
     let empty = ObjectFormat::Sha1.empty_tree();
     assert_eq!(located(empty), Some((ObjectKind::Tree, 0)));
 }
+
+#[rstest::rstest]
+#[case::enabled("true", true)]
+#[case::disabled("false", false)]
+#[case::invalid("invalid", false)]
+fn midx_configuration_controls_loading_and_refresh(#[case] value: &str, #[case] expected: bool) {
+    let fixture = Fixture::new(ObjectFormat::Sha1, true, 4);
+    crate::pack_git::git(fixture.root.path(), &["multi-pack-index", "write"], b"");
+    crate::pack_git::git(
+        fixture.root.path(),
+        &["config", "core.multiPackIndex", value],
+        b"",
+    );
+    let repo = crate::Repository::open(fixture.root.path()).unwrap();
+    let mut objects = repo.objects().unwrap();
+    assert_eq!(objects.stores[0].midx.is_some(), expected);
+
+    objects
+        .refresh(PackLimits::default(), AlternateLimits::default())
+        .unwrap();
+    assert_eq!(objects.stores[0].midx.is_some(), expected);
+    assert!(objects.read(fixture.ordinary).unwrap().is_some());
+}
