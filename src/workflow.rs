@@ -104,8 +104,8 @@
 //!    and `https://` need the `http` feature; `ssh://` and `user@host:path` need the `ssh` feature
 //!    on macOS or Linux. Any other scheme, such as `mem://repo` or `vault::team/project`, uses the
 //!    application's [`Transport`](crate::transport::Transport) from
-//!    [`TransferCallbacks::transport`], which can list references for now; without one, and for
-//!    `git://`, the result is [`TransferError::UnsupportedTransport`].
+//!    [`TransferCallbacks::transport`], for listing, fetch and clone (not yet push); without one,
+//!    and for `git://`, the result is [`TransferError::UnsupportedTransport`].
 //! 3. **Authenticate if asked.** An HTTP server that answers `401 Unauthorized` gets one retry with
 //!    a credential. Configured `credential.helper` programs are asked first; Git's `store` helper
 //!    is answered natively by [`crate::remote::CredentialStore`]. If no helper supplies a value,
@@ -1328,7 +1328,7 @@ pub enum TransferError {
     ///
     /// `http(s)://` URLs need the `http` feature and SSH URLs need the `ssh` feature on macOS or
     /// Linux. Other schemes need an application transport from [`TransferCallbacks::transport`],
-    /// which can only list references so far; fetch, push and clone over one return this too.
+    /// which supports listing, fetch and clone so far; push over one returns this too.
     /// girt never runs `git-remote-<helper>` programs, and `git://` is not supported. Holds the
     /// remote name.
     #[error("unsupported transport for remote {0}")]
@@ -1407,6 +1407,15 @@ impl Custom {
         };
         Ok(std::cell::RefCell::new(self.transport.connect(&request)?))
     }
+}
+
+// Whether a fetch failed in the exchange itself, which a failed service explains; a local or
+// policy failure stays girt's own.
+fn is_stream_failure(error: &crate::fetch::FetchError) -> bool {
+    matches!(
+        error,
+        crate::fetch::FetchError::Io(_) | crate::fetch::FetchError::Protocol(_)
+    )
 }
 
 // The reading and writing halves of one connection, for stream functions that take both.
@@ -2178,9 +2187,33 @@ impl Repository {
             ControlFlow::Continue(())
         };
         let ready = match endpoint {
-            // Application transports list references only, for now.
-            Endpoint::Custom(_) => {
-                return Err(TransferError::UnsupportedTransport(remote_name.to_owned()));
+            Endpoint::Custom(custom) => {
+                let mut connection = custom.connect(crate::transport::Service::UploadPack)?;
+                let download = request()?.receive_connection(
+                    &mut **connection.get_mut(),
+                    custom.protocol,
+                    Some(std::sync::Arc::new(known)),
+                    limits,
+                    &cancel,
+                    |message| callbacks.remote_message(message),
+                );
+                // A service that fails after a good response says nothing about it, but its failure
+                // explains a broken or invalid one.
+                let finished = connection.into_inner().finish();
+                let validated = download.and_then(|download| {
+                    download.validate_with_progress(
+                        &cancel,
+                        |_| ControlFlow::Continue(()),
+                        |event| callbacks.validation_progress(event),
+                    )
+                });
+                if let (Err(FetchWorkflowError::Transfer(cause)), Err(error)) =
+                    (&validated, finished)
+                    && is_stream_failure(cause)
+                {
+                    return Err(error.into());
+                }
+                validated
             }
             Endpoint::Local(path) => {
                 let callbacks = std::cell::RefCell::new(callbacks);
@@ -2460,7 +2493,7 @@ impl Repository {
         ))]
         let names: Vec<RefName> = commands.iter().map(|c| c.name.clone()).collect();
         let result = match endpoint {
-            // Application transports list references only, for now.
+            // Push over application transports comes later.
             Endpoint::Custom(_) => {
                 return Err(TransferError::UnsupportedTransport(remote_name.to_owned()));
             }

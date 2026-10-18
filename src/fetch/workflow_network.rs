@@ -7,6 +7,10 @@ use super::{
     DownloadedFetch, FetchLimits, FetchReady, FetchRequest, FetchUpdate, FetchWorkflowError,
     KnownHistory,
 };
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
 use crate::transport::TransportControl;
 
 /// An owned network download paired with its advertisement-derived fetch plan.
@@ -184,6 +188,38 @@ impl FetchRequest {
             progress,
         )
         .await;
+        let updates = selected(plan, &downloaded)?;
+        Ok(FetchDownload {
+            request: self,
+            updates,
+            downloaded: downloaded?,
+        })
+    }
+
+    /// Downloads over an application transport's connection, with the advertisement-derived plan.
+    pub(crate) fn receive_connection(
+        self,
+        connection: &mut dyn crate::transport::Connection,
+        requested: crate::transport::RequestedProtocol,
+        known: Option<Arc<KnownHistory>>,
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+        progress: impl FnMut(&[u8]),
+    ) -> Result<FetchDownload, FetchWorkflowError> {
+        self.check_known(known.as_deref().unwrap_or(&KnownHistory::default()))?;
+        let mut plan = None;
+        let downloaded = super::stream::download(
+            connection,
+            requested,
+            |advertisement| select(self.plan(advertisement), &mut plan),
+            known,
+            super::FetchOptions {
+                limits,
+                depth: self.depth,
+            },
+            cancel,
+            progress,
+        );
         let updates = selected(plan, &downloaded)?;
         Ok(FetchDownload {
             request: self,

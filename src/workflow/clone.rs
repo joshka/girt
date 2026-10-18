@@ -337,9 +337,32 @@ pub fn clone_with(
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let ready = match endpoint {
-        // Application transports list references only, for now.
-        Endpoint::Custom(_) => {
-            return Err(TransferError::UnsupportedTransport("origin".to_owned()).into());
+        Endpoint::Custom(custom) => {
+            let mut connection = custom.connect(crate::transport::Service::UploadPack)?;
+            let download = prepared.receive_connection(
+                &mut **connection.get_mut(),
+                custom.protocol,
+                options.fetch_limits,
+                &cancel,
+                |message| callbacks.remote_message(message),
+            );
+            // A service that fails after a good response says nothing about it, but its failure
+            // explains a broken or invalid one.
+            let finished = connection.into_inner().finish();
+            let validated = download.and_then(|download| {
+                download.validate_with_progress(
+                    &cancel,
+                    |_| ControlFlow::Continue(()),
+                    |event| callbacks.validation_progress(event),
+                )
+            });
+            if let (Err(crate::clone::CloneTransferError::Transfer(cause)), Err(error)) =
+                (&validated, finished)
+                && super::is_stream_failure(cause)
+            {
+                return Err(TransferError::from(error).into());
+            }
+            validated
         }
         Endpoint::Local(path) => {
             let callbacks = std::cell::RefCell::new(&mut *callbacks);

@@ -178,21 +178,93 @@ fn connect_failure_is_reported() {
     );
 }
 
-#[test]
-fn fetch_is_not_supported_yet() {
+fn refs(directory: &std::path::Path, prefix: &str) -> String {
+    String::from_utf8(git(
+        directory,
+        &["for-each-ref", "--format=%(objectname) %(refname)", prefix],
+        b"",
+    ))
+    .unwrap()
+}
+
+#[rstest]
+#[case::v0("0")]
+#[case::v2("2")]
+fn fetch_matches_git_fetch(#[case] version: &str) {
     let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
-    let (_directory, repository) = local(&fixture, &[("protocol.mem.allow", "always")]);
-    let result = girt::workflow::fetch(
+    let (directory, repository) = local(
+        &fixture,
+        &[
+            ("protocol.mem.allow", "always"),
+            ("protocol.version", version),
+        ],
+    );
+    girt::workflow::fetch(
         &repository,
         "origin",
         &girt::workflow::FetchOptions::new(["refs/heads/*:refs/remotes/origin/*"]),
         &Environment::default(),
         &mut Registered(Some(Arc::new(GitService))),
+    )
+    .unwrap();
+
+    let expected = tempfile::tempdir().unwrap();
+    git(expected.path(), &["init", "--quiet", "."], b"");
+    let source = fixture.root.path().to_str().unwrap();
+    git(
+        expected.path(),
+        &[
+            "fetch",
+            "--quiet",
+            source,
+            "refs/heads/*:refs/remotes/origin/*",
+        ],
+        b"",
     );
-    assert!(matches!(
-        result,
-        Err(TransferError::UnsupportedTransport(_))
+    assert_eq!(
+        refs(directory.path(), "refs/remotes/origin"),
+        refs(expected.path(), "refs/remotes/origin")
+    );
+    git(directory.path(), &["fsck", "--strict"], b"");
+}
+
+#[test]
+fn clone_matches_git_clone() {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let scratch = tempfile::tempdir().unwrap();
+    let inputs = girt::config::ConfigInputs::default().with_command(Some(
+        girt::Config::parse(b"[protocol \"mem\"]\nallow = always\n").unwrap(),
     ));
+    let url = format!("mem::{}", fixture.root.path().display());
+    girt::workflow::clone_with(
+        &url,
+        scratch.path().join("girt"),
+        &girt::workflow::CloneOptions::default(),
+        &inputs,
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(GitService))),
+    )
+    .unwrap();
+    let source = fixture.root.path().to_str().unwrap();
+    git(scratch.path(), &["clone", "--quiet", source, "git"], b"");
+    let girt_clone = scratch.path().join("girt");
+    let git_clone = scratch.path().join("git");
+    // girt's clone does not create the `origin/HEAD` alias, on any transport.
+    let git_refs = refs(&git_clone, "refs").replace(
+        &format!(
+            "{} refs/remotes/origin/HEAD\n",
+            String::from_utf8(git(&git_clone, &["rev-parse", "origin/HEAD"], b""))
+                .unwrap()
+                .trim()
+        ),
+        "",
+    );
+    assert_eq!(refs(&girt_clone, "refs"), git_refs);
+    assert_eq!(
+        git(&girt_clone, &["symbolic-ref", "HEAD"], b""),
+        git(&git_clone, &["symbolic-ref", "HEAD"], b"")
+    );
+    git(&girt_clone, &["fsck", "--strict"], b"");
 }
 
 // A service that fails without a listing is reported as the transport's failure.

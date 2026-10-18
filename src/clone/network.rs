@@ -3,6 +3,10 @@ use std::sync::atomic::AtomicBool;
 
 use super::{CloneHead, CloneReady, CloneRequest, CloneTransferError, plan, workflow};
 use crate::fetch::{DownloadedFetch, FetchLimits};
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
 use crate::transport::TransportControl;
 
 /// Owned network bytes and exact advertisement-derived clone selection, without destination I/O.
@@ -166,6 +170,36 @@ impl CloneRequest {
             progress,
         )
         .await;
+        let (plan, downloaded) = workflow::selected(saved, download)?;
+        Ok(CloneDownload {
+            request: self,
+            head: plan.head,
+            downloaded,
+        })
+    }
+
+    /// Downloads over an application transport's connection, using its advertisement.
+    pub(crate) fn receive_connection(
+        self,
+        connection: &mut dyn crate::transport::Connection,
+        requested: crate::transport::RequestedProtocol,
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+        progress: impl FnMut(&[u8]),
+    ) -> Result<CloneDownload, CloneTransferError> {
+        let mut saved = None;
+        let download = crate::fetch::stream::download(
+            connection,
+            requested,
+            |ad| plan::select(self.plan(ad), &mut saved),
+            None,
+            crate::fetch::FetchOptions {
+                limits,
+                depth: None,
+            },
+            cancel,
+            progress,
+        );
         let (plan, downloaded) = workflow::selected(saved, download)?;
         Ok(CloneDownload {
             request: self,
