@@ -149,5 +149,6 @@ The push follows the repository's receive policy: `receive.denyCurrentBranch`,
 `receive.denyDeletes`, `receive.denyNonFastForwards` and the hide rules. Its objects are validated
 before any reference moves, and the `pre-receive`, `update`, `post-receive` and `post-update` hooks
 run as with Git, with incoming objects quarantined until `pre-receive` accepts them. Push options
-reach the hooks when `receive.advertisePushOptions` is set. Atomic pushes and
-`receive.denyCurrentBranch=updateInstead` are refused for now.
+reach the hooks when `receive.advertisePushOptions` is set. With
+`receive.denyCurrentBranch=updateInstead`, a clean checked-out working tree is updated to the pushed
+commit, as with Git. Atomic pushes are refused for now.

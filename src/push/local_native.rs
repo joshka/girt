@@ -13,7 +13,7 @@ use crate::refs::{
     TransactionError,
 };
 use crate::transport::TransportControl;
-use crate::{Repository, Signature};
+use crate::{ObjectId, ReadLimits, Repository, Signature};
 
 /// The destination's references as `git receive-pack` would advertise them, read on request.
 pub(crate) struct LocalAdvertisement<'a> {
@@ -538,14 +538,12 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
                 continue;
             }
-            let checked_out =
-                is_checked_out(&repository, &command.name, config_inputs).map_err(|error| {
-                    PushError::Uncertain {
-                        cause: error,
-                        report: Box::new(report.clone()),
-                    }
+            let worktree = checked_out_worktree(&repository, &command.name, config_inputs)
+                .map_err(|error| PushError::Uncertain {
+                    cause: error,
+                    report: Box::new(report.clone()),
                 })?;
-            if checked_out {
+            if worktree.is_some() {
                 if command.deletes() && deny_delete_current {
                     report.refs[index].status = Some(Status::Rejected(
                         b"deletion of current branch denied".to_vec(),
@@ -589,6 +587,23 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 if !fast_forward {
                     report.refs[index].status =
                         Some(Status::Rejected(b"non-fast-forward".to_vec()));
+                    report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
+                    continue;
+                }
+            }
+            // Like Git, the checked-out worktree changes only once every other check has passed.
+            if let Some(worktree) = &worktree
+                && !command.deletes()
+                && current_policy == CurrentPolicy::UpdateInstead
+            {
+                let updated = update_instead(
+                    worktree,
+                    current_values[index],
+                    command.new,
+                    prepared.limits.read,
+                );
+                if let Err(reason) = updated {
+                    report.refs[index].status = Some(Status::Rejected(reason.to_vec()));
                     report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
                     continue;
                 }
@@ -691,17 +706,26 @@ fn is_checked_out(
     name: &RefName,
     config_inputs: &ConfigInputs,
 ) -> Result<bool, PushFailure> {
+    Ok(checked_out_worktree(repository, name, config_inputs)?.is_some())
+}
+
+/// The main or linked worktree whose HEAD names branch `name`, if any.
+fn checked_out_worktree(
+    repository: &Repository,
+    name: &RefName,
+    config_inputs: &ConfigInputs,
+) -> Result<Option<Repository>, PushFailure> {
     if !name.as_bytes().starts_with(b"refs/heads/") {
-        return Ok(false);
+        return Ok(None);
     }
     let main = Repository::open_with_config(repository.common_dir(), config_inputs)
         .map_err(PushFailure::destination)?;
     if head_names(&main, name)? {
-        return Ok(true);
+        return Ok(Some(main));
     }
     let entries = match fs::read_dir(repository.common_dir().join("worktrees")) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     for entry in entries {
@@ -712,10 +736,71 @@ fn is_checked_out(
         let worktree = Repository::open_with_config(entry.path(), config_inputs)
             .map_err(PushFailure::destination)?;
         if head_names(&worktree, name)? {
-            return Ok(true);
+            return Ok(Some(worktree));
         }
     }
-    Ok(false)
+    Ok(None)
+}
+
+/// Updates a checked-out branch's working tree from `old` to `new`, as Git's
+/// `receive.denyCurrentBranch=updateInstead` does; `Err` holds the rejection reason.
+///
+/// The working tree must have no unstaged or staged changes. Untracked files stay unless the new
+/// commit needs their paths, which refuses the update.
+fn update_instead(
+    worktree: &Repository,
+    old: Option<ObjectId>,
+    new: ObjectId,
+    limits: ReadLimits,
+) -> Result<(), &'static [u8]> {
+    const FAILED: &[u8] = b"Could not update working tree to new HEAD";
+    let environment = crate::workflow::Environment::default();
+    let rules = worktree.ignore_rules(&environment).map_err(|_| FAILED)?;
+    // As in Git, files are compared and written through the configured conversions and filter
+    // drivers.
+    let mut current = worktree
+        .filters(&environment, crate::filter::Commands::Run)
+        .map_err(|_| FAILED)?;
+    let status = worktree
+        .status_with_filters(
+            crate::status::Baseline::Head,
+            crate::status::UntrackedFiles::Omit,
+            &rules,
+            &crate::pathspec::Pathspec::all(),
+            &mut current,
+            crate::status::Limits::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(|_| FAILED)?;
+    if !status.unstaged.is_empty() {
+        return Err(b"Working directory has unstaged changes");
+    }
+    if !status.staged.is_empty() || !status.unmerged.is_empty() {
+        return Err(b"Working directory has staged changes");
+    }
+    let objects = worktree.objects().map_err(|_| FAILED)?;
+    let tree = |id: ObjectId| {
+        objects
+            .read_commit_with(id, limits)
+            .map(|commit| commit.tree())
+            .map_err(|_| FAILED)
+    };
+    let baseline = old.map(tree).transpose()?;
+    let target = tree(new)?;
+    let mut next = worktree
+        .filters_for_checkout(&environment, target, crate::filter::Commands::Run)
+        .map_err(|_| FAILED)?;
+    worktree
+        .checkout_tree_with_filters(
+            baseline,
+            Some(target),
+            &mut current,
+            &mut next,
+            Default::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(|_| FAILED)?;
+    Ok(())
 }
 
 fn head_names(repository: &Repository, name: &RefName) -> Result<bool, PushFailure> {
@@ -742,6 +827,7 @@ enum CurrentPolicy {
     Refuse,
     Allow,
     Warn,
+    UpdateInstead,
 }
 
 fn current_policy(repository: &Repository) -> Result<CurrentPolicy, PushError> {
@@ -754,9 +840,7 @@ fn current_policy(repository: &Repository) -> Result<CurrentPolicy, PushError> {
         Some(Some(value)) if value.eq_ignore_ascii_case(b"ignore") => Ok(CurrentPolicy::Allow),
         Some(Some(value)) if value.eq_ignore_ascii_case(b"warn") => Ok(CurrentPolicy::Warn),
         Some(Some(value)) if value.eq_ignore_ascii_case(b"updateInstead") => {
-            Err(PushError::NotSent(PushFailure::Unsupported(
-                "receive.denyCurrentBranch=updateInstead",
-            )))
+            Ok(CurrentPolicy::UpdateInstead)
         }
         Some(Some(value)) if crate::config::boolean(Some(value)) == Some(true) => {
             Ok(CurrentPolicy::Refuse)

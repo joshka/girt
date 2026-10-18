@@ -407,6 +407,8 @@ struct Pushed {
     report: String,
     success: bool,
     refs: String,
+    /// The non-bare server's working-tree status, including untracked files.
+    worktree: String,
 }
 
 /// Pushes from a fresh clone of a fresh server, through girt's receive-pack or Git's.
@@ -471,11 +473,22 @@ fn push_scenario_in(
         b"",
     ))
     .unwrap();
+    let worktree = if bare {
+        String::new()
+    } else {
+        String::from_utf8(git(
+            &server_path,
+            &["status", "--porcelain", "--untracked-files=all"],
+            b"",
+        ))
+        .unwrap()
+    };
     Pushed {
         report: String::from_utf8_lossy(&output.stdout)
             .replace(&*server_path.to_string_lossy(), "SERVER"),
         success: output.status.success(),
         refs,
+        worktree,
     }
 }
 
@@ -791,4 +804,84 @@ fn filter_not_allowed_clones_everything() {
             objects(&origin),
         );
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn update_instead_matches_git() {
+    let instead = |repo: &Path, extra: &dyn Fn(&Path)| {
+        git(
+            repo,
+            &["config", "receive.denyCurrentBranch", "updateInstead"],
+            b"",
+        )
+        .clear();
+        extra(repo);
+    };
+    type Setup<'a> = &'a dyn Fn(&Path);
+    let cases: [(&str, Setup<'_>); 5] = [
+        ("clean", &|_| {}),
+        ("unstaged", &|repo| {
+            std::fs::write(repo.join("one"), "dirty\n").unwrap()
+        }),
+        ("staged", &|repo| {
+            std::fs::write(repo.join("staged"), "new\n").unwrap();
+            git(repo, &["add", "staged"], b"").clear();
+        }),
+        ("untracked in the way", &|repo| {
+            std::fs::write(repo.join("pushed"), "mine\n").unwrap()
+        }),
+        ("unrelated untracked", &|repo| {
+            std::fs::write(repo.join("other"), "mine\n").unwrap()
+        }),
+    ];
+    for (name, extra) in cases {
+        let server = |repo: &Path| instead(repo, extra);
+        let by_girt = push_scenario(true, false, &server, &new_commit, &["main"]);
+        let by_git = push_scenario(false, false, &server, &new_commit, &["main"]);
+        assert_eq!(by_girt, by_git, "{name}");
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn update_instead_refused_by_other_policy_leaves_worktree_as_git_does() {
+    let server = |repo: &Path| {
+        git(
+            repo,
+            &["config", "receive.denyCurrentBranch", "updateInstead"],
+            b"",
+        )
+        .clear();
+        git(
+            repo,
+            &["config", "receive.denyNonFastForwards", "true"],
+            b"",
+        )
+        .clear();
+    };
+    push_matches_git(false, &server, &rewind, &["+main"]);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn update_instead_with_line_ending_conversion_matches_git() {
+    let server = |repo: &Path| {
+        git(
+            repo,
+            &["config", "receive.denyCurrentBranch", "updateInstead"],
+            b"",
+        )
+        .clear();
+        git(repo, &["config", "core.autocrlf", "true"], b"").clear();
+        // Rewrite the working files the way autocrlf checks them out, keeping the tree clean.
+        for name in ["one", "two", "side"] {
+            let path = repo.join(name);
+            if path.exists() {
+                std::fs::remove_file(&path).unwrap();
+            }
+        }
+        git(repo, &["checkout", "--", "."], b"").clear();
+    };
+    push_matches_git(false, &server, &new_commit, &["main"]);
 }
