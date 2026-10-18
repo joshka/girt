@@ -3206,5 +3206,12 @@ the matching files inside, and girt does the same. With only exclude specs, `git
 the whole repository while `git ls-files` starts from the current directory;
 `Context::with_excludes_from_root` selects between them.
 
+`Objects::compare_trees_matching` and `diff_trees_matching` limit tree comparison.
+`tests/diff_pathspec.rs` compares them with `git diff-tree -r --name-status [-M] -- <pathspec>` for
+21 spec lists over a history with modified, added, deleted, renamed and file-to-directory paths. As
+in Git, the pathspec applies before rename detection, so a file moved into the pathspec from outside
+it is an addition. The same test shows that a subtree outside the pathspec is never read: a missing
+tree object there goes unreported.
+
 Limitations: absolute paths are rejected even when they name a path inside the worktree, and status
-refuses `attr:` magic.
+and tree comparison refuse `attr:` magic.

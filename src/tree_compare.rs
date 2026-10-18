@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::pathspec::{Pathspec, Prune};
 use crate::{
     EntryMode, ObjectId, ObjectKind, ObjectReadError, Objects, ReadLimits, Tree, TreeError,
 };
@@ -389,7 +390,8 @@ impl Objects {
     /// by byte name: files and directories with the same name must pair even when their positions
     /// in Git order differ. A file/directory replacement yields a removal/addition at the file
     /// path and additions/removals below the directory. Empty directories yield no leaf records.
-    /// No rename/copy detection, text diff, path filtering, index or worktree access occurs.
+    /// No rename/copy detection, text diff, index or worktree access occurs; use
+    /// [`Self::compare_trees_matching`] to limit paths.
     ///
     /// Equal subtree IDs, including equal roots, are trusted and skipped without any read.
     /// This establishes structural identity, **not validity or existence**. Other encountered
@@ -465,7 +467,64 @@ impl Objects {
         limits: TreeCompareLimits,
         cancel: &AtomicBool,
     ) -> Result<Vec<TreeChange>, TreeCompareError> {
-        self.compare_trees_among(old, new, &HashMap::new(), limits, cancel)
+        self.compare_trees_matching(old, new, &Pathspec::all(), limits, cancel)
+    }
+
+    /// [`Self::compare_trees_with`], keeping only changes at paths `paths` selects.
+    ///
+    /// This is the comparison `git diff-tree -r <old> <new> -- <pathspec>` makes. Subtrees the
+    /// pathspec cannot reach are not read, and paths below a subtree it selects whole are not
+    /// tested, so a narrow pathspec over a large tree reads only the trees on the way to it.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::pathspec::{Context, Pathspec};
+    /// use girt::tree::TreeEditor;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repo.loose_objects();
+    /// let mut editor = TreeEditor::new(&loose);
+    /// editor.set(b"src/lib.rs", loose.write_blob(b"old\n")?)?;
+    /// editor.set(b"docs/guide.md", loose.write_blob(b"old\n")?)?;
+    /// let old = editor.write()?;
+    /// editor.set(b"src/lib.rs", loose.write_blob(b"new\n")?)?;
+    /// editor.set(b"docs/guide.md", loose.write_blob(b"new\n")?)?;
+    /// let new = editor.write()?;
+    ///
+    /// let paths = Pathspec::parse(["*.rs"], &Context::new())?;
+    /// let objects = repo.objects()?;
+    /// let changes = objects.compare_trees_matching(
+    ///     Some(old),
+    ///     Some(new),
+    ///     &paths,
+    ///     Default::default(),
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// assert_eq!(changes.len(), 1);
+    /// assert_eq!(changes[0].path, b"src/lib.rs");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::compare_trees_with`], and [`TreeCompareError::Unsupported`]
+    /// for a pathspec with `attr:` magic, which needs attributes a tree comparison does not load.
+    pub fn compare_trees_matching(
+        &self,
+        old: Option<ObjectId>,
+        new: Option<ObjectId>,
+        paths: &Pathspec,
+        limits: TreeCompareLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<TreeChange>, TreeCompareError> {
+        self.compare_trees_among(old, new, &HashMap::new(), paths, limits, cancel)
     }
 
     /// [`Self::compare_trees_with`], taking trees found in `local` instead of reading them.
@@ -477,9 +536,13 @@ impl Objects {
         old: Option<ObjectId>,
         new: Option<ObjectId>,
         local: &HashMap<ObjectId, Tree>,
+        paths: &Pathspec,
         limits: TreeCompareLimits,
         cancel: &AtomicBool,
     ) -> Result<Vec<TreeChange>, TreeCompareError> {
+        if paths.uses_attributes() {
+            return Err(TreeCompareError::Unsupported("attr: pathspec magic"));
+        }
         for id in old.into_iter().chain(new) {
             id.require_format(self.object_format())?;
         }
@@ -494,6 +557,7 @@ impl Objects {
             old,
             new,
             depth: 0,
+            selected: paths.is_all(),
         }];
         let mut changes = Vec::new();
         while let Some(directory) = pending.pop() {
@@ -525,19 +589,27 @@ impl Objects {
                 let old_tree = tree_id(old);
                 let new_tree = tree_id(new);
                 if old_tree != new_tree {
-                    if directory.depth == limits.max_depth {
-                        return Err(TreeCompareError::Limit("depth"));
+                    let prune = if directory.selected {
+                        Prune::All
+                    } else {
+                        paths.directory(&path)
+                    };
+                    if prune != Prune::Skip {
+                        if directory.depth == limits.max_depth {
+                            return Err(TreeCompareError::Limit("depth"));
+                        }
+                        pending.push(Directory {
+                            path: path.clone(),
+                            old: old_tree,
+                            new: new_tree,
+                            depth: directory.depth + 1,
+                            selected: prune == Prune::All,
+                        });
                     }
-                    pending.push(Directory {
-                        path: path.clone(),
-                        old: old_tree,
-                        new: new_tree,
-                        depth: directory.depth + 1,
-                    });
                 }
                 let old = old.filter(|value| value.mode != EntryMode::Tree);
                 let new = new.filter(|value| value.mode != EntryMode::Tree);
-                if old != new {
+                if old != new && (directory.selected || paths.matches(&path)) {
                     charge(&mut budget.remaining.max_changes, 1, "changes")?;
                     changes.push(TreeChange { path, old, new });
                 }
@@ -609,6 +681,8 @@ struct Directory {
     old: Option<ObjectId>,
     new: Option<ObjectId>,
     depth: usize,
+    /// The pathspec selects everything below, so paths need no further tests.
+    selected: bool,
 }
 
 struct Budget<'a> {
@@ -770,6 +844,9 @@ pub enum TreeCompareError {
     /// A named traversal or output bound was exceeded.
     #[error("tree comparison limit exceeded: {0}")]
     Limit(&'static str),
+    /// The request needs something tree comparison does not provide.
+    #[error("unsupported in tree comparison: {0}")]
+    Unsupported(&'static str),
     /// The caller requested cancellation at a cooperative checkpoint.
     #[error("tree comparison cancelled")]
     Cancelled,

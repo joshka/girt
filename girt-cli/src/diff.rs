@@ -46,6 +46,10 @@ pub struct DiffArgs {
     /// Also detect copies from modified files (implies `--renames`).
     #[arg(long)]
     copies: bool,
+    /// Limit the comparison to these pathspecs, relative to the current directory: `:/` for the
+    /// repository root, `:!` to exclude, `:(icase)`, `:(glob)`.
+    #[arg(last = true, value_name = "PATHSPEC")]
+    pathspecs: Vec<std::ffi::OsString>,
 }
 
 pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
@@ -53,6 +57,7 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
     let objects = repository.objects()?;
     let old = resolve_tree(&repository, &objects, &args.a)?;
     let new = resolve_tree(&repository, &objects, &args.b)?;
+    let paths = context.pathspec(&repository, &args.pathspecs)?;
     let entries = if args.renames || args.copies {
         let options = rewrites::Options::default().with_copies(if args.copies {
             Copies::Modified
@@ -60,9 +65,10 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
             Copies::Disabled
         });
         let comparison = objects
-            .diff_trees_with(
+            .diff_trees_matching(
                 Some(old),
                 Some(new),
+                &paths,
                 options,
                 Default::default(),
                 &AtomicBool::new(false),
@@ -77,7 +83,13 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
         comparison.entries
     } else {
         objects
-            .compare_trees(Some(old), Some(new))
+            .compare_trees_matching(
+                Some(old),
+                Some(new),
+                &paths,
+                Default::default(),
+                &AtomicBool::new(false),
+            )
             .wrap_err("comparing trees")?
             .into_iter()
             .map(Entry::Change)

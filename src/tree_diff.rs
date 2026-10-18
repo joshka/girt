@@ -40,6 +40,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicBool;
 
+use crate::pathspec::Pathspec;
 pub use crate::rewrites::Limits;
 use crate::rewrites::{Kind, Options};
 use crate::{ObjectId, Objects, TreeChange, TreeValue};
@@ -156,8 +157,29 @@ impl Objects {
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Comparison, Error> {
+        self.diff_trees_matching(old, new, &Pathspec::all(), options, limits, cancel)
+    }
+
+    /// [`Self::diff_trees_with`], limited to paths `paths` selects.
+    ///
+    /// As in `git diff -M <old> <new> -- <pathspec>`, the pathspec applies before inference: a
+    /// file moved from outside the pathspec to inside it is an addition, not a rename.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::diff_trees_with`], and an unsupported-pathspec tree
+    /// comparison error for `attr:` magic.
+    pub fn diff_trees_matching(
+        &self,
+        old: Option<ObjectId>,
+        new: Option<ObjectId>,
+        paths: &Pathspec,
+        options: Options,
+        limits: Limits,
+        cancel: &AtomicBool,
+    ) -> Result<Comparison, Error> {
         let objects = self;
-        let changes = objects.compare_trees_with(old, new, limits.trees, cancel)?;
+        let changes = objects.compare_trees_matching(old, new, paths, limits.trees, cancel)?;
         let detection =
             objects.detect_rewrites_from_changes(&changes, options, limits, None, cancel)?;
         let by_path: BTreeMap<_, _> = changes
