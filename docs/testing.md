@@ -337,6 +337,8 @@ The Windows integration selection follows implemented operations, not just file 
 - `layout_shallow`: Both-format relative/moved layouts, worktree inventory and shallow-depth
   observations. Filesystem symlink/permission cases are Unix-only; raw byte paths are Linux-only.
   Case-alias cases require a case-insensitive native volume and report absence when unavailable.
+- `submodules`: Byte-oriented `.gitmodules` interpretation, lexical validation and isolated Git init
+  observations. No native checkout or network transport is invoked.
 - `config_edit`: Lossless configuration/remote edits, lock cleanup, races and Git interpretation.
 - `config_resolution`: Portable layered configuration, conditions, provenance, environment and Git
   observations in both formats; arbitrary-byte filenames are Linux-only.

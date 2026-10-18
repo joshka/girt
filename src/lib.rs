@@ -90,6 +90,7 @@
 //! | Resolve names, conditionally update refs, inspect reflogs | [`refs`] |
 //! | Parse, resolve, interpret, or edit configuration | [`config`] |
 //! | Interpret named remotes and refspecs | [`remote`] |
+//! | Read and validate submodule definitions | [`submodule`] |
 //! | Fetch, push, or clone with explicit publication | [`fetch`], [`push`], [`clone`] |
 //! | Use configured-remote convenience workflows | [`workflow`] |
 //! | Compose everyday operations on a trusted local repository | [`Repo`], [`repo`] |
@@ -220,6 +221,7 @@ pub mod signing;
 mod source_files;
 pub mod stash;
 pub mod status;
+pub mod submodule;
 pub mod tag;
 pub mod transport;
 pub mod tree;
