@@ -325,3 +325,23 @@ fn constructs_monitor_checkpoint_with_bounded_dirty_positions() {
         .is_err()
     );
 }
+
+#[test]
+fn explicitly_installs_monitor_checkpoint_under_index_guard() {
+    use girt::index::{FsmonitorCache, MonitorToken};
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = Repository::init(ObjectFormat::Sha1, temporary.path().join("r"), InitKind::Worktree).unwrap();
+    let root = repo.worktree().unwrap();
+    std::fs::write(root.join("tracked"), b"tracked\n").unwrap();
+    oracle::git(root, &["add", "tracked"], b"");
+    let cache = FsmonitorCache::new(MonitorToken::Opaque(b"next".to_vec()), vec![0], 1, Limits::default()).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.set_fsmonitor_cache(Some(&cache)).unwrap();
+    edit.commit().unwrap();
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(index.fsmonitor_cache(Limits::default()).unwrap().unwrap().token(), cache.token());
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.set_fsmonitor_cache(None).unwrap();
+    edit.commit().unwrap();
+    assert!(repo.read_index(Limits::default()).unwrap().unwrap().fsmonitor_cache(Limits::default()).unwrap().is_none());
+}
