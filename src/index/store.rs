@@ -792,6 +792,21 @@ impl IndexEdit {
         self.index.replace_entries(entries, self.limits)
     }
 
+    /// Enables or removes the untracked directory cache in the held draft.
+    ///
+    /// Like `git update-index --untracked-cache`, enabling an absent cache installs an empty
+    /// cache that requires a fresh directory scan. An existing cache is preserved. Disabling
+    /// removes its UNTR extension. Only [`Self::commit`] writes the index; aborting leaves the
+    /// published bytes unchanged. This does not change `core.untrackedCache` configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ExtensionPreventsEdit`] for split indexes or unknown extensions whose
+    /// offsets cannot be preserved, and resource-limit errors without changing the draft.
+    pub fn set_untracked_cache_enabled(&mut self, enabled: bool) -> Result<(), Error> {
+        self.index.set_untracked_cache_enabled(enabled, self.limits)
+    }
+
     /// Replaces the complete draft with a caller-supplied standalone index.
     ///
     /// The held object format and limits are validated before mutation. Original primary/shared

@@ -268,13 +268,28 @@ fn explicitly_enables_and_disables_untracked_cache(#[case] format: ObjectFormat)
     let original = std::fs::read(repo.git_dir().join("index")).unwrap();
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     edit.set_untracked_cache_enabled(true).unwrap();
-    assert!(edit.index().untracked_cache(Limits::default()).unwrap().is_some());
-    assert_eq!(std::fs::read(repo.git_dir().join("index")).unwrap(), original);
+    assert!(
+        edit.index()
+            .untracked_cache(Limits::default())
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        std::fs::read(repo.git_dir().join("index")).unwrap(),
+        original
+    );
     edit.commit().unwrap();
     oracle::git(root, &["status", "--porcelain"], b"");
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     edit.set_untracked_cache_enabled(false).unwrap();
     edit.commit().unwrap();
-    assert!(repo.read_index(Limits::default()).unwrap().unwrap().untracked_cache(Limits::default()).unwrap().is_none());
+    assert!(
+        repo.read_index(Limits::default())
+            .unwrap()
+            .unwrap()
+            .untracked_cache(Limits::default())
+            .unwrap()
+            .is_none()
+    );
     oracle::git(root, &["status", "--porcelain"], b"");
 }
