@@ -293,3 +293,18 @@ fn explicitly_enables_and_disables_untracked_cache(#[case] format: ObjectFormat)
     );
     oracle::git(root, &["status", "--porcelain"], b"");
 }
+
+#[test]
+fn constructs_monitor_checkpoint_with_bounded_dirty_positions() {
+    use girt::index::{FsmonitorCache, MonitorToken};
+    for token in [MonitorToken::Timestamp(123), MonitorToken::Opaque(b"next".to_vec())] {
+        let cache = FsmonitorCache::new(token.clone(), vec![0, 63, 64, 129], 130, Limits::default()).unwrap();
+        let encoded = cache.encode(Limits::default()).unwrap();
+        let decoded = FsmonitorCache::parse(&encoded, 130, Limits::default()).unwrap();
+        assert_eq!(decoded.token(), &token);
+        assert_eq!(decoded.dirty(), &[0, 63, 64, 129]);
+    }
+    assert!(FsmonitorCache::new(MonitorToken::Timestamp(0), vec![1], 1, Limits::default()).is_err());
+    assert!(FsmonitorCache::new(MonitorToken::Timestamp(0), vec![0, 0], 1, Limits::default()).is_err());
+    assert!(FsmonitorCache::new(MonitorToken::Opaque(b"bad\0token".to_vec()), vec![], 0, Limits::default()).is_err());
+}
