@@ -556,6 +556,35 @@ impl<'a> Input<'a> {
 }
 
 impl Index {
+    pub(super) fn replace_status_cache(
+        &mut self,
+        signature: [u8; 4],
+        data: Option<Vec<u8>>,
+        limits: Limits,
+    ) -> Result<(), Error> {
+        if let Some(extension) = self.extensions.iter().find(|extension| {
+            !matches!(
+                &extension.signature,
+                b"TREE" | b"REUC" | b"sdir" | b"EOIE" | b"IEOT" | b"FSMN" | b"UNTR"
+            )
+        }) {
+            return Err(Error::ExtensionPreventsEdit(extension.signature));
+        }
+        let mut replacement = self.clone();
+        replacement.extensions.retain(|extension| {
+            extension.signature != signature && !matches!(&extension.signature, b"EOIE" | b"IEOT")
+        });
+        if let Some(data) = data {
+            replacement
+                .extensions
+                .push(super::Extension { signature, data });
+        }
+        replacement.original = None;
+        replacement.encoded_len(limits)?;
+        *self = replacement;
+        Ok(())
+    }
+
     pub(super) fn set_untracked_cache_enabled(
         &mut self,
         enabled: bool,

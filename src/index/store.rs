@@ -792,6 +792,29 @@ impl IndexEdit {
         self.index.replace_entries(entries, self.limits)
     }
 
+    /// Installs or removes a caller-observed filesystem-monitor checkpoint in the held draft.
+    ///
+    /// A clear dirty bit is a promise that the entry was clean relative to the checkpoint.
+    /// The caller must establish that promise using the same monitor that later status queries.
+    /// Dirty positions refer to this draft's complete entry ordering, including conflict stages.
+    /// This method never queries a monitor; [`Self::commit`] publishes through the existing lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Malformed`] for out-of-range dirty positions,
+    /// [`Error::ExtensionPreventsEdit`] for split indexes or unknown extensions, and resource
+    /// errors without changing the draft.
+    pub fn set_fsmonitor_cache(
+        &mut self,
+        cache: Option<&super::FsmonitorCache>,
+    ) -> Result<(), Error> {
+        let data = cache.map(|cache| cache.encode(self.limits)).transpose()?;
+        if let Some(data) = &data {
+            super::FsmonitorCache::parse(data, self.index.entries().len(), self.limits)?;
+        }
+        self.index.replace_status_cache(*b"FSMN", data, self.limits)
+    }
+
     /// Enables or removes the untracked directory cache in the held draft.
     ///
     /// Like `git update-index --untracked-cache`, enabling an absent cache installs an empty
