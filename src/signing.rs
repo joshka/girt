@@ -10,8 +10,9 @@
 //! returns them as [`Tag`] values whose own signatures are available through
 //! [`Tag::signed_payload`].
 //!
-//! [`SshSigner`] makes SSH signatures and [`SshVerifier`] checks them against an allowed signers
-//! file, both by running `ssh-keygen -Y` as Git does. Running programs is opt-in through
+//! [`SshSigner`] and [`GpgSigner`] make signatures with `ssh-keygen`, `gpg` or `gpgsm`, and
+//! [`SshVerifier`] and [`GpgVerifier`] check them, as Git does; [`Settings`] and [`Verifier`] pick
+//! the right one from `gpg.format` or the signature itself. Running programs is opt-in through
 //! [`Programs`]. Other signers plug in through [`Signer`] or a closure. A check returns a
 //! [`Verification`] whose [`Status`] matches Git's `%G?` letters.
 //!
@@ -45,10 +46,13 @@
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Output};
 
-use crate::{Commit, CommitPayload, ObjectFormat, Tag, TagError, TagFields};
+use crate::workflow::Environment;
+use crate::{Commit, CommitPayload, Config, ObjectFormat, Tag, TagError, TagFields};
 
+mod gpg;
 mod ssh;
 
+pub use gpg::{GpgSigner, GpgVerifier};
 pub use ssh::{SshKey, SshSigner, SshVerifier};
 
 /// Header holding a SHA-1 object's signature.
@@ -468,20 +472,30 @@ pub trait Signer {
 pub struct Verification {
     /// Whether the signature is good, and how far its key is trusted.
     pub status: Status,
-    /// Who signed: the matching SSH principal, or the OpenPGP user ID.
+    /// Who signed (`%GS`): the matching SSH principal, the OpenPGP user ID or the X.509 subject.
     pub signer: Option<String>,
-    /// The signing key's fingerprint, such as `SHA256:…` for SSH keys.
+    /// The key that made the signature (`%GK`): an SSH fingerprint, a long OpenPGP key ID or an
+    /// X.509 certificate fingerprint.
+    pub key: Option<String>,
+    /// The signing key's fingerprint (`%GF`), such as `SHA256:…` for SSH keys.
     pub fingerprint: Option<String>,
-    /// How far the key is trusted.
+    /// The fingerprint of the primary key when an OpenPGP subkey signed (`%GP`).
+    pub primary_fingerprint: Option<String>,
+    /// How far the key is trusted (`%GT`).
     pub trust: Trust,
     /// The verifying program's output, as `git verify-commit --raw` prints it.
     pub output: Vec<u8>,
+    accepted: bool,
 }
 
 impl Verification {
     /// Whether Git would accept the signature: `verify-commit` and `verify-tag` exit with 0.
+    ///
+    /// This depends on the format and on `gpg.minTrustLevel`, not only on [`Self::status`]: Git
+    /// accepts a good OpenPGP signature of unknown validity, or from an expired key, but not an
+    /// SSH signature whose key no allowed signer owns.
     pub fn is_good(&self) -> bool {
-        self.status == Status::Good
+        self.accepted
     }
 }
 
@@ -528,6 +542,9 @@ impl Status {
 }
 
 /// How far a signing key is trusted, as `%GT` prints it.
+///
+/// The derived ordering follows declaration order, which puts `undefined` below `never`. Git
+/// ranks `never` lowest; compare levels with [`Self::at_least`] to get Git's order.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum Trust {
@@ -544,6 +561,49 @@ pub enum Trust {
 }
 
 impl Trust {
+    /// Whether this level meets `minimum` in Git's order:
+    /// `never` < `undefined` < `marginal` < `fully` < `ultimate`.
+    ///
+    /// ```
+    /// use girt::signing::Trust;
+    ///
+    /// assert!(Trust::Undefined.at_least(Trust::Never));
+    /// assert!(!Trust::Never.at_least(Trust::Undefined));
+    /// ```
+    pub fn at_least(self, minimum: Self) -> bool {
+        self.rank() >= minimum.rank()
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            Self::Never => 0,
+            Self::Undefined => 1,
+            Self::Marginal => 2,
+            Self::Fully => 3,
+            Self::Ultimate => 4,
+        }
+    }
+
+    /// Reads a `gpg.minTrustLevel` value, which Git matches case-insensitively.
+    ///
+    /// ```
+    /// use girt::signing::Trust;
+    ///
+    /// assert_eq!(Trust::parse("Marginal"), Some(Trust::Marginal));
+    /// assert_eq!(Trust::parse("bogus"), None);
+    /// ```
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Never,
+            Self::Undefined,
+            Self::Marginal,
+            Self::Fully,
+            Self::Ultimate,
+        ]
+        .into_iter()
+        .find(|trust| trust.as_str().eq_ignore_ascii_case(value))
+    }
+
     /// The word `git log --format=%GT` prints.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -572,9 +632,25 @@ pub enum Error {
     /// `gpg.ssh.allowedSignersFile` is not configured, so SSH signatures cannot be checked.
     #[error("gpg.ssh.allowedSignersFile needs to be configured for ssh signature verification")]
     NoAllowedSigners,
-    /// The signature is not an SSH signature.
+    /// The signature is not an SSH signature; [`SshVerifier::verify`] returns this for any other
+    /// format.
     #[error("signature is not an ssh signature")]
     NotSsh,
+    /// The signature or signer is in a format this verifier or signer does not handle.
+    #[error("{} signatures are not handled here", format.as_str())]
+    WrongFormat {
+        /// The format that was given.
+        format: SignatureFormat,
+    },
+    /// The signature does not start with a known armor line, so its format is unknown.
+    #[error("bad/incompatible signature")]
+    UnknownFormat,
+    /// A signing setting has a value Git rejects, such as an unknown `gpg.format`.
+    #[error(transparent)]
+    Config(#[from] crate::config::InvalidValue),
+    /// No signing key is set and the committer identity, used in its place, is not configured.
+    #[error("no signing key and no committer identity")]
+    Identity(#[source] crate::CommitError),
     /// A configured path or program cannot be used.
     #[error("unusable path: {0}")]
     Path(&'static str),
@@ -600,6 +676,157 @@ pub enum Error {
     /// A temporary key or signature file could not be written.
     #[error("writing a temporary file")]
     Temporary(#[source] std::io::Error),
+}
+
+/// Reads `gpg.minTrustLevel`.
+fn min_trust(config: &Config) -> Result<Option<Trust>, Error> {
+    config
+        .value("gpg", None, "mintrustlevel")
+        .map(|value| {
+            value
+                .and_then(|value| std::str::from_utf8(value).ok())
+                .and_then(Trust::parse)
+                .ok_or_else(|| {
+                    crate::config::InvalidValue::new("gpg", "minTrustLevel", value).into()
+                })
+        })
+        .transpose()
+}
+
+/// Signing settings: the format and whether commits and tags are signed by default.
+///
+/// ```
+/// use girt::Config;
+/// use girt::signing::{Settings, SignatureFormat};
+///
+/// let config = Config::parse(b"[gpg]\nformat = ssh\n[commit]\ngpgSign\n")?;
+/// let settings = Settings::from_config(&config)?;
+/// assert_eq!(settings.format, SignatureFormat::Ssh);
+/// assert!(settings.sign_commits);
+/// assert!(!settings.sign_tags);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct Settings {
+    /// `gpg.format`: `openpgp` (the default), `x509` or `ssh`.
+    pub format: SignatureFormat,
+    /// `commit.gpgSign`: sign every commit.
+    pub sign_commits: bool,
+    /// `tag.gpgSign`: sign every annotated tag.
+    pub sign_tags: bool,
+}
+
+impl Settings {
+    /// Reads `gpg.format`, `commit.gpgSign` and `tag.gpgSign`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] for a `gpg.format` other than `openpgp`, `x509` or `ssh`
+    /// (matched case-sensitively, as Git does) and for non-boolean signing switches.
+    pub fn from_config(config: &Config) -> Result<Self, Error> {
+        let format = match config.value("gpg", None, "format") {
+            None => SignatureFormat::OpenPgp,
+            Some(Some(b"openpgp")) => SignatureFormat::OpenPgp,
+            Some(Some(b"x509")) => SignatureFormat::X509,
+            Some(Some(b"ssh")) => SignatureFormat::Ssh,
+            Some(value) => {
+                return Err(crate::config::InvalidValue::new("gpg", "format", value).into());
+            }
+        };
+        Ok(Self {
+            format,
+            sign_commits: config.boolean("commit", None, "gpgsign")?.unwrap_or(false),
+            sign_tags: config.boolean("tag", None, "gpgsign")?.unwrap_or(false),
+        })
+    }
+
+    /// The configured signer for [`Self::format`], built with [`SshSigner::from_config`] or
+    /// [`GpgSigner::from_config`]. It runs its program with exactly `environment`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the chosen signer's configuration errors.
+    pub fn signer(
+        &self,
+        config: &Config,
+        environment: &Environment,
+        programs: Programs,
+    ) -> Result<Box<dyn Signer + Send + Sync>, Error> {
+        Ok(match self.format {
+            SignatureFormat::Ssh => Box::new(
+                SshSigner::from_config(config, environment, programs)?
+                    .with_environment(environment.clone()),
+            ),
+            format => Box::new(
+                GpgSigner::from_config(config, environment, format, programs)?
+                    .with_environment(environment.clone()),
+            ),
+        })
+    }
+}
+
+/// Checks a signature of any format with the matching program, as `git verify-commit` does.
+///
+/// ```
+/// use girt::Config;
+/// use girt::signing::{Error, Programs, Verifier};
+///
+/// let verifier =
+///     Verifier::from_config(&Config::parse(b"")?, &Default::default(), Programs::Refuse)?;
+/// # let _ = verifier;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Debug)]
+pub struct Verifier {
+    ssh: SshVerifier,
+    gpg: GpgVerifier,
+}
+
+impl Verifier {
+    /// Combines an SSH verifier and an OpenPGP/X.509 verifier.
+    pub fn new(ssh: SshVerifier, gpg: GpgVerifier) -> Self {
+        Self { ssh, gpg }
+    }
+
+    /// Builds both verifiers from configuration, including `gpg.minTrustLevel`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the configuration errors of [`SshVerifier::from_config`] and
+    /// [`GpgVerifier::from_config`].
+    pub fn from_config(
+        config: &Config,
+        environment: &Environment,
+        programs: Programs,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            ssh: SshVerifier::from_config(config, environment, programs)?,
+            gpg: GpgVerifier::from_config(config, programs)?,
+        })
+    }
+
+    /// Runs every program with exactly `environment` instead of inheriting this process's.
+    #[must_use]
+    pub fn with_environment(self, environment: Environment) -> Self {
+        Self {
+            ssh: self.ssh.with_environment(environment.clone()),
+            gpg: self.gpg.with_environment(environment),
+        }
+    }
+
+    /// Checks `signed` with the verifier for its format.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnknownFormat`] for unrecognized armor, and the chosen verifier's errors.
+    pub fn verify(&self, signed: &SignedPayload) -> Result<Verification, Error> {
+        match signed.format() {
+            Some(SignatureFormat::Ssh) => self.ssh.verify(signed),
+            Some(_) => self.gpg.verify(signed),
+            None => Err(Error::UnknownFormat),
+        }
+    }
 }
 
 impl Error {
