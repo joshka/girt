@@ -17,7 +17,8 @@ pub struct WorktreeLimits {
     pub index: crate::index::Limits,
     /// Aggregate original, converted preimage and stored/working postimage bytes (default 64 MiB).
     pub max_retained_bytes: usize,
-    /// Total directory entries inspected in each verification pass (default 1,000,000).
+    /// Total directory entries inspected per preparation, preflight or publication pass (default
+    /// 1,000,000). Publication admits a conservative scan-cost bound before the first mutation.
     pub max_directory_entries: usize,
     /// Affected ancestor directories, including the root (default 10,000).
     pub max_directories: usize,
@@ -68,7 +69,7 @@ impl WorktreeFile {
     }
 }
 
-/// Fully computed working-file edits and pinned snapshot evidence. Computing this value writes
+/// Fully computed working-file edits and original snapshot evidence. Computing this value writes
 /// no objects, index entries or working files. Filter commands run only under the supplied
 /// pipeline's command policy. The caller must exclude other writers and ancestor/root renames
 /// through preparation and publication; snapshot checks detect observed changes, not arbitrary
@@ -110,6 +111,133 @@ impl PreparedWorktree {
     /// Planned final bytes and per-hunk results. Inspecting or dropping the plan changes no files.
     pub fn files(&self) -> &[WorktreeFile] {
         &self.files
+    }
+}
+
+/// One confirmed filesystem mutation. Replacements report removal and creation separately.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum WorktreeAction {
+    /// An original regular file was unlinked.
+    Removed,
+    /// A new regular leaf was exclusively created.
+    Created,
+    /// A missing ancestor directory was exclusively created.
+    DirectoryCreated,
+}
+
+/// One mutation in execution order, including a potentially incomplete created file.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct WorktreeWrite {
+    /// Repository-relative byte path.
+    pub path: Vec<u8>,
+    /// Mutation that succeeded at this path.
+    pub action: WorktreeAction,
+    /// For created files, true only after all bytes and executable mode were installed.
+    /// False means installation was not confirmed; the retained file can be empty, partial or
+    /// fully written. Inspect its actual state before recovery.
+    pub complete: bool,
+}
+
+/// Exact confirmed mutations. No automatic rollback or index publication occurs.
+#[derive(Debug, Default)]
+#[non_exhaustive]
+pub struct WorktreeReport {
+    /// Mutations in execution order. On failure, inspect these paths before recovery; earlier
+    /// writes remain, and a created leaf with `complete == false` is retained explicitly.
+    pub writes: Vec<WorktreeWrite>,
+}
+
+/// Publication stopped. Preparation/hunk errors never reach this phase; late I/O, cancellation or
+/// snapshot failures retain the exact mutations performed before stopping.
+#[derive(Debug, thiserror::Error)]
+#[error("working-file patch publication failed")]
+#[non_exhaustive]
+pub struct WorktreeFailure {
+    /// Cause of stopping.
+    #[source]
+    pub cause: Box<WorktreeError>,
+    /// Mutations already performed; never discard this when choosing recovery.
+    pub report: WorktreeReport,
+}
+
+impl PreparedWorktree {
+    /// Publishes with no cancellation, after preflighting all original snapshots again.
+    ///
+    /// Wraps [`Self::publish_with`]. All hunk, filter and path preparation is complete before
+    /// this phase. Index, refs and object storage remain unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorktreeFailure`] with every confirmed mutation if I/O or a final snapshot check
+    /// fails. Earlier writes are retained; no unsafe automatic rollback is attempted.
+    ///
+    /// ```
+    /// use girt::apply::Patch;
+    /// use girt::filter::Commands;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+    ///
+    /// let temporary = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     temporary.path().join("r"),
+    ///     InitKind::Worktree,
+    /// )?;
+    /// let path = repo.worktree().unwrap().join("file");
+    /// std::fs::write(&path, b"old\n")?;
+    /// let mut filters = repo.filters(&Default::default(), Commands::Refuse)?;
+    /// let patch = Patch::parse(b"--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new\n")?;
+    /// let plan = patch.prepare_worktree(&repo, &mut filters)?;
+    /// assert_eq!(std::fs::read(&path)?, b"old\n");
+    ///
+    /// let report = plan.publish()?;
+    /// assert_eq!(std::fs::read(&path)?, b"new\n");
+    /// assert!(report.writes.iter().all(|write| write.complete));
+    /// assert!(repo.read_index(Default::default())?.is_none());
+    /// # Ok::<(), girt::Error>(())
+    /// ```
+    pub fn publish(self) -> Result<WorktreeReport, WorktreeFailure> {
+        self.publish_with(&AtomicBool::new(false))
+    }
+
+    /// Preflights snapshots and the publication scan budget before any mutation, then rechecks
+    /// each affected file immediately before mutation.
+    ///
+    /// Missing directories are created exclusively, original leaves are removed only after
+    /// identity/content checks, and new regular files are exclusively created without following
+    /// symlinks. A copy's unchanged source is rechecked immediately before destination creation.
+    /// Every created file is reported before bytes are written. Failed or cancelled writes retain
+    /// the incomplete leaf with `complete == false`; report entries distinguish that from a fully
+    /// installed file. Final verification reopens every installed target and compares its bytes.
+    ///
+    /// There is no batch atomicity or crash durability for publication failures. Parse, hunk,
+    /// conversion and preparation failures write nothing; a publication failure reports the exact
+    /// confirmed mutations, including directories and partial leaves. Existing empty directories
+    /// are retained after deletions. File permissions use Git modes 0644/0755; ACLs, ownership and
+    /// other metadata are not preserved. The caller exclusion contract on [`PreparedWorktree`]
+    /// applies through this entire call. Verification cannot exclude an arbitrary writer racing
+    /// the final inode check and unlink/write syscall.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorktreeFailure`] on snapshot changes, obstructions, I/O, cancellation or bounds.
+    /// An initial preflight failure has an empty report. Inspect the report and actual paths
+    /// before retrying or attempting recovery; there is no implicit index or reference update.
+    pub fn publish_with(self, cancel: &AtomicBool) -> Result<WorktreeReport, WorktreeFailure> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            unix::publish(self, cancel, &mut |_, _| Ok(()))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = cancel;
+            Err(WorktreeFailure {
+                cause: Box::new(WorktreeError::UnsupportedPlatform),
+                report: WorktreeReport::default(),
+            })
+        }
     }
 }
 
@@ -195,7 +323,9 @@ impl Patch {
     /// The index is read only to supply `text=auto` staged context. Dirty and untracked regular
     /// files can be patch sources; index and refs remain untouched. Rename cycles read original
     /// sources and copies retain theirs. New directories are planned without creating them.
-    /// Symlink leaves, symlink ancestors, special files, directory/file transitions, nested
+    /// `core.fileMode=false` is refused until a mode policy is supplied; regular-file executable
+    /// mode follows the owner execute bit, as checkout/status do. Symlink leaves, symlink
+    /// ancestors, special files, directory/file transitions, nested
     /// repositories and aliases sharing a volume name are refused. Path mapping uses the same
     /// stripping and directory-prefix rules as tree application. Existing regular-file modes are
     /// preserved unless declared by the patch; additions use 0644 or declared executable mode.

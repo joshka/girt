@@ -4140,3 +4140,20 @@ missing directories, symlink leaves/ancestors, metadata aliases, traversal and p
 repositories. Existing tree/index tests cover the shared mapping extraction. The first guarded
 working-file implementation is Linux/macOS regular-file-only; other platforms, symlink edits and
 directory/file transitions are explicit refusals tracked in issue 506.
+
+Working-file publication also compares Git-generated SHA-1/SHA-256 missing-newline text, literal and
+delta binary, and executable-mode patches against `git apply` working bytes/modes, with unchanged
+index snapshots. Tests cover filtered publication, nested additions and rename cycles. Focused
+boundary-injection tests stop before/after removal, creation and writing; assert exact reports;
+retain partially written leaves explicitly; preserve foreign obstructions; and reject replaced
+roots, created-directory replacements and symlink substitutions without writing outside targets.
+Required filter failure and changed later sources are checked before their mutation.
+
+The default is no writes on hunk/filter/preparation failure. Late filesystem failures use an exact
+mutation report, rather than automatic rollback; earlier mutations remain. Empty directories after
+deletion are retained. This differs from a transactional filesystem batch and is documented on
+`PreparedWorktree::publish_with`.
+
+Review follow-ups cover publication scan-cost admission: a patch whose read-only preflight fits but
+whose repeated mutation checks exceed the directory budget is refused with no mutations. Mode tests
+pin owner-only executable detection and explicit no-write refusal of `core.fileMode=false`.

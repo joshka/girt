@@ -47,6 +47,17 @@ pub(super) fn prepare(
     let root = repo
         .worktree()
         .ok_or_else(|| refused(b"", "repository has no working tree"))?;
+    if !repo
+        .config()
+        .boolean("core", None, "filemode")
+        .map_err(|_| refused(b"", "invalid core.fileMode boolean"))?
+        .unwrap_or(true)
+    {
+        return Err(refused(
+            b"",
+            "core.fileMode=false requires an explicit mode policy",
+        ));
+    }
     let fd = open_root(root)?;
     let root_stat = fstat(&fd).map_err(|e| io(b"", e))?;
     let protection = Protection::from_config(repo).map_err(|reason| refused(b"", reason))?;
@@ -181,7 +192,7 @@ pub(super) fn prepare(
             return Err(refused(destination, "addition destination exists"));
         }
         let mode = source.map_or(EntryMode::Blob, |leaf| {
-            if leaf.stat.st_mode & 0o111 != 0 {
+            if leaf.stat.st_mode & 0o100 != 0 {
                 EntryMode::Executable
             } else {
                 EntryMode::Blob
@@ -208,13 +219,16 @@ pub(super) fn prepare(
         let mut unfiltered = false;
         let mut warning = None;
         let preimage = if let Some(path) = &mapping.old {
-            let staged_entry = index.as_ref().and_then(|index| {
+            let needs_staged = filters.plan(path)?.text() == filter::Text::Auto;
+            let staged_entry = index.as_ref().filter(|_| needs_staged).and_then(|index| {
                 let at = index
                     .entries()
                     .partition_point(|entry| entry.path.as_slice() < path.as_slice());
                 index.entries().get(at).filter(|entry| {
                     entry.path == *path
                         && entry.stage == crate::index::Stage::Normal
+                        && !entry.intent_to_add
+                        && !entry.id.is_null()
                         && matches!(
                             entry.mode,
                             crate::index::Mode::Regular | crate::index::Mode::Executable
@@ -295,6 +309,74 @@ pub(super) fn prepare(
 }
 
 impl Snapshot {
+    /// Reserve a conservative upper bound for every planned directory scan before mutation.
+    /// Replacements and newly created directories can only increase these original name counts
+    /// by the number of planned creations. Unrelated concurrent writes are excluded by contract;
+    /// the live budget and name guards still refuse observed changes during publication.
+    fn admit_publication(&mut self, files: &[WorktreeFile], cancel: &AtomicBool) -> Result<()> {
+        let directories: Vec<_> = self.directories.keys().cloned().collect();
+        let mut inspection = self.limits.max_directory_entries;
+        let mut counts = BTreeMap::new();
+        for path in directories {
+            check(cancel)?;
+            let probe = join(&path, b"");
+            let count = match self.parent(&probe, false, &mut inspection, cancel)? {
+                Some(fd) => self.names(&fd, &path, b"", &mut inspection, cancel)?.len(),
+                None => 0,
+            };
+            counts.insert(path, count);
+        }
+        let destinations: BTreeSet<_> = files
+            .iter()
+            .filter(|file| file.content.is_some())
+            .map(|file| file.path.as_slice())
+            .collect();
+        let mut weights: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
+        for path in &self.removals {
+            weight(&mut weights, path, 2)?;
+        }
+        for file in files {
+            if file.content.is_some() {
+                // Destination absence, open for create, pre-write reachability and final check.
+                weight(&mut weights, &file.path, 4)?;
+                increment(&mut counts, parent(&file.path))?;
+                if let Some(source) = &file.source_path
+                    && !self.removals.contains(source)
+                {
+                    weight(&mut weights, source, 1)?;
+                }
+            }
+        }
+        for (path, stat) in &self.directories {
+            if stat.is_none() {
+                weight(&mut weights, path, 1)?;
+                increment(&mut counts, parent(path))?;
+            }
+        }
+        for path in self.leaves.keys() {
+            if !destinations.contains(path.as_slice()) {
+                weight(&mut weights, path, 1)?;
+            }
+        }
+        let mut remaining = self.limits.max_directory_entries;
+        for (path, weight) in weights {
+            check(cancel)?;
+            let mut prefix = Vec::new();
+            charge_scans(&mut remaining, counts[&prefix], weight)?;
+            for component in parent(&path)
+                .split(|b| *b == b'/')
+                .filter(|part| !part.is_empty())
+            {
+                if !prefix.is_empty() {
+                    prefix.push(b'/');
+                }
+                prefix.extend_from_slice(component);
+                charge_scans(&mut remaining, counts[&prefix], weight)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn verify(&mut self, cancel: &AtomicBool) -> Result<()> {
         let mut budget = self.limits.max_directory_entries;
         let paths: Vec<_> = self.leaves.keys().cloned().collect();
@@ -485,6 +567,27 @@ impl Snapshot {
     }
 }
 
+fn weight(weights: &mut BTreeMap<Vec<u8>, usize>, path: &[u8], amount: usize) -> Result<()> {
+    let entry = weights.entry(path.to_vec()).or_default();
+    *entry = entry.checked_add(amount).ok_or(WorktreeError::Limit(
+        "publication directory inspection entries",
+    ))?;
+    Ok(())
+}
+fn increment(counts: &mut BTreeMap<Vec<u8>, usize>, path: &[u8]) -> Result<()> {
+    let entry = counts.get_mut(path).unwrap();
+    *entry = entry.checked_add(1).ok_or(WorktreeError::Limit(
+        "publication directory inspection entries",
+    ))?;
+    Ok(())
+}
+fn charge_scans(remaining: &mut usize, count: usize, weight: usize) -> Result<()> {
+    let total = count.checked_mul(weight).ok_or(WorktreeError::Limit(
+        "publication directory inspection entries",
+    ))?;
+    charge(remaining, total, "publication directory inspection entries")
+}
+
 pub(super) fn check(cancel: &AtomicBool) -> Result<()> {
     if cancel.load(Ordering::Relaxed) {
         Err(WorktreeError::Cancelled)
@@ -541,5 +644,392 @@ pub(super) fn io(path: &[u8], source: impl Into<std::io::Error>) -> WorktreeErro
     WorktreeError::Io {
         path: path.to_vec(),
         source: source.into(),
+    }
+}
+
+/// Publication records each successful syscall that mutates a path before any later fallible work.
+pub(super) fn publish(
+    plan: PreparedWorktree,
+    cancel: &AtomicBool,
+    hook: &mut impl FnMut(&str, &[u8]) -> Result<()>,
+) -> std::result::Result<super::WorktreeReport, super::WorktreeFailure> {
+    use std::io::Write;
+
+    use rustix::fs::{AtFlags, Mode, OFlags, fchmod, mkdirat, unlinkat};
+
+    use super::{WorktreeAction, WorktreeReport, WorktreeWrite};
+
+    let PreparedWorktree {
+        files,
+        mut snapshot,
+    } = plan;
+    let mut report = WorktreeReport::default();
+    let result: Result<()> = (|| {
+        snapshot.verify(cancel)?;
+        snapshot.admit_publication(&files, cancel)?;
+        hook("preflight complete", b"")?;
+        let mut budget = snapshot.limits.max_directory_entries;
+        let missing: Vec<_> = snapshot
+            .directories
+            .iter()
+            .filter(|(_, stat)| stat.is_none())
+            .map(|(path, _)| path.clone())
+            .collect();
+        for path in missing {
+            hook("before directory", &path)?;
+            check(cancel)?;
+            let fd = snapshot
+                .parent(&path, false, &mut budget, cancel)?
+                .ok_or_else(|| refused(&path, "directory parent is absent"))?;
+            if optional_stat(&fd, name(&path), &path)?.is_some() {
+                return Err(refused(&path, "directory appeared after planning"));
+            }
+            mkdirat(
+                &fd,
+                OsStr::from_bytes(name(&path)),
+                Mode::from_raw_mode(0o755),
+            )
+            .map_err(|e| io(&path, e))?;
+            report.writes.push(WorktreeWrite {
+                path: path.clone(),
+                action: WorktreeAction::DirectoryCreated,
+                complete: true,
+            });
+            let opened = openat(
+                &fd,
+                OsStr::from_bytes(name(&path)),
+                directory_flags(),
+                Mode::empty(),
+            )
+            .map_err(|e| io(&path, e))?;
+            let stat = fstat(&opened).map_err(|e| io(&path, e))?;
+            hook("after directory", &path)?;
+            let named = optional_stat(&fd, name(&path), &path)?
+                .ok_or_else(|| refused(&path, "new directory disappeared"))?;
+            identity(&path, &stat, &named)?;
+            snapshot.directories.insert(path, Some(stat));
+        }
+        let removals: Vec<_> = snapshot.removals.iter().cloned().collect();
+        for path in removals {
+            hook("before removal", &path)?;
+            check(cancel)?;
+            snapshot.verify_leaf(&path, &mut budget, cancel)?;
+            let fd = snapshot
+                .parent(&path, false, &mut budget, cancel)?
+                .ok_or_else(|| refused(&path, "source parent disappeared"))?;
+            let current = optional_stat(&fd, name(&path), &path)?
+                .ok_or_else(|| refused(&path, "source disappeared"))?;
+            same(
+                &path,
+                &snapshot.leaves[&path].as_ref().unwrap().stat,
+                &current,
+            )?;
+            unlinkat(&fd, OsStr::from_bytes(name(&path)), AtFlags::empty())
+                .map_err(|e| io(&path, e))?;
+            report.writes.push(WorktreeWrite {
+                path: path.clone(),
+                action: WorktreeAction::Removed,
+                complete: true,
+            });
+            snapshot.leaves.insert(path.clone(), None);
+            hook("after removal", &path)?;
+        }
+        let mut installed = BTreeMap::new();
+        for file in &files {
+            let Some(bytes) = &file.content else {
+                continue;
+            };
+            hook("before install", &file.path)?;
+            check(cancel)?;
+            if let Some(source) = &file.source_path
+                && !snapshot.removals.contains(source)
+            {
+                snapshot.verify_leaf(source, &mut budget, cancel)?;
+            }
+            snapshot.verify_leaf(&file.path, &mut budget, cancel)?;
+            let fd = snapshot
+                .parent(&file.path, false, &mut budget, cancel)?
+                .ok_or_else(|| refused(&file.path, "destination parent disappeared"))?;
+            let mode = Mode::from_raw_mode(if file.executable { 0o755 } else { 0o644 });
+            let opened = openat(
+                &fd,
+                OsStr::from_bytes(name(&file.path)),
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                mode,
+            )
+            .map_err(|e| io(&file.path, e))?;
+            report.writes.push(WorktreeWrite {
+                path: file.path.clone(),
+                action: WorktreeAction::Created,
+                complete: false,
+            });
+            hook("after create", &file.path)?;
+            let owned = fstat(&opened).map_err(|e| io(&file.path, e))?;
+            let mut output = std::fs::File::from(opened);
+            hook("before write", &file.path)?;
+            let fresh = snapshot
+                .parent(&file.path, false, &mut budget, cancel)?
+                .ok_or_else(|| refused(&file.path, "destination parent changed"))?;
+            let named = optional_stat(&fresh, name(&file.path), &file.path)?
+                .ok_or_else(|| refused(&file.path, "created file disappeared"))?;
+            identity(&file.path, &owned, &named)?;
+            for chunk in bytes.chunks(64 * 1024) {
+                check(cancel)?;
+                let named = optional_stat(&fresh, name(&file.path), &file.path)?
+                    .ok_or_else(|| refused(&file.path, "created file disappeared"))?;
+                identity(&file.path, &owned, &named)?;
+                output.write_all(chunk).map_err(|e| io(&file.path, e))?;
+                hook("after write chunk", &file.path)?;
+            }
+            check(cancel)?;
+            fchmod(&output, mode).map_err(|e| io(&file.path, e))?;
+            let stat = fstat(&output).map_err(|e| io(&file.path, e))?;
+            installed.insert(file.path.clone(), stat);
+            report.writes.last_mut().unwrap().complete = true;
+            hook("after install", &file.path)?;
+        }
+        hook("before final verification", b"")?;
+        for file in &files {
+            let Some(bytes) = &file.content else {
+                continue;
+            };
+            let fd = snapshot
+                .parent(&file.path, false, &mut budget, cancel)?
+                .ok_or_else(|| refused(&file.path, "installed parent disappeared"))?;
+            let current = optional_stat(&fd, name(&file.path), &file.path)?
+                .ok_or_else(|| refused(&file.path, "installed file disappeared"))?;
+            same(&file.path, &installed[&file.path], &current)?;
+            let actual = crate::checkout::read_leaf(
+                &fd,
+                &file.path,
+                &current,
+                snapshot.limits.content.max_output_bytes,
+                cancel,
+            )?;
+            if actual != *bytes {
+                return Err(refused(&file.path, "installed file bytes changed"));
+            }
+        }
+        let remaining: Vec<_> = snapshot
+            .leaves
+            .keys()
+            .filter(|path| !installed.contains_key(*path))
+            .cloned()
+            .collect();
+        for path in remaining {
+            snapshot.verify_leaf(&path, &mut budget, cancel)?;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => Ok(report),
+        Err(cause) => Err(super::WorktreeFailure {
+            cause: Box::new(cause),
+            report,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::apply::WorktreeAction;
+    use crate::attributes::{Attributes, Case, Limits as AttributeLimits};
+    use crate::filter::{Drivers, Pipeline, Settings};
+    use crate::{InitKind, ObjectFormat};
+
+    fn setup() -> (tempfile::TempDir, Repository, Pipeline) {
+        let temporary = tempfile::tempdir().unwrap();
+        let repo = Repository::init(
+            ObjectFormat::Sha1,
+            temporary.path().join("r"),
+            InitKind::Worktree,
+        )
+        .unwrap();
+        std::fs::write(repo.worktree().unwrap().join("file"), b"old\n").unwrap();
+        let filters = Pipeline::from_attributes(
+            Attributes::new(Case::Sensitive, AttributeLimits::default()),
+            Settings::default(),
+            Drivers::default(),
+        );
+        (temporary, repo, filters)
+    }
+    const CHANGE: &[u8] = b"--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new\n";
+
+    #[test]
+    fn failures_at_every_boundary_report_exact_confirmed_mutations() {
+        for stage in [
+            "preflight complete",
+            "before removal",
+            "after removal",
+            "before install",
+            "after create",
+            "before write",
+            "after install",
+            "before final verification",
+        ] {
+            let (_temporary, repo, mut filters) = setup();
+            let plan = Patch::parse(CHANGE)
+                .unwrap()
+                .prepare_worktree(&repo, &mut filters)
+                .unwrap();
+            let failure = publish(plan, &AtomicBool::new(false), &mut |at, _| {
+                if at == stage {
+                    Err(refused(b"file", "injected failure"))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+            let file = repo.worktree().unwrap().join("file");
+            match stage {
+                "preflight complete" | "before removal" => {
+                    assert!(failure.report.writes.is_empty());
+                    assert_eq!(std::fs::read(file).unwrap(), b"old\n");
+                }
+                "after removal" | "before install" => {
+                    assert_eq!(failure.report.writes.len(), 1);
+                    assert_eq!(failure.report.writes[0].action, WorktreeAction::Removed);
+                    assert!(!file.exists());
+                }
+                "after create" | "before write" => {
+                    assert_eq!(failure.report.writes.len(), 2);
+                    assert_eq!(failure.report.writes[1].action, WorktreeAction::Created);
+                    assert!(!failure.report.writes[1].complete);
+                    assert_eq!(std::fs::read(file).unwrap(), b"");
+                }
+                _ => {
+                    assert_eq!(failure.report.writes.len(), 2);
+                    assert!(failure.report.writes[1].complete);
+                    assert_eq!(std::fs::read(file).unwrap(), b"new\n");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raced_obstruction_is_retained_and_not_reported_as_our_creation() {
+        let (_temporary, repo, mut filters) = setup();
+        let plan = Patch::parse(CHANGE)
+            .unwrap()
+            .prepare_worktree(&repo, &mut filters)
+            .unwrap();
+        let file = repo.worktree().unwrap().join("file");
+        let failure = publish(plan, &AtomicBool::new(false), &mut |stage, _| {
+            if stage == "before install" {
+                std::fs::write(&file, b"foreign").unwrap();
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert_eq!(failure.report.writes.len(), 1);
+        assert_eq!(failure.report.writes[0].action, WorktreeAction::Removed);
+        assert_eq!(std::fs::read(file).unwrap(), b"foreign");
+    }
+
+    #[test]
+    fn symlink_replacement_after_creation_never_writes_the_target() {
+        let (_temporary, repo, mut filters) = setup();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"outside").unwrap();
+        let plan = Patch::parse(CHANGE)
+            .unwrap()
+            .prepare_worktree(&repo, &mut filters)
+            .unwrap();
+        let file = repo.worktree().unwrap().join("file");
+        let failure = publish(plan, &AtomicBool::new(false), &mut |stage, _| {
+            if stage == "after create" {
+                std::fs::remove_file(&file).unwrap();
+                std::os::unix::fs::symlink(outside.path(), &file).unwrap();
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert_eq!(failure.report.writes.len(), 2);
+        assert!(!failure.report.writes[1].complete);
+        assert_eq!(std::fs::read(outside.path()).unwrap(), b"outside");
+    }
+
+    #[test]
+    fn changed_second_source_after_preflight_is_refused_before_its_removal() {
+        let (_temporary, repo, mut filters) = setup();
+        let later = repo.worktree().unwrap().join("later");
+        std::fs::write(&later, b"old\n").unwrap();
+        let bytes = [
+            CHANGE,
+            b"--- a/later\n+++ b/later\n@@ -1 +1 @@\n-old\n+new\n",
+        ]
+        .concat();
+        let plan = Patch::parse(&bytes)
+            .unwrap()
+            .prepare_worktree(&repo, &mut filters)
+            .unwrap();
+        let failure = publish(plan, &AtomicBool::new(false), &mut |stage, path| {
+            if stage == "before removal" && path == b"later" {
+                std::fs::write(&later, b"external").unwrap();
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert_eq!(failure.report.writes.len(), 1);
+        assert_eq!(failure.report.writes[0].path, b"file");
+        assert_eq!(failure.report.writes[0].action, WorktreeAction::Removed);
+        assert_eq!(std::fs::read(later).unwrap(), b"external");
+    }
+
+    #[test]
+    fn replaced_new_directory_is_detected_before_any_child_write() {
+        let (_temporary, repo, mut filters) = setup();
+        let patch = Patch::parse(b"--- /dev/null\n+++ b/new/file\n@@ -0,0 +1 @@\n+new\n").unwrap();
+        let plan = patch.prepare_worktree(&repo, &mut filters).unwrap();
+        let directory = repo.worktree().unwrap().join("new");
+        let moved = repo.worktree().unwrap().join("moved");
+        let failure = publish(plan, &AtomicBool::new(false), &mut |stage, _| {
+            if stage == "after directory" {
+                std::fs::rename(&directory, &moved).unwrap();
+                std::fs::create_dir(&directory).unwrap();
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert_eq!(failure.report.writes.len(), 1);
+        assert_eq!(
+            failure.report.writes[0].action,
+            WorktreeAction::DirectoryCreated
+        );
+        assert!(!directory.join("file").exists());
+        assert!(!moved.join("file").exists());
+    }
+    #[test]
+    fn partial_write_is_retained_with_an_incomplete_report_entry() {
+        let (_temporary, repo, mut filters) = setup();
+        let mut bytes = b"--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+".to_vec();
+        bytes.extend(std::iter::repeat_n(b'x', 128 * 1024));
+        bytes.push(b'\n');
+        let plan = Patch::parse(&bytes)
+            .unwrap()
+            .prepare_worktree(&repo, &mut filters)
+            .unwrap();
+        let failure = publish(plan, &AtomicBool::new(false), &mut |stage, _| {
+            if stage == "after write chunk" {
+                Err(refused(b"file", "injected write failure"))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert_eq!(failure.report.writes.len(), 2);
+        assert_eq!(failure.report.writes[1].action, WorktreeAction::Created);
+        assert!(!failure.report.writes[1].complete);
+        assert_eq!(
+            std::fs::read(repo.worktree().unwrap().join("file"))
+                .unwrap()
+                .len(),
+            64 * 1024
+        );
     }
 }
