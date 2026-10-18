@@ -775,3 +775,164 @@ fn status_branch_header_matches_git() {
     git(&["checkout", "--quiet", "--detach"]);
     compare("detached");
 }
+
+/// `girt history describe --dirty` and `--broken` append their marks when `git describe` does.
+#[test]
+fn describe_dirty_matches_git() {
+    let scratch = tempfile::tempdir().unwrap();
+    let repository = scratch.path().join("repo");
+    fixture(scratch.path(), &repository);
+    let run_both = |girt_args: &[&str], git_args: &[&str]| {
+        let girt = run(
+            Command::new(env!("CARGO_BIN_EXE_girt")).args(girt_args),
+            scratch.path(),
+            &repository,
+            None,
+        );
+        let git = run(
+            Command::new("git").args(git_args),
+            scratch.path(),
+            &repository,
+            None,
+        );
+        (girt, git)
+    };
+    let compare = |state: &str| {
+        for (girt_args, git_args) in [
+            (
+                &["history", "describe", "--dirty"][..],
+                &["describe", "--dirty"][..],
+            ),
+            (
+                &["history", "describe", "--dirty=.mod", "--long"][..],
+                &["describe", "--dirty=.mod", "--long"][..],
+            ),
+            (
+                &["history", "describe", "--broken"][..],
+                &["describe", "--broken"][..],
+            ),
+        ] {
+            let (girt, git) = run_both(girt_args, git_args);
+            assert_eq!(
+                String::from_utf8_lossy(&girt.stdout),
+                String::from_utf8_lossy(&git.stdout),
+                "{state} {git_args:?}: {}",
+                String::from_utf8_lossy(&girt.stderr)
+            );
+        }
+    };
+    compare("clean");
+    fs::write(repository.join("untracked.txt"), "untracked\n").unwrap();
+    compare("untracked only");
+    fs::write(repository.join("a.txt"), "modified\n").unwrap();
+    compare("modified");
+    let restore = run(
+        Command::new("git").args(["checkout", "--", "a.txt"]),
+        scratch.path(),
+        &repository,
+        None,
+    );
+    assert!(restore.status.success());
+    let add = run(
+        Command::new("git").args(["add", "untracked.txt"]),
+        scratch.path(),
+        &repository,
+        None,
+    );
+    assert!(add.status.success());
+    compare("staged");
+    fs::write(repository.join(".git/index"), "junk\n").unwrap();
+    let (girt, git) = run_both(
+        &["history", "describe", "--broken"],
+        &["describe", "--broken"],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&girt.stdout),
+        String::from_utf8_lossy(&git.stdout)
+    );
+    let (girt, _) = run_both(&["history", "describe", "--dirty", "HEAD"], &["describe"]);
+    assert!(!girt.status.success());
+}
+
+/// Cases `git describe --dirty` does not count, and one where Git knows a file is dirty without
+/// running its failing clean filter.
+#[test]
+fn describe_dirty_exceptions_match_git() {
+    let scratch = tempfile::tempdir().unwrap();
+    let repository = scratch.path().join("repo");
+    fixture(scratch.path(), &repository);
+    let git = |args: &[&str]| {
+        let output = run(
+            Command::new("git").args(args),
+            scratch.path(),
+            &repository,
+            None,
+        );
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let compare = |state: &str| {
+        for flag in ["--dirty", "--broken"] {
+            let girt = run(
+                Command::new(env!("CARGO_BIN_EXE_girt")).args(["history", "describe", flag]),
+                scratch.path(),
+                &repository,
+                None,
+            );
+            let expected = run(
+                Command::new("git").args(["describe", flag]),
+                scratch.path(),
+                &repository,
+                None,
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&girt.stdout),
+                String::from_utf8_lossy(&expected.stdout),
+                "{state} {flag}: {}",
+                String::from_utf8_lossy(&girt.stderr)
+            );
+        }
+    };
+    // An intent-to-add entry whose file was deleted.
+    fs::write(repository.join("planned.txt"), "planned\n").unwrap();
+    git(&["add", "-N", "planned.txt"]);
+    fs::remove_file(repository.join("planned.txt")).unwrap();
+    compare("deleted intent-to-add");
+    git(&["rm", "--quiet", "--cached", "planned.txt"]);
+    // A submodule whose only change is an untracked file.
+    let sub = scratch.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    let sub_git = |args: &[&str]| {
+        let output = run(Command::new("git").args(args), scratch.path(), &sub, None);
+        assert!(output.status.success(), "git {args:?}");
+    };
+    sub_git(&["init", "--quiet", "--initial-branch=main"]);
+    fs::write(sub.join("s.txt"), "s\n").unwrap();
+    sub_git(&["add", "s.txt"]);
+    sub_git(&["commit", "--quiet", "-m", "sub"]);
+    git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "--quiet",
+        "add",
+        sub.to_str().unwrap(),
+        "sm",
+    ]);
+    git(&["commit", "--quiet", "-m", "add submodule"]);
+    git(&["tag", "--annotate", "v2", "-m", "Version two"]);
+    fs::write(repository.join("sm/untracked.txt"), "untracked\n").unwrap();
+    compare("untracked file in submodule");
+    // A size change Git sees without running a failing required clean filter.
+    fs::write(repository.join(".gitattributes"), "a.txt filter=probe\n").unwrap();
+    git(&["add", ".gitattributes"]);
+    git(&["commit", "--quiet", "-m", "filter"]);
+    git(&["tag", "--annotate", "v3", "-m", "Version three"]);
+    git(&["config", "filter.probe.clean", "false"]);
+    git(&["config", "filter.probe.required", "true"]);
+    fs::write(repository.join("a.txt"), "a much longer replacement line\n").unwrap();
+    compare("failing filter, size changed");
+}
