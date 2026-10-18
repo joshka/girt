@@ -60,6 +60,8 @@ pub struct PreparedPush {
     pub(super) has_options: bool,
     pub(super) options: Vec<Vec<u8>>,
     pub(super) progress: bool,
+    /// Whether the commands came from a remote client, with Git's receive-pack semantics.
+    pub(super) received: bool,
 }
 impl PreparedPush {
     /// Validates commands, selects outgoing reachable objects, proves permitted branch ancestry,
@@ -211,6 +213,7 @@ impl PreparedPush {
                     has_options: false,
                     options: vec![],
                     progress: false,
+                    received: false,
                 });
             }
             let mut selection = graph::select(
@@ -281,6 +284,7 @@ impl PreparedPush {
                 has_options: false,
                 options: vec![],
                 progress: false,
+                received: false,
             })
         };
         #[cfg(feature = "tracing")]
@@ -301,6 +305,29 @@ impl PreparedPush {
         }
 
         result
+    }
+
+    /// Wraps commands and a pack received from a remote client, for the native receiver.
+    pub(super) fn received(
+        format: crate::ObjectFormat,
+        commands: Vec<PushCommand>,
+        pack: crate::fetch::Bytes,
+        limits: PushLimits,
+        options: Option<Vec<Vec<u8>>>,
+    ) -> Self {
+        Self {
+            format,
+            commands,
+            request: Vec::new(),
+            pack,
+            limits,
+            objects: 0,
+            receiver_roots: Vec::new(),
+            has_options: options.is_some(),
+            options: options.unwrap_or_default(),
+            progress: false,
+            received: true,
+        }
     }
 
     /// Number of objects in the spooled pack after any receiver-history exclusion.

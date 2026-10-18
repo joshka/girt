@@ -1,9 +1,13 @@
-//! Serve fetches to Git clients, as `git upload-pack` does.
+//! Serve fetches and receive pushes from Git clients, as `git upload-pack` and
+//! `git receive-pack` do.
 //!
-//! [`UploadPack`] answers protocol v2 requests over any byte stream. A program that runs it over
-//! stdin and stdout works as the `--upload-pack` command of `git clone` and `git fetch`, over SSH
-//! and over `file://` URLs. Pack generation reuses the push object walk: it counts the objects to
-//! send before the first pack byte, then streams the pack through sideband 1 as it is written.
+//! [`UploadPack`] answers fetch requests over any byte stream. A program that runs it over stdin
+//! and stdout works as the `--upload-pack` command of `git clone` and `git fetch`, over SSH and
+//! over `file://` URLs. Pack generation reuses the push object walk: it counts the objects to send
+//! before the first pack byte, then streams the pack through sideband 1 as it is written.
+//!
+//! [`ReceivePack`] receives pushes the same way, as the `--receive-pack` command of `git push`. It
+//! shares its receive policy, validation, quarantine and hooks with a native local push.
 //!
 //! # Examples
 //!
@@ -55,12 +59,14 @@
     reason = "parses untrusted network input (#103)"
 )]
 
+mod receive;
 mod shallow;
 mod upload;
 
 #[cfg(test)]
 mod tests;
 
+pub use receive::ReceivePack;
 pub use upload::{UploadLimits, UploadPack, WantPolicy};
 
 use crate::ObjectId;
@@ -147,6 +153,9 @@ pub enum ServeError {
     /// Reading a commit for a shallow request failed.
     #[error("reading a commit")]
     Commit(#[source] Box<crate::ReadCommitError>),
+    /// Opening the served repository failed.
+    #[error("opening the repository")]
+    Open(#[source] Box<crate::OpenError>),
 }
 
 impl From<crate::packet::Error> for ServeError {

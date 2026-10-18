@@ -149,7 +149,7 @@ pub use http::{HttpPushOutcome, send_http, send_http_checked, send_http_checked_
 pub(crate) mod graph;
 mod hooks;
 mod local;
-mod local_native;
+pub(crate) mod local_native;
 mod prepared;
 mod progress;
 mod protocol;

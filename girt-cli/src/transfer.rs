@@ -14,7 +14,7 @@ use girt::push::{ForcePolicy, PushCommand, RejectionOrigin, Status};
 use girt::refs::RefName;
 use girt::remote::RefSource;
 use girt::revision::Resolver;
-use girt::serve::{Protocol, UploadLimits, UploadPack};
+use girt::serve::{Protocol, ReceivePack, UploadLimits, UploadPack};
 use girt::workflow::{self, Environment, FetchOptions, PushOptions};
 use girt::{InitKind, ObjectId, Repository};
 
@@ -54,6 +54,40 @@ pub struct FetchArgs {
     /// Configured remote name.
     #[arg(default_value = "origin", add = ArgValueCandidates::new(complete::remotes))]
     remote: String,
+}
+
+/// Receive pushes into a repository.
+#[derive(Debug, clap::Args)]
+pub struct ReceivePackArgs {
+    /// Repository to receive into.
+    directory: PathBuf,
+}
+
+/// Serve one receive-pack session on stdin and stdout.
+pub fn receive_pack(args: ReceivePackArgs, context: &Context) -> Result<ExitCode> {
+    // The receiving repository is trusted; the client's commands and pack are bounded.
+    let defaults = girt::push::PushLimits::default();
+    let mut limits = girt::push::PushLimits::trusted()
+        .with_max_commands(defaults.max_commands)
+        .with_max_command_bytes(defaults.max_command_bytes);
+    limits.pack = defaults.pack;
+    let mut receive =
+        ReceivePack::new(&args.directory, context.config_inputs()?).with_limits(limits);
+    // Like Git, reflog entries record the receiving process's committer, when it has one.
+    let repository = Repository::open_with_config(&args.directory, &context.config_inputs()?)
+        .wrap_err_with(|| format!("opening {}", args.directory.display()))?;
+    if let Ok(identity) = girt::Signature::committer(repository.config(), &context.environment) {
+        receive = receive.with_identity(identity);
+    }
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    receive
+        .serve(
+            &mut std::io::stdin().lock(),
+            &mut std::io::BufWriter::new(std::io::stdout().lock()),
+            &cancel,
+        )
+        .wrap_err("serving receive-pack")?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Serve fetches from a repository.

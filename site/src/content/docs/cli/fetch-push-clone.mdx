@@ -115,3 +115,24 @@ a separate repository. In v0, `uploadpack.allowTipSHA1InWant`, `allowReachableSH
 `allowAnySHA1InWant` decide which unlisted objects can be fetched. Shallow clones and fetches are
 served, and so is `object-info` when `transfer.advertiseObjectInfo` is set; partial-clone filters
 aren't yet.
+
+## Receive pushes (`girt receive-pack`)
+
+<Example cmd="receive-pack">
+
+`girt receive-pack <directory>` receives one push on stdin and stdout, as Git's `git-receive-pack`
+does. Give it to a Git client as its receive-pack command, locally or over SSH:
+
+```console
+git -C served commit -q --allow-empty -m "From the served copy"
+git -C served push -q --receive-pack='girt receive-pack' origin main
+```
+
+</Example>
+
+The push follows the repository's receive policy: `receive.denyCurrentBranch`,
+`receive.denyDeletes`, `receive.denyNonFastForwards` and the hide rules. Its objects are validated
+before any reference moves, and the `pre-receive`, `update`, `post-receive` and `post-update` hooks
+run as with Git, with incoming objects quarantined until `pre-receive` accepts them. Push options
+reach the hooks when `receive.advertisePushOptions` is set. Atomic pushes and
+`receive.denyCurrentBranch=updateInstead` are refused for now.

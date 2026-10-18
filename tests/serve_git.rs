@@ -715,3 +715,166 @@ fn object_info_is_advertised_only_when_configured() {
     );
     assert!(advertise().contains("001aobject-info=size type\n"));
 }
+
+/// Runs `git receive-pack` on a full-duplex request and returns everything after its
+/// advertisement.
+fn git_receive_pack(repo: &Path, request: &[u8]) -> Vec<u8> {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let output = command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", repo.join("absent-config"))
+        .arg("receive-pack")
+        .arg(repo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child.stdin.take().unwrap().write_all(request)?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    after_advertisement(&output.stdout)
+}
+
+fn girt_receive_pack(repo: &Path, request: &[u8]) -> Vec<u8> {
+    let receive = girt::serve::ReceivePack::new(repo, girt::config::ConfigInputs::default());
+    let mut response = Vec::new();
+    receive
+        .serve(&mut &request[..], &mut response, &AtomicBool::new(false))
+        .unwrap();
+    after_advertisement(&response)
+}
+
+fn after_advertisement(response: &[u8]) -> Vec<u8> {
+    let end = response
+        .windows(4)
+        .position(|window| window == b"0000")
+        .unwrap()
+        + 4;
+    response[end..].to_vec()
+}
+
+/// A pack with no objects, which a push sends when the server already has everything.
+fn empty_pack(format: &str) -> Vec<u8> {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &["init", "-q", &format!("--object-format={format}"), "r"],
+        b"",
+    );
+    git(&root.path().join("r"), &["pack-objects", "--stdout"], b"")
+}
+
+/// Two bare copies of a repository with `main`, `side` and a loose blob, for parallel pushes.
+fn receiving_pair(root: &Path) -> (std::path::PathBuf, std::path::PathBuf, String) {
+    let source = merge_fixture(root, "sha1");
+    let blob = String::from_utf8(git(&source, &["hash-object", "-w", "--stdin"], b"blob\n"))
+        .unwrap()
+        .trim()
+        .to_owned();
+    let mut copies = Vec::new();
+    for name in ["by-girt.git", "by-git.git"] {
+        git(
+            root,
+            &["clone", "-q", "--bare", source.to_str().unwrap(), name],
+            b"",
+        );
+        let copy = root.join(name);
+        git(&copy, &["hash-object", "-w", "--stdin"], b"blob\n");
+        copies.push(copy);
+    }
+    let by_git = copies.pop().unwrap();
+    (copies.pop().unwrap(), by_git, blob)
+}
+
+#[rstest::rstest]
+#[case::blob_branch_tip("Z", "BLOB", "refs/heads/blob", true)]
+#[case::wrong_old("side", "main~1", "refs/heads/main", true)]
+#[case::wrong_old_already_current("side", "main", "refs/heads/main", true)]
+#[case::truncated_pack("main", "side", "refs/heads/main", false)]
+fn receive_status_matches_git(
+    #[case] old: &str,
+    #[case] new: &str,
+    #[case] name: &str,
+    #[case] whole_pack: bool,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let (by_girt, by_git, blob) = receiving_pair(root.path());
+    let resolve = |revision: &str| match revision {
+        "Z" => "0".repeat(40),
+        "BLOB" => blob.clone(),
+        revision => rev_parse(&by_git, revision),
+    };
+    let mut request = pkt(&format!(
+        "{} {} {name}\0report-status\n",
+        resolve(old),
+        resolve(new)
+    ));
+    request.extend_from_slice(b"0000");
+    let pack = empty_pack("sha1");
+    request.extend_from_slice(if whole_pack { &pack } else { &pack[..6] });
+    let girt_status = String::from_utf8(girt_receive_pack(&by_girt, &request)).unwrap();
+    let git_status = String::from_utf8(git_receive_pack(&by_git, &request)).unwrap();
+    if whole_pack {
+        assert_eq!(girt_status, git_status);
+    } else {
+        // The unpack reason is each implementation's own wording.
+        let shape = |status: &str| {
+            status
+                .lines()
+                .map(|line| {
+                    if line.contains("unpack ") {
+                        "unpack <reason>".to_owned()
+                    } else {
+                        line.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            girt_status.contains("ng refs/heads/main unpacker error"),
+            "{girt_status}"
+        );
+        assert_eq!(shape(&girt_status).len(), shape(&git_status).len());
+    }
+    assert_eq!(
+        git(&by_girt, &["for-each-ref"], b""),
+        git(&by_git, &["for-each-ref"], b""),
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn receive_hooks_see_the_supplied_old_value() {
+    let root = tempfile::tempdir().unwrap();
+    let (by_girt, by_git, _) = receiving_pair(root.path());
+    for repo in [&by_girt, &by_git] {
+        let hook = repo.join("hooks/pre-receive");
+        std::fs::write(&hook, "#!/bin/sh\ncat > \"$GIT_DIR/seen\"\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let request = |repo: &Path| {
+        let mut request = pkt(&format!(
+            "{} {} refs/heads/main\0report-status\n",
+            rev_parse(repo, "side"),
+            rev_parse(repo, "main~1")
+        ));
+        request.extend_from_slice(b"0000");
+        request.extend(empty_pack("sha1"));
+        request
+    };
+    girt_receive_pack(&by_girt, &request(&by_girt));
+    git_receive_pack(&by_git, &request(&by_git));
+    assert_eq!(
+        std::fs::read(by_girt.join("seen")).unwrap(),
+        std::fs::read(by_git.join("seen")).unwrap()
+    );
+}
