@@ -1706,3 +1706,48 @@ fn enumerated_packed_peels_and_loose_overrides_agree_with_git(#[case] format: gi
             .is_empty()
     );
 }
+
+/// Git exposes another worktree's private refs through aliases that RefName cannot represent.
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn cross_worktree_reference_aliases_are_not_representable(#[case] format: girt::ObjectFormat) {
+    let (root, _, first) = fixture(format);
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("linked");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            worktree.to_str().unwrap(),
+            &first.to_string(),
+        ],
+        b"",
+    );
+    assert_eq!(
+        oid(&git(
+            &worktree,
+            &["rev-parse", "--verify", "main-worktree/HEAD"],
+            b""
+        )),
+        first
+    );
+    assert_eq!(
+        oid(&git(
+            root.path(),
+            &["rev-parse", "--verify", "worktrees/linked/HEAD"],
+            b""
+        )),
+        first
+    );
+    for alias in ["main-worktree/HEAD", "worktrees/linked/HEAD"] {
+        assert!(RefName::new(alias).is_err());
+    }
+}
