@@ -2095,6 +2095,766 @@
           "git-git/log/large",
           "git-git/status/untracked-unique"
         ]
+      },
+      {
+        "girt_version": "0.17.0",
+        "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+        "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+        "binaries": {
+          "girt": "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d",
+          "stock": "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
+        },
+        "run_epochs": [
+          {
+            "started": "2026-10-18T07:27:12-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "clone",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              39.0029296875,
+              47.1884765625,
+              41.66259765625
+            ]
+          },
+          {
+            "started": "2026-10-18T08:19:17-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "log-ancestry",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              20.560546875,
+              25.91943359375,
+              31.01220703125
+            ]
+          },
+          {
+            "started": "2026-10-18T08:23:33-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "gc-garbage",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              30.884765625,
+              28.048828125,
+              30.67724609375
+            ]
+          },
+          {
+            "started": "2026-10-18T08:32:15-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "bookmark-list",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              26.21044921875,
+              25.83349609375,
+              28.27294921875
+            ]
+          },
+          {
+            "started": "2026-10-18T08:44:10-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "log-large",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              23.0087890625,
+              22.2841796875,
+              25.22802734375
+            ]
+          },
+          {
+            "started": "2026-10-18T08:48:44-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "status-untracked-unique",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              22.49462890625,
+              24.5654296875,
+              25.67041015625
+            ]
+          },
+          {
+            "started": "2026-10-18T08:54:56-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "rebase-100",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              20.900390625,
+              23.58203125,
+              25.01123046875
+            ]
+          },
+          {
+            "started": "2026-10-18T09:00:59-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "status-untracked",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              18.3994140625,
+              24.2333984375,
+              25.341796875
+            ]
+          },
+          {
+            "started": "2026-10-18T09:10:10-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "status-many-edits",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              18.98974609375,
+              24.02734375,
+              24.86767578125
+            ]
+          },
+          {
+            "started": "2026-10-18T09:14:15-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "rebase-10",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              20.35888671875,
+              23.86279296875,
+              24.7080078125
+            ]
+          },
+          {
+            "started": "2026-10-18T09:20:03-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "rebase-bookmark",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              22.0068359375,
+              23.9541015625,
+              24.6005859375
+            ]
+          },
+          {
+            "started": "2026-10-18T09:21:54-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "rebase-1",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              21.34814453125,
+              23.07666015625,
+              24.17333984375
+            ]
+          },
+          {
+            "started": "2026-10-18T09:23:40-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "status-small-edit",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              17.38232421875,
+              21.3330078125,
+              23.37451171875
+            ]
+          },
+          {
+            "started": "2026-10-18T09:25:04-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "status-clean",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              13.64013671875,
+              19.1748046875,
+              22.3623046875
+            ]
+          },
+          {
+            "started": "2026-10-18T09:26:42-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "log-limited",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              16.6435546875,
+              18.17578125,
+              21.58837890625
+            ]
+          },
+          {
+            "started": "2026-10-18T09:27:38-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "log-default",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              17.85888671875,
+              18.31396484375,
+              21.42724609375
+            ]
+          },
+          {
+            "started": "2026-10-18T09:28:42-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "log-no-graph",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              19.34765625,
+              18.57568359375,
+              21.2880859375
+            ]
+          },
+          {
+            "started": "2026-10-18T09:29:39-0700",
+            "argv": [
+              "--matrix",
+              "--resume",
+              "--fsck-scope",
+              "operation-type",
+              "--girt-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.17.0",
+              "--stock-jj",
+              "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+              "--girt-rev",
+              "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+              "--jj-rev",
+              "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+              "--stock-rev",
+              "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+              "--repo",
+              "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+              "--runs",
+              "6",
+              "--ops",
+              "gc-clean",
+              "--adaptive",
+              "--bounded-disk",
+              "--fresh-read-copies",
+              "--max-load",
+              "24",
+              "--work",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/run",
+              "--out",
+              "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-bench-matrix.json"
+            ],
+            "adaptive": true,
+            "load_average_at_start": [
+              20.89794921875,
+              19.24658203125,
+              21.37255859375
+            ]
+          }
+        ],
+        "load_1m": {
+          "min": 12.6,
+          "median": 20.0,
+          "max": 33.3,
+          "cores": 12
+        },
+        "fsck": {
+          "scope": "operation-type",
+          "checks": 13,
+          "failures": 0
+        },
+        "cells": [
+          "git-git/bookmark/list",
+          "git-git/git clone/local-full-checkout",
+          "git-git/log/ancestry",
+          "git-git/log/default",
+          "git-git/log/limited",
+          "git-git/log/no-graph",
+          "git-git/rebase/1",
+          "git-git/rebase/10",
+          "git-git/rebase/100",
+          "git-git/rebase/bookmark",
+          "git-git/status/clean",
+          "git-git/status/many-edits",
+          "git-git/status/small-edit",
+          "git-git/status/untracked",
+          "git-git/util gc/clean",
+          "git-git/util gc/garbage"
+        ]
       }
     ]
   },
@@ -2370,40 +3130,40 @@
       "variant": "list",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 7075.44806250371,
-      "girt_rss_mb": 305.609375,
+      "girt_ms": 8238.771645497764,
+      "girt_rss_mb": 307.921875,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 7751.3945210084785,
-      "stock_rss_mb": 294.0,
+      "stock_ms": 9570.923125000263,
+      "stock_rss_mb": 298.734375,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 17.585708003025502,
-      "git_rss_mb": 9.828125,
-      "ratio_vs_stock": 0.9127967933159947,
+      "git_ms": 25.348854003823362,
+      "git_rss_mb": 9.921875,
+      "ratio_vs_stock": 0.8608126444958294,
       "sample_policy": "adaptive",
-      "stock_vs_git_ratio": 440.77807499561027,
+      "stock_vs_git_ratio": 377.56827679691884,
       "jj_level_gap": true,
-      "notes": "girt n=6 range=6995.018..7219.608ms; stock n=6 range=7688.893..7978.451ms; git n=6 range=16.932..20.402ms",
+      "notes": "girt n=6 range=8099.080..8420.007ms; stock n=6 range=9406.045..9893.763ms; git n=6 range=22.774..27.333ms",
       "harness_op": "bookmark-list",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          6995.017749999533,
-          7219.608041996253
+          8099.07966699393,
+          8420.006917003775
         ],
         "stock": [
-          7688.89258299896,
-          7978.4505420102505
+          9406.044874995132,
+          9893.763333995594
         ],
         "git": [
-          16.931874997681007,
-          20.401625006343238
+          22.773999997298233,
+          27.332917001331225
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -2417,15 +3177,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T19:14:29-0700"
+        "2026-10-18T08:32:15-0700"
       ],
-      "girt_version": "0.14.0",
-      "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
-      "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        2.7,
-        6.1
+        16.4,
+        24.7
       ],
       "issues": []
     },
@@ -2502,40 +3262,40 @@
       "variant": "local-full-checkout",
       "girt_samples": 3,
       "girt_attempts": 3,
-      "girt_ms": 18191.289458001847,
-      "girt_rss_mb": 631.140625,
+      "girt_ms": 21382.658458009246,
+      "girt_rss_mb": 662.375,
       "stock_samples": 3,
       "stock_attempts": 3,
-      "stock_ms": 14045.636082999408,
-      "stock_rss_mb": 630.640625,
+      "stock_ms": 16878.69412500004,
+      "stock_rss_mb": 641.640625,
       "git_samples": 3,
       "git_attempts": 3,
-      "git_ms": 9219.185542009654,
-      "git_rss_mb": 340.84375,
-      "ratio_vs_stock": 1.2951559723251171,
+      "git_ms": 12571.833334004623,
+      "git_rss_mb": 340.890625,
+      "ratio_vs_stock": 1.2668431751682803,
       "sample_policy": "adaptive",
-      "stock_vs_git_ratio": 1.523522443386865,
+      "stock_vs_git_ratio": 1.342580169222106,
       "jj_level_gap": false,
-      "notes": "local-path pack transfer; full checkout; girt n=3 range=18031.313..18217.085ms; stock n=3 range=14041.128..14411.324ms; git n=3 range=9152.865..9368.373ms",
+      "notes": "local-path pack transfer; full checkout; girt n=3 range=20058.825..47131.030ms; stock n=3 range=15759.789..37924.515ms; git n=3 range=10633.670..21683.815ms",
       "harness_op": "clone",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          18031.312582999817,
-          18217.084916992462
+          20058.82512500102,
+          47131.029791999026
         ],
         "stock": [
-          14041.127625008812,
-          14411.324082990177
+          15759.789167001145,
+          37924.51454199909
         ],
         "git": [
-          9152.864542003954,
-          9368.373416000395
+          10633.670041992445,
+          21683.814707997954
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -2550,20 +3310,20 @@
       "profiles": [
         {
           "tool": "girt",
-          "path": "/Users/joshka/tmp/girt-bench/matrix-0.14.0/jj-matrix-profiles/git-git-clone.json.gz",
-          "binary_sha256": "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
+          "path": "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-matrix-profiles/git-git-clone.json.gz",
+          "binary_sha256": "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         }
       ],
       "run_epochs": [
-        "2026-10-17T19:14:29-0700"
+        "2026-10-18T07:27:12-0700"
       ],
-      "girt_version": "0.14.0",
-      "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
-      "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        11.3,
-        24.2
+        20.9,
+        29.5
       ],
       "issues": [
         218
@@ -3598,40 +4358,40 @@
       "variant": "clean",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 562.5341664999723,
-      "girt_rss_mb": 49.453125,
+      "girt_ms": 586.1662290044478,
+      "girt_rss_mb": 47.6875,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 8249.28752049891,
-      "stock_rss_mb": 908.859375,
+      "stock_ms": 7882.1622709947405,
+      "stock_rss_mb": 886.703125,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 7089.319000000614,
-      "git_rss_mb": 898.25,
-      "ratio_vs_stock": 0.06819184870234112,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 1.1636219953564222,
+      "git_ms": 6897.867520994623,
+      "git_rss_mb": 893.265625,
+      "ratio_vs_stock": 0.07436617121693344,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 1.1426955137952821,
       "jj_level_gap": false,
-      "notes": "no intentionally unreachable garbage; backend packing policies differ; girt n=6 range=516.984..698.191ms; stock n=6 range=7481.785..9451.822ms; git n=6 range=6366.660..7733.112ms",
+      "notes": "no intentionally unreachable garbage; backend packing policies differ; girt n=6 range=522.856..751.780ms; stock n=6 range=7829.763..10006.984ms; git n=6 range=6821.294..13126.523ms",
       "harness_op": "gc-clean",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          516.9836250024673,
-          698.1913749987143
+          522.8562919946853,
+          751.7800000059651
         ],
         "stock": [
-          7481.784542000241,
-          9451.821750000818
+          7829.763458008529,
+          10006.984124993323
         ],
         "git": [
-          6366.660374998901,
-          7733.1119580012455
+          6821.294332999969,
+          13126.52341699868
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -3645,15 +4405,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T06:58:53-0700"
+        "2026-10-18T09:29:39-0700"
       ],
-      "girt_version": "0.11.1",
-      "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-      "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        24.3,
-        34.2
+        16.4,
+        27.5
       ],
       "issues": [],
       "comparable": false,
@@ -3666,40 +4426,40 @@
       "variant": "garbage",
       "girt_samples": 3,
       "girt_attempts": 3,
-      "girt_ms": 11377.171999993152,
-      "girt_rss_mb": 337.390625,
+      "girt_ms": 5792.665749992011,
+      "girt_rss_mb": 420.546875,
       "stock_samples": 3,
       "stock_attempts": 3,
-      "stock_ms": 9669.533708001836,
-      "stock_rss_mb": 856.25,
+      "stock_ms": 11105.28649999469,
+      "stock_rss_mb": 873.59375,
       "git_samples": 3,
       "git_attempts": 3,
-      "git_ms": 8930.183457996463,
-      "git_rss_mb": 902.125,
-      "ratio_vs_stock": 1.1765998592650018,
+      "git_ms": 9994.892458998947,
+      "git_rss_mb": 866.140625,
+      "ratio_vs_stock": 0.5216133550444448,
       "sample_policy": "adaptive",
-      "stock_vs_git_ratio": 1.0827922800783367,
+      "stock_vs_git_ratio": 1.1110961469121157,
       "jj_level_gap": false,
-      "notes": "2000 unreachable loose blobs (8 MiB), aged 30 days; verify collection; girt n=3 range=11165.416..11587.425ms; stock n=3 range=9649.468..9727.062ms; git n=3 range=8908.264..8931.551ms",
+      "notes": "2000 unreachable loose blobs (8 MiB), aged 30 days; verify collection; girt n=3 range=5172.115..5948.595ms; stock n=3 range=11005.688..11297.471ms; git n=3 range=9817.048..10078.284ms",
       "harness_op": "gc-garbage",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          11165.415540992399,
-          11587.425124991569
+          5172.115207999013,
+          5948.595290989033
         ],
         "stock": [
-          9649.468083007378,
-          9727.061625002534
+          11005.688000004739,
+          11297.470917008468
         ],
         "git": [
-          8908.263958990574,
-          8931.550709006842
+          9817.047791002551,
+          10078.283665992785
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -3713,15 +4473,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T19:14:29-0700"
+        "2026-10-18T08:23:33-0700"
       ],
-      "girt_version": "0.14.0",
-      "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
-      "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        5.6,
-        17.8
+        21.0,
+        25.2
       ],
       "issues": [],
       "comparable": false,
@@ -3866,40 +4626,40 @@
       "variant": "ancestry",
       "girt_samples": 1,
       "girt_attempts": 1,
-      "girt_ms": 66049.37166700256,
-      "girt_rss_mb": 388.71875,
+      "girt_ms": 60146.52541599935,
+      "girt_rss_mb": 398.734375,
       "stock_samples": 1,
       "stock_attempts": 1,
-      "stock_ms": 104867.1926669922,
-      "stock_rss_mb": 518.4375,
+      "stock_ms": 74925.50487500557,
+      "stock_rss_mb": 536.421875,
       "git_samples": 1,
       "git_attempts": 1,
-      "git_ms": 2968.098541998188,
-      "git_rss_mb": 140.25,
-      "ratio_vs_stock": 0.6298382743661655,
+      "git_ms": 1261.59229100449,
+      "git_rss_mb": 140.1875,
+      "ratio_vs_stock": 0.8027510193803666,
       "sample_policy": "adaptive",
-      "stock_vs_git_ratio": 35.331439028433785,
+      "stock_vs_git_ratio": 59.38963436067707,
       "jj_level_gap": true,
-      "notes": "full output consumed to /dev/null; girt n=1 range=66049.372..66049.372ms; stock n=1 range=104867.193..104867.193ms; git n=1 range=2968.099..2968.099ms; timed on a fresh copy per sample after adapter d9c0ceb1 stopped log writing loose copies of packed trees; one sample per tool at load 24.9-34.9. This single sample was faster than stock; parity or a speedup is not established.",
+      "notes": "full output consumed to /dev/null; girt n=1 range=60146.525..60146.525ms; stock n=1 range=74925.505..74925.505ms; git n=1 range=1261.592..1261.592ms",
       "harness_op": "log-ancestry",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          66049.37166700256,
-          66049.37166700256
+          60146.52541599935,
+          60146.52541599935
         ],
         "stock": [
-          104867.1926669922,
-          104867.1926669922
+          74925.50487500557,
+          74925.50487500557
         ],
         "git": [
-          2968.098541998188,
-          2968.098541998188
+          1261.59229100449,
+          1261.59229100449
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "632dd28b002e2a60adaf582e644e0a05582766ddd799ddb79632f3813bdf1adf"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -3913,15 +4673,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T22:00:40-0700"
+        "2026-10-18T08:19:17-0700"
       ],
-      "girt_version": "0.14.0",
-      "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
-      "jj_adapter_commit": "d9c0ceb1f7869825116fadda854bbb15a816c812",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        24.9,
-        34.9
+        23.0,
+        33.3
       ],
       "issues": []
     },
@@ -3932,40 +4692,40 @@
       "variant": "default",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 59.88547949891654,
-      "girt_rss_mb": 45.9375,
+      "girt_ms": 99.72268749697832,
+      "girt_rss_mb": 46.5,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 53.594333498040214,
-      "stock_rss_mb": 44.90625,
+      "stock_ms": 95.03749999566935,
+      "stock_rss_mb": 46.28125,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 515.0309585005743,
-      "git_rss_mb": 142.3125,
-      "ratio_vs_stock": 1.117384536578039,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 0.10406041154122281,
+      "git_ms": 656.3623335023294,
+      "git_rss_mb": 142.359375,
+      "ratio_vs_stock": 1.049298303317348,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 0.14479426247474037,
       "jj_level_gap": false,
-      "notes": "default revsets differ; girt n=6 range=53.319..69.035ms; stock n=6 range=50.721..60.939ms; git n=6 range=494.236..530.321ms",
+      "notes": "default revsets differ; girt n=6 range=80.904..193.329ms; stock n=6 range=76.873..123.521ms; git n=6 range=645.413..666.855ms",
       "harness_op": "log-default",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          53.318875001423294,
-          69.03516600141302
+          80.90383300441317,
+          193.32854100503027
         ],
         "stock": [
-          50.720708997687325,
-          60.938958999031456
+          76.87299999815878,
+          123.52066700987052
         ],
         "git": [
-          494.2364579983405,
-          530.320791000122
+          645.413207996171,
+          666.8549999885727
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -3979,15 +4739,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T04:49:39-0700"
+        "2026-10-18T09:27:38-0700"
       ],
-      "girt_version": "0.11.1",
-      "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-      "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        24.0,
-        25.4
+        17.2,
+        19.5
       ],
       "issues": []
     },
@@ -4064,40 +4824,40 @@
       "variant": "limited",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 222.53306250058813,
-      "girt_rss_mb": 87.75,
+      "girt_ms": 210.83616650867043,
+      "girt_rss_mb": 86.828125,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 203.5547920022509,
-      "stock_rss_mb": 84.328125,
+      "stock_ms": 209.65847849583952,
+      "stock_rss_mb": 84.359375,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 633.5952709996491,
-      "git_rss_mb": 141.265625,
-      "ratio_vs_stock": 1.0932342113475146,
+      "git_ms": 608.2228954983293,
+      "git_rss_mb": 141.21875,
+      "ratio_vs_stock": 1.0056171733253052,
       "sample_policy": "adaptive",
-      "stock_vs_git_ratio": 0.3212694306905009,
+      "stock_vs_git_ratio": 0.3447066528530829,
       "jj_level_gap": false,
-      "notes": "100 revisions maximum from full ancestry; full output consumed to /dev/null; girt n=6 range=218.140..1228.758ms; stock n=6 range=197.434..208.850ms; git n=6 range=623.527..668.403ms; timed on a fresh copy per sample after adapter d9c0ceb1.",
+      "notes": "100 revisions maximum from full ancestry; full output consumed to /dev/null; girt n=6 range=200.343..237.255ms; stock n=6 range=198.692..228.855ms; git n=6 range=598.385..659.541ms",
       "harness_op": "log-limited",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          218.13974999531638,
-          1228.758375000325
+          200.34274998761248,
+          237.25504201138392
         ],
         "stock": [
-          197.4342499888735,
-          208.85000000998843
+          198.69191700126976,
+          228.85516700625885
         ],
         "git": [
-          623.5273329948541,
-          668.4026250004536
+          598.3848330070032,
+          659.5412500028033
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "632dd28b002e2a60adaf582e644e0a05582766ddd799ddb79632f3813bdf1adf"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -4111,15 +4871,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T22:00:40-0700"
+        "2026-10-18T09:26:42-0700"
       ],
-      "girt_version": "0.14.0",
-      "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
-      "jj_adapter_commit": "d9c0ceb1f7869825116fadda854bbb15a816c812",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        28.5,
-        31.3
+        17.6,
+        18.7
       ],
       "issues": []
     },
@@ -4130,40 +4890,40 @@
       "variant": "no-graph",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 54.138250001415145,
-      "girt_rss_mb": 45.28125,
+      "girt_ms": 84.86802099650959,
+      "girt_rss_mb": 44.984375,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 48.71674999958486,
-      "stock_rss_mb": 44.046875,
+      "stock_ms": 75.3600835087127,
+      "stock_rss_mb": 45.796875,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 14.414937499168445,
-      "git_rss_mb": 9.8125,
-      "ratio_vs_stock": 1.1112861593163845,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 3.379601888831997,
+      "git_ms": 28.396999994583894,
+      "git_rss_mb": 9.859375,
+      "ratio_vs_stock": 1.1261667589141886,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 2.6538043991649114,
       "jj_level_gap": true,
-      "notes": "default revsets differ; girt n=6 range=50.365..63.614ms; stock n=6 range=46.287..61.582ms; git n=6 range=14.038..18.751ms",
+      "notes": "default revsets differ; girt n=6 range=68.948..131.717ms; stock n=6 range=63.428..104.416ms; git n=6 range=23.642..73.127ms",
       "harness_op": "log-no-graph",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          50.36537499836413,
-          63.61395899875788
+          68.94758400449064,
+          131.7170829861425
         ],
         "stock": [
-          46.28670799866086,
-          61.58158299876959
+          63.42812499497086,
+          104.41562499909196
         ],
         "git": [
-          14.038458997674752,
-          18.750958999589784
+          23.64158300042618,
+          73.12662499316502
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -4177,15 +4937,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T06:58:53-0700"
+        "2026-10-18T09:28:42-0700"
       ],
-      "girt_version": "0.11.1",
-      "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-      "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        19.9,
-        19.9
+        20.3,
+        22.6
       ],
       "issues": []
     },
@@ -4662,40 +5422,40 @@
       "variant": "1",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 203.15706251130905,
-      "girt_rss_mb": 63.984375,
+      "girt_ms": 241.38093750661938,
+      "girt_rss_mb": 64.6875,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 174.95720800070558,
-      "stock_rss_mb": 61.46875,
+      "stock_ms": 220.1894375102711,
+      "stock_rss_mb": 63.53125,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 74.89620849810308,
-      "git_rss_mb": 30.4375,
-      "ratio_vs_stock": 1.1611814387806745,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 2.3359955264642904,
+      "git_ms": 90.89366700209212,
+      "git_rss_mb": 31.1875,
+      "ratio_vs_stock": 1.0962421278512045,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 2.4224948202959284,
       "jj_level_gap": true,
-      "notes": "1 nonempty commits moved backwards 20 main commits; girt n=6 range=199.648..211.005ms; stock n=6 range=170.208..177.897ms; git n=6 range=73.726..75.572ms",
+      "notes": "1 nonempty commits moved backwards 20 main commits; girt n=6 range=221.503..256.154ms; stock n=6 range=207.363..594.391ms; git n=6 range=89.795..224.458ms",
       "harness_op": "rebase-1",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          199.647792003816,
-          211.00500000466127
+          221.50304200476967,
+          256.1539579910459
         ],
         "stock": [
-          170.2082080009859,
-          177.89749999064952
+          207.36299999407493,
+          594.3907920009224
         ],
         "git": [
-          73.72583300457336,
-          75.57183300377801
+          89.79470899794251,
+          224.45812499790918
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -4709,15 +5469,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T18:29:36-0700"
+        "2026-10-18T09:21:54-0700"
       ],
-      "girt_version": "0.13.1",
-      "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-      "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        4.7,
-        5.3
+        16.3,
+        22.7
       ],
       "issues": []
     },
@@ -4728,40 +5488,40 @@
       "variant": "10",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 287.0313125094981,
-      "girt_rss_mb": 64.703125,
+      "girt_ms": 321.4927715016529,
+      "girt_rss_mb": 64.34375,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 244.80402049812255,
-      "stock_rss_mb": 62.078125,
+      "stock_ms": 309.5320834981976,
+      "stock_rss_mb": 64.71875,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 197.21900000149617,
-      "git_rss_mb": 31.53125,
-      "ratio_vs_stock": 1.1724942749120388,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 1.2412801023038622,
+      "git_ms": 245.50822900346247,
+      "git_rss_mb": 33.59375,
+      "ratio_vs_stock": 1.0386411898510834,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 1.2607808901339603,
       "jj_level_gap": false,
-      "notes": "10 nonempty commits moved backwards 20 main commits; girt n=6 range=275.449..320.364ms; stock n=6 range=237.246..252.048ms; git n=6 range=193.389..202.642ms",
+      "notes": "10 nonempty commits moved backwards 20 main commits; girt n=6 range=313.405..331.600ms; stock n=6 range=293.270..382.559ms; git n=6 range=168.637..294.954ms",
       "harness_op": "rebase-10",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          275.4494580003666,
-          320.36391700967215
+          313.4051250090124,
+          331.60033299645875
         ],
         "stock": [
-          237.24641599983443,
-          252.04762499197386
+          293.2695000054082,
+          382.5593329966068
         ],
         "git": [
-          193.38870800856967,
-          202.6424159994349
+          168.63720800029114,
+          294.9543330032611
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -4775,15 +5535,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T18:29:36-0700"
+        "2026-10-18T09:14:15-0700"
       ],
-      "girt_version": "0.13.1",
-      "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-      "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        4.6,
-        7.7
+        19.4,
+        22.4
       ],
       "issues": []
     },
@@ -4794,40 +5554,40 @@
       "variant": "100",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 1261.6012294965913,
-      "girt_rss_mb": 84.78125,
+      "girt_ms": 1058.0980835002265,
+      "girt_rss_mb": 80.546875,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 1099.656229496759,
-      "stock_rss_mb": 81.203125,
+      "stock_ms": 1009.9385834982968,
+      "stock_rss_mb": 80.6875,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 1106.4968335049343,
-      "git_rss_mb": 38.359375,
-      "ratio_vs_stock": 1.1472687515024074,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 0.9938177825719509,
+      "git_ms": 1133.1481455054018,
+      "git_rss_mb": 39.640625,
+      "ratio_vs_stock": 1.0476855729534675,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 0.8912679136476443,
       "jj_level_gap": false,
-      "notes": "100 nonempty commits moved backwards 20 main commits; girt n=6 range=1127.559..1338.789ms; stock n=6 range=970.273..1124.443ms; git n=6 range=920.688..1174.713ms",
+      "notes": "100 nonempty commits moved backwards 20 main commits; girt n=6 range=1016.632..1063.415ms; stock n=6 range=958.047..1269.636ms; git n=6 range=1025.598..1423.911ms",
       "harness_op": "rebase-100",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          1127.5588330026949,
-          1338.788624998415
+          1016.6315419919556,
+          1063.4153749997495
         ],
         "stock": [
-          970.2730410062941,
-          1124.4427089986857
+          958.0467080086237,
+          1269.6364579896908
         ],
         "git": [
-          920.6879999983357,
-          1174.7132500022417
+          1025.5980830115732,
+          1423.9105000015115
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -4841,15 +5601,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T18:29:36-0700"
+        "2026-10-18T08:54:56-0700"
       ],
-      "girt_version": "0.13.1",
-      "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-      "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        6.4,
-        7.6
+        18.4,
+        23.2
       ],
       "issues": []
     },
@@ -4860,40 +5620,40 @@
       "variant": "bookmark",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 194.43514550948748,
-      "girt_rss_mb": 60.15625,
+      "girt_ms": 181.55839599785395,
+      "girt_rss_mb": 59.875,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 164.1553744993871,
-      "stock_rss_mb": 53.859375,
+      "stock_ms": 164.3471874995157,
+      "stock_rss_mb": 54.015625,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 106.43170799448853,
-      "git_rss_mb": 22.34375,
-      "ratio_vs_stock": 1.1844579935469213,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 1.542354037087216,
+      "git_ms": 124.21868750243448,
+      "git_rss_mb": 24.78125,
+      "ratio_vs_stock": 1.1047246914303839,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 1.323047206534804,
       "jj_level_gap": false,
-      "notes": "whole 10-commit topic bookmark onto main advanced by one empty commit; girt n=6 range=177.211..206.102ms; stock n=6 range=159.743..166.537ms; git n=6 range=101.469..110.183ms",
+      "notes": "whole 10-commit topic bookmark onto main advanced by one empty commit; girt n=6 range=167.157..216.323ms; stock n=6 range=156.048..259.492ms; git n=6 range=120.205..161.807ms",
       "harness_op": "rebase-bookmark",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          177.21116699976847,
-          206.10245800344273
+          167.15704200032633,
+          216.32258300087415
         ],
         "stock": [
-          159.743083990179,
-          166.53691700776108
+          156.04775000247173,
+          259.4920830015326
         ],
         "git": [
-          101.46874999918509,
-          110.18295800022315
+          120.20537498756312,
+          161.80691700719763
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -4907,15 +5667,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T18:29:36-0700"
+        "2026-10-18T09:20:03-0700"
       ],
-      "girt_version": "0.13.1",
-      "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-      "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        5.6,
-        6.1
+        20.0,
+        23.9
       ],
       "issues": []
     },
@@ -5190,40 +5950,40 @@
       "variant": "clean",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 44.26412500470178,
-      "girt_rss_mb": 45.59375,
+      "girt_ms": 84.70143799786456,
+      "girt_rss_mb": 44.984375,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 40.110875001118984,
-      "stock_rss_mb": 44.578125,
+      "stock_ms": 83.92137499322416,
+      "stock_rss_mb": 45.984375,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 25.243812495318707,
-      "git_rss_mb": 11.390625,
-      "ratio_vs_stock": 1.103544238400856,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 1.5889388739738608,
+      "git_ms": 556.2270420050481,
+      "git_rss_mb": 11.796875,
+      "ratio_vs_stock": 1.0092951647265476,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 0.15087611470796222,
       "jj_level_gap": false,
-      "notes": "girt n=6 range=43.548..76.673ms; stock n=6 range=39.739..58.685ms; git n=6 range=23.350..548.480ms",
+      "notes": "girt n=6 range=69.014..134.602ms; stock n=6 range=75.093..130.319ms; git n=6 range=544.448..621.973ms",
       "harness_op": "status-clean",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          43.547665991354734,
-          76.67287498770747
+          69.01404199015815,
+          134.60183299321216
         ],
         "stock": [
-          39.73895798844751,
-          58.68541699601337
+          75.09275000484195,
+          130.31887498800643
         ],
         "git": [
-          23.350333998678252,
-          548.4795830125222
+          544.4483339961153,
+          621.9732919998933
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -5237,15 +5997,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T18:29:36-0700"
+        "2026-10-18T09:25:04-0700"
       ],
-      "girt_version": "0.13.1",
-      "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-      "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        25.3,
-        25.3
+        12.6,
+        15.8
       ],
       "issues": []
     },
@@ -5256,40 +6016,40 @@
       "variant": "many-edits",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 387.014874999295,
-      "girt_rss_mb": 67.71875,
+      "girt_ms": 279.80599999864353,
+      "girt_rss_mb": 72.125,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 352.4407705044723,
-      "stock_rss_mb": 65.265625,
+      "stock_ms": 503.6683539947262,
+      "stock_rss_mb": 65.0625,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 475.96610400796635,
-      "git_rss_mb": 12.09375,
-      "ratio_vs_stock": 1.0980990492255889,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 0.740474516014219,
+      "git_ms": 577.6786459973664,
+      "git_rss_mb": 12.171875,
+      "ratio_vs_stock": 0.5555361931704237,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 0.8718832823137146,
       "jj_level_gap": false,
-      "notes": "1000 tracked files edited; girt n=6 range=377.843..402.784ms; stock n=6 range=345.143..365.390ms; git n=6 range=468.437..496.372ms",
+      "notes": "1000 tracked files edited; girt n=6 range=269.794..299.306ms; stock n=6 range=448.445..526.245ms; git n=6 range=559.372..656.471ms",
       "harness_op": "status-many-edits",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          377.8432499966584,
-          402.7835830056574
+          269.79437499539927,
+          299.3056660052389
         ],
         "stock": [
-          345.1432500005467,
-          365.39041600190103
+          448.44470800308045,
+          526.2449579895474
         ],
         "git": [
-          468.4368330053985,
-          496.37162500584964
+          559.371999988798,
+          656.4711249957327
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -5303,15 +6063,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T18:29:36-0700"
+        "2026-10-18T09:10:10-0700"
       ],
-      "girt_version": "0.13.1",
-      "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-      "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        18.6,
-        25.7
+        17.4,
+        22.6
       ],
       "issues": []
     },
@@ -5322,40 +6082,40 @@
       "variant": "small-edit",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 114.00147899985313,
-      "girt_rss_mb": 48.765625,
+      "girt_ms": 144.78747949760873,
+      "girt_rss_mb": 50.390625,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 110.37866699916776,
-      "stock_rss_mb": 49.6875,
+      "stock_ms": 145.8311460010009,
+      "stock_rss_mb": 49.578125,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 560.4219790038769,
-      "git_rss_mb": 11.46875,
-      "ratio_vs_stock": 1.032821668345684,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 0.19695634920557636,
+      "git_ms": 551.6137500017066,
+      "git_rss_mb": 11.78125,
+      "ratio_vs_stock": 0.9928433223490886,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 0.26437184714947676,
       "jj_level_gap": false,
-      "notes": "girt n=6 range=103.535..128.309ms; stock n=6 range=104.390..115.857ms; git n=6 range=551.501..570.493ms",
+      "notes": "girt n=6 range=130.009..158.254ms; stock n=6 range=123.659..177.869ms; git n=6 range=546.141..554.568ms",
       "harness_op": "status-small-edit",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          103.53495899471454,
-          128.30858401139267
+          130.0094589969376,
+          158.254041991313
         ],
         "stock": [
-          104.39016699092463,
-          115.85733300307766
+          123.65924999176059,
+          177.8694579988951
         ],
         "git": [
-          551.5014999982668,
-          570.493166000233
+          546.1409590061521,
+          554.5678750058869
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -5369,15 +6129,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T18:29:36-0700"
+        "2026-10-18T09:23:40-0700"
       ],
-      "girt_version": "0.13.1",
-      "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-      "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        18.4,
-        23.9
+        13.4,
+        15.8
       ],
       "issues": []
     },
@@ -5388,40 +6148,40 @@
       "variant": "untracked",
       "girt_samples": 6,
       "girt_attempts": 6,
-      "girt_ms": 505.9358544967836,
-      "girt_rss_mb": 61.21875,
+      "girt_ms": 296.14179149939446,
+      "girt_rss_mb": 62.203125,
       "stock_samples": 6,
       "stock_attempts": 6,
-      "stock_ms": 1740.5226664996007,
-      "stock_rss_mb": 60.828125,
+      "stock_ms": 1541.4961249916814,
+      "stock_rss_mb": 59.3125,
       "git_samples": 6,
       "git_attempts": 6,
-      "git_ms": 556.4352714936831,
-      "git_rss_mb": 11.59375,
-      "ratio_vs_stock": 0.2906804170004181,
-      "sample_policy": "fixed-six",
-      "stock_vs_git_ratio": 3.12798766661103,
+      "git_ms": 689.0186669988907,
+      "git_rss_mb": 11.578125,
+      "ratio_vs_stock": 0.1921132247419646,
+      "sample_policy": "adaptive",
+      "stock_vs_git_ratio": 2.2372341981761767,
       "jj_level_gap": true,
-      "notes": "10000 identical-content untracked files across 100 directories; duplicate-blob workload; girt n=6 range=434.287..568.999ms; stock n=6 range=1709.605..1844.998ms; git n=6 range=550.915..563.131ms",
+      "notes": "10000 identical-content untracked files across 100 directories; duplicate-blob workload; girt n=6 range=283.626..408.483ms; stock n=6 range=1520.153..1551.389ms; git n=6 range=648.859..4128.256ms",
       "harness_op": "status-untracked",
       "status": "ok",
       "sample_ranges_ms": {
         "girt": [
-          434.2867910017958,
-          568.9988329977496
+          283.62612500495743,
+          408.4830840001814
         ],
         "stock": [
-          1709.6049579995451,
-          1844.9982079910114
+          1520.1527080062078,
+          1551.3894999894546
         ],
         "git": [
-          550.9146669937763,
-          563.1308339943644
+          648.8593340036459,
+          4128.256165990024
         ]
       },
       "binary_fingerprints": {
         "girt": [
-          "01cba81e0747daa637d0762ffd6c7589a134677c0675f79fb3b731c82bcff292"
+          "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
         ],
         "stock": [
           "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -5435,15 +6195,15 @@
       },
       "profiles": [],
       "run_epochs": [
-        "2026-10-17T18:29:36-0700"
+        "2026-10-18T09:00:59-0700"
       ],
-      "girt_version": "0.13.1",
-      "girt_commit": "4e8cb9db082191517ad87d201d8121e68b5e9f8e",
-      "jj_adapter_commit": "c583d1b88adfac08ea19cdeb27720831a7700f9c",
-      "measured_on": "2026-10-17",
+      "girt_version": "0.17.0",
+      "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+      "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+      "measured_on": "2026-10-18",
       "load_1m_range": [
-        18.4,
-        26.6
+        16.2,
+        23.5
       ],
       "issues": []
     },
