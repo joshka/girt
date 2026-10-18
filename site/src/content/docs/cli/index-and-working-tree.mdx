@@ -134,9 +134,13 @@ A  .gitignore
 `--hard` also makes the tracked working files match the commit, discarding local changes: modified
 files are rewritten, added files removed and deleted files restored, converted as `girt checkout`
 converts them (`--raw` and `--refuse-filter-commands` work the same way). Untracked files stay,
-except one where the commit has a file. Unlike Git, girt refuses rather than delete an untracked
-directory in the way, and keeps directories that removing files left empty. `--keep` and `--merge`
-are not available yet, and an index from a sparse checkout is refused.
+except one where the commit has a file, and directories left empty are removed. Unlike Git, girt
+refuses rather than delete an untracked directory in the way that still holds files.
+
+`--keep` updates only the files that differ between `HEAD` and the commit and keeps your other local
+changes; `--merge` updates the files whose staged version differs from the commit, which aborts a
+conflicted merge while keeping unrelated unstaged edits. Both refuse, changing nothing, when they
+would overwrite local changes. An index from a sparse checkout is refused.
 
 ## Manage linked worktrees (`girt worktree`)
 

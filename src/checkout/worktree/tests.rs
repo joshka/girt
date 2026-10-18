@@ -1160,6 +1160,7 @@ fn projection_checks_intermediate_states_not_only_the_final_tree() {
         &mut edit,
         None,
         super::Local::Refuse,
+        None,
         Limits::default(),
         &cancel,
     )

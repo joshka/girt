@@ -109,6 +109,7 @@ fn working_files(root: &Path) -> String {
             let metadata = std::fs::symlink_metadata(&path).unwrap();
             let relative = path.strip_prefix(root).unwrap().display().to_string();
             if metadata.is_dir() {
+                listed.push(format!("{relative}/"));
                 pending.push(path);
             } else {
                 #[cfg(unix)]
@@ -521,7 +522,47 @@ fn hard_resolves_conflicts_and_modes() {
     );
 }
 
-/// Git deletes an untracked directory in the way; girt refuses before changing anything.
+/// An untracked directory holding only empty directories where the target has a file is
+/// replaced, as Git replaces it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn hard_replaces_empty_untracked_directories_in_the_way() {
+    let block = |root: &Path| {
+        git(root, &["rm", "--quiet", "--cached", "dir/f2.txt"]);
+        std::fs::remove_file(root.join("dir/f2.txt")).unwrap();
+        std::fs::create_dir_all(root.join("dir/f2.txt/empty/nested")).unwrap();
+    };
+    compare(
+        block,
+        &["reset", "--quiet", "--hard", "HEAD"],
+        |repo, root| hard(root, repo, "HEAD"),
+    );
+}
+
+/// Directories left empty by removing tracked files are removed; one with untracked content
+/// stays.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn hard_removes_emptied_directories() {
+    let nested = |root: &Path| {
+        git(root, &["stash", "--quiet", "--include-untracked"]);
+        std::fs::create_dir_all(root.join("gone/deeper")).unwrap();
+        std::fs::write(root.join("gone/deeper/x.txt"), "x\n").unwrap();
+        std::fs::create_dir_all(root.join("kept")).unwrap();
+        std::fs::write(root.join("kept/y.txt"), "y\n").unwrap();
+        git(root, &["add", "gone", "kept"]);
+        git(root, &["commit", "--quiet", "-m", "dirs"]);
+        std::fs::write(root.join("kept/untracked.txt"), "untracked\n").unwrap();
+    };
+    compare(
+        nested,
+        &["reset", "--quiet", "--hard", "HEAD~1"],
+        |repo, root| hard(root, repo, "HEAD~1"),
+    );
+}
+
+/// Git deletes an untracked directory in the way with its contents; girt refuses before
+/// changing anything when it holds a file, naming that file.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn hard_refuses_untracked_directory_in_the_way() {
@@ -535,7 +576,13 @@ fn hard_refuses_untracked_directory_in_the_way() {
     let head = git(root.path(), &["rev-parse", "HEAD"]);
     let before = working_files(root.path());
     let result = hard(root.path(), &repository, "HEAD");
-    assert!(matches!(result, Err(ResetError::Checkout(_))), "{result:?}");
+    let Err(ResetError::Checkout(failure)) = &result else {
+        panic!("{result:?}");
+    };
+    assert!(
+        matches!(&*failure.cause, girt::checkout::Error::Refused { path, .. } if path == b"dir/f2.txt/keep"),
+        "{failure:?}"
+    );
     assert_eq!(working_files(root.path()), before);
     assert_eq!(git(root.path(), &["rev-parse", "HEAD"]), head);
 }
@@ -588,7 +635,7 @@ fn hard_keeps_clean_files_when_only_attributes_change() {
                 )
                 .unwrap();
             let options = ResetOptions::new(committer(), "HEAD~1");
-            repo.reset_hard_with_filters(commit, &options, &mut filters)
+            repo.reset_with_filters(commit, ResetMode::Hard, &options, &mut filters)
                 .map(drop)
         },
     );
@@ -616,4 +663,274 @@ fn hard_reset_without_commits() {
         git(actual.path(), &["ls-files", "--stage"]),
         git(expected.path(), &["ls-files", "--stage"])
     );
+}
+
+/// Keep and merge resets run on Linux and macOS only.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn reset_mode(
+    root: &Path,
+    repo: &Repository,
+    mode: ResetMode,
+    revision: &str,
+) -> Result<(), ResetError> {
+    let options = ResetOptions::new(committer(), revision);
+    repo.reset(resolve(root, revision), mode, &options)
+        .map(drop)
+}
+
+/// A clean starting point: the fixture's local changes are stashed.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn clean(root: &Path) {
+    git(root, &["stash", "--quiet", "--include-untracked"]);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn keep_updates_changed_files_and_keeps_other_local_changes() {
+    // An unstaged change and a staged change to files HEAD~1 does not change, plus untracked.
+    let local = |root: &Path| {
+        clean(root);
+        std::fs::write(root.join("dir/f0.txt"), "edited\n").unwrap();
+        std::fs::write(root.join("dir/f1.txt"), "staged\n").unwrap();
+        git(root, &["add", "dir/f1.txt"]);
+        std::fs::write(root.join("untracked.txt"), "untracked\n").unwrap();
+    };
+    compare(
+        local,
+        &["reset", "--quiet", "--keep", "HEAD~1"],
+        |repo, root| reset_mode(root, repo, ResetMode::Keep, "HEAD~1"),
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn keep_refuses_local_changes_it_would_overwrite() {
+    for (name, change) in [
+        (
+            "unstaged",
+            (|root: &Path| std::fs::write(root.join("a.txt"), "edited\n").unwrap()) as fn(&Path),
+        ),
+        ("staged", |root: &Path| {
+            std::fs::write(root.join("a.txt"), "staged\n").unwrap();
+            git(root, &["add", "a.txt"]);
+        }),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        fixture(root.path());
+        clean(root.path());
+        change(root.path());
+        assert!(
+            !run(root.path(), &["reset", "--quiet", "--keep", "HEAD~1"])
+                .status
+                .success()
+        );
+        let before = observe(root.path());
+        let repository = Repository::open(root.path()).unwrap();
+        let result = reset_mode(root.path(), &repository, ResetMode::Keep, "HEAD~1");
+        assert!(
+            matches!(result, Err(ResetError::LocalChanges { .. })),
+            "{name}: {result:?}"
+        );
+        assert_eq!(observe(root.path()), before, "{name}");
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn merge_discards_staged_changes_and_keeps_unstaged_ones() {
+    let local = |root: &Path| {
+        clean(root);
+        // Staged only: discarded. Unstaged on a file whose index matches the target: kept.
+        std::fs::write(root.join("dir/f1.txt"), "staged\n").unwrap();
+        git(root, &["add", "dir/f1.txt"]);
+        std::fs::write(root.join("dir/f0.txt"), "edited\n").unwrap();
+        std::fs::write(root.join("new.txt"), "new\n").unwrap();
+        git(root, &["add", "new.txt"]);
+    };
+    compare(
+        local,
+        &["reset", "--quiet", "--merge", "HEAD~1"],
+        |repo, root| reset_mode(root, repo, ResetMode::Merge, "HEAD~1"),
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn merge_aborts_a_conflicted_merge() {
+    let conflict = |root: &Path| {
+        clean(root);
+        git(root, &["checkout", "--quiet", "-b", "other", "main~1"]);
+        std::fs::write(root.join("a.txt"), "other\n").unwrap();
+        git(root, &["commit", "--quiet", "-am", "other"]);
+        git(root, &["checkout", "--quiet", "main"]);
+        std::fs::write(root.join("dir/f0.txt"), "unrelated edit\n").unwrap();
+        assert!(!run(root, &["merge", "--quiet", "other"]).status.success());
+    };
+    compare(conflict, &["reset", "--quiet", "--merge"], |repo, root| {
+        reset_mode(root, repo, ResetMode::Merge, "HEAD")
+    });
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn merge_refuses_unstaged_changes_it_would_overwrite() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path());
+    clean(root.path());
+    std::fs::write(root.path().join("a.txt"), "staged\n").unwrap();
+    git(root.path(), &["add", "a.txt"]);
+    std::fs::write(root.path().join("a.txt"), "and unstaged\n").unwrap();
+    assert!(
+        !run(root.path(), &["reset", "--quiet", "--merge", "HEAD"])
+            .status
+            .success()
+    );
+    let before = observe(root.path());
+    let repository = Repository::open(root.path()).unwrap();
+    let result = reset_mode(root.path(), &repository, ResetMode::Merge, "HEAD");
+    assert!(
+        matches!(result, Err(ResetError::LocalChanges { .. })),
+        "{result:?}"
+    );
+    assert_eq!(observe(root.path()), before);
+}
+
+/// Runs `git reset --<mode> T` and girt's reset on copies prepared with `prepare`, where `T` is
+/// a commit that changes `a.txt` and adds `b.txt`. When Git refuses, girt must refuse and change
+/// nothing; otherwise every observable must match.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn keep_or_merge_matches_git(mode: ResetMode, name: &str, prepare: impl Fn(&Path)) {
+    let flag = if mode == ResetMode::Keep {
+        "--keep"
+    } else {
+        "--merge"
+    };
+    let setup = |root: &Path| {
+        clean(root);
+        std::fs::write(root.join("a.txt"), "target\n").unwrap();
+        std::fs::write(root.join("b.txt"), "added\n").unwrap();
+        git(root, &["add", "a.txt", "b.txt"]);
+        git(root, &["commit", "--quiet", "-m", "target"]);
+        git(root, &["tag", "T"]);
+        git(root, &["reset", "--quiet", "--hard", "HEAD~1"]);
+        prepare(root);
+    };
+    let expected = tempfile::tempdir().unwrap();
+    let actual = tempfile::tempdir().unwrap();
+    for root in [expected.path(), actual.path()] {
+        fixture(root);
+        setup(root);
+    }
+    let refused = !run(expected.path(), &["reset", "--quiet", flag, "T"])
+        .status
+        .success();
+    let before = observe(actual.path());
+    let repository = Repository::open(actual.path()).unwrap();
+    let result = reset_mode(actual.path(), &repository, mode, "T");
+    if refused {
+        assert!(
+            matches!(
+                result,
+                Err(ResetError::LocalChanges { .. } | ResetError::MergeInProgress)
+            ),
+            "{flag} {name}: Git refused, girt {result:?}"
+        );
+        assert_eq!(
+            observe(actual.path()),
+            before,
+            "{flag} {name}: girt changed files"
+        );
+    } else {
+        result.unwrap_or_else(|error| panic!("{flag} {name}: {error}"));
+        assert_eq!(
+            observe(actual.path()),
+            observe(expected.path()),
+            "{flag} {name}"
+        );
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn keep_and_merge_refusal_rules_match_git() {
+    type Prepare = fn(&Path);
+    let cases: &[(&str, Prepare)] = &[
+        ("clean", |_| {}),
+        ("deleted a", |root| {
+            std::fs::remove_file(root.join("a.txt")).unwrap()
+        }),
+        ("unstaged a", |root| {
+            std::fs::write(root.join("a.txt"), "mine\n").unwrap()
+        }),
+        ("staged a equal to target", |root| {
+            std::fs::write(root.join("a.txt"), "target\n").unwrap();
+            git(root, &["add", "a.txt"]);
+        }),
+        ("staged a equal to target, then edited", |root| {
+            std::fs::write(root.join("a.txt"), "target\n").unwrap();
+            git(root, &["add", "a.txt"]);
+            std::fs::write(root.join("a.txt"), "newer\n").unwrap();
+        }),
+        ("staged a different", |root| {
+            std::fs::write(root.join("a.txt"), "mine\n").unwrap();
+            git(root, &["add", "a.txt"]);
+        }),
+        ("untracked b in the way", |root| {
+            std::fs::write(root.join("b.txt"), "precious\n").unwrap();
+        }),
+        ("intent-to-add b", |root| {
+            std::fs::write(root.join("b.txt"), "planned\n").unwrap();
+            git(root, &["add", "-N", "b.txt"]);
+        }),
+        ("unrelated conflict", |root| {
+            let blob = git(root, &["rev-parse", "HEAD:dir/f0.txt"]);
+            let blob = blob.trim();
+            let stages = format!(
+                "0 {zero} 0\tdir/f0.txt\n100644 {blob} 1\tdir/f0.txt\n100644 {blob} 2\tdir/f0.txt\n",
+                zero = "0".repeat(40)
+            );
+            let mut child = Command::new("git")
+                .current_dir(root)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", root.join("absent-config"))
+                .args(["update-index", "--index-info"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(stages.as_bytes())
+                .unwrap();
+            assert!(child.wait().unwrap().success());
+        }),
+    ];
+    for mode in [ResetMode::Keep, ResetMode::Merge] {
+        for (name, prepare) in cases {
+            keep_or_merge_matches_git(mode, name, prepare);
+        }
+    }
+}
+
+/// On a branch with no commits, a merge reset refuses unstaged changes, as Git does.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn merge_reset_without_commits_refuses_unstaged_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    git(path, &["init", "--quiet", "--template="]);
+    std::fs::write(path.join("a.txt"), "staged\n").unwrap();
+    git(path, &["add", "a.txt"]);
+    std::fs::write(path.join("a.txt"), "edited\n").unwrap();
+    let before = working_files(path);
+    let repository = Repository::open(path).unwrap();
+    let result = repository.reset_unborn(ResetMode::Merge, &Default::default());
+    assert!(
+        matches!(result, Err(ResetError::LocalChanges { .. })),
+        "{result:?}"
+    );
+    assert_eq!(working_files(path), before);
+    assert_eq!(git(path, &["ls-files"]), "a.txt\n");
 }

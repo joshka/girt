@@ -139,4 +139,4 @@ mod worktree;
 
 pub use types::*;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(crate) use worktree::{run_discarding, run_with_index};
+pub(crate) use worktree::{LOCAL_CHANGES, Selection, run_discarding, run_with_index};
