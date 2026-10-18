@@ -244,17 +244,20 @@ runs.
 `commit_graph::CommitGraph` reads standalone SHA-1 and SHA-256 graph files with ordered parent
 edges, including octopus merges, generation v1 and corrected commit dates (GDA2/GDO2). Parsing
 checks the checksum, chunk boundaries, fanout, sorted identities and parent positions under explicit
-byte, commit and parent bounds. This is structural validation, not object-store verification.
-Unknown chunks are ignored. Split chains resolve global parent positions against checked base
-identities and reject missing, reordered or duplicate layers. Repository loading honors
-`core.commitGraph`; malformed indexes return errors so callers can use objects instead. Explicit
-`CommitGraph::verify` checks trees, ordered parents and committer dates against object reads. It
-does not validate generation equations. Callers can explicitly attach a graph to `Objects` to reuse
-metadata for walks and merge bases. Attachment checks closed, acyclic ancestry; range and ancestry
-pruning additionally require a strict corrected-date or topological-generation order. Unknown
-coverage or generation order uses full traversal. Indexed queries preserve shallow boundaries and
-commit/parent bounds; per-object read limits apply to fallback reads. Repository object readers do
-not enable this trust policy automatically. Bloom filters are not used.
+byte, commit and parent bounds. Each layer additionally limits decoded parents to twice its commit
+count plus its encoded extra-edge count, bounding expansion from shared edge runs. This is
+structural validation, not object-store verification. Unknown chunks are ignored. Split chains
+resolve global parent positions against checked base identities and reject missing, reordered or
+duplicate layers. Repository loading honors `core.commitGraph`; malformed indexes return errors so
+callers can use objects instead. Explicit `CommitGraph::verify` checks trees, ordered parents and
+committer dates against object reads. It does not validate generation equations. Callers can
+explicitly attach a graph to `Objects` to reuse metadata for walks and merge bases. Attachment
+checks closed, acyclic ancestry; range and ancestry pruning additionally require a strict
+corrected-date or topological-generation order. Unknown coverage or generation order uses full
+traversal. Indexed queries preserve shallow boundaries and commit/parent bounds; per-object read
+limits apply to fallback reads. Repository object readers do not enable this trust policy
+automatically. Supported Bloom filters can skip tree comparisons in first-parent path walks and
+single-parent blame steps; unknown filters fall back to tree reads.
 
 `tests/commit_graph.rs` generates original histories using the installed Git executable, writes both
 generation versions with `git commit-graph write --reachable`, runs `git commit-graph verify`, and
@@ -275,8 +278,18 @@ Graph construction reads verified commit objects and calculates generations inde
 attached auxiliary indexes. Standalone and incremental encoders emit both object formats, octopus
 edges, corrected-date overflow and base-file positional references. Git CLI verification accepts
 original girt-written standalone and chained fixtures. New layers omit Bloom filters; construction
-refuses shallow history and unrepresentable timestamps. Encoding is an artifact API and does not
-publish files. Incremental construction currently verifies the full selected object closure.
+refuses shallow history and unrepresentable timestamps. Encoding returns artifacts; locked
+publication separately installs standalone files or split chains. Tests verify migration, held-lock
+preservation, failed manifest replacement with a readable previous index, and unchanged object
+integrity through Git fsck. Incremental construction currently verifies the full selected object
+closure.
+
+Git 2.56.0 CLI fixtures show `git gc` writing a standalone graph by default and
+`gc.writeCommitGraph=false` suppressing it. Default `git maintenance run` and explicit
+`--task=commit-graph` produce split chains. An isolated `GIT_TRACE2_EVENT` observation confirms
+`commit-graph write --split --reachable --no-progress` during default maintenance. girt exposes
+explicit publication independently of maintenance scheduling; it does not yet automatically write
+graphs during retention/GC.
 
 ## Imported Object Decoding and Tag Peeling
 

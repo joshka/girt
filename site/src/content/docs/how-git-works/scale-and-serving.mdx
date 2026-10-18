@@ -19,12 +19,17 @@ parses a commit object; with it, a step is an array lookup.
 
 A commit's generation number is one more than its parents' highest. A commit can't be an ancestor of
 a commit with a lower or equal generation, so walks can stop as soon as they pass below the target's
-generation instead of visiting the whole excluded history. Optional **changed-path Bloom filters**
-record which paths each commit touched, so `git log -- path` and blame skip commits that didn't. Git
-writes the file during `git gc` and `git maintenance` by default, so reading it is enough to
-benefit.
+generation instead of visiting the whole excluded history. Newer files can also store corrected
+commit dates: the greater of the commit's date and one more than every parent's corrected date.
+These remain ordered even when commit clocks disagree.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/492">Single/split reading, opt-in history/Bloom queries and full/incremental artifact encoding; file publication remains.</GirtStatus>
+Optional **changed-path Bloom filters** can rule out changes to a path relative to the first parent.
+A positive answer can be a false positive and requires comparison; merge filters do not rule out
+differences from other parents. Git writes a standalone graph during `git gc` by default unless
+`gc.writeCommitGraph` disables it. Default `git maintenance run` writes split chains, as does its
+explicit commit-graph task. Reading an existing graph is enough to benefit.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/492">Single/split reading and writing, explicit verification, opt-in indexed history and first-parent Bloom queries; automatic GC writing remains.</GirtStatus>
 
 ## Multi-pack index
 

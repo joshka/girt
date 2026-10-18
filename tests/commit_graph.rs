@@ -688,3 +688,143 @@ fn graph_writer_keeps_input_bounds_and_rejects_shallow_history(
         Err(girt::commit_graph::GraphWriteError::Shallow)
     ));
 }
+
+#[rstest]
+fn graph_publication_migrates_full_to_split_without_changing_objects(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    use girt::commit_graph::GraphWriteMode;
+    let h = History::with_format(&[vec![], vec![0], vec![1]], false, format);
+    let object_dir = h.root.path().join("objects");
+    let base = CommitGraph::from_objects(&h.objects(), &[h.ids[0]]).unwrap();
+    base.install(&object_dir, GraphWriteMode::Full).unwrap();
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+    let all = CommitGraph::from_objects(&h.objects(), &[h.ids[2]]).unwrap();
+    let report = all
+        .install(&object_dir, GraphWriteMode::Incremental)
+        .unwrap();
+    assert_eq!(report.layers, 2);
+    assert_eq!(report.commits_written, 2);
+    assert!(!object_dir.join("info/commit-graph").exists());
+    assert_eq!(
+        CommitGraph::open(&object_dir, format)
+            .unwrap()
+            .unwrap()
+            .commits()
+            .len(),
+        3
+    );
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+    git(h.root.path(), &["fsck", "--full"], b"");
+}
+
+#[rstest]
+fn held_graph_lock_preserves_previous_index(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    use girt::commit_graph::GraphWriteMode;
+    let h = History::with_format(&[vec![], vec![0]], false, format);
+    let original = graph(&h, "2");
+    let directory = h.root.path().join("objects");
+    std::fs::write(directory.join("info/commit-graph.lock"), b"held").unwrap();
+    let graph = CommitGraph::from_objects(&h.objects(), &[h.ids[1]]).unwrap();
+    assert!(graph.install(&directory, GraphWriteMode::Full).is_err());
+    assert_eq!(
+        std::fs::read(directory.join("info/commit-graph")).unwrap(),
+        original
+    );
+    assert_eq!(
+        std::fs::read(directory.join("info/commit-graph.lock")).unwrap(),
+        b"held"
+    );
+}
+
+#[rstest]
+fn failed_manifest_publication_preserves_standalone_graph(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    use girt::commit_graph::GraphWriteMode;
+    let h = History::with_format(&[vec![], vec![0]], false, format);
+    let original = graph(&h, "2");
+    let directory = h.root.path().join("objects");
+    std::fs::create_dir_all(directory.join("info/commit-graphs/commit-graph-chain")).unwrap();
+    let graph = CommitGraph::from_objects(&h.objects(), &[h.ids[1]]).unwrap();
+    let failure = graph
+        .install(&directory, GraphWriteMode::Incremental)
+        .unwrap_err();
+    assert!(!failure.index_published);
+    assert_eq!(failure.operation, "publish chain manifest");
+    assert_eq!(
+        std::fs::read(directory.join("info/commit-graph")).unwrap(),
+        original
+    );
+    assert!(!directory.join("info/commit-graph.lock").exists());
+    assert!(
+        !directory
+            .join("info/commit-graphs/commit-graph-chain.lock")
+            .exists()
+    );
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+}
+
+#[rstest]
+fn git_gc_and_maintenance_write_optional_graphs(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![], vec![0]], false, format);
+    git(h.root.path(), &["gc"], b"");
+    assert!(h.root.path().join("objects/info/commit-graph").is_file());
+    std::fs::remove_file(h.root.path().join("objects/info/commit-graph")).unwrap();
+    git(
+        h.root.path(),
+        &["-c", "gc.writeCommitGraph=false", "gc"],
+        b"",
+    );
+    assert!(!h.root.path().join("objects/info/commit-graph").exists());
+    git(h.root.path(), &["maintenance", "run"], b"");
+    assert!(!h.root.path().join("objects/info/commit-graph").exists());
+    assert!(
+        h.root
+            .path()
+            .join("objects/info/commit-graphs/commit-graph-chain")
+            .is_file()
+    );
+    git(
+        h.root.path(),
+        &["maintenance", "run", "--task=commit-graph"],
+        b"",
+    );
+    assert!(
+        h.root
+            .path()
+            .join("objects/info/commit-graphs/commit-graph-chain")
+            .is_file()
+    );
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+}
+
+#[rstest]
+fn empty_graph_artifact_is_accepted_by_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![]], false, format);
+    let graph = CommitGraph::from_objects(&h.objects(), &[]).unwrap();
+    graph
+        .install(
+            &h.root.path().join("objects"),
+            girt::commit_graph::GraphWriteMode::Full,
+        )
+        .unwrap();
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+}
+
+#[test]
+fn empty_index_retains_its_hash_format_at_attachment() {
+    let source = History::with_format(&[vec![]], false, ObjectFormat::Sha1);
+    let target = History::with_format(&[vec![]], false, ObjectFormat::Sha256);
+    let graph = CommitGraph::from_objects(&source.objects(), &[]).unwrap();
+    assert!(matches!(
+        target.objects().with_commit_graph(graph),
+        Err(GraphError::HashFormat)
+    ));
+}

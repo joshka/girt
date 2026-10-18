@@ -10,7 +10,8 @@ with the object database.
 `Repository::commit_graph` loads a standalone graph or split chain and honors `core.commitGraph`. An
 absent setting enables loading. A disabled or missing graph returns `None`; damaged files return an
 error. Applications can report that error and continue with ordinary object reads. Opening the graph
-writes nothing.
+writes nothing. Bloom read configuration settings are not interpreted; callers choose whether to
+attach the graph and use path queries.
 
 `Objects::with_commit_graph` explicitly trusts indexed object claims. It checks that indexed
 ancestry is closed and acyclic, and enables generation pruning only when every parent edge strictly
@@ -113,3 +114,30 @@ Artifact encoding uses the default 512 MiB output limit and does not publish fil
 writers. A parsed generation-v1-only graph lacks corrected dates required by this encoder; rebuild
 it from objects before encoding. Incremental artifact output does not yet avoid a complete
 object-verification scan during construction.
+
+## Publish files
+
+`Repository::write_commit_graph(roots, mode)` constructs verified metadata and publishes it to the
+repository's object store. Roots are explicit; this operation does not select references or change
+maintenance settings. Use `GraphWriteMode::Full` for a standalone file or `Incremental` to retain
+base layers and append one split layer. For separate construction and publication, call
+`CommitGraph::install` on a graph artifact.
+
+Publication holds both standalone and chain writer locks. It writes complete checksum-named layers
+before replacing the chain manifest, then removes a migrated standalone file so readers can see the
+chain. Previous base files are retained. Full publication replaces the standalone file and retains
+any previous chain. No objects, packs, references or reflogs change.
+
+`GraphInstallError::index_published` reports whether a standalone file or manifest was published
+before a later failure. A migrated standalone can still shadow a newly published chain after a
+removal failure. Reopen and inspect current state before retrying. Failed publication can leave
+unreferenced layer files; lock cleanup after an operation error is best effort. Existing writer
+locks are never stolen. Loaded readers retain their bytes, and transient locks participate in
+caller-controlled cleanup. Exclude hostile directory/lock replacement and object pruning while
+constructing and publishing. File contents are synchronized, but publication does not promise a
+power-loss transaction, old-layer compaction or a shared-repository permissions policy.
+
+Git 2.56.0 observations distinguish maintenance entry points: `git gc` writes a standalone graph by
+default, and `gc.writeCommitGraph=false` suppresses it. Default `git maintenance run` and its
+explicit `--task=commit-graph` task write split chains. girt's explicit writer is independent of
+those scheduling policies; automatic maintenance integration is separate.

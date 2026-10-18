@@ -26,6 +26,8 @@
 
 mod bloom;
 mod history;
+mod install;
+pub use install::{GraphInstallError, GraphInstallReport, GraphWriteMode};
 mod write;
 pub use write::GraphWriteError;
 mod store;
@@ -71,6 +73,9 @@ pub struct GraphLimits {
     /// Maximum number of indexed commits (default 5 million).
     pub max_commits: usize,
     /// Maximum parent occurrences across all records (default 20 million).
+    ///
+    /// Each layer is also limited to twice its commit count plus its encoded extra-edge count,
+    /// preventing repeated references to shared edge runs from amplifying decoded storage.
     pub max_parents: usize,
 }
 
@@ -127,7 +132,12 @@ impl CommitGraph {
         format: ObjectFormat,
         limits: GraphLimits,
     ) -> Result<Self, GraphError> {
-        let commits = parse_layer(bytes, format, limits, &[], &[], &mut { limits.max_parents })?;
+        if bytes.get(7).is_some_and(|bases| *bases != 0) {
+            Chunks::parse(bytes, format, limits)?;
+            return Err(GraphError::Unsupported("split file requires bases"));
+        }
+        let mut remaining_parents = limits.max_parents;
+        let commits = parse_layer(bytes, format, limits, &[], &[], &mut remaining_parents)?;
         Ok(Self {
             commits,
             format,
@@ -235,7 +245,10 @@ fn parse_layer(
     let ids = chunks.required(b"OIDL")?;
     let data = chunks.required(b"CDAT")?;
     let width = format.digest_len();
-    if ids.len() / width != count || ids.len() % width != 0 || data.len() != count * (width + 16) {
+    if ids.len() / width != count
+        || ids.len() % width != 0
+        || Some(data.len()) != count.checked_mul(width + 16)
+    {
         return Err(bad("commit table length"));
     }
     validate_fanout(fanout, ids, width)?;
@@ -247,10 +260,18 @@ fn parse_layer(
     if generation.is_some_and(|g| g.len() != count * 4) {
         return Err(bad("generation table length"));
     }
+    // Shared EDGE runs must not amplify a small file into an unbounded decoded graph.
+    // Allow at most two inline parents per record plus the encoded extra-edge entries.
+    let encoded_parents = count
+        .checked_mul(2)
+        .and_then(|inline| inline.checked_add(chunks.optional(b"EDGE").map_or(0, |e| e.len() / 4)))
+        .ok_or(GraphError::Limit("parents"))?;
+    let layer_budget = (*parents_left).min(encoded_parents);
+    let mut layer_parents_left = layer_budget;
     let blooms = bloom::BloomData::parse(&chunks, count);
     let mut commits = Vec::with_capacity(count);
     for (index, record) in data.chunks_exact(width + 16).enumerate() {
-        let positions = parent_positions(record, width, &chunks, parents_left)?;
+        let positions = parent_positions(record, width, &chunks, &mut layer_parents_left)?;
         let parents = positions
             .into_iter()
             .map(|p| {
@@ -280,6 +301,7 @@ fn parse_layer(
             bloom: blooms.as_ref().and_then(|data| data.filter(index)),
         });
     }
+    *parents_left -= layer_budget - layer_parents_left;
     Ok(commits)
 }
 
@@ -399,7 +421,9 @@ fn parent_positions(
         if edges.len() % 4 != 0 {
             return Err(bad("extra edge length"));
         }
-        let mut at = (second & 0x7fffffff) as usize * 4;
+        let mut at = ((second & 0x7fffffff) as usize)
+            .checked_mul(4)
+            .ok_or(bad("extra edge offset"))?;
         loop {
             let edge = word(edges, at)?;
             push_parent(&mut parents, edge & 0x7fffffff, left)?;
@@ -432,7 +456,9 @@ fn corrected_date(
     } else {
         long(
             chunks.required(b"GDO2")?,
-            (offset & 0x7fffffff) as usize * 8,
+            ((offset & 0x7fffffff) as usize)
+                .checked_mul(8)
+                .ok_or(bad("generation overflow offset"))?,
         )?
     };
     time.checked_add(offset)
@@ -523,6 +549,61 @@ mod tests {
         bytes[offset] = value;
         resign(&mut bytes, ObjectFormat::Sha1, true);
         assert!(CommitGraph::parse(&bytes, ObjectFormat::Sha1).is_err());
+    }
+
+    #[test]
+    fn shared_extra_edges_cannot_amplify_decoded_parents() {
+        let edges: Vec<_> = [0u32, 0, 0, 0x80000000]
+            .into_iter()
+            .flat_map(u32::to_be_bytes)
+            .collect();
+        let mut fanout = vec![0; 1024];
+        for bucket in 1..256 {
+            let count = if bucket == 1 { 1u32 } else { 2u32 };
+            fanout[bucket * 4..bucket * 4 + 4].copy_from_slice(&count.to_be_bytes());
+        }
+        let mut ids = vec![1; 20];
+        ids.extend_from_slice(&[2; 20]);
+        let mut record = vec![0; 20];
+        record.extend_from_slice(&0u32.to_be_bytes());
+        record.extend_from_slice(&0x80000000u32.to_be_bytes());
+        record.extend_from_slice(&[0; 8]);
+        let data = record.repeat(2);
+        let chunks = [
+            (b"OIDF", fanout),
+            (b"OIDL", ids),
+            (b"CDAT", data),
+            (b"EDGE", edges),
+        ];
+        let mut bytes = b"CGPH\x01\x01\x04\x00".to_vec();
+        let mut offset = 68u64;
+        for (tag, data) in &chunks {
+            bytes.extend_from_slice(*tag);
+            bytes.extend_from_slice(&offset.to_be_bytes());
+            offset += data.len() as u64;
+        }
+        bytes.extend_from_slice(&[0; 4]);
+        bytes.extend_from_slice(&offset.to_be_bytes());
+        for (_, data) in chunks {
+            bytes.extend(data);
+        }
+        resign(&mut bytes, ObjectFormat::Sha1, false);
+        // Two records share four encoded edges, attempting ten decoded parents.
+        assert!(matches!(
+            CommitGraph::parse(&bytes, ObjectFormat::Sha1),
+            Err(GraphError::Limit("parents"))
+        ));
+    }
+
+    #[test]
+    fn standalone_split_layer_is_unsupported() {
+        let mut bytes = fixture(ObjectFormat::Sha1);
+        bytes[7] = 1;
+        resign(&mut bytes, ObjectFormat::Sha1, true);
+        assert!(matches!(
+            CommitGraph::parse(&bytes, ObjectFormat::Sha1),
+            Err(GraphError::Unsupported("split file requires bases"))
+        ));
     }
 
     #[rstest]
