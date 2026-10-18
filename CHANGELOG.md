@@ -13,6 +13,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `binary`, `-diff`, `diff=<driver>`, `diff.<driver>.binary` and function-name patterns to patches
   with `patch::DiffAttributes`. `Repo::write_patch` applies them by default; `Repo::blame` refuses
   textconv drivers.
+- Consolidate packs during `Repository::collect_garbage` and `Repository::run_maintenance` once the
+  pack count exceeds `gc.autoPackLimit`, with `retention::PackConsolidation` and
+  `RetentionPolicy::with_pack_consolidation` to force or skip it, `Repository::collect_garbage_with`
+  to bound the new pack, `MaintenanceReport::consolidated` and `MaintenanceCause::Config`.
 
 ### Changed
 

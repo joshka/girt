@@ -280,9 +280,19 @@ impl Session {
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
     ) -> Result<Self, RetentionError> {
+        Self::new_folding(repository, policy, false, cancel)
+    }
+
+    // See `Repository::plan_retention_folding`.
+    pub(super) fn new_folding(
+        repository: &Repository,
+        policy: &RetentionPolicy,
+        fold_recent_packs: bool,
+        cancel: &AtomicBool,
+    ) -> Result<Self, RetentionError> {
         let inputs = Inputs::observe(repository, policy, cancel)?;
         let current = Repository::open(repository.git_dir()).map_err(RetentionError::read)?;
-        let plan = current.plan_retention(policy, cancel);
+        let plan = current.plan_retention_folding(policy, fold_recent_packs, cancel);
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
             return Err(reason);
         }

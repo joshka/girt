@@ -1,6 +1,8 @@
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(unix)]
+use super::consolidate::SelectError;
 use super::{
     ExpireFailure, ExpireReport, MaintenanceIsolation, PruneFailure, PruneReport, RepackLimits,
     RetentionError, RetentionPolicy, RetireFailure, RetireReport,
@@ -15,6 +17,9 @@ pub struct MaintenanceReport {
     pub expired: Option<ExpireReport>,
     /// A replacement pack was verified and eligible old packs were retired.
     pub retired: Option<RetireReport>,
+    /// Pack consolidation was selected for this attempt. Its publication and removals are in
+    /// `retired`, or in the [`MaintenanceCause::Retire`] failure.
+    pub consolidated: bool,
     /// Old unreachable primary loose objects were swept.
     pub pruned: Option<PruneReport>,
 }
@@ -29,6 +34,9 @@ pub enum MaintenanceCause {
     /// The caller could not hold a repository-wide exclusion boundary.
     #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
+    /// `gc.autoPackLimit` is not a 32-bit Git integer; no phase has started.
+    #[error("invalid pack consolidation configuration")]
+    Config(#[source] crate::config::InvalidValue),
     /// Directory durability for destructive publication is not established on this platform.
     #[error("composed maintenance is unsupported on this platform")]
     UnsupportedPlatform,
@@ -121,10 +129,15 @@ impl Repository {
     /// phase's partial effects. Retry with a new isolation guard and fresh scans. On non-Unix
     /// platforms the sequence refuses before any publication or deletion.
     ///
+    /// When [`RetentionPolicy::pack_consolidation`] selects consolidation, retirement also retires
+    /// recent packs other than `.keep` and promisor packs, keeping every object they hold; see
+    /// [`PackConsolidation`](super::PackConsolidation).
+    ///
     /// # Errors
     ///
-    /// Isolation refusal, unsupported platform, cancellation and any phase failure preserve the
-    /// completed-phase report and the current phase's partial result when applicable.
+    /// Isolation refusal, unsupported platform, malformed `gc.autoPackLimit`, cancellation and
+    /// any phase failure preserve the completed-phase report and the current phase's partial
+    /// result when applicable.
     ///
     /// # Maintain an exclusively owned disposable repository
     ///
@@ -205,18 +218,118 @@ impl Repository {
         self.run_maintenance_exclusive(policy, limits, cancel, || {})
     }
 
+    /// Expires reflogs, consolidates packs when selected, and prunes old unreachable loose objects.
+    ///
+    /// This is the explicit-limits form of [`Self::collect_garbage`]; `limits` bound the
+    /// consolidated pack. Consolidation follows [`RetentionPolicy::pack_consolidation`]: by
+    /// default it runs when the indexed primary packs without a `.keep` file outnumber
+    /// `gc.autoPackLimit` (50 unless configured; 0 or a negative value turns it off). It
+    /// publishes one pack holding every retained object and every object of the recent packs it
+    /// replaces, synchronizes it, decodes every retained object from it, and only then retires
+    /// the old packs, as [`Self::retire_old_packs`] does. `.keep` packs, promisor packs, packs
+    /// with other sidecars and alternates stay in place. Old unreachable objects in retired packs
+    /// older than [`RetentionPolicy::recent_cutoff`] are reclaimed; with no cutoff, every packed
+    /// object is kept. Unreachable objects copied from recent packs live until the new pack is
+    /// older than the cutoff. Without consolidation, pack files stay untouched.
+    ///
+    /// All other contracts are those of [`Self::collect_garbage`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::collect_garbage`]. A malformed `gc.autoPackLimit` refuses
+    /// with [`MaintenanceCause::Config`] before any phase; a consolidation failure is a
+    /// [`MaintenanceCause::Retire`] carrying its publication and removals.
+    ///
+    /// # Consolidate a repository's packs
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let cancel = AtomicBool::new(false);
+    ///
+    /// # if cfg!(not(unix)) { return Ok(()); }
+    ///
+    /// // This fixture is private to this single-threaded example. No external writer, reader or
+    /// // alternate-store dependent exists. A shared repository needs a real exclusion mechanism.
+    /// struct PrivateFixture;
+    /// impl girt::retention::MaintenanceIsolation for PrivateFixture {
+    ///     type Guard = ();
+    ///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// use girt::retention::{PackConsolidation, RepackLimits, RetentionPolicy};
+    /// let first = repo.loose_objects().write_blob(b"first")?;
+    /// repo.repack_retained(
+    ///     &RetentionPolicy::default(),
+    ///     RepackLimits::default(),
+    ///     &cancel,
+    /// )?;
+    /// let second = repo.loose_objects().write_blob(b"second")?;
+    /// repo.repack_retained(
+    ///     &RetentionPolicy::default(),
+    ///     RepackLimits::default(),
+    ///     &cancel,
+    /// )?;
+    ///
+    /// let policy = RetentionPolicy::default().with_pack_consolidation(PackConsolidation::Always);
+    /// let report = repo.collect_garbage_with(
+    ///     &mut PrivateFixture,
+    ///     &policy,
+    ///     RepackLimits::default(),
+    ///     &cancel,
+    /// )?;
+    /// assert!(report.consolidated);
+    /// let packs = std::fs::read_dir(repo.object_dir().join("pack"))?
+    ///     .filter(|entry| {
+    ///         entry
+    ///             .as_ref()
+    ///             .is_ok_and(|entry| entry.path().extension().is_some_and(|ext| ext == "pack"))
+    ///     })
+    ///     .count();
+    /// assert_eq!(packs, 1);
+    /// let objects = repo.objects_with(Default::default())?;
+    /// assert!(objects.read_with(first, Default::default())?.is_some());
+    /// assert!(objects.read_with(second, Default::default())?.is_some());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn collect_garbage_with<I: MaintenanceIsolation>(
+        &self,
+        isolation: &mut I,
+        policy: &RetentionPolicy,
+        limits: RepackLimits,
+        cancel: &AtomicBool,
+    ) -> Result<MaintenanceReport, MaintenanceFailure> {
+        self.collect_garbage_controlled(isolation, policy, limits, cancel, || {})
+    }
+
     /// Expires reflogs and prunes old unreachable loose objects under one isolation guard.
     ///
     /// Builds one bounded retention plan. Before either phase mutates storage, fingerprints of
     /// refs, histories, worktree metadata, indexes, shallow state, loose generations, packs and
     /// alternate topology must still match. Expiry advances the observation only for its exact
-    /// outputs; pruning uses the plan's post-expiry required closure. Pack files stay untouched.
-    /// External changes refuse the attempt; retry under a new guard to re-plan.
+    /// outputs; pruning uses the plan's post-expiry required closure. External changes refuse the
+    /// attempt; retry under a new guard to re-plan.
+    ///
+    /// Between expiry and pruning, packs are consolidated when
+    /// [`RetentionPolicy::pack_consolidation`] selects it, which by default means more than
+    /// `gc.autoPackLimit` packs. This form bounds the consolidated pack with
+    /// [`RepackLimits::default`]; see [`Self::collect_garbage_with`] for the consolidation
+    /// contract and for larger repositories. Otherwise pack files stay untouched.
     ///
     /// # Errors
     ///
-    /// Returns isolation, incomplete/changed input, cancellation or phase errors, preserving any
-    /// completed expiry and partial pruning. Non-Unix hosts refuse before mutation.
+    /// Returns isolation, configuration, incomplete/changed input, cancellation or phase errors,
+    /// preserving any completed expiry, consolidation and partial pruning. Non-Unix hosts refuse
+    /// before mutation.
     ///
     /// # Reclaim an old, unreferenced loose blob
     ///
@@ -271,7 +384,7 @@ impl Repository {
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
     ) -> Result<MaintenanceReport, MaintenanceFailure> {
-        self.collect_garbage_with_checkpoint(isolation, policy, cancel, || {})
+        self.collect_garbage_with(isolation, policy, RepackLimits::default(), cancel)
     }
 
     /// Collects garbage with an observation checkpoint after planning and before mutation.
@@ -290,6 +403,23 @@ impl Repository {
         cancel: &AtomicBool,
         after_plan: impl FnOnce(),
     ) -> Result<MaintenanceReport, MaintenanceFailure> {
+        self.collect_garbage_controlled(
+            isolation,
+            policy,
+            RepackLimits::default(),
+            cancel,
+            after_plan,
+        )
+    }
+
+    fn collect_garbage_controlled<I: MaintenanceIsolation>(
+        &self,
+        isolation: &mut I,
+        policy: &RetentionPolicy,
+        limits: RepackLimits,
+        cancel: &AtomicBool,
+        after_plan: impl FnOnce(),
+    ) -> Result<MaintenanceReport, MaintenanceFailure> {
         if cancel.load(Ordering::Relaxed) {
             return Err(failed(
                 MaintenanceCause::Cancelled,
@@ -304,14 +434,21 @@ impl Repository {
         })?;
         #[cfg(not(unix))]
         {
-            let _ = (policy, after_plan);
+            let _ = (policy, limits, after_plan);
             Err(failed(
                 MaintenanceCause::UnsupportedPlatform,
                 MaintenanceReport::default(),
             ))
         }
         #[cfg(unix)]
-        self.maintain_exclusive(policy, None, cancel, after_plan, || {}, || {})
+        self.maintain_exclusive(
+            policy,
+            Phases::consolidating(limits),
+            cancel,
+            after_plan,
+            || {},
+            || {},
+        )
     }
 
     #[cfg(unix)]
@@ -322,31 +459,61 @@ impl Repository {
         cancel: &AtomicBool,
         after_expiry: impl FnOnce(),
     ) -> Result<MaintenanceReport, MaintenanceFailure> {
-        self.maintain_exclusive(policy, Some(limits), cancel, || {}, after_expiry, || {})
+        self.maintain_exclusive(
+            policy,
+            Phases::retiring(limits),
+            cancel,
+            || {},
+            after_expiry,
+            || {},
+        )
     }
 
     #[cfg(unix)]
     fn maintain_exclusive(
         &self,
         policy: &RetentionPolicy,
-        repack: Option<RepackLimits>,
+        phases: Phases,
         cancel: &AtomicBool,
         after_plan: impl FnOnce(),
         after_expiry: impl FnOnce(),
         after_retirement: impl FnOnce(),
     ) -> Result<MaintenanceReport, MaintenanceFailure> {
         let _headers = crate::pack::HeaderScope::new();
-        let mut report = MaintenanceReport::default();
-        let mut session = super::inputs::Session::new(self, policy, cancel).map_err(|reason| {
-            failed(
-                if cancel.load(Ordering::Relaxed) {
-                    MaintenanceCause::Cancelled
-                } else {
-                    MaintenanceCause::Incomplete(reason)
-                },
-                report.clone(),
-            )
-        })?;
+        let consolidated = policy
+            .pack_consolidation
+            .selected(self, policy.max_entries, cancel)
+            .map_err(|error| {
+                failed(
+                    match error {
+                        SelectError::Config(error) => MaintenanceCause::Config(error),
+                        SelectError::Observe(reason) => MaintenanceCause::Incomplete(reason),
+                        SelectError::Cancelled => MaintenanceCause::Cancelled,
+                    },
+                    MaintenanceReport::default(),
+                )
+            })?;
+        let mut report = MaintenanceReport {
+            consolidated,
+            ..MaintenanceReport::default()
+        };
+        let repack = if phases.retire || report.consolidated {
+            Some(phases.limits)
+        } else {
+            None
+        };
+        let mut session =
+            super::inputs::Session::new_folding(self, policy, report.consolidated, cancel)
+                .map_err(|reason| {
+                    failed(
+                        if cancel.load(Ordering::Relaxed) {
+                            MaintenanceCause::Cancelled
+                        } else {
+                            MaintenanceCause::Incomplete(reason)
+                        },
+                        report.clone(),
+                    )
+                })?;
         after_plan();
         if cancel.load(Ordering::Relaxed) {
             return Err(failed(MaintenanceCause::Cancelled, report));
@@ -430,6 +597,33 @@ impl Repository {
     }
 }
 
+/// Which pack phases one composed maintenance call may run.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct Phases {
+    /// Retire old packs whether or not consolidation is selected, as `run_maintenance` does.
+    retire: bool,
+    /// Bounds a replacement pack, whether for retirement or consolidation.
+    limits: RepackLimits,
+}
+
+#[cfg(unix)]
+impl Phases {
+    fn retiring(limits: RepackLimits) -> Self {
+        Self {
+            retire: true,
+            limits,
+        }
+    }
+
+    fn consolidating(limits: RepackLimits) -> Self {
+        Self {
+            retire: false,
+            limits,
+        }
+    }
+}
+
 fn failed(cause: MaintenanceCause, report: MaintenanceReport) -> MaintenanceFailure {
     MaintenanceFailure {
         cause,
@@ -504,7 +698,7 @@ mod tests {
                     ),
                     ..Default::default()
                 },
-                None,
+                Phases::consolidating(RepackLimits::default()),
                 &AtomicBool::new(false),
                 || {},
                 || {
@@ -552,7 +746,7 @@ mod tests {
         let error = repository
             .maintain_exclusive(
                 &RetentionPolicy::default(),
-                Some(RepackLimits::default()),
+                Phases::retiring(RepackLimits::default()),
                 &cancel,
                 || {},
                 || {},
@@ -589,7 +783,7 @@ mod tests {
         let error = repo
             .maintain_exclusive(
                 &policy,
-                Some(RepackLimits::trusted()),
+                Phases::retiring(RepackLimits::trusted()),
                 &AtomicBool::new(false),
                 || super::super::walk_tests::change_pack(&pack, truncate),
                 || {},
