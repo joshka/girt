@@ -23,6 +23,8 @@ pub struct ContentOptions {
     pub binary: BinaryMode,
     /// Selection of overlapping changes (default unresolved).
     pub favor: Favor,
+    /// Line-matching whitespace policy (default exact); accepted output bytes remain original.
+    pub whitespace: super::Whitespace,
     /// Bounds applied independently to each of the two base-to-side comparisons.
     pub limits: DiffLimits,
 }
@@ -39,6 +41,13 @@ impl ContentOptions {
     #[must_use]
     pub fn with_favor(mut self, favor: Favor) -> Self {
         self.favor = favor;
+        self
+    }
+
+    /// Selects whitespace used for line matching, preserving original output bytes.
+    #[must_use]
+    pub fn with_whitespace(mut self, whitespace: super::Whitespace) -> Self {
+        self.whitespace = whitespace;
         self
     }
 

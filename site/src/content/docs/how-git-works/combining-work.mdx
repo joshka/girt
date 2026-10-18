@@ -30,14 +30,18 @@ let limit = 20;
 Binary conflicts keep our version in the working file without text markers; the index retains the
 available original sides for resolution.
 
+Whitespace options change which lines compare equal without rewriting accepted payloads. Attributes
+can select text, binary, union or custom merge drivers for a path. Marker presentation is separate
+from the original versions retained in the index.
+
 When there are several merge bases, Git's default strategy first merges the bases together into a
 virtual base. Cherry-pick, revert, rebase and stash are all merges underneath: cherry-picking C is a
 merge whose base is C's parent. Without merging, a tool can read history but can't combine work.
 
 <GirtStatus status="partial" href="https://github.com/joshka/girt/issues/493">
-  Content, rename-aware tree and commit merging with clean recursive bases, original conflict
-  stages, explicit drivers and guarded conflict checkout. Conflicted virtual bases, directory-stage
-  expansion and ambiguous rename layouts remain limited.
+  Content and whitespace policies, rename-aware tree/commit merging with clean recursive bases,
+  original conflict stages, explicit drivers and guarded conflict checkout. Conflicted virtual
+  bases, directory-stage expansion and ambiguous rename layouts remain limited.
 </GirtStatus>
 
 ## Filters
