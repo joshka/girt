@@ -3235,8 +3235,8 @@ Opaque source headers and signatures are omitted. Messages are byte-oriented; ca
 messages are not cleaned through Git configuration. Existing content/rename merge limitations apply.
 Source messages are retained without Git's configurable cleanup or encoding conversion;
 configuration-specific trailer tokens remain caller policy. Linear todo execution and explicit
-sequencer metadata publication are described below. Stash remains separate work in
-[the replay design](https://github.com/joshka/girt/issues/608).
+sequencer metadata publication are described below. Saved stash objects and application have their
+own sections below.
 
 ### In-memory rebase
 
@@ -3352,3 +3352,23 @@ change, then compute inverse cleanup with the existing merge engine. Overlap ret
 conflicts; Git's patch-based cleanup can instead refuse after publishing the saved entry. Callers
 must retain the saved entry when cleanup cannot complete. Filesystem capture, filters and path
 selection remain caller policy; no convenience command captures or deletes working files.
+
+### Applying stashes and editing their history
+
+`Objects::apply_stash` uses explicit-base tree merges and retains original conflict sides. Ordinary
+apply preserves current staged entries and stages added paths; optional index restoration is a
+separate merge that can stop before working-tree computation. Git-oracle cases compare index and
+working trees, index/working conflicts and untracked collision refusals. Guarded apply/pop cases
+publish working files and the intended index through the existing merge checkout under one guard,
+then conditionally drop the saved entry. Filesystem capture and dirty save cleanup remain caller
+policy, tracked in [the repository workflow follow-up](https://github.com/joshka/girt/issues/639).
+Git's patch-based staged cleanup/index restoration can refuse inputs that tree merging resolves;
+this API exposes tree-merge outcomes rather than promising patch admission parity.
+
+`stash::History` retains bounded complete files-backend logs and lists entries newest first.
+`tests/stash_history_git.rs` compares newest/middle/oldest drop bytes with Git, verifies surviving
+objects remain readable, and covers last-entry deletion, explicit push, stale snapshots and foreign
+locks. A fault-model test covers reference publication followed by log failure: the partial receipt
+names the new tip and original log bytes survive. No object is deleted. Ref/log replacement is
+sequential and requires caller isolation; it promises no cross-file crash transaction.
+[Reftable stash history editing](https://github.com/joshka/girt/issues/638) is explicitly refused.

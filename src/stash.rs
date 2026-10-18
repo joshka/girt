@@ -6,6 +6,13 @@
 //! identities, and returns a separate cleanup plan. It never captures files, applies filters,
 //! installs objects or updates `refs/stash` implicitly.
 //!
+//! [`Objects::apply_stash`] returns working/index merge outcomes with original conflict sides.
+//! [`Apply::prepare_checkout`] composes them with guarded merge checkout. [`History`] observes
+//! the files-backend reflog stack and plans conditional push/drop publication. Pop is successful
+//! apply/checkout followed by an explicit drop; conflict or partial checkout must keep the entry.
+//! See the [stash guide](https://github.com/joshka/girt/blob/main/docs/stashing-changes.md) for
+//! capture ownership, publication ordering and recovery.
+//!
 //! Callers own path selection and snapshot capture. Supply the tracked working-tree tree separately
 //! from the optional untracked tree; ignored files belong there only when the caller requests them.
 //! Save the generated objects and publish the stash entry before removing saved working changes.
@@ -48,6 +55,11 @@
 //! }
 //! ```
 use std::sync::atomic::AtomicBool;
+
+mod apply;
+pub use apply::{Apply, ApplyInput, ApplyOptions};
+mod history;
+pub use history::{History, LogEdit, LogError, LogLimits};
 
 use crate::merge::{TreeMerge, TreeMergeOptions};
 use crate::{Commit, CommitFields, ObjectId, Objects, Signature, Tree};
@@ -217,6 +229,21 @@ pub enum Error {
     /// Cancellation was observed before computation.
     #[error("stash computation cancelled")]
     Cancelled,
+    /// Index restoration must be resolved before working-tree publication.
+    #[error("stash index restoration conflicted")]
+    IndexConflict,
+    /// Existing merge checkout preparation failed.
+    #[error("preparing stash index")]
+    Preparation(#[from] crate::merge::PublicationError),
+    /// The final index cannot represent the proposed paths.
+    #[error("constructing stash index")]
+    Index(#[from] crate::index::Error),
+    /// Occupied path input exceeds preparation limits.
+    #[error("stash input limit exceeded")]
+    Limit,
+    /// Saved untracked data would overwrite an existing file or directory.
+    #[error("saved untracked path collides with current files: {0:?}")]
+    UntrackedCollision(Vec<u8>),
     /// Git refuses staged-only saving with untracked capture.
     #[error("staged-only stash cannot include untracked files")]
     StagedUntracked,

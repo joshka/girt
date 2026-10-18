@@ -1182,7 +1182,7 @@ pub(super) fn check_path(path: &Path) -> Result<(), ReferenceError> {
     Ok(())
 }
 
-pub(super) struct Lock {
+pub(crate) struct Lock {
     pub(super) destination: PathBuf,
     path: PathBuf,
     file: Option<crate::locks::SharedFile>,
@@ -1190,7 +1190,7 @@ pub(super) struct Lock {
     cleanup: crate::locks::Guard,
 }
 impl Lock {
-    pub(super) fn acquire(destination: PathBuf) -> Result<Self, ReferenceError> {
+    pub(crate) fn acquire(destination: PathBuf) -> Result<Self, ReferenceError> {
         let _lock_operation = crate::locks::operation();
         let destination =
             std::path::absolute(&destination).map_err(|source| io_error(&destination, source))?;
@@ -1227,7 +1227,7 @@ impl Lock {
             file: Some(file),
         })
     }
-    pub(super) fn check_owned(&self) -> Result<(), ReferenceError> {
+    pub(crate) fn check_owned(&self) -> Result<(), ReferenceError> {
         self.cleanup
             .check()
             .map_err(|source| io_error(&self.path, source))?;
@@ -1246,7 +1246,7 @@ impl Lock {
         Ok(())
     }
 
-    pub(super) fn publish_retaining_lock(&self, bytes: &[u8]) -> Result<(), ReferenceError> {
+    pub(crate) fn publish_retaining_lock(&self, bytes: &[u8]) -> Result<(), ReferenceError> {
         self.publish_replacement(bytes, false)
     }
 

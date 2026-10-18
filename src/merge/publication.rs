@@ -62,6 +62,15 @@ pub struct MergeCheckout {
 }
 
 impl MergeCheckout {
+    // Stash application can restore working files while preserving a different staged snapshot.
+    pub(crate) fn with_index(mut self, index: index::Index) -> Result<Self, PublicationError> {
+        if index.object_format() != self.index.object_format() {
+            return Err(PublicationError::ObjectFormat);
+        }
+        self.index = index;
+        Ok(self)
+    }
+
     /// Identity of the marker-bearing working-tree snapshot; not proof of object installation.
     pub fn tree_id(&self) -> ObjectId {
         self.tree
