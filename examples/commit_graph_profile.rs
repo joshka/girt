@@ -1,12 +1,13 @@
 //! Phase timings for object-backed and default indexed history queries.
 //!
-//! Opening includes default graph loading and attachment in every mode. Object mode then removes
+//! Opening includes default graph loading and attachment in every mode. Pack limits are trusted
+//! because Linux-sized pack indexes exceed the default bound. Object mode then removes
 //! the index before querying; indexed mode retains it. Verified mode additionally checks objects.
 //!
 //! Usage: `commit_graph_profile REPO TIP BASE objects|indexed|verified walk|range|ancestor`.
 use std::time::Instant;
 
-use girt::{HistoryLimits, ObjectId, Repository};
+use girt::{HistoryLimits, ObjectId, PackLimits, Repository};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -17,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let query = args.next().ok_or("walk, range or ancestor required")?;
     let start = Instant::now();
     let repo = Repository::open(path)?;
-    let mut objects = repo.objects()?;
+    let mut objects = repo.objects_with(PackLimits::trusted())?;
     eprintln!("open={:?}", start.elapsed());
     match trust.as_str() {
         "objects" => objects = objects.without_commit_graph(),

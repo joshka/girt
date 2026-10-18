@@ -1613,10 +1613,11 @@ To prove an old commit is reachable from only one side, it must still paint the 
 that commit's generation. So `v6.0...v6.1`, whose v6.1 side includes branches based on much older
 commits, explores 109,164 commits for 15,109 results, more than the default
 `HistoryLimits::max_commits` of 100,000. `girt status` passes `HistoryLimits::trusted`, like the
-history commands. Opening the commit-graph itself still costs about 20 ms on git.git and 0.7 s on
-Linux, which dominates a single near-tip query;
-[issue 625](https://github.com/joshka/girt/issues/625) tracks that. Each walk also allocates one
-byte of color per indexed commit, about 1 MB on Linux.
+history commands. Opening reads graph records in place rather than decoding them, so a whole
+near-tip `is_ancestor` process on Linux takes about 52 ms, against 0.7 s before and 10.5 ms for
+`git merge-base --is-ancestor`. Most of what remains is the whole-file checksum, which girt checks
+on every open; see [issue 625](https://github.com/joshka/girt/issues/625). Each walk also allocates
+one byte of color per indexed commit, about 1 MB on Linux.
 
 Without a commit-graph girt reads both complete ancestries, 0.5-1 s for every row, where Git stops
 early using commit dates (60 ms for `master~3...master`). girt does not use date heuristics, so its

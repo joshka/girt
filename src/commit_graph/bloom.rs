@@ -1,12 +1,14 @@
 //! Conservative first-parent changed-path membership from Git-written Bloom chunks.
+use std::ops::Range;
+
 use super::{Chunks, CommitGraph, word};
 use crate::ObjectId;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct BloomFilter {
+/// One commit's filter, borrowed from its layer.
+pub(super) struct BloomFilter<'a> {
     version: u32,
     hashes: u32,
-    bits: Vec<u8>,
+    bits: &'a [u8],
 }
 
 impl CommitGraph {
@@ -26,7 +28,8 @@ impl CommitGraph {
         {
             return None;
         }
-        let filter = self.get(commit)?.bloom.as_ref()?;
+        let (layer, index) = self.layer_at(self.locate(commit)?);
+        let filter = layer.bloom(index)?;
         if filter.version == 1 && !path.is_ascii() {
             return None;
         }
@@ -47,15 +50,17 @@ impl CommitGraph {
     }
 }
 
-pub(super) struct BloomData<'a> {
+/// Locations of a layer's usable filter chunks; unusable chunks are treated as absent.
+#[derive(Clone, Debug)]
+pub(super) struct BloomLayout {
     version: u32,
     hashes: u32,
-    offsets: &'a [u8],
-    data: &'a [u8],
+    offsets: Range<usize>,
+    data: Range<usize>,
 }
 
-impl<'a> BloomData<'a> {
-    pub(super) fn parse(chunks: &Chunks<'a>, count: usize) -> Option<Self> {
+impl BloomLayout {
+    pub(super) fn parse(chunks: &Chunks<'_>, count: usize) -> Option<Self> {
         let offsets = chunks.optional(b"BIDX")?;
         let data = chunks.optional(b"BDAT")?;
         if offsets.len() != count.checked_mul(4)? || data.len() < 12 {
@@ -66,38 +71,41 @@ impl<'a> BloomData<'a> {
         if !matches!(version, 1 | 2) || !(1..=64).contains(&hashes) || word(data, 8).ok()? == 0 {
             return None;
         }
-        let data = &data[12..];
+        let filters = data.len() - 12;
         let mut previous = 0;
         for index in 0..count {
             let end = word(offsets, index * 4).ok()? as usize;
-            if end < previous || end > data.len() {
+            if end < previous || end > filters {
                 return None;
             }
             previous = end;
         }
+        let data = chunks.range(b"BDAT")?;
         Some(Self {
             version,
             hashes,
-            offsets,
-            data,
+            offsets: chunks.range(b"BIDX")?,
+            data: data.start + 12..data.end,
         })
     }
 
-    pub(super) fn filter(&self, index: usize) -> Option<BloomFilter> {
+    /// Returns a record's filter from its layer's bytes; an empty filter is unusable.
+    pub(super) fn filter<'a>(&self, bytes: &'a [u8], index: usize) -> Option<BloomFilter<'a>> {
+        let offsets = &bytes[self.offsets.clone()];
         let start = if index == 0 {
             0
         } else {
-            word(self.offsets, (index - 1) * 4).ok()? as usize
+            word(offsets, (index - 1) * 4).ok()? as usize
         };
-        let end = word(self.offsets, index * 4).ok()? as usize;
-        let bits = self.data.get(start..end)?;
+        let end = word(offsets, index * 4).ok()? as usize;
+        let bits = bytes[self.data.clone()].get(start..end)?;
         if bits.is_empty() {
             return None;
         }
         Some(BloomFilter {
             version: self.version,
             hashes: self.hashes,
-            bits: bits.to_vec(),
+            bits,
         })
     }
 }
@@ -160,10 +168,13 @@ mod tests {
         data.extend_from_slice(&10u32.to_be_bytes());
         data.extend_from_slice(&[0, 255]);
         let offsets: Vec<_> = ends.into_iter().flat_map(u32::to_be_bytes).collect();
-        let chunks = Chunks(BTreeMap::from([
-            (*b"BIDX", offsets.as_slice()),
-            (*b"BDAT", data.as_slice()),
-        ]));
-        assert!(BloomData::parse(&chunks, 2).is_none());
+        let mut bytes = offsets;
+        let split = bytes.len();
+        bytes.extend_from_slice(&data);
+        let chunks = Chunks {
+            bytes: &bytes,
+            ranges: BTreeMap::from([(*b"BIDX", 0..split), (*b"BDAT", split..bytes.len())]),
+        };
+        assert!(BloomLayout::parse(&chunks, 2).is_none());
     }
 }
