@@ -58,6 +58,29 @@ an operation without a default form keeps its plain name with explicit arguments
 an error. Callers that never cancel an operation without a default form pass
 `&AtomicBool::new(false)`; do not export a shared never-set static, because any caller could set it.
 
+## Vertical Spacing
+
+Readers scan code by its shape: a blank line marks the edge of a group of related statements, so a
+body with no gaps reads as one undifferentiated step even when each line is clear. Write function
+bodies, tests and examples as short paragraphs, each doing one step of the work.
+
+- Separate setup, the operation, and checking or building the result. In tests this is arrange, act,
+  assert.
+- Put a blank line before and after a multi-line `if`, `match`, loop or long call, unless it
+  directly consumes the line above it, such as `let entry = ...;` followed by `match entry`.
+- Keep a binding next to the code that uses it; do not split one step across paragraphs.
+- Put a comment that introduces a paragraph directly above it, after the blank line.
+- Short bodies of about five lines rarely need a gap. Never add blank lines after an opening brace,
+  before a closing one, or two in a row.
+- Doctest examples follow the same rule. Hidden `#` lines do not count; a blank line goes between
+  visible groups.
+
+A body that needs many paragraphs may also want named helpers; spacing is not a substitute for that,
+but it should come first because it is cheap and reveals the structure. Run
+`scripts/code-spacing.py` to list paragraphs of more than ten lines with two or more statements in a
+block. A single long expression, `match` arms and struct literals are not flagged, and a flagged
+paragraph that genuinely is one step may stay as it is.
+
 ## Domain Types at API Boundaries
 
 - Use domain types when a primitive would admit invalid choices, obscure meaning, or allow unrelated

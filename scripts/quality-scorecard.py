@@ -538,6 +538,20 @@ def robustness(caps, panics):
     return axis("robustness", 90, metrics)
 
 
+def code_spacing():
+    """Blocks and functions whose statements run on without blank lines; see docs/rust-conventions.md."""
+    result = run([sys.executable, "scripts/code-spacing.py", "--json"])
+    return {s["surface"]: s for s in json.loads(result.stdout)}
+
+
+def spaced(surfaces, names):
+    """Percent of the named surfaces' blocks or functions with no dense paragraph."""
+    blocks = sum(surfaces[n]["blocks"] for n in names)
+    dense = sum(surfaces[n]["dense_blocks"] for n in names)
+    detail = [p for n in names for p in surfaces[n]["paragraphs"]][:20]
+    return percent(blocks - dense, blocks), detail
+
+
 def idiomatic(doc, items, types, style):
     unsafe_sites = [(s, i) for s in source_files() for i, line in enumerate(read(s).splitlines())
                     if re.search(r"\bunsafe\s*(\{|fn|impl)", line)]
@@ -559,6 +573,7 @@ def idiomatic(doc, items, types, style):
     for item in items.values():
         kind = next(iter(item["inner"]))
         kinds[kind] = kinds.get(kind, 0) + 1
+    spacing_source = spaced(code_spacing(), ["library source", "CLI source"])
     metrics = [
         metric("unsafe blocks, functions and impls", len(unsafe_sites), None,
                detail=sorted({s for s, _ in unsafe_sites})),
@@ -575,6 +590,8 @@ def idiomatic(doc, items, types, style):
         metric("public types implementing Debug", percent(len(types) - len(no_debug), len(types)), 100, unit="%",
                detail=no_debug[:20]),
         metric("CLI-, libgit2- or gix-shaped public names", len(foreign), 0, higher=False, detail=foreign[:20]),
+        metric("library and CLI functions grouped into paragraphs", spacing_source[0], 90, unit="%",
+               note="scripts/code-spacing.py --list", detail=spacing_source[1]),
         metric("public API items", len(items), None, detail=[f"{k}: {n}" for k, n in sorted(kinds.items())]),
         metric("clippy::pedantic warnings", sum(len(v) for k, v in style.items() if k in PEDANTIC), None,
                note="informational, not a gate"),
@@ -673,6 +690,7 @@ def documentation(doc, items, docs_rs):
     with_example = [v for v in top_level if has_example(v.get("docs"))]
     lint = re.search(r"missing_docs\s*=|#!\[(deny|warn|forbid)\([^)]*missing_docs", read("Cargo.toml") + read("src/lib.rs"))
     stale = stale_versions()
+    spacing_examples = spaced(code_spacing(), ["website guides", "Rustdoc examples", "examples"])
     metrics = [
         metric("public items documented", percent(len(items) - len(undocumented), len(items)), 100, unit="%",
                detail=undocumented[:20]),
@@ -687,6 +705,8 @@ def documentation(doc, items, docs_rs):
                40, unit="%"),
         metric("docs.rs build with warnings denied", docs_rs, True),
         metric("pinned girt versions in dependency snippets", len(stale), 0, higher=False, detail=stale),
+        metric("examples and guide programs grouped into paragraphs", spacing_examples[0], 100, unit="%",
+               note="scripts/code-spacing.py --list", detail=spacing_examples[1]),
     ]
     return axis("docs", 90, metrics)
 

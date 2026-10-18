@@ -91,6 +91,8 @@ stored-name edits without following symbolic references.
 
 ## Examples and Validation
 
+- Group example code into paragraphs separated by blank lines, as described in
+  [Vertical Spacing](rust-conventions.md#vertical-spacing).
 - Demonstrate useful behavior with expected results or error handling. Prefer grouped or linked
   examples over repetitive accessor doctests. Distinguish example policy from library guarantees.
 - Keep imports, dependencies, features, and lifecycle consistent across README, Rustdoc, and
