@@ -397,9 +397,14 @@ mod supported {
             .and_then(|index| index.trees(cancel));
         check(cancel)?;
         let staged = match trees {
-            Some((root, trees)) => {
-                objects.compare_trees_among(tree, Some(root), &trees, limits.trees, cancel)?
-            }
+            Some((root, trees)) => objects.compare_trees_among(
+                tree,
+                Some(root),
+                &trees,
+                paths,
+                limits.trees,
+                cancel,
+            )?,
             None => flattened_staged(&objects, tree, entries, limits, cancel)?,
         };
         let mut staged = staged;
