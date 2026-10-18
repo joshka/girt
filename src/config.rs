@@ -102,6 +102,7 @@ pub(crate) use sources::system_file;
 pub use sources::{
     ConfigFile, ConfigInputs, ConfigScope, IncludeContext, Origin, ResolveLimits, SourceLocation,
 };
+pub use values::parse_boolean;
 pub(crate) use values::{boolean, integer};
 
 #[cfg(test)]

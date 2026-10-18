@@ -282,6 +282,7 @@ fn validate(
             limits: FetchLimits::default(),
             depth: None,
             filter: None,
+            explicit_wants: false,
         },
         &mut ValidationObserver::new(&AtomicBool::new(false), &mut |_| {}),
     )

@@ -103,6 +103,18 @@ nope missing
 Batch mode opens the repository once, so it is the form to use when timing object reads against
 `git cat-file --batch`.
 
+### Missing objects in a partial clone
+
+A partial clone, such as one made by `git clone --filter=blob:none`, leaves out objects its promisor
+remote can send later. When `object show`, `info`, `cat`, `exists` or `batch` reads one of them,
+girt fetches it from the promisor remotes first, as Git's lazy fetch does, and then reads it. Set
+`GIT_NO_LAZY_FETCH=1` to read only what is stored; a missing object then reads as missing. If the
+fetch fails, girt prints a warning and treats the object as missing.
+
+Only the CLI fetches on read. The library never contacts a remote while reading:
+`workflow::fetch_missing` and `workflow::fetch_promised` fetch a batch of missing objects when the
+caller asks.
+
 ## Hash content (`girt object hash`)
 
 <Example cmd="object hash">

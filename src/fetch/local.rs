@@ -105,6 +105,7 @@ pub fn receive_local(
         select,
         request.known.unwrap_or(&empty),
         None,
+        false,
         request.limits,
         control,
         |message| {
@@ -130,11 +131,12 @@ pub fn receive_local(
     clippy::too_many_arguments,
     reason = "local transfer keeps explicit progress policy"
 )]
-pub(super) fn receive_local_observed(
+pub(crate) fn receive_local_observed(
     source: impl AsRef<Path>,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
     known: &KnownHistory,
     depth: Option<NonZeroU32>,
+    explicit_wants: bool,
     limits: FetchLimits,
     control: TransportControl<'_>,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
@@ -155,7 +157,16 @@ pub(super) fn receive_local_observed(
         let source =
             crate::Repository::open(source).map_err(|error| FetchError::Source(Box::new(error)))?;
         super::local_native::receive_depth_observed(
-            &source, select, known, depth, limits, control, progress, observe, validation,
+            &source,
+            select,
+            known,
+            depth,
+            explicit_wants,
+            limits,
+            control,
+            progress,
+            observe,
+            validation,
         )
     };
     #[cfg(feature = "tracing")]

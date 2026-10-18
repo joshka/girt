@@ -64,11 +64,17 @@ export const calls: Record<string, CliCalls> = {
       objects('read_with'),
       method('Object', 'objects/struct.Object.html', 'kind'),
       method('Object', 'objects/struct.Object.html', 'data'),
+      unreleased('Repository::is_partial_clone', 521),
+      unreleased('workflow::fetch_promised', 521),
     ],
   },
   'object batch': {
     git: 'git cat-file --batch',
-    api: [resolver('resolve'), objects('read_with')],
+    api: [
+      resolver('resolve'),
+      objects('read_with'),
+      unreleased('workflow::fetch_promised', 521),
+    ],
   },
   'object hash': {
     git: 'git hash-object',

@@ -48,6 +48,7 @@ pub(super) fn receive_depth(
         select,
         known,
         depth,
+        false,
         limits,
         control,
         progress,
@@ -65,6 +66,7 @@ pub(super) fn receive_depth_observed(
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
     known: &KnownHistory,
     depth: Option<NonZeroU32>,
+    explicit_wants: bool,
     limits: FetchLimits,
     control: TransportControl<'_>,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
@@ -106,7 +108,7 @@ pub(super) fn receive_depth_observed(
         .map(|reference| reference.id)
         .collect();
     for id in &wants {
-        if !offered.contains(id) {
+        if !explicit_wants && !offered.contains(id) {
             return Err(FetchError::Unadvertised(*id));
         }
         if id.format() != source.object_format() {
@@ -418,6 +420,7 @@ pub(super) fn receive_depth_observed(
             limits,
             depth,
             filter: None,
+            explicit_wants,
         },
         &mut super::progress::ValidationObserver::new(control.cancel, &mut validation),
     )?;

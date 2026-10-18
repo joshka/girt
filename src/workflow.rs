@@ -9,6 +9,8 @@
 //! - [`fetch`] downloads objects and updates remote-tracking references and tags.
 //! - [`push`] conditionally updates references on the remote.
 //! - [`remote_head`] asks which branch the remote's `HEAD` names, as a clone does.
+//! - [`fetch_missing`] and [`fetch_promised`] fetch objects a partial clone lacks. Reading an
+//!   object never fetches it; these are the explicit, batched alternative to Git's lazy fetch.
 //!
 //! Fetch, push and remote-head queries take the [`Repository`] explicitly, an [`Environment`]
 //! snapshot instead of reading the process environment, and a [`TransferCallbacks`] implementation
@@ -197,6 +199,8 @@
 //! | [`FetchFinish`](TransferError::FetchFinish) | objects, shallow boundaries or some references, depending on the phase | Inspect the report; fetching again is safe. |
 //! | [`Push`](TransferError::Push) | none locally | If [`Uncertain`](crate::push::PushError::Uncertain), read the remote's references before retrying. |
 //! | [`Local`](TransferError::Local) | none | Reading this repository failed. |
+//! | [`NotPromisor`](TransferError::NotPromisor), [`NoPromisorRemote`](TransferError::NoPromisorRemote) | none | Ask a promisor remote; see [`promisor_remotes`]. |
+//! | [`NotFetched`](TransferError::NotFetched) | the objects the remote did send | Ask another promisor remote. |
 //!
 //! Clone returns [`CloneError`], preserving destination creation and checkout reports as well as
 //! transfer errors.
@@ -269,6 +273,8 @@ use crate::{ObjectId, Repository};
 
 mod clone;
 pub use clone::{CloneError, CloneOptions, CloneOutcome, clone, clone_with};
+mod missing;
+pub use missing::{PromisorFetch, fetch_missing, fetch_promised, promisor_remotes};
 
 /// Asks a configured remote which branch its `HEAD` names, without downloading objects.
 ///
@@ -1445,6 +1451,20 @@ pub enum TransferError {
     /// A hook could not run or rejected the operation before anything was sent.
     #[error(transparent)]
     Hook(Box<crate::hooks::Error>),
+    /// The remote is not a promisor, so it never promised the objects a partial clone lacks.
+    ///
+    /// Holds the remote name. A promisor remote has `remote.<name>.promisor = true` or is named by
+    /// `extensions.partialClone`. Nothing was sent.
+    #[error("remote {0} is not a promisor remote")]
+    NotPromisor(String),
+    /// No configured remote is a promisor, so there is nowhere to fetch promised objects from.
+    #[error("no promisor remote is configured")]
+    NoPromisorRemote,
+    /// The remote's pack lacked these requested objects.
+    ///
+    /// The pack was installed, so the objects it did contain are stored.
+    #[error("{} requested objects were not fetched, including {}", .0.len(), .0.first().map(ToString::to_string).unwrap_or_default())]
+    NotFetched(Vec<ObjectId>),
 }
 
 impl TransferError {

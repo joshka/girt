@@ -370,6 +370,8 @@ pub(super) struct Negotiation {
     /// The filter sent to the server; `None` when none was requested or the server lacks support.
     pub(super) filter: Option<ObjectFilter>,
     v2: bool,
+    /// The wants named objects directly; see [`FetchOptions::explicit_wants`].
+    pub(super) explicit_wants: bool,
 }
 
 /// The upload-pack protocol a session speaks after its first response line.
@@ -454,6 +456,7 @@ pub(super) fn request(
         limits,
         depth,
         ref filter,
+        explicit_wants,
     } = *options;
     check_cancelled(cancel)?;
     let format = advertisement.object_format()?;
@@ -483,7 +486,7 @@ pub(super) fn request(
     let mut seen = HashSet::new();
     for id in selected {
         id.require_format(format)?;
-        if !advertised.contains(&id) {
+        if !explicit_wants && !advertised.contains(&id) {
             return Err(Error::Unadvertised(id));
         }
         if seen.insert(id) {
@@ -507,6 +510,7 @@ pub(super) fn request(
             depth,
             filter: None,
             v2: matches!(dialect, Dialect::V2(_)),
+            explicit_wants,
         });
     }
     if let Dialect::V2(capabilities) = dialect {
@@ -523,7 +527,11 @@ pub(super) fn request(
             filter,
             limits,
             cancel,
-        );
+        )
+        .map(|negotiation| Negotiation {
+            explicit_wants,
+            ..negotiation
+        });
     }
     let filter = filter.as_ref().filter(|_| advertisement.has(b"filter"));
     if !advertisement.has(b"side-band-64k") {
@@ -585,6 +593,7 @@ pub(super) fn request(
         depth,
         filter: filter.cloned(),
         v2: false,
+        explicit_wants,
     })
 }
 
@@ -639,6 +648,7 @@ fn request_v2(
         depth,
         filter: filter.cloned(),
         v2: true,
+        explicit_wants: false,
     })
 }
 
@@ -701,6 +711,7 @@ pub(super) fn response_observed(
             limits,
             depth: negotiation.depth,
             filter: negotiation.filter,
+            explicit_wants: negotiation.explicit_wants,
         },
         observer,
     )
@@ -1031,6 +1042,7 @@ mod tests {
                 depth: NonZeroU32::new(1),
                 filter: None,
                 v2: false,
+                explicit_wants: false,
             },
             limits,
         )
@@ -1166,6 +1178,7 @@ mod tests {
                 depth: depth.and_then(NonZeroU32::new),
                 filter: None,
                 v2: true,
+                explicit_wants: false,
             },
             FetchLimits::default(),
         )
@@ -1382,5 +1395,55 @@ mod tests {
             "{written}"
         );
         assert_eq!(negotiation.filter, None);
+    }
+
+    /// A promisor fetch names objects no reference advertises, as Git's lazy fetch does: wants,
+    /// the filter and `done`, with no haves. Ordinary fetches refuse such wants.
+    #[test]
+    fn explicit_wants_need_not_be_advertised() {
+        let cancel = AtomicBool::new(false);
+        let mut bytes = Vec::new();
+        for line in ["agent=git/2.56.0\n", "fetch=shallow filter\n"] {
+            packet(&mut bytes, line.as_bytes(), &cancel).unwrap();
+        }
+        bytes.extend_from_slice(b"0000");
+        let mut reader = bytes.as_slice();
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: 4096,
+            cancel: &cancel,
+        };
+        let dialect = Dialect::V2(Capabilities::read(&mut wire, FetchLimits::default()).unwrap());
+        let advertisement = Advertisement::new(vec![], vec![]);
+        let blob = ObjectId::Sha1([2; 20]);
+        let mut options = FetchOptions::default().with_filter(Some(ObjectFilter::BlobNone));
+        let request_blob = |options: &FetchOptions, written: &mut Vec<u8>| {
+            request(
+                written,
+                &advertisement,
+                &dialect,
+                vec![blob],
+                &KnownHistory::default(),
+                options,
+                &cancel,
+            )
+        };
+        assert!(matches!(
+            request_blob(&options, &mut Vec::new()),
+            Err(Error::Unadvertised(id)) if id == blob
+        ));
+
+        options.explicit_wants = true;
+        let mut written = Vec::new();
+        let negotiation = request_blob(&options, &mut written).unwrap();
+        let written = String::from_utf8(written).unwrap();
+        assert!(
+            written.ends_with(&format!(
+                "000eofs-delta\n0032want {blob}\n0015filter blob:none\n0009done\n0000"
+            )),
+            "{written}"
+        );
+        assert!(!written.contains("have "));
+        assert!(negotiation.explicit_wants);
     }
 }

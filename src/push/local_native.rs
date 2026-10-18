@@ -297,6 +297,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 limits,
                 depth: None,
                 filter: None,
+                explicit_wants: false,
             },
             &mut crate::fetch::ValidationObserver::new(control.cancel, &mut validation),
         )
