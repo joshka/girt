@@ -52,12 +52,14 @@ impl RequestedProtocol {
         }
     }
 
-    /// The `GIT_PROTOCOL` / `Git-Protocol` value, or `None` for v0.
-    #[cfg(any(
-        test,
-        feature = "http",
-        all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-    ))]
+    /// The value Git sends as `GIT_PROTOCOL` (over SSH) or `Git-Protocol` (over HTTP), such as
+    /// `version=2`, or `None` for v0.
+    ///
+    /// An application [`Transport`](super::Transport) passes it to its service the same way.
+    pub fn git_protocol(self) -> Option<&'static str> {
+        self.parameter()
+    }
+
     pub(crate) fn parameter(self) -> Option<&'static str> {
         match self {
             Self::V0 => None,

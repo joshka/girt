@@ -102,8 +102,10 @@
 //! 2. **Choose a transport** from the URL. Local paths and `file://` URLs use girt's native local transfer,
 //!    which reads and writes the other repository's storage directly and never starts Git. `http://`
 //!    and `https://` need the `http` feature; `ssh://` and `user@host:path` need the `ssh` feature
-//!    on macOS or Linux. Other schemes, such as `git://` and `remote-helper::url`, return
-//!    [`TransferError::UnsupportedTransport`].
+//!    on macOS or Linux. Any other scheme, such as `mem://repo` or `vault::team/project`, uses the
+//!    application's [`Transport`](crate::transport::Transport) from
+//!    [`TransferCallbacks::transport`], which can list references for now; without one, and for
+//!    `git://`, the result is [`TransferError::UnsupportedTransport`].
 //! 3. **Authenticate if asked.** An HTTP server that answers `401 Unauthorized` gets one retry with
 //!    a credential. Configured `credential.helper` programs are asked first; Git's `store` helper
 //!    is answered natively by [`crate::remote::CredentialStore`]. If no helper supplies a value,
@@ -188,7 +190,8 @@
 //! | --- | --- | --- |
 //! | [`NoSuchRemote`](TransferError::NoSuchRemote) | none | Check the name or add the remote. |
 //! | [`Configuration`](TransferError::Configuration) | none | Report it; the user's config is invalid or unsupported. |
-//! | [`UnsupportedTransport`](TransferError::UnsupportedTransport) | none | Enable the feature or use another URL. |
+//! | [`UnsupportedTransport`](TransferError::UnsupportedTransport) | none | Enable the feature, register a transport or use another URL. |
+//! | [`Transport`](TransferError::Transport) | none | Inspect the application transport's error. |
 //! | [`Authentication`](TransferError::Authentication) | none | Ask for a different credential. |
 //! | [`Fetch`](TransferError::Fetch) | none | Inspect the cause; retrying is safe. |
 //! | [`FetchFinish`](TransferError::FetchFinish) | objects, shallow boundaries or some references, depending on the phase | Inspect the report; fetching again is safe. |
@@ -899,6 +902,16 @@ pub trait TransferCallbacks {
         None
     }
 
+    /// Returns the application's transport for a URL scheme girt does not handle itself.
+    ///
+    /// Called with the scheme of a `<scheme>::<address>` or unrecognized `<scheme>://` URL, such
+    /// as `b"mem"` for `mem://repo`. The default, `None`, leaves the URL unsupported. The URL must
+    /// still be allowed by `protocol.<scheme>.allow`. See
+    /// [`Transport`](crate::transport::Transport).
+    fn transport(&self, _scheme: &[u8]) -> Option<std::sync::Arc<dyn crate::transport::Transport>> {
+        None
+    }
+
     /// Returns the check that decides whether HTTPS server certificates are acceptable.
     ///
     /// Called once per HTTPS transfer, before connecting. The default, `None`, keeps girt's own
@@ -1314,10 +1327,16 @@ pub enum TransferError {
     /// The URL's transport is not available in this build or not supported at all.
     ///
     /// `http(s)://` URLs need the `http` feature and SSH URLs need the `ssh` feature on macOS or
-    /// Linux. `git://` and remote helpers (`<transport>::<address>`) are never supported. Holds the
+    /// Linux. Other schemes need an application transport from [`TransferCallbacks::transport`],
+    /// which can only list references so far; fetch, push and clone over one return this too.
+    /// girt never runs `git-remote-<helper>` programs, and `git://` is not supported. Holds the
     /// remote name.
     #[error("unsupported transport for remote {0}")]
     UnsupportedTransport(String),
+    /// The application's [`Transport`](crate::transport::Transport) could not connect, or its
+    /// service failed.
+    #[error(transparent)]
+    Transport(#[from] crate::transport::ConnectError),
     /// An HTTP server asked for a credential and none could be obtained.
     ///
     /// Raised when credential helpers and [`TransferCallbacks::credential`] supply nothing or the
@@ -1362,10 +1381,51 @@ impl TransferError {
 /// A resolved connection target.
 enum Endpoint {
     Local(PathBuf),
+    Custom(Box<Custom>),
     #[cfg(feature = "http")]
     Http(Box<Http>),
     #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
     Ssh(Box<crate::transport::ssh::SshRemote>),
+}
+
+// A remote reached through an application's transport.
+struct Custom {
+    transport: std::sync::Arc<dyn crate::transport::Transport>,
+    destination: Destination,
+    protocol: crate::transport::RequestedProtocol,
+}
+
+impl Custom {
+    fn connect(
+        &self,
+        service: crate::transport::Service,
+    ) -> Result<std::cell::RefCell<Box<dyn crate::transport::Connection>>, TransferError> {
+        let request = crate::transport::ConnectRequest {
+            destination: &self.destination,
+            service,
+            protocol: self.protocol,
+        };
+        Ok(std::cell::RefCell::new(self.transport.connect(&request)?))
+    }
+}
+
+// The reading and writing halves of one connection, for stream functions that take both.
+struct Half<'a>(&'a std::cell::RefCell<Box<dyn crate::transport::Connection>>);
+
+impl std::io::Read for Half<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().read(buffer)
+    }
+}
+
+impl std::io::Write for Half<'_> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().write(buffer)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.borrow_mut().flush()
+    }
 }
 
 #[cfg(feature = "http")]
@@ -1828,13 +1888,9 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, TransferError> {
     Ok(bytes)
 }
 
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
-/// Reads `protocol.version` for an HTTP or SSH endpoint, defaulting to v2 like Git. Only
-/// upload-pack sends the request; a server answering v0/v1 is accepted. Native local transfer never
-/// reads it, so enabling a network feature cannot change local fetch or push.
+/// Reads `protocol.version` for an HTTP, SSH or application endpoint, defaulting to v2 like Git.
+/// Only upload-pack sends the request; a server answering v0/v1 is accepted. Native local transfer
+/// never reads it, so enabling a network feature cannot change local fetch or push.
 fn requested_protocol(
     config: &crate::Config,
 ) -> Result<crate::transport::RequestedProtocol, TransferError> {
@@ -1906,13 +1962,6 @@ fn configured_endpoint(
     direction: Direction,
     base: &Path,
     environment: &Environment,
-    #[cfg_attr(
-        not(any(
-            feature = "http",
-            all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-        )),
-        expect(unused_variables)
-    )]
     callbacks: &dyn TransferCallbacks,
 ) -> Result<(Endpoint, Destination), TransferError> {
     let protocol_environment =
@@ -1973,6 +2022,17 @@ fn configured_endpoint(
             }
             Endpoint::Ssh(Box::new(ssh))
         }
+        Protocol::Helper => {
+            let transport = destination
+                .helper_scheme()
+                .and_then(|scheme| callbacks.transport(scheme))
+                .ok_or_else(|| TransferError::UnsupportedTransport(remote_name.to_owned()))?;
+            Endpoint::Custom(Box::new(Custom {
+                transport,
+                destination: destination.clone(),
+                protocol: requested_protocol(config)?,
+            }))
+        }
         _ => return Err(TransferError::UnsupportedTransport(remote_name.to_owned())),
     };
     Ok((endpoint, destination))
@@ -2024,6 +2084,22 @@ impl Repository {
         let limits = FetchLimits::trusted();
         let discovery = match endpoint {
             Endpoint::Local(path) => crate::fetch::discover_local(path, limits, control),
+            Endpoint::Custom(custom) => {
+                let connection = custom.connect(crate::transport::Service::UploadPack)?;
+                let discovery = crate::fetch::discover_session(
+                    &mut Half(&connection),
+                    &mut Half(&connection),
+                    limits,
+                    &cancel,
+                );
+                // Like closing an SSH session after listing: a service that fails after a complete
+                // listing says nothing about it, but its failure explains a broken one.
+                let finished = connection.into_inner().finish();
+                match (discovery, finished) {
+                    (Err(_), Err(error)) => return Err(error.into()),
+                    (discovery, _) => discovery,
+                }
+            }
             #[cfg(feature = "http")]
             Endpoint::Http(http) => {
                 let runtime = runtime()?;
@@ -2102,6 +2178,10 @@ impl Repository {
             ControlFlow::Continue(())
         };
         let ready = match endpoint {
+            // Application transports list references only, for now.
+            Endpoint::Custom(_) => {
+                return Err(TransferError::UnsupportedTransport(remote_name.to_owned()));
+            }
             Endpoint::Local(path) => {
                 let callbacks = std::cell::RefCell::new(callbacks);
                 request()?.receive_local(
@@ -2380,6 +2460,10 @@ impl Repository {
         ))]
         let names: Vec<RefName> = commands.iter().map(|c| c.name.clone()).collect();
         let result = match endpoint {
+            // Application transports list references only, for now.
+            Endpoint::Custom(_) => {
+                return Err(TransferError::UnsupportedTransport(remote_name.to_owned()));
+            }
             Endpoint::Local(path) => {
                 let send = || {
                     crate::push::send_local_preparing_observed(
