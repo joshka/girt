@@ -1,4 +1,4 @@
-//! Three-way merging of byte content without a repository or working tree.
+//! Three-way merging of byte content and tree entries without a working tree.
 //!
 //! [`content()`] compares each side with a common base and keeps nonoverlapping edits. Unresolved
 //! regions retain all three inputs in [`ContentHunk::Conflict`]; marker text is a separate
@@ -17,11 +17,17 @@
 //! common lines in conflict regions can differ from Git's refinement. Adjacent edits from
 //! opposite sides form one region. Binary conflicts retain whole inputs and render ours without
 //! markers. No references, index entries, objects or working files are written.
+//! [`crate::Objects::merge_tree_entries`] merges entries at matching paths and returns a
+//! [`TreeMerge`] with a candidate root, generated objects and original conflict sides. Install
+//! generated objects explicitly before publishing a clean root. This primitive does not infer
+//! renames; rename-aware composition remains a separate operation.
 mod content;
 mod render;
+mod tree;
 mod types;
 
 pub use content::{content, content_with};
+pub use tree::{ConflictKind, TreeConflict, TreeError, TreeMerge, TreeOptions};
 pub use types::{
     ConflictStyle, ContentHunk, ContentMerge, ContentOptions, Error, Favor, MarkerOptions,
 };
