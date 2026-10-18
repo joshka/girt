@@ -78,13 +78,16 @@ jobs:
       - run: cargo +1.97.1 test --locked --no-default-features --lib
 
   unix:
-    name: Test (${{ matrix.os }})
+    name: Test (${{ matrix.os }}, ${{ matrix.suite }})
     needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' && !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(needs.changes.outputs.unix) }}
+        # Feature-set builds run beside the all-features tests so neither
+        # macOS job approaches the timeout. Each suite keeps its own cache.
+        suite: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["main","features"]' || '["main"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -110,83 +113,89 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: stable
         with:
-          shared-key: stable-tests
+          # main keeps the pre-split key so PR runs restore the existing warm cache.
+          shared-key: ${{ matrix.suite == 'main' && 'stable-tests' || 'stable-tests-features' }}
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
+        if: ${{ matrix.suite == 'main' }}
       - run: cargo +stable clippy --locked -p girt-cli --all-targets -- -D warnings
+        if: ${{ matrix.suite == 'main' }}
       - name: Rust formatting
-        if: runner.os == 'Linux'
+        if: ${{ matrix.suite == 'main' && runner.os == 'Linux' }}
         run: |
           rustup toolchain install nightly --profile minimal --component rustfmt
           cargo +nightly fmt --all -- --check
       # Tracing fixture dispatchers share tracing-core's global callsite cache.
       - run: cargo +stable test --locked --all-features -- --test-threads=1
+        if: ${{ matrix.suite == 'main' }}
       - run: cargo +stable test --locked -p girt-cli
+        if: ${{ matrix.suite == 'main' }}
       - name: Developer guide examples
+        if: ${{ matrix.suite == 'main' }}
         env:
           RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/check-guide-examples.py
       - name: Core-only runtime without tracing
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'features' }}
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
           --lib --test layout_shallow --test worktree_create --test worktree_admin --test object_ids --test short_ids --test sha256 --test commits --test builders --test repo --test decoding --test packs --test index --test colocation --test references --test references_portable --test reflog_expiry --test retention --test retention_noop --test retention_integrity --test retention_survivors --test retention_repack_contracts
       - name: Core-only library
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'features' }}
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'features' }}
         run: cargo +stable check --locked --lib --no-default-features --features http
       - name: Tracing without network dependencies
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'features' }}
         run: cargo +stable test --locked --no-default-features --features tracing --test tracing
       - name: Tracing HTTP lifecycle
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'features' }}
         run: cargo +stable test --locked --no-default-features --features tracing,http --test tracing
       - name: Tracing SSH-only library
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'features' }}
         run: cargo +stable check --locked --lib --no-default-features --features tracing,ssh
       - name: SSH-only library
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'features' }}
         run: cargo +stable check --locked --lib --no-default-features --features ssh
       - name: HTTP-only runtime without tracing
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'features' }}
         run: cargo +stable test --locked --no-default-features --features http --no-fail-fast --test http --test http_portable
       - name: SSH-only runtime without tracing
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'features' }}
         run: cargo +stable test --locked --no-default-features --features ssh --test ssh
       - run: cargo +stable run --locked --example fetch_local
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --example push_local
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --features http --example http_local
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --features ssh --example ssh_local
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --example content_diff
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --example index
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --example write_pack
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --example init_repository
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --features tracing --example tracing
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --example reference_transaction
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --example status
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - run: cargo +stable run --locked --example checkout
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
       - name: Rustdoc
-        if: ${{ needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && needs.changes.outputs.full == 'true' }}
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
       - name: docs.rs build
-        if: ${{ runner.os == 'Linux' && needs.changes.outputs.full == 'true' }}
+        if: ${{ matrix.suite == 'main' && runner.os == 'Linux' && needs.changes.outputs.full == 'true' }}
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
