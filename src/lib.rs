@@ -211,6 +211,7 @@ pub mod revision;
 pub mod rewrites;
 pub mod sequencer;
 mod source_files;
+pub mod stash;
 pub mod status;
 pub mod tag;
 pub mod transport;
