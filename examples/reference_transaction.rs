@@ -9,14 +9,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         directory.path().join("repository"),
         girt::InitKind::Bare,
     )?;
+
     let objects = repo.loose_objects();
     let tree = objects.write_tree(&repo.new_tree(Vec::new())?)?;
+
     let committer = Signature {
         name: b"Example Writer".to_vec(),
         email: b"writer@example.com".to_vec(),
         seconds: 1700000000,
         offset_minutes: 0,
     };
+
     let commit = Commit::new(CommitFields {
         tree,
         parents: Vec::new(),
@@ -26,6 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         message: b"Initial commit\n".to_vec(),
     })?;
     let id = objects.write_commit(&commit)?;
+
     let head = RefName::HEAD;
     let tag = RefName::tag("initial")?;
     let edits = [
@@ -50,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         ),
     ];
+
     let refs = repo.references()?;
     match refs.transaction(&edits) {
         Ok(outcomes) => println!("Published: {outcomes:?}"),
@@ -64,6 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(error) => return Err(error.into()),
     }
+
     refs.transaction(&[RefEdit::delete(
         tag.clone(),
         id,
@@ -72,9 +78,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             message: b"remove temporary tag".to_vec(),
         },
     )])?;
+
     assert_eq!(refs.reflog(&head)?.unwrap().len(), 1);
     assert_eq!(refs.reflog(&tag)?.unwrap().len(), 2);
     assert_eq!(refs.read(&tag)?, None);
+
     // A retention ref may already exist at this value, but must never overwrite another value.
     let keep = RefName::new("refs/jj/keep-example")?;
     refs.transaction(&[RefEdit::new(

@@ -25,10 +25,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         directory.path().join("project.git"),
         InitKind::Bare,
     )?;
+
     let global = directory.path().join("global");
     std::fs::write(&global, b"[core]\neditor = user-editor\n")?;
     let inputs =
         ConfigInputs::default().with_files(vec![ConfigFile::new(global, ConfigScope::Global)]);
+
     let opened = Repository::open_with_config(repo.git_dir(), &inputs)?;
     assert_eq!(
         opened.config().string("core", None, "editor"),
@@ -50,6 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         refreshed.config().string("core", None, "editor"),
         Some(&b"project-editor"[..])
     );
+
     let winning = refreshed
         .config()
         .entries()
@@ -67,6 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         winning.location.path.as_deref(),
         Some(refreshed.common_dir().join("config").as_path())
     );
+
     Ok(())
 }
 ```

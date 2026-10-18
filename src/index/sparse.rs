@@ -96,12 +96,14 @@ impl Default for SparseLimits {
 ///
 /// use girt::index::{Entry, Error, Index, Limits, Mode, SparseError, SparseLimits};
 /// use girt::{InitKind, ObjectFormat, Repository, Tree};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
 ///     InitKind::Worktree,
 /// )?;
+///
 /// let tree = repo
 ///     .loose_objects()
 ///     .write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
@@ -109,6 +111,7 @@ impl Default for SparseLimits {
 ///     Entry::new(b"vendor/".to_vec(), Mode::SparseDirectory, tree).with_skip_worktree(true);
 /// let mut index = Index::new(ObjectFormat::Sha1, vec![collapsed], Limits::default())?;
 /// let original = index.clone();
+///
 /// let objects = repo.objects_with(Default::default())?;
 /// let error = index
 ///     .expand_sparse(
@@ -118,6 +121,7 @@ impl Default for SparseLimits {
 ///         &AtomicBool::new(false),
 ///     )
 ///     .unwrap_err();
+///
 /// assert!(matches!(
 ///     error,
 ///     SparseError::Index(Error::Limit("sparse tree reads"))
@@ -192,12 +196,14 @@ impl Index {
     ///
     /// use girt::index::{Entry, Index, Limits, Mode, SparseLimits};
     /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let loose = repo.loose_objects();
     /// let id = loose.write_blob(b"pub fn library() {}\n")?;
     /// let tree = loose.write_tree(&Tree::new(
@@ -208,6 +214,7 @@ impl Index {
     ///         id,
     ///     }],
     /// )?)?;
+    ///
     /// let collapsed =
     ///     Entry::new(b"vendor/".to_vec(), Mode::SparseDirectory, tree).with_skip_worktree(true);
     /// let mut index = Index::new(ObjectFormat::Sha1, vec![collapsed], Limits::default())?;

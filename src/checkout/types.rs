@@ -26,6 +26,7 @@ use crate::{ObjectId, index};
 ///
 /// use girt::checkout::Limits;
 /// use girt::{EntryMode, Tree, TreeEntry};
+///
 /// let id = repo.loose_objects().write_blob(b"target")?;
 /// let tree = repo.loose_objects().write_tree(&Tree::new(
 ///     ObjectFormat::Sha1,
@@ -37,6 +38,7 @@ use crate::{ObjectId, index};
 /// )?)?;
 ///
 /// use girt::checkout::Error;
+///
 /// let failure = repo
 ///     .checkout_tree_with(
 ///         None,
@@ -45,6 +47,7 @@ use crate::{ObjectId, index};
 ///         &AtomicBool::new(false),
 ///     )
 ///     .unwrap_err();
+///
 /// assert!(matches!(
 ///     failure.cause.as_ref(),
 ///     Error::Object(girt::ObjectReadError::Loose(girt::loose::Error::TooLarge))
@@ -195,12 +198,14 @@ pub enum Stage {
 /// use girt::checkout::{Action, Limits};
 /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
 /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("w"),
 ///     InitKind::Worktree,
 /// )?;
+///
 /// let loose = repo.loose_objects();
 /// let id = loose.write_blob(b"data")?;
 /// let entry = |name: &[u8], mode, id| TreeEntry {
@@ -208,6 +213,7 @@ pub enum Stage {
 ///     mode,
 ///     id,
 /// };
+///
 /// let old = loose.write_tree(&Tree::new(
 ///     ObjectFormat::Sha1,
 ///     vec![entry(b"path", EntryMode::Blob, id)],
@@ -220,9 +226,11 @@ pub enum Stage {
 ///     ObjectFormat::Sha1,
 ///     vec![entry(b"path", EntryMode::Tree, subtree)],
 /// )?)?;
+///
 /// let cancel = AtomicBool::new(false);
 /// repo.checkout_tree_with(None, Some(old), Limits::default(), &cancel)?;
 /// let report = repo.checkout_tree_with(Some(old), Some(new), Limits::default(), &cancel)?;
+///
 /// let at_path: Vec<_> = report
 ///     .applied
 ///     .iter()
@@ -281,6 +289,7 @@ pub struct Applied {
 ///
 /// use girt::checkout::Limits;
 /// use girt::{EntryMode, Tree, TreeEntry};
+///
 /// let id = repo.loose_objects().write_blob(b"target")?;
 /// let tree = repo.loose_objects().write_tree(&Tree::new(
 ///     ObjectFormat::Sha1,
@@ -292,8 +301,10 @@ pub struct Applied {
 /// )?)?;
 ///
 /// use girt::checkout::{Action, Stage};
+///
 /// let report =
 ///     repo.checkout_tree_with(None, Some(tree), Limits::default(), &AtomicBool::new(false))?;
+///
 /// assert_eq!(report.stage, Stage::Publication);
 /// assert!(report.index_published);
 /// assert!(
@@ -332,12 +343,14 @@ pub struct Report {
 ///
 /// use girt::checkout::{Error, Limits, Stage};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repository = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("repo"),
 ///     InitKind::Worktree,
 /// )?;
+///
 /// let failure = repository
 ///     .checkout_tree_with(None, None, Limits::default(), &AtomicBool::new(true))
 ///     .unwrap_err();
@@ -386,6 +399,7 @@ pub struct Failure {
 ///
 /// use girt::checkout::Limits;
 /// use girt::{EntryMode, Tree, TreeEntry};
+///
 /// let id = repo.loose_objects().write_blob(b"target")?;
 /// let tree = repo.loose_objects().write_tree(&Tree::new(
 ///     ObjectFormat::Sha1,
@@ -397,8 +411,10 @@ pub struct Failure {
 /// )?)?;
 ///
 /// use girt::checkout::{Error, Stage};
+///
 /// let path = repo.worktree().unwrap().join("file");
 /// std::fs::write(&path, b"local notes")?;
+///
 /// let failure = repo
 ///     .checkout_tree_with(None, Some(tree), Limits::default(), &AtomicBool::new(false))
 ///     .unwrap_err();
@@ -406,6 +422,7 @@ pub struct Failure {
 ///     failure.cause.as_ref(),
 ///     Error::Refused { path, reason } if path == b"file" && !reason.is_empty()
 /// ));
+///
 /// assert_eq!(failure.report.stage, Stage::Preparation);
 /// assert!(failure.report.applied.is_empty());
 /// assert!(!failure.report.index_published);

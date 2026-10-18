@@ -48,10 +48,12 @@
 //!     directory.path().join("w"),
 //!     InitKind::Worktree,
 //! )?;
+//!
 //! let id = repository.loose_objects().write_blob(b"staged\n")?;
 //! let mut edit = repository.edit_index(Default::default())?;
 //! edit.replace_entries(vec![Entry::new(b"hello.txt".to_vec(), Mode::Regular, id)])?;
 //! edit.commit()?;
+//!
 //! let worktree = repository.worktree().expect("ordinary repository");
 //! std::fs::write(worktree.join("hello.txt"), b"working\n")?;
 //! std::fs::write(worktree.join("scratch.txt"), b"new\n")?;

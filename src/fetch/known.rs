@@ -36,8 +36,10 @@ use crate::{IdMap, IdSet, Object, ObjectId, ObjectKind, Objects};
 /// use girt::transport::TransportControl;
 /// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
 /// # let commit = include!("../doctest/commit.rs");
+///
 /// let cancel = AtomicBool::new(false);
 /// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+///
 /// let fetch = |known: &KnownHistory| -> Result<_, Box<dyn std::error::Error>> {
 ///     let request = FetchRequest::prepare(
 ///         repo.clone(),
@@ -53,6 +55,7 @@ use crate::{IdMap, IdSet, Object, ObjectId, ObjectKind, Objects};
 ///         LocalFetchObserver::default(),
 ///     )?)
 /// };
+///
 /// fetch(&KnownHistory::default())?.finish(FetchUpdateLimits::default(), &cancel)?;
 ///
 /// // Upstream adds a commit on top of `main`.

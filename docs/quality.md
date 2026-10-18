@@ -67,6 +67,12 @@ documentation metrics come from nightly Rustdoc JSON. They cover publicly reacha
 fields and variants, and inherent methods. Trait implementation members are excluded because their
 documentation belongs to the trait.
 
+Code spacing comes from `scripts/code-spacing.py`, which finds paragraphs of more than ten lines
+holding two or more statements of one block, with no blank line between them (see
+[Vertical Spacing](rust-conventions.md#vertical-spacing)). The idiomatic axis scores the share of
+library and CLI functions without one; the documentation axis scores website guide programs, Rustdoc
+examples and runnable examples together.
+
 Mutation testing samples one quarter of the mutants in the object, tree, commit, tag and pkt-line
 modules and runs the unit tests and object integration tests against each. Rotate `MUTANT_SHARD` in
 the script to cover the rest over time.

@@ -43,12 +43,14 @@ impl Objects {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"seven\n")?;
     /// let objects = repo.objects_with(PackLimits::default())?;
     /// let header = objects

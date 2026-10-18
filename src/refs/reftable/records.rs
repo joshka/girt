@@ -35,6 +35,7 @@ pub struct RefRecord {
 /// ```
 /// use girt::refs::reftable::{Limits, LogRecord, LogValue, RecordName, Table};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let format = ObjectFormat::Sha1;
 /// let value = LogValue {
 ///     old: ObjectId::null(format),
@@ -45,6 +46,7 @@ pub struct RefRecord {
 ///     offset_minutes: 330,
 ///     message: b"created\n".to_vec(),
 /// };
+///
 /// let table = Table {
 ///     format,
 ///     min_update_index: 1,
@@ -56,6 +58,7 @@ pub struct RefRecord {
 ///         value: Some(value.clone()),
 ///     }],
 /// };
+///
 /// let decoded = Table::decode(&table.encode(Limits::default())?, Limits::default())?;
 /// assert_eq!(decoded.logs[0].value, Some(value));
 /// // The binary codec preserves unsigned seconds; do not coerce through Signature's signed range.
@@ -94,6 +97,7 @@ pub struct LogValue {
 ///     update_index: 7,
 ///     value: None,
 /// };
+///
 /// let older = LogRecord {
 ///     name: record.name.clone(),
 ///     update_index: 6,
@@ -107,6 +111,7 @@ pub struct LogValue {
 ///         message: b"created".to_vec(),
 ///     }),
 /// };
+///
 /// let table = Table {
 ///     format: girt::ObjectFormat::Sha1,
 ///     min_update_index: 6,
@@ -114,6 +119,7 @@ pub struct LogValue {
 ///     references: vec![],
 ///     logs: vec![record.clone(), older.clone()],
 /// };
+///
 /// let decoded = Table::decode(&table.encode(Limits::default())?, Limits::default())?;
 /// assert_eq!(decoded.logs, [record, older]);
 /// # Ok::<(), girt::refs::reftable::Error>(())
@@ -140,6 +146,7 @@ pub struct LogRecord {
 /// use girt::refs::reftable::{Limits, RefRecord, Table};
 /// use girt::refs::{RefName, Target};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let id = ObjectId::for_blob(ObjectFormat::Sha1, b"tag target");
 /// let table = Table {
 ///     format: ObjectFormat::Sha1,
@@ -153,6 +160,7 @@ pub struct LogRecord {
 ///     }],
 ///     logs: vec![],
 /// };
+///
 /// let bytes = table.encode(Limits::default())?;
 /// assert_eq!(Table::decode(&bytes, Limits::default())?, table);
 /// # Ok::<(), Box<dyn std::error::Error>>(())

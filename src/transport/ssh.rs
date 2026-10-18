@@ -52,6 +52,7 @@
 //!         Path::new("/usr/bin/ssh"),
 //!         Path::new("/etc/girt/ssh_config"),
 //!     )?;
+//!
 //!     let cancel = AtomicBool::new(false);
 //!     let discovery = discover_ssh(
 //!         &remote,
@@ -361,8 +362,10 @@ impl std::fmt::Debug for SshEnvironment {
 ///     Path::new("/etc/girt/ssh_config"),
 /// )?
 /// .with_protocol(RequestedProtocol::V2);
+///
 /// assert_eq!(remote.protocol(), RequestedProtocol::V2);
 /// assert!(!remote.has_terminal());
+///
 /// // Debug output never shows the host, user or path.
 /// assert!(!format!("{remote:?}").contains("example.com"));
 /// # Ok::<(), girt::transport::ssh::SshError>(())

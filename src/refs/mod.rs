@@ -91,6 +91,7 @@
 //!     directory.path().join("repo.git"),
 //!     InitKind::Bare,
 //! )?;
+//!
 //! let loose = repository.loose_objects();
 //! let person = Signature {
 //!     name: b"A. Writer".to_vec(),
@@ -98,6 +99,7 @@
 //!     seconds: 1_700_000_000,
 //!     offset_minutes: 0,
 //! };
+//!
 //! let commit = loose.write_commit(&Commit::new(CommitFields {
 //!     tree: loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?,
 //!     parents: vec![],

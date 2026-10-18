@@ -63,12 +63,14 @@ use crate::{ObjectFormat, ObjectId, Repository};
 /// ```
 /// use girt::refs::{RefName, Target};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let refs = repo.references()?;
 /// let head = RefName::HEAD;
 /// assert_eq!(
@@ -101,16 +103,19 @@ pub struct References<'a> {
 /// ```
 /// use girt::refs::{Expected, RefName, Target};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
 /// let refs = repo.references()?;
 /// let name = RefName::new("refs/tags/one")?;
 /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+///
 /// let seen = refs.read_observation(&name)?.ok_or("reference absent")?;
 /// assert_eq!(seen.target, Target::Direct(id));
 /// assert!(seen.peeled_hint.is_none()); // Loose direct reference has no stored peeled hint.
@@ -161,16 +166,19 @@ pub enum Backend {
 /// ```
 /// use girt::refs::{RefName, Target};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let refs = repo.references()?;
 /// let head = RefName::HEAD;
 /// let main = RefName::new("refs/heads/main")?;
 /// assert_eq!(refs.read(&head)?, Some(Target::Symbolic(main)));
+///
 /// // resolve follows names; object reads and tag peeling are separate operations.
 /// assert!(refs.resolve(&head)?.id.is_none());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -189,12 +197,14 @@ pub enum Target {
 /// ```
 /// use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
 /// use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let loose = repo.loose_objects();
 /// let person = Signature {
 ///     name: b"A. Writer".to_vec(),
@@ -211,6 +221,7 @@ pub enum Target {
 ///     extra_headers: vec![],
 ///     message: b"Initial snapshot\n".to_vec(),
 /// })?)?;
+///
 /// let refs = repo.references()?;
 /// let main = RefName::new("refs/heads/main")?;
 /// let edit = RefEdit::new(
@@ -223,6 +234,7 @@ pub enum Target {
 ///     },
 /// );
 /// refs.transaction(&[edit])?;
+///
 /// let stale_creation = RefEdit::new(
 ///     main,
 ///     Some(Target::Direct(id)),
@@ -273,15 +285,18 @@ impl std::fmt::Display for DisplayTarget<'_> {
 /// ```
 /// use girt::refs::{RefName, Target};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let refs = repo.references()?;
 /// let head = RefName::HEAD;
 /// let main = RefName::new("refs/heads/main")?;
+///
 /// let terminal = refs.resolve(&head)?;
 /// assert_eq!(terminal.name, main);
 /// assert!(terminal.id.is_none());
@@ -448,12 +463,14 @@ impl<'a> References<'a> {
     /// ```
     /// use girt::refs::{RefName, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let refs = repo.references()?;
     /// let head = RefName::HEAD;
     /// let main = RefName::new("refs/heads/main")?;
@@ -483,12 +500,14 @@ impl<'a> References<'a> {
     /// ```
     /// use girt::refs::RefName;
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("repo"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let refs = repo.references()?;
     /// let observation = refs
     ///     .read_observation(&RefName::HEAD)?
@@ -535,12 +554,14 @@ impl<'a> References<'a> {
     /// ```
     /// use girt::refs::RefName;
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let resolution = repo.references()?.resolve(&RefName::HEAD)?;
     /// assert_eq!(resolution.name, RefName::branch("main")?);
     /// assert_eq!(resolution.id, None); // Unborn.
@@ -564,15 +585,18 @@ impl<'a> References<'a> {
     /// ```
     /// use girt::refs::{RefName, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let refs = repo.references()?;
     /// let head = RefName::HEAD;
     /// let main = RefName::new("refs/heads/main")?;
+    ///
     /// let resolution = refs.resolve(&head)?;
     /// assert_eq!(resolution.name, main);
     /// assert_eq!(resolution.id, None); // Resolution can succeed without a branch ID.
@@ -644,16 +668,19 @@ impl<'a> References<'a> {
     /// ```
     /// use girt::refs::{Expected, RefName, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
     /// let refs = repo.references()?;
     /// let name = RefName::new("refs/tags/one")?;
     /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+    ///
     /// assert_eq!(refs.read(&name)?, Some(Target::Direct(id)));
     /// assert!(!refs.has_reflog(&name)?); // Deliberately bypasses name-history recording.
     ///
@@ -710,17 +737,20 @@ impl<'a> References<'a> {
     /// ```
     /// use girt::refs::{Expected, RefName, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
     /// let refs = repo.references()?;
     /// let name = RefName::new("refs/tags/one")?;
     /// let alias = RefName::new("refs/meta/current")?;
     /// refs.update_without_reflog(&alias, Target::Symbolic(name.clone()), Expected::Absent)?;
+    ///
     /// assert_eq!(
     ///     refs.update_resolved_without_reflog(&alias, id, Expected::Absent)?,
     ///     name
@@ -791,17 +821,20 @@ impl<'a> References<'a> {
     /// ```
     /// use girt::refs::{Expected, RefName, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
     /// let refs = repo.references()?;
     /// let name = RefName::new("refs/tags/one")?;
     /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
     /// refs.delete_without_reflog(&name, Expected::Value(Target::Direct(id)))?;
+    ///
     /// assert!(refs.read(&name)?.is_none());
     /// assert!(
     ///     repo.objects_with(girt::PackLimits::default())?

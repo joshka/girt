@@ -197,16 +197,19 @@ impl Advertisement {
 ///         ControlFlow::Continue(())
 ///     },
 /// );
+///
 /// // Close the pipes and reap the process whatever happened; stop it first if the fetch failed.
 /// drop((input, output));
 /// if result.is_err() {
 ///     server.kill().ok();
 /// }
+///
 /// let status = server.wait()?;
 /// let received = result?;
 /// if !status.success() {
 ///     return Err(format!("git upload-pack failed: {status}").into());
 /// }
+///
 /// println!("received {} objects", received.object_count());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

@@ -86,13 +86,17 @@ fn sample(directory: PathBuf, running: &AtomicBool) -> io::Result<Peaks> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let repository = Repository::open(args.path)?;
+
     let pack_directory = repository.object_dir().join("pack");
     let initial_bytes = pack_bytes(&pack_directory)?;
+
     let policy =
         RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
+
     let cancel = AtomicBool::new(false);
     let running = AtomicBool::new(true);
     let start = Instant::now();
+
     let (result, peaks) = thread::scope(|scope| {
         let monitor = scope.spawn(|| sample(pack_directory.clone(), &running));
         let result = repository.run_maintenance(
@@ -101,13 +105,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             RepackLimits::default(),
             &cancel,
         );
+
         running.store(false, Ordering::Relaxed);
         (result, monitor.join().expect("sampler thread panicked"))
     });
+
     let report = result?;
     let peaks = peaks?;
     let elapsed = start.elapsed();
     let final_bytes = pack_bytes(&pack_directory)?;
+
     let retired = report
         .retired
         .expect("completed run has a retirement report");
@@ -115,6 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .published
         .expect("completed retirement has a replacement pack")
         .written;
+
     println!("elapsed_ms={}", elapsed.as_millis());
     println!("initial_pack_directory_bytes={initial_bytes}");
     println!("peak_observed_pack_directory_bytes={}", peaks.pack_bytes);

@@ -518,6 +518,7 @@ impl Config {
     ///
     /// ```
     /// use girt::Config;
+    ///
     /// let config = Config::parse(b"[core]\nx=first\nx\n[core]\nx=last\n[empty]\n")?;
     /// let sections: Vec<_> = config.section_occurrences().collect();
     /// assert_eq!(sections[0].entry_indices(), &[0, 1]);

@@ -40,6 +40,7 @@ use crate::{ObjectId, Repository};
 ///             .map_err(|_| std::io::Error::other("store exclusion poisoned"))
 ///     }
 /// }
+///
 /// // No other process knows this disposable path; every application user must take this mutex.
 /// let mutex = Mutex::new(());
 /// let report = repo.prune_unreachable_loose(

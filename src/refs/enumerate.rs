@@ -24,16 +24,19 @@ use super::{RefName, ReferenceError, ReferenceObservation, References, Target};
 /// ```
 /// use girt::refs::{Expected, RefName, Target};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
 /// let refs = repo.references()?;
 /// let name = RefName::new("refs/tags/one")?;
 /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+///
 /// let listed = refs.list()?;
 /// assert_eq!(listed[0].name, name);
 /// assert_eq!(listed[0].target, Target::Direct(id));
@@ -102,12 +105,14 @@ impl References<'_> {
     /// ```
     /// use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
     /// use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let loose = repo.loose_objects();
     /// let person = Signature {
     ///     name: b"A. Writer".to_vec(),
@@ -124,6 +129,7 @@ impl References<'_> {
     ///     extra_headers: vec![],
     ///     message: b"Initial snapshot\n".to_vec(),
     /// })?)?;
+    ///
     /// let refs = repo.references()?;
     /// let main = RefName::new("refs/heads/main")?;
     /// let edit = RefEdit::new(
@@ -136,6 +142,7 @@ impl References<'_> {
     ///     },
     /// );
     /// refs.transaction(&[edit])?;
+    ///
     /// let listed = refs.list()?;
     /// assert_eq!(listed.len(), 1); // HEAD is a pseudoref, excluded from list().
     /// assert_eq!(listed[0].name, main);
@@ -162,16 +169,19 @@ impl References<'_> {
     /// ```
     /// use girt::refs::{Expected, RefName, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
     /// let refs = repo.references()?;
     /// let name = RefName::new("refs/tags/one")?;
     /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+    ///
     /// let cancel = std::sync::atomic::AtomicBool::new(false);
     /// assert!(matches!(
     ///     refs.list_controlled(0, 4096, &cancel),
@@ -210,12 +220,14 @@ impl References<'_> {
     /// use std::sync::atomic::AtomicBool;
     ///
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("repo"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let refs = repo.references()?;
     /// let observations =
     ///     refs.list_observations_controlled(100, 1024 * 1024, &AtomicBool::new(false))?;
@@ -253,19 +265,23 @@ impl References<'_> {
     /// ```
     /// use girt::refs::{Expected, RefName, Target};
     /// use girt::{InitKind, ObjectId, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     girt::ObjectFormat::Sha1,
     ///     directory.path().join("repo"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let refs = repo.references()?;
     /// let tag = RefName::new(b"refs/tags/example")?;
     /// let value = Target::Direct(ObjectId::Sha1([1; 20]));
     /// // Reference storage does not require the target object to exist.
     /// refs.update_without_reflog(&tag, value.clone(), Expected::Absent)?;
+    ///
     /// let tags = refs.list_namespace(&RefName::new(b"refs/tags")?)?;
     /// assert_eq!(tags[0].name, tag);
+    ///
     /// refs.delete_without_reflog(&tag, Expected::Value(tags[0].target.clone()))?;
     /// assert!(refs.list()?.is_empty());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -289,16 +305,19 @@ impl References<'_> {
     /// ```
     /// use girt::refs::{Expected, RefName, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
     /// let refs = repo.references()?;
     /// let name = RefName::new("refs/tags/one")?;
     /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+    ///
     /// let tags = refs.list_namespace_observations(&RefName::new("refs/tags")?)?;
     /// assert_eq!(tags.len(), 1);
     /// assert_eq!(tags[0].name, name);
@@ -329,12 +348,14 @@ impl References<'_> {
     /// ```
     /// use girt::refs::{RefEdit, RefName, Reflog};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"tip")?;
     /// let refs = repo.references()?;
     /// let edits = ["feature", "fe/x", "main"].map(|branch| {
@@ -349,6 +370,7 @@ impl References<'_> {
     ///         .into_iter()
     ///         .collect::<Result<Vec<_>, girt::refs::InvalidRefName>>()?,
     /// )?;
+    ///
     /// let names: Vec<_> = refs
     ///     .list_prefix("refs/heads/fe")?
     ///     .into_iter()
@@ -381,12 +403,14 @@ impl References<'_> {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// assert!(
     ///     repo.references()?
     ///         .list_prefix_observations("refs/tags/v")?

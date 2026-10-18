@@ -9,11 +9,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let format = girt::ObjectFormat::Sha256;
     let payload = b"explicit export\0\xff";
     let id = ObjectId::for_blob(format, payload);
+
     let inputs = [PackObject {
         id,
         kind: ObjectKind::Blob,
         data: payload,
     }];
+
     let mut pack = BufWriter::new(File::create(root.path().join("export.pack"))?);
     let mut index = BufWriter::new(File::create(root.path().join("export.idx"))?);
     let written = write_pack(
@@ -23,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut index,
         PackWriteLimits::default(),
     )?;
+
     pack.flush()?;
     index.flush()?;
     drop((pack, index));
@@ -31,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A live repository needs a separate safe publication protocol, not this two-rename sequence.
     let repo_path = root.path().join("private.git");
     let repo = Repository::init(format, &repo_path, girt::InitKind::Bare)?;
+
     let basename = format!("objects/pack/pack-{}", written.checksum);
     fs::rename(
         root.path().join("export.pack"),
@@ -40,10 +44,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.path().join("export.idx"),
         repo_path.join(format!("{basename}.idx")),
     )?;
+
     let objects = repo.objects()?;
     let restored = objects.read(id)?.ok_or("exported object missing")?;
     assert_eq!(restored.kind(), ObjectKind::Blob);
     assert_eq!(restored.data(), payload);
+
     println!(
         "Verified {} explicit object in {} pack bytes and {} index bytes",
         written.objects, written.pack_bytes, written.index_bytes

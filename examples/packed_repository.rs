@@ -23,6 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Repository::open(args.path)?;
     let objects = repository.objects()?;
     let object = objects.read(args.id)?.ok_or("object absent")?;
+
     eprintln!(
         "{} {} ({} bytes)",
         object.kind().as_str(),

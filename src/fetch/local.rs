@@ -77,6 +77,7 @@ use crate::transport::TransportControl;
 ///     TransportControl::new(&cancel),
 ///     LocalFetchObserver::default(),
 /// )?;
+///
 /// assert_eq!(received.wants(), [main]);
 ///
 /// let installed = received.install(&repo, PackLimits::default(), &cancel)?;

@@ -11,11 +11,13 @@ use super::write::PackWriteError;
 ///     DeltaOptions, ObjectFormat, ObjectId, ObjectKind, PackCompression, PackObject,
 ///     PackWriteLimits, write_pack_with_compression,
 /// };
+///
 /// let base: Vec<u8> = (0..4096u32)
 ///     .flat_map(|n| n.wrapping_mul(2_654_435_761).to_le_bytes())
 ///     .collect();
 /// let mut revised = base.clone();
 /// revised.extend_from_slice(b"new footer\n");
+///
 /// let inputs: Vec<_> = [&base[..], &revised[..]]
 ///     .into_iter()
 ///     .map(|data| PackObject {
@@ -24,6 +26,7 @@ use super::write::PackWriteError;
 ///         data,
 ///     })
 ///     .collect();
+///
 /// let encode = |policy| {
 ///     let (mut pack, mut index) = (Vec::new(), Vec::new());
 ///     let report = write_pack_with_compression(
@@ -36,8 +39,10 @@ use super::write::PackWriteError;
 ///     )?;
 ///     Ok::<_, girt::PackWriteError>((pack.len(), report))
 /// };
+///
 /// let (ordinary_bytes, ordinary) = encode(PackCompression::Ordinary)?;
 /// let (delta_bytes, delta) = encode(PackCompression::Delta(DeltaOptions::default()))?;
+///
 /// assert_eq!(ordinary.deltas.entries, 0);
 /// assert_eq!(delta.deltas.entries, 1);
 /// assert!(delta_bytes < ordinary_bytes);
@@ -93,6 +98,7 @@ pub enum PackCompression {
 ///     DeltaOptions, ObjectFormat, ObjectId, ObjectKind, PackCompression, PackObject,
 ///     PackWriteLimits, write_pack_with_compression,
 /// };
+///
 /// # let base: Vec<u8> = (0..4096u32)
 /// #     .flat_map(|n| n.wrapping_mul(2_654_435_761).to_le_bytes())
 /// #     .collect();
@@ -118,6 +124,7 @@ pub enum PackCompression {
 ///     policy,
 /// )?;
 /// assert_eq!(report.objects, 2);
+///
 /// assert_eq!(report.deltas.entries, 0);
 /// assert_eq!(report.deltas.work, 0);
 /// # Ok::<(), girt::PackWriteError>(())

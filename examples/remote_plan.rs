@@ -16,10 +16,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         directory.path().join("repo"),
         InitKind::Bare,
     )?;
+
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .open(repo.common_dir().join("config"))?;
     file.write_all(b"\n[remote \"origin\"]\nurl=https://example.invalid/repo\nfetch=refs/tags/*:refs/tags/*\npush=refs/tags/local:refs/tags/published\n")?;
+
     // Configuration is a snapshot: reopen after fixture setup.
     let repo = Repository::open(repo.git_dir())?;
     let remote = Remote::find(repo.config(), b"origin")?.ok_or("missing origin")?;
@@ -40,6 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )],
         Vec::new(),
     );
+
     let mut planned = None;
     let mut select = |advertisement: &Advertisement| {
         let result = remote.fetch_refspecs().map_advertisement(advertisement);
@@ -49,10 +52,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         planned = Some(result);
         ids
     };
+
     // Pass `select` to receive_local/receive_http/receive_ssh in a real transfer. Here we call it
     // directly, then check its saved error before accepting any transfer outcome.
     let wants = select(&advertisement);
     let fetch_plan = planned.ok_or("selection callback was not invoked")??;
+
     assert_eq!(wants, vec![advertised_id]);
     assert_eq!(fetch_plan[0].destination, Some(tag_name));
     // Current fetch callbacks return IDs only, so mapping errors travel through the saved result.
@@ -63,12 +68,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: RefName::new("refs/tags/local")?,
         id: local_id,
     }];
+
     let push_plan = remote.push_refspecs().map(&local_sources)?;
     let commands = creation_commands(&push_plan)?;
     assert_eq!(commands[0].name.as_bytes(), b"refs/tags/published");
+
     let objects = repo.objects()?;
     let cancel = AtomicBool::new(false);
     let _prepared = PreparedPush::new(&objects, commands, &[], PushLimits::default(), &cancel)?;
+
     // Sending would be a separate, authorized call to push::send_local/send_http/send_ssh.
     // Select and validate the endpoint from remote.push_urls() before choosing an adapter.
     println!(
@@ -99,6 +107,7 @@ fn creation_commands(plan: &[Mapping]) -> Result<Vec<PushCommand>, Box<dyn std::
         if mapping.force == girt::remote::ForceIntent::Requested {
             return Err("this consumer has not authorized force".into());
         }
+
         let source = mapping
             .source
             .as_ref()

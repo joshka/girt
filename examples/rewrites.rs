@@ -25,6 +25,7 @@ fn main() -> girt::Result<()> {
     let args = Args::parse();
     let repo = Repository::open(args.repository)?;
     let objects = repo.objects()?;
+
     let records = objects.detect_rewrites(
         Some(args.old_tree),
         Some(args.new_tree),
@@ -33,6 +34,7 @@ fn main() -> girt::Result<()> {
         None,
         &AtomicBool::new(false),
     )?;
+
     let mut output = io::stdout().lock();
     for record in records {
         write!(output, "{}{:03}\0", record.kind.letter(), record.similarity)?;

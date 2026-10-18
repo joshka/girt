@@ -16,11 +16,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.path().join("source"),
         InitKind::Bare,
     )?;
+
     let destination_path = root.path().join("destination");
     let destination =
         Repository::init(girt::ObjectFormat::Sha1, &destination_path, InitKind::Bare)?;
+
     let objects = source.loose_objects();
     let tree = objects.write_tree(&Tree::new(girt::ObjectFormat::Sha1, Vec::new())?)?;
+
     let identity = Signature {
         name: b"Fetch Example".to_vec(),
         email: b"fetch@example.com".to_vec(),
@@ -35,6 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: Vec::new(),
         message: b"Original fetch example\n".to_vec(),
     })?)?;
+
     source.references()?.update_without_reflog(
         &RefName::new("refs/heads/main")?,
         Target::Direct(commit),
@@ -46,8 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::parse(
         b"[remote \"origin\"]\nurl = local-example\nfetch = +refs/heads/*:refs/remotes/origin/*\n",
     )?;
+
     let remote = Remote::find(&config, b"origin")?.ok_or("missing remote")?;
     assert_eq!(remote.fetch_url(), Some(b"local-example".as_slice()));
+
     // Consumer endpoint policy resolves this token to the disposable source, with no credentials.
     // An HTTP/SSH consumer constructs its explicit remote and chooses receive_http/receive_ssh.
     let request = FetchRequest::prepare(
@@ -59,6 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             message: b"fetch origin".to_vec(),
         },
     )?;
+
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel)
         .with_deadline(Some(Instant::now() + Duration::from_secs(30)));
@@ -69,6 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         control,
         girt::fetch::LocalFetchObserver::default(),
     )?;
+
     let report = match ready.finish(FetchUpdateLimits::default(), &cancel) {
         Ok(report) => report,
         Err(error) => {
@@ -81,6 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(error.into());
         }
     };
+
     let destination = Repository::open(&destination_path)?;
     assert_eq!(
         destination
@@ -89,12 +98,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Target::Direct(commit))
     );
     assert!(!destination.git_dir().join("FETCH_HEAD").exists());
+
     println!(
         "Validated {} objects, installed {:?}, published {} reference(s)",
         report.objects,
         report.installed,
         report.references.len()
     );
+
     // TempDir removes both repositories after all synchronous work has completed.
     Ok(())
 }

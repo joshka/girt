@@ -9,6 +9,7 @@
 //!
 //! ```
 //! use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+//!
 //! let target = ObjectId::for_blob(ObjectFormat::Sha1, b"release manifest\n");
 //! let tag = Tag::new(TagFields {
 //!     target,
@@ -18,6 +19,7 @@
 //!     extra_headers: vec![],
 //!     message: b"Reviewed manifest\n".to_vec(),
 //! })?;
+//!
 //! assert_eq!(tag.target(), target);
 //! assert_eq!(tag.target_kind(), ObjectKind::Blob);
 //! # Ok::<(), girt::TagError>(())
@@ -70,6 +72,7 @@ use crate::{CommitError, ObjectId, Signature};
 ///
 /// ```
 /// use girt::{ObjectId, ObjectKind, Tag, TagFields};
+///
 /// let tag = Tag::new(TagFields {
 ///     target: ObjectId::for_blob(girt::ObjectFormat::Sha1, b"release bytes"),
 ///     target_kind: ObjectKind::Blob,
@@ -78,6 +81,7 @@ use crate::{CommitError, ObjectId, Signature};
 ///     extra_headers: vec![],
 ///     message: b"First release\n".to_vec(),
 /// })?;
+///
 /// let parsed = Tag::parse(girt::ObjectFormat::Sha1, tag.as_bytes())?;
 /// assert_eq!(parsed.to_fields()?.name, b"v1");
 /// assert_eq!(parsed.id(), tag.id());
@@ -102,6 +106,7 @@ impl Tag {
     ///
     /// ```
     /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    ///
     /// let fields = TagFields {
     ///     target: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
     ///     target_kind: ObjectKind::Blob,
@@ -152,6 +157,7 @@ impl Tag {
     ///
     /// ```
     /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    ///
     /// let tag = Tag::new(TagFields {
     ///     target: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
     ///     target_kind: ObjectKind::Blob,
@@ -160,6 +166,7 @@ impl Tag {
     ///     extra_headers: vec![],
     ///     message: b"Release manifest\n".to_vec(),
     /// })?;
+    ///
     /// let parsed = Tag::parse(ObjectFormat::Sha1, tag.as_bytes())?;
     /// assert_eq!(parsed.id(), tag.id());
     /// assert_eq!(parsed.encode(), tag.encode());
@@ -213,6 +220,7 @@ impl Tag {
     ///
     /// ```
     /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    ///
     /// let tag = Tag::new(TagFields {
     ///     target: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
     ///     target_kind: ObjectKind::Blob,
@@ -221,6 +229,7 @@ impl Tag {
     ///     extra_headers: vec![],
     ///     message: b"Release manifest\n".to_vec(),
     /// })?;
+    ///
     /// let mut fields = tag.to_fields()?;
     /// fields.name = b"v2".to_vec();
     /// let renamed = Tag::new(fields)?;
@@ -369,6 +378,7 @@ impl Tag {
 ///
 /// ```
 /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+///
 /// let target = ObjectId::for_blob(ObjectFormat::Sha1, b"manifest");
 /// let tag = Tag::new(TagFields {
 ///     target,
@@ -378,6 +388,7 @@ impl Tag {
 ///     extra_headers: vec![],
 ///     message: b"Reviewed".to_vec(),
 /// })?;
+///
 /// let mut edit = tag.to_fields()?;
 /// edit.message = b"Reviewed again".to_vec();
 /// let changed = Tag::new(edit)?;

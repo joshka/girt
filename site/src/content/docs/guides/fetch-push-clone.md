@@ -59,8 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let path = directory.path().join("destination.git");
     Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+
     let loose = source.loose_objects();
     let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+
     let author = Signature {
         name: b"Example".to_vec(),
         email: b"example@example.com".to_vec(),
@@ -75,11 +77,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: vec![],
         message: b"Initial commit\n".to_vec(),
     })?)?;
+
     source.references()?.update_without_reflog(
         &RefName::new("refs/heads/main")?,
         Target::Direct(commit),
         Expected::Absent,
     )?;
+
     let url = source
         .git_dir()
         .to_str()
@@ -105,9 +109,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &Environment::from_process(),
         &mut NoCallbacks,
     )?;
+
     for change in &outcome.updated {
         println!("{:?}: {:?} -> {:?}", change.name, change.old, change.new);
     }
+
     assert_eq!(outcome.updated.len(), 1);
     Ok(())
 }
@@ -181,9 +187,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let path = directory.path().join("source.git");
     Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+
     let repo = Repository::open(&path)?;
     let loose = repo.loose_objects();
     let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+
     let author = Signature {
         name: b"Example".to_vec(),
         email: b"example@example.com".to_vec(),
@@ -198,6 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: vec![],
         message: b"Initial commit\n".to_vec(),
     })?)?;
+
     let mut edit = repo.edit_config(1 << 20)?;
     girt::remote::RemoteConfig::new(edit.document_mut()).add(
         b"origin",
@@ -222,16 +231,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &Environment::from_process(),
         &mut NoCallbacks,
     )?;
+
     if !report.all_succeeded() {
         for status in &report.refs {
             println!("{:?}: {:?}", status.command.name, status.status);
         }
     }
+
     assert!(report.all_succeeded());
     assert_eq!(
         destination.references()?.read(&topic)?,
         Some(Target::Direct(commit))
     );
+
     Ok(())
 }
 ```
@@ -296,8 +308,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let path = directory.path().join("destination.git");
     Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+
     let loose = source.loose_objects();
     let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+
     let author = Signature {
         name: b"Example".to_vec(),
         email: b"example@example.com".to_vec(),
@@ -312,11 +326,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: vec![],
         message: b"Initial commit\n".to_vec(),
     })?)?;
+
     source.references()?.update_without_reflog(
         &RefName::new("refs/heads/main")?,
         Target::Direct(commit),
         Expected::Absent,
     )?;
+
     let mut edit = Repository::open(&path)?.edit_config(1 << 20)?;
     girt::remote::RemoteConfig::new(edit.document_mut()).add(
         b"origin",
@@ -360,11 +376,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(error.into());
         }
     }
+
     assert_eq!(
         repo.references()?
             .read(&RefName::new("refs/remotes/origin/main")?)?,
         Some(Target::Direct(commit)),
     );
+
     Ok(())
 }
 ```

@@ -28,6 +28,7 @@ use crate::refs::store::{Lock, check_path, io_error, malformed};
 /// use girt::refs::Backend;
 /// use girt::refs::reftable::{Snapshot, StackLimits};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init_with_backend(
 ///     ObjectFormat::Sha1,
@@ -35,6 +36,7 @@ use crate::refs::store::{Lock, check_path, io_error, malformed};
 ///     InitKind::Bare,
 ///     Backend::Reftable,
 /// )?;
+///
 /// let stack = repo.git_dir().join("reftable");
 /// assert!(
 ///     Snapshot::read(
@@ -125,6 +127,7 @@ impl StackLimits {
 /// use girt::refs::reftable::{Snapshot, StackLimits};
 /// use girt::refs::{Backend, Expected, RefName, Target};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init_with_backend(
 ///     ObjectFormat::Sha1,
@@ -132,6 +135,7 @@ impl StackLimits {
 ///     InitKind::Bare,
 ///     Backend::Reftable,
 /// )?;
+///
 /// let stack = repo.git_dir().join("reftable");
 /// let before = Snapshot::read(
 ///     &stack,
@@ -139,10 +143,12 @@ impl StackLimits {
 ///     StackLimits::default(),
 ///     &AtomicBool::new(false),
 /// )?;
+///
 /// let tag = RefName::new("refs/tags/new")?;
 /// let id = repo.loose_objects().write_blob(b"manifest")?;
 /// repo.references()?
 ///     .update_without_reflog(&tag, Target::Direct(id), Expected::Absent)?;
+///
 /// assert!(
 ///     !before
 ///         .table
@@ -183,6 +189,7 @@ impl Snapshot {
     /// use girt::refs::reftable::{Snapshot, StackLimits};
     /// use girt::refs::{Backend, Expected, RefName, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init_with_backend(
     ///     ObjectFormat::Sha256,
@@ -190,18 +197,21 @@ impl Snapshot {
     ///     InitKind::Bare,
     ///     Backend::Reftable,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"tagged")?;
     /// repo.references()?.update_without_reflog(
     ///     &RefName::new("refs/tags/one")?,
     ///     Target::Direct(id),
     ///     Expected::Absent,
     /// )?;
+    ///
     /// let snapshot = Snapshot::read(
     ///     &repo.common_dir().join("reftable"),
     ///     ObjectFormat::Sha256,
     ///     StackLimits::default(),
     ///     &AtomicBool::new(false),
     /// )?;
+    ///
     /// assert!(
     ///     snapshot
     ///         .table
@@ -546,15 +556,18 @@ fn sync_directory(directory: &Path) -> Result<(), ReferenceError> {
 /// let live = RefName::new("refs/tags/live")?;
 /// let id = repo.loose_objects().write_blob(b"retained data")?;
 /// let refs = repo.references()?;
+///
 /// for name in [&gone, &live] {
 ///     refs.update_without_reflog(name, Target::Direct(id), Expected::Absent)?;
 /// }
 /// refs.delete_without_reflog(&gone, Expected::Value(Target::Direct(id)))?;
+///
 /// let before = Snapshot::read(&stack, ObjectFormat::Sha1, StackLimits::default(), &cancel)?;
 /// let tombstone = |record: &girt::refs::reftable::RefRecord| {
 ///     record.name.as_bytes() == gone.as_bytes() && record.target.is_none()
 /// };
 /// assert!(before.table.references.iter().any(tombstone));
+///
 /// let retained = before
 ///     .table
 ///     .references
@@ -562,9 +575,11 @@ fn sync_directory(directory: &Path) -> Result<(), ReferenceError> {
 ///     .find(|record| record.name.as_bytes() == live.as_bytes())
 ///     .unwrap()
 ///     .clone();
+///
 /// let report = compact(&stack, ObjectFormat::Sha1, StackLimits::default(), &cancel)?;
 /// assert!(report.input_tables >= 2); // Each successful transaction publishes a table.
 /// assert!(report.retained.is_empty());
+///
 /// let after = Snapshot::read(&stack, ObjectFormat::Sha1, StackLimits::default(), &cancel)?;
 /// assert!(
 ///     !after

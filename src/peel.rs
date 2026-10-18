@@ -90,15 +90,18 @@ impl PeelLimits {
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, PeelLimits, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let blob = repo.loose_objects().write_blob(b"manifest")?;
 /// let objects = repo.objects_with(PackLimits::default())?;
 /// let result = objects.peel(blob, PeelLimits::default(), &AtomicBool::new(false))?;
+///
 /// assert_eq!(result.original, blob);
 /// assert_eq!(result.target, blob);
 /// assert_eq!(result.kind, ObjectKind::Blob);
@@ -127,12 +130,14 @@ pub struct PeeledObject {
 ///
 /// ```
 /// use girt::{InitKind, ObjectFormat, ObjectId, PackLimits, PeelFailure, PeelLimits, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let objects = repo.objects_with(PackLimits::default())?;
 /// let missing = ObjectId::Sha1([1; 20]);
 /// let error = objects
@@ -142,6 +147,7 @@ pub struct PeeledObject {
 ///         &std::sync::atomic::AtomicBool::new(false),
 ///     )
 ///     .expect_err("not stored");
+///
 /// assert_eq!(error.id, missing);
 /// assert!(matches!(error.source.as_ref(), PeelFailure::Missing));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -232,12 +238,14 @@ impl Objects {
     /// use girt::{
     ///     InitKind, ObjectFormat, ObjectKind, PackLimits, PeelLimits, Repository, Tag, TagFields,
     /// };
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let loose = repo.loose_objects();
     /// let blob = loose.write_blob(b"manifest")?;
     /// let tag = Tag::new(TagFields {
@@ -249,6 +257,7 @@ impl Objects {
     ///     message: b"Reviewed".to_vec(),
     /// })?;
     /// let inner = loose.write_tag(&tag)?;
+    ///
     /// let outer = Tag::new(TagFields {
     ///     target: inner,
     ///     target_kind: ObjectKind::Tag,
@@ -258,8 +267,10 @@ impl Objects {
     ///     message: b"Release pointer".to_vec(),
     /// })?;
     /// let tip = loose.write_tag(&outer)?;
+    ///
     /// let objects = repo.objects_with(PackLimits::default())?;
     /// let peeled = objects.peel(tip, PeelLimits::default(), &AtomicBool::new(false))?;
+    ///
     /// assert_eq!(peeled.tags, [tip, inner]);
     /// assert_eq!(peeled.target, blob);
     /// assert_eq!(peeled.kind, ObjectKind::Blob);

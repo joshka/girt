@@ -12,14 +12,17 @@ use crate::ObjectId;
 /// use girt::commit::CommitBuilder;
 /// use girt::workflow::Environment;
 /// use girt::{Config, ObjectFormat, Tree};
+///
 /// let config = Config::parse(b"[user]\nname = Writer\nemail = writer@example.com\n")?;
 /// let environment = Environment::default()
 ///     .with("GIT_AUTHOR_DATE", "@1700000000 +0000")
 ///     .with("GIT_COMMITTER_DATE", "@1700000001 +0000");
+///
 /// let tree = Tree::new(ObjectFormat::Sha1, vec![])?.id();
 /// let commit = CommitBuilder::from_config(tree, b"Snapshot\n", &config, &environment)?
 ///     .header(b"reviewed-by", b"Maintainer")
 ///     .build()?;
+///
 /// assert_eq!(commit.subject(), b"Snapshot");
 /// assert_eq!(commit.to_fields()?.committer.seconds, 1700000001);
 /// # Ok::<(), Box<dyn std::error::Error>>(())

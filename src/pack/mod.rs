@@ -64,6 +64,7 @@
 //!     &mut index,
 //!     PackWriteLimits::default(),
 //! )?;
+//!
 //! let base = repository
 //!     .object_dir()
 //!     .join("pack")

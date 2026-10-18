@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let temp = tempfile::tempdir()?;
     let environment = Environment::from_process();
+
     let repository = match args.path {
         // Read configuration as `git` does, so `core.excludesFile` and `core.ignoreCase` apply.
         Some(path) => {
@@ -41,11 +42,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None => fixture(&temp)?,
     };
+
     let limits = if args.trusted {
         trusted_limits()
     } else {
         Limits::default()
     };
+
     let untracked = match args.untracked {
         Listing::Omit => UntrackedFiles::Omit,
         Listing::All => UntrackedFiles::All,
@@ -61,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
     };
+
     let rules = repository.ignore_rules(&environment)?;
     let report = repository.status_with(
         Baseline::Head,
@@ -69,13 +73,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         limits,
         &AtomicBool::new(false),
     )?;
+
     println!("Tracked content is compared as literal bytes and POSIX modes.");
+
     for change in &report.staged {
         println!("staged    {}", String::from_utf8_lossy(&change.path));
     }
+
     for change in &report.unstaged {
         println!("unstaged  {}", String::from_utf8_lossy(&change.path));
     }
+
     for entry in &report.untracked {
         let suffix = if entry.kind == UntrackedKind::File {
             ""
@@ -84,21 +92,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         println!("untracked {}{suffix}", String::from_utf8_lossy(&entry.path));
     }
+
     Ok(())
 }
 
 fn trusted_limits() -> Limits {
     let unbounded = usize::MAX / 4;
     let defaults = Limits::default();
+
     let mut index = defaults.index;
     index.max_bytes = unbounded;
     index.max_entries = unbounded;
+
     let mut trees = defaults.trees;
     trees.max_trees = unbounded;
     trees.max_tree_bytes = unbounded;
     trees.max_path_bytes = unbounded;
     trees.max_entries = unbounded;
     trees.max_changes = unbounded;
+
     defaults
         .with_index(index)
         .with_trees(trees)
@@ -124,10 +136,12 @@ fn fixture(temp: &tempfile::TempDir) -> Result<Repository, Box<dyn std::error::E
         id,
     )])?;
     edit.commit()?;
+
     let worktree = repository.worktree().unwrap();
     std::fs::write(worktree.join("hello.txt"), b"working\n")?;
     std::fs::create_dir(worktree.join("target"))?;
     std::fs::write(worktree.join("target/app"), b"build output\n")?;
     std::fs::write(worktree.join(".gitignore"), b"/target/\n")?;
+
     Ok(repository)
 }

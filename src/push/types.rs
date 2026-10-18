@@ -69,8 +69,10 @@ pub enum ForcePolicy {
 ///
 /// // Create `topic`; rejected if it already exists with a different value.
 /// let create = PushCommand::new(RefName::new("refs/heads/topic")?, None, new);
+///
 /// // Fast-forward `main` from `old` to `new`.
 /// let update = PushCommand::new(RefName::new("refs/heads/main")?, Some(old), new);
+///
 /// // Delete `stale`, but only if it is still at `old`.
 /// let delete = PushCommand::new(
 ///     RefName::new("refs/heads/stale")?,
@@ -78,6 +80,7 @@ pub enum ForcePolicy {
 ///     ObjectId::null(ObjectFormat::Sha1),
 /// )
 /// .with_force(ForcePolicy::Allow);
+///
 /// assert!(delete.deletes() && !create.deletes() && !update.deletes());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -461,11 +464,13 @@ pub struct RefRewrite {
 /// use girt::refs::RefName;
 /// use girt::transport::TransportControl;
 /// use girt::{ObjectFormat, ObjectKind};
+///
 /// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
 /// # let commit = include!("../doctest/commit.rs");
 /// # girt::workflow::fetch(&repo, "origin", &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]), &girt::workflow::Environment::default(), &mut girt::workflow::NoCallbacks)?;
 /// let next = commit(&repo, &[main], "Next commit")?;
 /// let outdated = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"an outdated view");
+///
 /// let commands = vec![
 ///     PushCommand::new(RefName::new("refs/heads/main")?, Some(main), next),
 ///     // Preparation cannot prove ancestry from an old value it doesn't have, so allow force;
@@ -575,6 +580,7 @@ impl PushReport {
 /// let cancel = AtomicBool::new(false);
 /// let objects = repo.objects_with(PackLimits::default())?;
 /// let prepared = PreparedPush::new(&objects, Vec::new(), &[], PushLimits::default(), &cancel)?;
+///
 /// let missing = directory.path().join("missing.git");
 /// let result = send_local(
 ///     &missing,
@@ -582,6 +588,7 @@ impl PushReport {
 ///     TransportControl::new(&cancel),
 ///     |_| {},
 /// );
+///
 /// assert!(matches!(
 ///     result,
 ///     Err(PushError::NotSent(PushFailure::Destination(_)))
@@ -652,15 +659,18 @@ pub enum PushError {
 /// use girt::PackLimits;
 /// use girt::push::{PreparedPush, PushCommand, PushFailure, PushLimits};
 /// use girt::refs::RefName;
+///
 /// # let (_directory, _, repo, _, _) = include!("../doctest/remote.rs");
 /// # let commit = include!("../doctest/commit.rs");
 /// let first = commit(&repo, &[], "First")?;
 /// let second = commit(&repo, &[], "Second")?;
+///
 /// let main = RefName::new("refs/heads/main")?;
 /// let commands = vec![
 ///     PushCommand::new(main.clone(), None, first),
 ///     PushCommand::new(main, None, second),
 /// ];
+///
 /// let objects = repo.objects_with(PackLimits::default())?;
 /// let result = PreparedPush::new(
 ///     &objects,
@@ -669,6 +679,7 @@ pub enum PushError {
 ///     PushLimits::default(),
 ///     &AtomicBool::new(false),
 /// );
+///
 /// assert!(matches!(result, Err(PushFailure::Command(_))));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

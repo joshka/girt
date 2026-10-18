@@ -262,6 +262,7 @@ impl From<FetchError> for IndexRebuildError {
 ///
 /// use girt::pack::{IndexRebuildLimits, IndexRebuildOutcome, rebuild_index};
 /// use girt::{ObjectFormat, ObjectId, ObjectKind, PackObject, PackWriteLimits, write_pack};
+///
 /// let input = PackObject {
 ///     id: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
 ///     kind: ObjectKind::Blob,
@@ -275,9 +276,11 @@ impl From<FetchError> for IndexRebuildError {
 ///     &mut index,
 ///     PackWriteLimits::default(),
 /// )?;
+///
 /// let directory = tempfile::tempdir()?;
 /// let path = directory.path().join("private.pack");
 /// std::fs::write(&path, &bytes)?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let report = rebuild_index(
 ///     &path,
@@ -285,10 +288,12 @@ impl From<FetchError> for IndexRebuildError {
 ///     IndexRebuildLimits::default(),
 ///     &cancel,
 /// )?;
+///
 /// assert!(report.index.exists());
 /// assert_eq!(report.checksum, written.checksum);
 /// assert_eq!(report.objects, 1);
 /// assert_eq!(report.outcome, IndexRebuildOutcome::Created);
+///
 /// let again = rebuild_index(
 ///     &path,
 ///     ObjectFormat::Sha1,
@@ -296,6 +301,7 @@ impl From<FetchError> for IndexRebuildError {
 ///     &cancel,
 /// )?;
 /// assert_eq!(again.outcome, IndexRebuildOutcome::Unchanged);
+///
 /// // Damage only this private fixture's derived index, then reconstruct it from the pack.
 /// std::fs::write(&report.index, b"damaged index")?;
 /// let repaired = rebuild_index(

@@ -175,6 +175,7 @@
 //!     BTreeSet::new(),
 //!     Reflog::Append { committer: person, message: b"fetch origin".to_vec() },
 //! )?;
+//!
 //! let cancel = AtomicBool::new(false);
 //! let ready = request.receive_local(
 //!     source.git_dir(),
@@ -183,6 +184,7 @@
 //!     TransportControl::new(&cancel),
 //!     girt::fetch::LocalFetchObserver::default(),
 //! )?;
+//!
 //! let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
 //! assert_eq!(report.references.len(), 1);
 //!
@@ -391,6 +393,7 @@ impl FetchOptions {
 ///     BTreeSet::new(),
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let result = request.receive_local(
 ///     upstream.git_dir(),
@@ -399,6 +402,7 @@ impl FetchOptions {
 ///     TransportControl::new(&cancel),
 ///     girt::fetch::LocalFetchObserver::default(),
 /// );
+///
 /// assert!(matches!(
 ///     result,
 ///     Err(FetchWorkflowError::Transfer(FetchError::Limit(_)))

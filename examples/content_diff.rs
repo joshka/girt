@@ -12,9 +12,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.path().join("repo"),
         InitKind::Bare,
     )?;
+
     let store = repo.loose_objects();
     let old_blob = store.write_blob(b"heading\r\nold\n")?;
     let new_blob = store.write_blob(b"heading\r\nnew\xff")?;
+
     let old = store.write_tree(&Tree::new(
         girt::ObjectFormat::Sha1,
         vec![TreeEntry {
@@ -31,9 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: new_blob,
         }],
     )?)?;
+
     let objects = repo.objects()?;
     let cancel = AtomicBool::new(false);
     let limits = DiffLimits::default();
+
     let changes = objects.compare_trees(Some(old), Some(new))?;
     for change in changes {
         println!(
@@ -42,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             change.old.map(|v| v.mode),
             change.new.map(|v| v.mode)
         );
+
         // Gitlinks require a submodule policy; the blob adapter deliberately rejects them.
         let content = BlobContent::read(
             &objects,
@@ -50,6 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             limits.max_input_bytes,
             &cancel,
         )?;
+
         match diff(
             &content.old,
             &content.new,
@@ -74,6 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => return Err("unsupported content diff kind".into()),
         }
     }
+
     Ok(())
 }
 

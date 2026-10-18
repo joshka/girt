@@ -73,6 +73,7 @@ pub(super) static FAIL_FLUSH: AtomicBool = AtomicBool::new(false);
 /// let config = Config::parse(b"[remote \"origin\"]\nurl = git@example.com:team/project.git\n")?;
 /// let origin = Remote::find(&config, b"origin")?.ok_or("no origin")?;
 /// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+///
 /// let options = OpenSshOptions::default()
 ///     .with_default_executable("/usr/bin/ssh".into())
 ///     // The user's environment, without `GIT_*` variables that would select another command.
@@ -91,6 +92,7 @@ pub(super) static FAIL_FLUSH: AtomicBool = AtomicBool::new(false);
 /// let runtime = tokio::runtime::Builder::new_current_thread()
 ///     .enable_all()
 ///     .build()?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let discovery = runtime.block_on(async {
 ///     let session = discover_ssh(
@@ -113,6 +115,7 @@ pub(super) static FAIL_FLUSH: AtomicBool = AtomicBool::new(false);
 ///         }
 ///     }
 /// })?;
+///
 /// println!("{:?}", discovery.head);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

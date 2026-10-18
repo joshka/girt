@@ -59,11 +59,13 @@ pub enum SshPushOutcome {
 ///
 /// let repo = Repository::open("project")?;
 /// let origin = Remote::find(repo.config(), b"origin")?.ok_or("no origin")?;
+///
 /// let destination = origin
 ///     .push_destinations(repo.config(), &ProtocolEnvironment::default())?
 ///     .into_iter()
 ///     .next()
 ///     .ok_or("no push URL")?;
+///
 /// let environment = ["HOME", "PATH", "SSH_AUTH_SOCK"]
 ///     .into_iter()
 ///     .filter_map(|name| Some((name.into(), std::env::var_os(name)?)))
@@ -80,6 +82,7 @@ pub enum SshPushOutcome {
 /// else {
 ///     return Err("refs/heads/topic does not point directly at a commit".into());
 /// };
+///
 /// let objects = repo.objects_with(PackLimits::default())?;
 /// let cancel = AtomicBool::new(false);
 /// let command = PushCommand::new(RefName::new("refs/heads/topic")?, None, tip);

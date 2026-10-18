@@ -28,6 +28,7 @@
 //!     directory.path().join("r"),
 //!     InitKind::Bare,
 //! )?;
+//!
 //! let loose = repo.loose_objects();
 //! let tree = |name: &[u8], content: &[u8]| -> Result<_, Box<dyn std::error::Error>> {
 //!     let id = loose.write_blob(content)?;
@@ -38,6 +39,7 @@
 //!     };
 //!     Ok(loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![entry])?)?)
 //! };
+//!
 //! let lines: Vec<u8> = (0..20)
 //!     .flat_map(|n| format!("line {n}\n").into_bytes())
 //!     .collect();
@@ -53,6 +55,7 @@
 //!     None, // Report rewrites for every destination path.
 //!     &AtomicBool::new(false),
 //! )?;
+//!
 //! assert_eq!(rewrites.len(), 1);
 //! assert_eq!(
 //!     (rewrites[0].source.as_slice(), rewrites[0].target.as_slice()),

@@ -17,12 +17,14 @@ reads the reflog:
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use girt::refs::{RefEdit, RefName, Reflog};
     use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature};
+
     let directory = tempfile::tempdir()?;
     let repo = Repository::init(
         ObjectFormat::Sha1,
         directory.path().join("r.git"),
         InitKind::Bare,
     )?;
+
     let loose = repo.loose_objects();
     let person = Signature {
         name: b"A. Writer".to_vec(),
@@ -30,6 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seconds: 1_700_000_000,
         offset_minutes: 0,
     };
+
     let tree = loose.write_tree(&repo.new_tree(vec![])?)?;
     let id = loose.write_commit(&Commit::new(CommitFields {
         tree,
@@ -39,6 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: vec![],
         message: b"Initial snapshot\n".to_vec(),
     })?)?;
+
     let refs = repo.references()?;
     let main = RefName::branch("main")?;
     let edit = RefEdit::create(
@@ -50,9 +54,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
     refs.transaction(&[edit])?;
+
     assert_eq!(repo.head()?.id, Some(id));
     let logs = refs.reflog(&main)?.ok_or("reflog missing")?;
     assert_eq!(logs[0].new, id);
+
     Ok(())
 }
 ```

@@ -53,8 +53,10 @@ pub enum Baseline {
 /// )?;
 ///
 /// use girt::status::{Baseline, Limits, Untracked};
+///
 /// std::fs::write(repo.worktree().unwrap().join("notes.tmp"), b"scratch")?;
 /// std::fs::write(repo.worktree().unwrap().join(".gitignore"), b"*.tmp\n")?;
+///
 /// let report = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::RawFilesWithoutIgnores,
@@ -85,6 +87,7 @@ pub enum Untracked {
 /// use girt::status::{Baseline, UntrackedFiles, UntrackedKind};
 /// use girt::workflow::Environment;
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
@@ -92,6 +95,7 @@ pub enum Untracked {
 ///     directory.path().join("w"),
 ///     InitKind::Worktree,
 /// )?;
+///
 /// let worktree = repo.worktree().unwrap();
 /// std::fs::create_dir_all(worktree.join("notes/drafts"))?;
 /// std::fs::write(worktree.join("notes/drafts/a.md"), b"a")?;
@@ -170,6 +174,7 @@ pub struct UntrackedPath {
 ///
 /// use girt::index::{Entry, Mode};
 /// use girt::status::{Baseline, Error, Limits, Untracked};
+///
 /// let id = repo.loose_objects().write_blob(b"12345")?;
 /// let mut edit = repo.edit_index(Default::default())?;
 /// edit.replace_entries(vec![
@@ -177,8 +182,10 @@ pub struct UntrackedPath {
 ///     Entry::new(b"b".to_vec(), Mode::Regular, id),
 /// ])?;
 /// edit.commit()?;
+///
 /// std::fs::write(repo.worktree().unwrap().join("a"), b"12345")?;
 /// std::fs::write(repo.worktree().unwrap().join("b"), b"12345")?;
+///
 /// let result = repo.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,
@@ -544,12 +551,14 @@ pub enum Change {
 ///
 /// use girt::status::{Baseline, Error, Limits, Untracked};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repository = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("repo"),
 ///     InitKind::Worktree,
 /// )?;
+///
 /// let result = repository.raw_status_with(
 ///     Baseline::Head,
 ///     Untracked::Omit,

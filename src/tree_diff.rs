@@ -7,22 +7,27 @@
 //! use girt::tree::TreeEditor;
 //! use girt::tree_diff::Entry;
 //! use girt::{InitKind, ObjectFormat, Repository};
+//!
 //! let directory = tempfile::tempdir()?;
 //! let repo = Repository::init(
 //!     ObjectFormat::Sha1,
 //!     directory.path().join("r"),
 //!     InitKind::Bare,
 //! )?;
+//!
 //! let loose = repo.loose_objects();
 //! let blob = loose.write_blob(b"retained content\n")?;
 //! let mut editor = TreeEditor::new(&loose);
 //! editor.set(b"old", blob)?;
 //! let old = editor.write()?;
+//!
 //! editor.remove(b"old")?;
 //! editor.set(b"new", blob)?;
 //! let new = editor.write()?;
+//!
 //! let objects = repo.objects()?;
 //! let changes = objects.diff_trees(Some(old), Some(new))?;
+//!
 //! assert!(matches!(
 //!     &changes.entries[0],
 //!     Entry::Rewrite {

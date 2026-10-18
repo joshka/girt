@@ -51,13 +51,16 @@ impl SourceKind {
 ///     directory.path().join("w"),
 ///     InitKind::Worktree,
 /// )?;
+///
 /// std::fs::write(
 ///     repo.worktree().unwrap().join(".gitignore"),
 ///     b"# notes\n*.tmp\n",
 /// )?;
+///
 /// let mut rules = repo.ignore_rules(&Environment::default())?;
 /// let found = rules.check(b"draft.tmp", InputKind::File)?.unwrap();
 /// let source = rules.source(found.source).unwrap();
+///
 /// assert!(source.path().ends_with(".gitignore"));
 /// assert_eq!(source.line(found.line), Some(&b"*.tmp"[..]));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -378,11 +381,13 @@ impl Repository {
     ///     directory.path().join("w"),
     ///     girt::InitKind::Worktree,
     /// )?;
+    ///
     /// let repo = Repository::open_with_config(
     ///     directory.path().join("w"),
     ///     &ConfigInputs::git_default(&environment)?,
     /// )?;
     /// let mut rules = repo.ignore_rules_with(&environment, Limits::default())?;
+    ///
     /// assert!(
     ///     rules
     ///         .check(b"src/.DS_Store", InputKind::File)?

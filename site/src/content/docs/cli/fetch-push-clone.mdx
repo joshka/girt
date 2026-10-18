@@ -76,11 +76,13 @@ would discard the upstream commit it just fetched.
 $ git commit -q --allow-empty -m "From the copy"
 $ girt push origin main:refs/heads/review
 ok	refs/heads/review
+
 $ girt push origin main
 Error:
    0: pushing to origin
    1: push not sent
    2: replacement requires explicit force for RefName([114, 101, 102, 115, 47, 104, 101, 97, 100, 115, 47, 109, 97, 105, 110])
+
 $ girt push origin +main
 ok	refs/heads/main
 ```

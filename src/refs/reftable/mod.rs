@@ -46,6 +46,7 @@
 //! let path = directory.path().join("repo.git");
 //! let repository =
 //!     Repository::init_with_backend(ObjectFormat::Sha1, path, InitKind::Bare, Backend::Reftable)?;
+//!
 //! let id = repository.loose_objects().write_blob(b"tagged content\n")?;
 //! let references = repository.references()?;
 //! for name in ["refs/tags/one", "refs/tags/two"] {
@@ -68,6 +69,7 @@
 //!
 //! let compaction = compact(&stack, ObjectFormat::Sha1, StackLimits::default(), &cancel)?;
 //! assert!(compaction.input_tables >= 2);
+//!
 //! // `tables.list` names the stack's tables; one remains after compaction.
 //! assert_eq!(
 //!     std::fs::read_to_string(stack.join("tables.list"))?

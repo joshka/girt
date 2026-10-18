@@ -123,6 +123,7 @@ pub enum Mode {
 /// ```
 /// use girt::index::{Entry, Index, Limits, Mode, Stage};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let format = ObjectFormat::Sha1;
 /// let ours = Entry::new(
 ///     b"file".to_vec(),
@@ -136,8 +137,10 @@ pub enum Mode {
 ///     ObjectId::for_blob(format, b"theirs"),
 /// )
 /// .with_stage(Stage::Theirs);
+///
 /// let mut index = Index::new(format, vec![theirs, ours.clone()], Limits::default())?;
 /// assert_eq!(index.entries()[0].stage, Stage::Ours);
+///
 /// index.replace_entries(vec![ours.with_stage(Stage::Normal)], Limits::default())?;
 /// assert_eq!(index.entries().len(), 1);
 /// # Ok::<(), girt::index::Error>(())

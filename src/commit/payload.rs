@@ -18,6 +18,7 @@ use super::CommitError;
 ///
 /// ```
 /// use girt::CommitPayload;
+///
 /// let bytes = b"author A <a> unusual date\ngpgsig first\n second\nx keep\n\nbody\xff";
 /// let payload = CommitPayload::parse(bytes)?;
 /// let (index, signature) = payload
@@ -25,6 +26,7 @@ use super::CommitError;
 ///     .enumerate()
 ///     .find(|(_, header)| header.name == b"gpgsig")
 ///     .ok_or("signature header absent")?;
+///
 /// assert_eq!(signature.unfolded_value(), b"first\nsecond");
 /// assert_eq!(
 ///     payload
@@ -55,8 +57,10 @@ impl<'a> CommitPayload<'a> {
     ///
     /// ```
     /// use girt::CommitPayload;
+    ///
     /// let bytes = b"x-header first\n continued\n\nmessage\xff";
     /// let payload = CommitPayload::parse(bytes)?;
+    ///
     /// assert_eq!(payload.as_bytes(), bytes);
     /// assert_eq!(
     ///     payload

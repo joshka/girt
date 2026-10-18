@@ -18,12 +18,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commit, CommitFields, HistoryLimits, InitKind, ObjectFormat, PackLimits, Repository,
         Signature, Tree,
     };
+
     let directory = tempfile::tempdir()?;
     let repo = Repository::init(
         ObjectFormat::Sha1,
         directory.path().join("r.git"),
         InitKind::Bare,
     )?;
+
     let loose = repo.loose_objects();
     let blob = loose.write_blob(b"# Project\n")?;
     let tree = loose.write_tree(&Tree::new(
@@ -34,6 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: blob,
         }],
     )?)?;
+
     let person = Signature {
         name: b"A. Writer".to_vec(),
         email: b"writer@example.com".to_vec(),
@@ -50,9 +53,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             message: message.to_vec(),
         })?)
     };
+
     let base = commit(vec![], b"base\n")?;
     let left = commit(vec![base], b"left\n")?;
     let right = commit(vec![base], b"right\n")?;
+
     let objects = repo.objects_with(PackLimits::default())?;
     assert_eq!(
         objects.walk_with(&[left], HistoryLimits::default())?,
@@ -62,17 +67,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         objects.merge_bases_with(left, right, HistoryLimits::default())?,
         [base]
     );
+
     let decoded = objects.read_commit_with(left, girt::ReadLimits::default())?;
     let root = objects
         .read_with(decoded.tree(), girt::ReadLimits::default())?
         .ok_or("tree missing")?;
     assert_eq!(root.kind(), girt::ObjectKind::Tree);
+
     let entries = Tree::parse(ObjectFormat::Sha1, root.data())?;
     let file = objects
         .read_with(entries.entries()[0].id, girt::ReadLimits::default())?
         .ok_or("blob missing")?;
     assert_eq!(file.kind(), girt::ObjectKind::Blob);
     assert_eq!(file.data(), b"# Project\n");
+
     Ok(())
 }
 ```

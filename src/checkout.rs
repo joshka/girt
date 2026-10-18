@@ -79,6 +79,7 @@
 //!     directory.path().join("w"),
 //!     InitKind::Worktree,
 //! )?;
+//!
 //! let loose = repository.loose_objects();
 //! let id = loose.write_blob(b"#!/bin/sh\necho hello\n")?;
 //! let entry = TreeEntry {
@@ -96,11 +97,13 @@
 //!     .expect("ordinary repository")
 //!     .join("hello.sh");
 //! assert_eq!(std::fs::read(&file)?, b"#!/bin/sh\necho hello\n");
+//!
 //! #[cfg(unix)]
 //! {
 //!     use std::os::unix::fs::PermissionsExt;
 //!     assert_ne!(std::fs::metadata(&file)?.permissions().mode() & 0o111, 0);
 //! }
+//!
 //! let index = repository
 //!     .read_index(Default::default())?
 //!     .expect("checkout published an index");

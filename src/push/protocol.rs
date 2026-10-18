@@ -52,6 +52,7 @@ use crate::refs::RefName;
 ///
 /// let repo = Repository::open("project")?;
 /// let objects = repo.objects_with(PackLimits::default())?;
+///
 /// // Publish the commit at the tip of the local `topic` branch.
 /// let Some(Target::Direct(tip)) = repo
 ///     .references()?
@@ -59,6 +60,7 @@ use crate::refs::RefName;
 /// else {
 ///     return Err("refs/heads/topic does not point directly at a commit".into());
 /// };
+///
 /// let command = PushCommand::new(RefName::new("refs/heads/topic")?, None, tip);
 /// let cancel = AtomicBool::new(false);
 /// let prepared = PreparedPush::new(&objects, vec![command], &[], PushLimits::default(), &cancel)?;
@@ -71,11 +73,14 @@ use crate::refs::RefName;
 /// let mut input = server.stdin.take().expect("piped");
 /// let mut output = server.stdout.take().expect("piped");
 /// let result = send(&mut output, &mut input, &prepared, &cancel);
+///
 /// // Close the pipes and reap the process whatever happened.
 /// drop((input, output));
 /// let status = server.wait()?;
+///
 /// // A failed push may still have updated references: `PushError::Uncertain` says so.
 /// let report = result?;
+///
 /// if !status.success() {
 ///     return Err(format!("git receive-pack failed: {status}").into());
 /// }

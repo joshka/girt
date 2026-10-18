@@ -13,15 +13,18 @@ use crate::{
 ///
 /// use girt::rewrites::{Copies, Kind, Options};
 /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let loose = repo.loose_objects();
 /// let original = loose.write_blob(b"original content\n")?;
 /// let edited = loose.write_blob(b"changed source\n")?;
+///
 /// let entry = |name: &[u8], id| TreeEntry {
 ///     name: name.to_vec(),
 ///     mode: EntryMode::Blob,
@@ -35,6 +38,7 @@ use crate::{
 ///     ObjectFormat::Sha1,
 ///     vec![entry(b"source", edited), entry(b"copy", original)],
 /// )?)?;
+///
 /// let copies = repo.objects_with(Default::default())?.detect_rewrites(
 ///     Some(old),
 ///     Some(new),
@@ -43,6 +47,7 @@ use crate::{
 ///     None,
 ///     &AtomicBool::new(false),
 /// )?;
+///
 /// assert_eq!(copies.len(), 1);
 /// assert_eq!(copies[0].kind, Kind::Copy);
 /// assert_eq!(copies[0].source_id, original); // Scored against the source's preimage.
@@ -153,6 +158,7 @@ impl Options {
     /// let id = loose.write_blob(b"")?;
     /// let old = tree(vec![entry(b"old", id, EntryMode::Blob)])?;
     /// let new = tree(vec![entry(b"new", id, EntryMode::Blob)])?;
+    ///
     /// let objects = repo.objects_with(Default::default())?;
     /// assert!(
     ///     objects
@@ -166,6 +172,7 @@ impl Options {
     ///         )?
     ///         .is_empty()
     /// );
+    ///
     /// let matches = objects.detect_rewrites(
     ///     Some(old),
     ///     Some(new),
@@ -222,6 +229,7 @@ impl Options {
     /// let after = loose.write_blob(b"after\0binary")?;
     /// let old = tree(vec![entry(b"old", before, EntryMode::Blob)])?;
     /// let new = tree(vec![entry(b"new", after, EntryMode::Blob)])?;
+    ///
     /// let objects = repo.objects_with(Default::default())?;
     /// let options = Options::default()
     ///     .with_approximate_binary(false)
@@ -236,6 +244,7 @@ impl Options {
     /// )?;
     /// assert!(skipped.rewrites.is_empty());
     /// assert!(skipped.inexact_skipped.is_some());
+    ///
     /// let complete = objects.detect_rewrites_or_exact(
     ///     Some(old),
     ///     Some(new),
@@ -300,6 +309,7 @@ impl Default for Options {
 /// let id = loose.write_blob(b"same")?;
 /// let old = tree(vec![entry(b"old", id, EntryMode::Blob)])?;
 /// let new = tree(vec![entry(b"new", id, EntryMode::Blob)])?;
+///
 /// let result = repo
 ///     .objects_with(Default::default())?
 ///     .detect_rewrites_or_exact(
@@ -456,6 +466,7 @@ impl Kind {
 ///     entry(b"source", after, EntryMode::Blob),
 ///     entry(b"copy", after, EntryMode::Blob),
 /// ])?;
+///
 /// let records = repo.objects_with(Default::default())?.detect_rewrites(
 ///     Some(old),
 ///     Some(new),
@@ -466,6 +477,7 @@ impl Kind {
 ///     None,
 ///     &cancel,
 /// )?;
+///
 /// assert_eq!(records[0].kind, Kind::Copy);
 /// assert_eq!(records[0].similarity, 100);
 /// assert_eq!(records[0].source_id, before);
@@ -555,12 +567,14 @@ impl InexactSkipped {
 ///
 /// use girt::rewrites::{Error, Limits, Options};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let result = repo.objects_with(Default::default())?.detect_rewrites(
 ///     None,
 ///     None,

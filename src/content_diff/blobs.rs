@@ -42,12 +42,15 @@ impl BlobContent {
     /// use std::sync::atomic::AtomicBool;
     /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
     /// use girt::content_diff::BlobContent;
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Bare)?;
+    ///
     /// let loose = repo.loose_objects();
     /// let id = loose.write_blob(b"added\n")?;
     /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1,
     ///     vec![TreeEntry { name: b"file".to_vec(), mode: EntryMode::Blob, id }])?)?;
+    ///
     /// let objects = repo.objects_with(Default::default())?;
     /// let cancel = AtomicBool::new(false);
     /// let changes = objects.compare_trees_with(None, Some(tree), Default::default(), &cancel)?;

@@ -196,6 +196,7 @@ impl LooseObjects {
     ///
     /// ```
     /// use girt::{Commit, CommitFields, ObjectFormat, Signature, Tree};
+    ///
     /// let person = Signature {
     ///     name: b"A. Writer".to_vec(),
     ///     email: b"a@example.com".to_vec(),
@@ -210,9 +211,11 @@ impl LooseObjects {
     ///     extra_headers: vec![],
     ///     message: b"Initial snapshot\n".to_vec(),
     /// })?;
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let objects = girt::LooseObjects::new(directory.path(), girt::ObjectFormat::Sha1);
     /// let id = objects.write_commit(&commit)?;
+    ///
     /// assert_eq!(
     ///     objects.read_commit(id, 4096)?.message(),
     ///     b"Initial snapshot\n"
@@ -238,6 +241,7 @@ impl LooseObjects {
     ///
     /// ```
     /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    ///
     /// let tag = Tag::new(TagFields {
     ///     target: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
     ///     target_kind: ObjectKind::Blob,
@@ -246,6 +250,7 @@ impl LooseObjects {
     ///     extra_headers: vec![],
     ///     message: b"Release manifest\n".to_vec(),
     /// })?;
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let objects = girt::LooseObjects::new(directory.path(), girt::ObjectFormat::Sha1);
     /// let id = objects.write_tag(&tag)?;
@@ -402,9 +407,11 @@ impl LooseObjects {
     ///
     /// ```
     /// use girt::{EntryMode, LooseObjects, ObjectFormat, Tree, TreeEntry};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
     /// let blob = objects.write_blob(b"notes\n")?;
+    ///
     /// let tree = Tree::new(
     ///     ObjectFormat::Sha1,
     ///     vec![TreeEntry {
@@ -413,6 +420,7 @@ impl LooseObjects {
     ///         id: blob,
     ///     }],
     /// )?;
+    ///
     /// let id = objects.write_tree(&tree)?;
     /// assert_eq!(id, tree.id()); // Child storage precedes publishing a complete snapshot.
     /// assert_eq!(objects.read_tree(id, 4096)?.entries()[0].id, blob);
@@ -580,18 +588,21 @@ impl LooseObjects {
 /// ```
 /// use girt::loose::Error;
 /// use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let loose = repo.loose_objects();
 /// let id = loose.write_blob(b"release notes\n")?;
 /// assert!(matches!(
 ///     loose.read_commit(id, 4096),
 ///     Err(Error::UnsupportedObjectType)
 /// ));
+///
 /// let object = repo
 ///     .objects_with(PackLimits::default())?
 ///     .read_with(id, ReadLimits::default())?

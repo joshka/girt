@@ -42,6 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let temp = tempfile::tempdir()?;
     let mut out = io::BufWriter::new(io::stdout().lock());
+
     let Some(path) = args.path else {
         // The fixture compares two trees directly; no commits are needed.
         let repo = Repository::init(ObjectFormat::Sha1, temp.path().join("r"), InitKind::Bare)?;
@@ -50,35 +51,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         editor.set(b"notes.txt", loose.write_blob(b"one\ntwo\nthree\n")?)?;
         editor.set(b"old name", loose.write_blob(b"moved\ncontent\n")?)?;
         let old = editor.write()?;
+
         editor.set(b"notes.txt", loose.write_blob(b"one\n2\nthree")?)?;
         editor.remove(b"old name")?;
         editor.set(b"new name", loose.write_blob(b"moved\ncontent\n")?)?;
         let new = editor.write()?;
+
         let git = Repo::new(repo);
         git.write_patch(&mut out, old, new)?;
         out.flush()?;
         return Ok(());
     };
+
     if args.unified == 3 && !args.trusted && !args.no_indent_heuristic {
         Repo::discover(path)?.write_patch(&mut out, &args.old, &args.new)?;
         out.flush()?;
         return Ok(());
     }
+
     // Explicit options and limits go through the core API the handle composes.
     let environment = Environment::from_process();
     let repo = Repository::discover_with_config(path, &ConfigInputs::git_default(&environment)?)?;
+
     let (packs, rewrite_limits, limits) = if args.trusted {
         let diff = DiffLimits::default()
             .with_max_input_bytes(usize::MAX)
             .with_max_lines(usize::MAX)
             .with_max_trace(usize::MAX)
             .with_max_work(usize::MAX);
+
         // Keep the default rename candidate limit, which matches Git's, but lift resources.
         let rewrites = rewrites::Limits::default()
             .with_read(ReadLimits::trusted())
             .with_max_blob_bytes(usize::MAX)
             .with_max_spans(usize::MAX)
             .with_max_work(usize::MAX);
+
         (
             PackLimits::trusted(),
             rewrites,
@@ -93,10 +101,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Limits::default(),
         )
     };
+
     let objects = repo.objects_with(packs)?;
     let resolver = Resolver::new(&repo, &objects)?;
     let old = resolver.resolve_to(&args.old.parse()?, ObjectKind::Tree)?;
     let new = resolver.resolve_to(&args.new.parse()?, ObjectKind::Tree)?;
+
     let cancel = AtomicBool::new(false);
     let comparison = objects.diff_trees_with(
         Some(old),
@@ -105,6 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rewrite_limits,
         &cancel,
     )?;
+
     // Apply `.gitattributes` and `diff.<driver>` settings as `git diff` does.
     let mut attributes = repo.diff_attributes(&environment)?;
     objects.write_patch_with(
@@ -117,6 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         limits,
         &cancel,
     )?;
+
     out.flush()?;
     Ok(())
 }

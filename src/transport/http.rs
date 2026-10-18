@@ -32,13 +32,16 @@
 //! async fn list(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
 //!     let origin = Remote::find(config, b"origin")?.ok_or("no origin remote")?;
 //!     let destination = origin.fetch_destination(config, &ProtocolEnvironment::default())?;
+//!
 //!     let environment = HttpEnvironment::default();
 //!     let settings =
 //!         HttpSettings::resolve_for_remote(config, b"origin", &destination, &environment)?;
 //!     let remote = HttpRemote::configured(settings)?;
+//!
 //!     let cancel = AtomicBool::new(false);
 //!     let control = TransportControl::new(&cancel);
 //!     let discovery = discover_http(&remote, FetchLimits::default(), control).await?;
+//!
 //!     for reference in &discovery.advertisement.refs {
 //!         let name = String::from_utf8_lossy(reference.name.as_bytes());
 //!         println!("{} {name}", reference.id);
@@ -78,6 +81,7 @@ pub use configuration::{HttpEnvironment, HttpSettings};
 /// let config = Config::parse(b"[remote \"origin\"]\nurl = https://example.com/project.git\n")?;
 /// let origin = Remote::find(&config, b"origin")?.expect("configured");
 /// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+///
 /// let settings = HttpSettings::resolve_for_remote(
 ///     &config,
 ///     b"origin",

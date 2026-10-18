@@ -180,12 +180,14 @@ impl References<'_> {
     /// ```
     /// use girt::refs::PackRefsOptions;
     /// use girt::{InitKind, ObjectFormat, PackLimits, Repository};
+    ///
     /// # let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let report = repo.references()?.pack(
     ///     &repo.objects_with(PackLimits::default())?,
     ///     PackRefsOptions::ALL,

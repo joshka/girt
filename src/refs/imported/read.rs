@@ -29,18 +29,21 @@ use crate::{ObjectFormat, ObjectId};
 /// ```
 /// use girt::refs::{ImportedReflog, ReflogLimits};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let format = ObjectFormat::Sha1;
 /// let id = ObjectId::Sha1([1; 20]);
 /// let bytes = format!(
 ///     "{} {id} A <a@example.com> 60 +0130\tnote\n",
 ///     ObjectId::null(format)
 /// );
+///
 /// let log = ImportedReflog::read(
 ///     format,
 ///     bytes.as_bytes(),
 ///     ReflogLimits::default().with_records(0),
 ///     &std::sync::atomic::AtomicBool::new(false),
 /// );
+///
 /// assert!(!log.is_complete());
 /// assert!(log.records().is_empty());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -122,18 +125,21 @@ impl ReflogLimits {
 /// ```
 /// use girt::refs::{ImportedReflog, ReflogLimits};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let format = ObjectFormat::Sha1;
 /// let id = ObjectId::Sha1([1; 20]);
 /// let bytes = format!(
 ///     "{} {id} A <a@example.com> 60 +0130\tnote\n",
 ///     ObjectId::null(format)
 /// );
+///
 /// let log = ImportedReflog::read(
 ///     format,
 ///     bytes.as_bytes(),
 ///     ReflogLimits::default().with_bytes(4),
 ///     &std::sync::atomic::AtomicBool::new(false),
 /// );
+///
 /// assert!(matches!(log.end(), girt::refs::ReflogReadEnd::Limit(_)));
 /// assert!(!log.is_complete());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -163,18 +169,21 @@ pub enum ReflogReadEnd {
 ///
 /// use girt::refs::{ImportedReflog, ReflogLimits};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let format = ObjectFormat::Sha1;
 /// let tip = ObjectId::Sha1([1; 20]);
 /// let bytes = format!(
 ///     "{} {tip} A <a@b> 18446744073709551615 +0000\timported\n",
 ///     ObjectId::null(format)
 /// );
+///
 /// let log = ImportedReflog::read(
 ///     format,
 ///     bytes.as_bytes(),
 ///     ReflogLimits::default(),
 ///     &AtomicBool::new(false),
 /// );
+///
 /// assert!(log.is_complete());
 /// assert_eq!(log.records()[0].fields()?.seconds, i128::from(u64::MAX));
 /// assert_eq!(log.recoverable_roots().collect::<Vec<_>>(), [tip]);
@@ -202,12 +211,14 @@ impl ImportedReflog {
     ///
     /// use girt::refs::{ImportedReflog, ReflogLimits};
     /// use girt::{ObjectFormat, ObjectId};
+    ///
     /// let format = ObjectFormat::Sha1;
     /// let tip = ObjectId::for_blob(format, b"manifest");
     /// let bytes = format!(
     ///     "{} {tip} A <a@example.com> 60 +0000\tcreated\n",
     ///     ObjectId::null(format)
     /// );
+    ///
     /// let complete = ImportedReflog::read(
     ///     format,
     ///     bytes.as_bytes(),
@@ -216,6 +227,7 @@ impl ImportedReflog {
     /// );
     /// assert!(complete.is_complete());
     /// assert_eq!(complete.recoverable_roots().collect::<Vec<_>>(), [tip]);
+    ///
     /// let partial = ImportedReflog::read(
     ///     format,
     ///     bytes.as_bytes(),
@@ -388,12 +400,14 @@ impl References<'_> {
     /// ```
     /// use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
     /// use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let loose = repo.loose_objects();
     /// let person = Signature {
     ///     name: b"A. Writer".to_vec(),
@@ -410,6 +424,7 @@ impl References<'_> {
     ///     extra_headers: vec![],
     ///     message: b"Initial snapshot\n".to_vec(),
     /// })?)?;
+    ///
     /// let refs = repo.references()?;
     /// let main = RefName::new("refs/heads/main")?;
     /// let edit = RefEdit::new(
@@ -422,6 +437,7 @@ impl References<'_> {
     ///     },
     /// );
     /// refs.transaction(&[edit])?;
+    ///
     /// let log = refs
     ///     .imported_reflog(
     ///         &main,
@@ -429,6 +445,7 @@ impl References<'_> {
     ///         &std::sync::atomic::AtomicBool::new(false),
     ///     )?
     ///     .ok_or("reflog missing")?;
+    ///
     /// assert!(log.is_complete());
     /// assert_eq!(log.records()[0].fields()?.new, id);
     /// # Ok::<(), Box<dyn std::error::Error>>(())

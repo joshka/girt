@@ -39,6 +39,7 @@ pub struct DecodedEntry {
 /// ```
 /// use girt::Config;
 /// use girt::config::{DecodedEntry, DecodedSection, ResolveLimits};
+///
 /// let section = DecodedSection {
 ///     name: b"core".to_vec(),
 ///     subsection: None,
@@ -53,6 +54,7 @@ pub struct DecodedEntry {
 ///         },
 ///     ],
 /// };
+///
 /// let config = Config::from_decoded_sections(vec![section], ResolveLimits::default())?;
 /// assert_eq!(config.value("core", None, "quiet"), Some(None));
 /// assert_eq!(config.value("core", None, "empty"), Some(Some(&b""[..])));
@@ -94,6 +96,7 @@ impl Config {
     /// ```
     /// use girt::Config;
     /// use girt::config::{DecodedEntry, DecodedSection, ResolveLimits};
+    ///
     /// let config = Config::from_decoded_sections(
     ///     vec![DecodedSection {
     ///         name: b"remote".to_vec(),
@@ -105,6 +108,7 @@ impl Config {
     ///     }],
     ///     ResolveLimits::default(),
     /// )?;
+    ///
     /// assert_eq!(config.value("remote", Some(b"origin"), "url"), Some(None));
     /// # Ok::<(), girt::ConfigError>(())
     /// ```

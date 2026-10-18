@@ -22,12 +22,14 @@ use crate::{IdentityRef, ObjectFormat, ObjectId};
 /// ```
 /// use girt::refs::{ImportedReflog, ReflogLimits};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let format = ObjectFormat::Sha1;
 /// let id = ObjectId::Sha1([1; 20]);
 /// let bytes = format!(
 ///     "{} {id} A <a@example.com> 60 +0130\tnote\n",
 ///     ObjectId::null(format)
 /// );
+///
 /// let broken = bytes.replace("60 +0130", "invalid date");
 /// let log = ImportedReflog::read(
 ///     format,
@@ -35,6 +37,7 @@ use crate::{IdentityRef, ObjectFormat, ObjectId};
 ///     ReflogLimits::default(),
 ///     &std::sync::atomic::AtomicBool::new(false),
 /// );
+///
 /// assert!(log.records()[0].fields().is_err());
 /// assert_eq!(
 ///     log.records()[0].recoverable_roots().collect::<Vec<_>>(),
@@ -70,18 +73,21 @@ pub enum ImportedRecord {
 /// ```
 /// use girt::refs::{ImportedReflog, ReflogLimits};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let format = ObjectFormat::Sha1;
 /// let id = ObjectId::Sha1([1; 20]);
 /// let bytes = format!(
 ///     "{} {id} A <a@example.com> 60 +0130\tnote\n",
 ///     ObjectId::null(format)
 /// );
+///
 /// let log = ImportedReflog::read(
 ///     format,
 ///     bytes.as_bytes(),
 ///     ReflogLimits::default(),
 ///     &std::sync::atomic::AtomicBool::new(false),
 /// );
+///
 /// let fields = log.records()[0].fields()?;
 /// assert_eq!((fields.seconds, fields.offset_minutes), (60, 90));
 /// assert_eq!(fields.message, b"note");

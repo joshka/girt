@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         InitKind::Bare,
         Backend::Reftable,
     )?;
+
     let before = descriptors();
     let refs = repo.references()?;
     let name = RefName::new(b"refs/tags/probe")?;
@@ -34,6 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Expected::Any,
         )?;
     }
+
     let directory = repo.git_dir().join("reftable");
     let snapshot = Snapshot::read(
         &directory,
@@ -42,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &AtomicBool::new(false),
     )?;
     let retained = descriptors();
+
     let report = compact(
         &directory,
         ObjectFormat::Sha1,
@@ -49,6 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &AtomicBool::new(false),
     )?;
     let after_compaction = descriptors();
+
     assert!(report.retained.is_empty());
     assert_eq!(snapshot.table.references.len(), 2);
     assert!(
@@ -60,11 +64,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .is_err()
     );
+
     drop(snapshot);
     let after_drop = descriptors();
     println!(
         "descriptors before={before:?} retained={retained:?} compacted={after_compaction:?} dropped={after_drop:?}"
     );
     println!("compacted_tables={}", report.input_tables);
+
     Ok(())
 }

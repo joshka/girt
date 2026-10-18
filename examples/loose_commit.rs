@@ -6,6 +6,7 @@ use girt::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let objects = LooseObjects::new(directory.path().join("objects"), ObjectFormat::Sha1);
+
     let blob = objects.write_blob(b"Hello from a commit!\n")?;
     let tree = Tree::new(
         girt::ObjectFormat::Sha1,
@@ -16,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
     )?;
     let tree_id = objects.write_tree(&tree)?;
+
     let author = Signature::now(b"A. Writer", b"writer@example.com")?;
     let commit = Commit::new(CommitFields {
         tree: tree_id,
@@ -25,14 +27,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: vec![],
         message: b"Record the first snapshot\n".to_vec(),
     })?;
+
     let id = objects.write_commit(&commit)?;
     let restored = objects.read_commit(id, 4096)?;
     assert_eq!(restored, commit);
+
     let restored_tree = objects.read_tree(restored.tree(), 4096)?;
     assert_eq!(
         objects.read_blob(restored_tree.entries()[0].id, 1024)?,
         b"Hello from a commit!\n"
     );
+
     println!("Stored commit {id} referencing tree {tree_id} and blob {blob}");
     // The temporary directory and every loose object are removed on normal exit.
     Ok(())

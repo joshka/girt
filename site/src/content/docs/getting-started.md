@@ -53,16 +53,20 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let repository = Repository::open(&args.path)?;
+
     let head = repository.head()?;
     let head_id = head.id.ok_or("HEAD has no commits yet")?;
+
     let objects = repository.objects()?;
     let history = objects.walk(&[head_id])?;
+
     for id in history.into_iter().take(args.count) {
         let commit = objects.read_commit(id)?;
         let message = String::from_utf8_lossy(commit.message());
         let summary = message.lines().next().unwrap_or_default();
         println!("{id} {summary}");
     }
+
     Ok(())
 }
 ```

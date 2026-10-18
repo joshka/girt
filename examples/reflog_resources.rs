@@ -16,6 +16,7 @@ fn descriptors() -> Option<usize> {
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     None
 }
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
         for count in [100, 10_000] {
@@ -25,6 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
 fn probe(
     format: ObjectFormat,
     count: usize,
@@ -33,18 +35,21 @@ fn probe(
     let root = tempfile::tempdir()?;
     let repo =
         Repository::init_with_backend(format, root.path().join("repo"), InitKind::Bare, backend)?;
+
     let tip = ObjectId::from_hex(format, &"12".repeat(format.digest_len()))?;
     let record = format!(
         "{} {tip} A <a@b> 1700000000 +0000\tfixture\n",
         ObjectId::null(format)
     );
     let bytes = record.repeat(count);
+
     if backend == Backend::Files {
         std::fs::create_dir_all(repo.git_dir().join("logs"))?;
         std::fs::write(repo.git_dir().join("logs/HEAD"), &bytes)?;
     } else {
         write_binary(&repo, tip, count)?;
     }
+
     let refs = repo.references()?;
     let name = RefName::HEAD;
     let cancel = AtomicBool::new(false);
@@ -54,6 +59,7 @@ fn probe(
         .unwrap();
     let during = descriptors();
     assert!(retained.is_complete());
+
     let payload: usize = retained
         .records()
         .iter()
@@ -67,8 +73,10 @@ fn probe(
             _ => Err("unsupported imported reflog record"),
         })
         .sum::<Result<usize, _>>()?;
+
     drop(retained);
     let after = descriptors();
+
     let mut samples = Vec::new();
     for _ in 0..30 {
         let start = Instant::now();
@@ -80,11 +88,13 @@ fn probe(
         drop(log);
         samples.push(start.elapsed().as_nanos());
     }
+
     samples.sort_unstable();
     println!(
         "backend={backend:?} format={format} records={count} payload={payload} min_ns={} median_ns={} max_ns={} descriptors={before:?}/{during:?}/{after:?}",
         samples[0], samples[15], samples[29]
     );
+
     Ok(())
 }
 
@@ -94,6 +104,7 @@ fn write_binary(
     count: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use girt::refs::reftable::{Limits, LogRecord, LogValue, RecordName, Table};
+
     let table = Table {
         format: tip.format(),
         min_update_index: 1,
@@ -116,6 +127,7 @@ fn write_binary(
             })
             .collect(),
     };
+
     std::fs::write(
         repo.git_dir().join("reftable/original.ref"),
         table.encode(Limits::default())?,
@@ -124,5 +136,6 @@ fn write_binary(
         repo.git_dir().join("reftable/tables.list"),
         b"original.ref\n",
     )?;
+
     Ok(())
 }

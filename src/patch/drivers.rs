@@ -45,6 +45,7 @@ use crate::workflow::Environment;
 ///     repo.worktree().unwrap().join(".gitattributes"),
 ///     "*.svg binary\n",
 /// )?;
+///
 /// let loose = repo.loose_objects();
 /// let mut editor = TreeEditor::new(&loose);
 /// editor.set(b"logo.svg", loose.write_blob(b"<svg/>\n")?)?;
@@ -54,6 +55,7 @@ use crate::workflow::Environment;
 ///
 /// let objects = repo.objects()?;
 /// let entries = objects.diff_trees(Some(old), Some(new))?.entries;
+///
 /// let mut attributes = repo.diff_attributes(&Environment::default())?;
 /// let mut patch = Vec::new();
 /// objects.write_patch_with(
@@ -64,6 +66,7 @@ use crate::workflow::Environment;
 ///     Limits::default(),
 ///     &AtomicBool::new(false),
 /// )?;
+///
 /// assert!(patch.ends_with(b"Binary files a/logo.svg and b/logo.svg differ\n"));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

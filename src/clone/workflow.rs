@@ -58,6 +58,7 @@ use crate::{InitKind, ObjectKind, Repository};
 ///     BranchSelection::Branch(main_ref.clone()),
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let ready = request.receive_local(
 ///     upstream.git_dir(),
@@ -65,12 +66,14 @@ use crate::{InitKind, ObjectKind, Repository};
 ///     TransportControl::new(&cancel),
 ///     |_| ControlFlow::Continue(()),
 /// )?;
+///
 /// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
 /// let clone = report.repository.expect("finish succeeded");
 /// assert_eq!(
 ///     clone.references()?.read(&main_ref)?,
 ///     Some(Target::Direct(main))
 /// );
+///
 /// // The recorded origin URL is the one passed to `prepare_tracking`.
 /// assert_eq!(
 ///     girt::remote::Remote::find(clone.config(), b"origin")?
@@ -242,6 +245,7 @@ pub(super) fn selected<T>(
 ///     BranchSelection::Default,
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let ready = request.receive_local(
 ///     upstream.git_dir(),
@@ -259,6 +263,7 @@ pub(super) fn selected<T>(
 ///
 /// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
 /// let clone = report.repository.expect("finish succeeded");
+///
 /// // Every remote branch is tracked; only the selected one becomes local.
 /// assert!(
 ///     clone
@@ -532,6 +537,7 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), CloneFailure> {
 ///     BranchSelection::Default,
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let ready = request.receive_local(
 ///     upstream.git_dir(),
@@ -539,6 +545,7 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), CloneFailure> {
 ///     TransportControl::new(&cancel),
 ///     |_| ControlFlow::Continue(()),
 /// )?;
+///
 /// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
 /// assert!(report.reserved && report.initialized && report.configured);
 /// assert!(
@@ -601,6 +608,7 @@ pub struct CloneReport {
 ///     BranchSelection::Default,
 ///     Reflog::Preserve,
 /// )?;
+///
 /// // A tight limit stops the transfer; the destination is never created.
 /// let cancel = AtomicBool::new(false);
 /// let result = request.receive_local(
@@ -609,6 +617,7 @@ pub struct CloneReport {
 ///     TransportControl::new(&cancel),
 ///     |_| ControlFlow::Continue(()),
 /// );
+///
 /// assert!(matches!(
 ///     result,
 ///     Err(CloneTransferError::Transfer(FetchError::Limit(_)))
@@ -658,6 +667,7 @@ pub enum CloneTransferError {
 ///     BranchSelection::Default,
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let ready = request.receive_local(
 ///     upstream.git_dir(),
@@ -674,6 +684,7 @@ pub enum CloneTransferError {
 ///     error.source,
 ///     CloneFailure::Verification(FetchError::Cancelled)
 /// ));
+///
 /// // Decide on cleanup from the report, not by guessing.
 /// assert!(!error.report.reserved && !error.report.initialized);
 /// assert!(!destination.exists());

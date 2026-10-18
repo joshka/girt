@@ -85,12 +85,14 @@ impl Repository {
     /// ```
     /// use girt::refs::{RefEdit, RefName, Reflog};
     /// use girt::{InitKind, ObjectFormat, Repository, Signature};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("work"),
     ///     InitKind::Worktree,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"tip")?;
     /// let who = Signature {
     ///     name: b"A. Writer".to_vec(),
@@ -98,6 +100,7 @@ impl Repository {
     ///     seconds: 1_700_000_000,
     ///     offset_minutes: 0,
     /// };
+    ///
     /// // A non-bare repository logs branches but not tags by default.
     /// let branch = RefName::branch("topic")?;
     /// let reflog = repo.reflog_for(&branch, who.clone(), "branch: Created")?;
@@ -106,6 +109,7 @@ impl Repository {
     ///     repo.reflog_for(&RefName::tag("v1")?, who, "tag")?,
     ///     Reflog::Preserve
     /// );
+    ///
     /// let refs = repo.references()?;
     /// refs.transaction(&[RefEdit::create(branch.clone(), id, reflog)])?;
     /// assert_eq!(refs.reflog(&branch)?.map(|log| log.len()), Some(1));

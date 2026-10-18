@@ -92,6 +92,7 @@ type RemoteMessages<'a> = dyn FnMut(&[u8]) -> ControlFlow<()> + 'a;
 ///     }
 /// };
 /// let mut on_validation = |progress: ValidationProgress| validation.push(progress);
+///
 /// let observer = LocalFetchObserver::default()
 ///     .with_construction(&mut on_construction)
 ///     .with_validation(&mut on_validation);
@@ -103,6 +104,7 @@ type RemoteMessages<'a> = dyn FnMut(&[u8]) -> ControlFlow<()> + 'a;
 ///     BTreeSet::new(),
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// request.receive_local(
 ///     upstream.git_dir(),

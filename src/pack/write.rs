@@ -21,11 +21,13 @@ use crate::{ObjectId, ObjectKind};
 /// use girt::{
 ///     ObjectFormat, ObjectId, ObjectKind, PackObject, PackWriteError, PackWriteLimits, write_pack,
 /// };
+///
 /// let input = PackObject {
 ///     id: ObjectId::for_blob(ObjectFormat::Sha1, b"original"),
 ///     kind: ObjectKind::Blob,
 ///     data: b"changed",
 /// };
+///
 /// let (mut pack, mut index) = (Vec::new(), Vec::new());
 /// assert!(matches!(
 ///     write_pack(
@@ -37,6 +39,7 @@ use crate::{ObjectId, ObjectKind};
 ///     ),
 ///     Err(PackWriteError::Identity { .. })
 /// ));
+///
 /// assert!(pack.is_empty() && index.is_empty());
 /// ```
 #[derive(Debug, Clone, Copy)]
@@ -64,17 +67,20 @@ pub struct PackObject<'a> {
 /// use girt::{
 ///     ObjectFormat, ObjectId, ObjectKind, PackObject, PackWriteError, PackWriteLimits, write_pack,
 /// };
+///
 /// let input = PackObject {
 ///     id: ObjectId::for_blob(ObjectFormat::Sha1, b"large"),
 ///     kind: ObjectKind::Blob,
 ///     data: b"large",
 /// };
+///
 /// let (mut pack, mut index) = (Vec::new(), Vec::new());
 /// let limits = PackWriteLimits::default().with_max_object_bytes(2);
 /// assert!(matches!(
 ///     write_pack(ObjectFormat::Sha1, &[input], &mut pack, &mut index, limits),
 ///     Err(PackWriteError::Limit(_))
 /// ));
+///
 /// assert!(pack.is_empty() && index.is_empty());
 /// ```
 #[derive(Debug, Clone, Copy)]
@@ -166,11 +172,13 @@ impl PackWriteLimits {
 ///
 /// ```
 /// use girt::{ObjectFormat, ObjectId, ObjectKind, PackObject, PackWriteLimits, write_pack};
+///
 /// let input = PackObject {
 ///     id: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
 ///     kind: ObjectKind::Blob,
 ///     data: b"manifest",
 /// };
+///
 /// let (mut bytes, mut index) = (Vec::new(), Vec::new());
 /// let written = write_pack(
 ///     ObjectFormat::Sha1,
@@ -179,6 +187,7 @@ impl PackWriteLimits {
 ///     &mut index,
 ///     PackWriteLimits::default(),
 /// )?;
+///
 /// assert_eq!(written.objects, 1);
 /// assert!(bytes.ends_with(written.checksum.as_bytes()));
 /// assert!(!index.is_empty());
@@ -261,11 +270,13 @@ pub enum PackWriteError {
 ///
 /// ```
 /// use girt::{ObjectId, ObjectKind, PackObject, PackWriteLimits, write_pack};
+///
 /// let input = PackObject {
 ///     id: ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello"),
 ///     kind: ObjectKind::Blob,
 ///     data: b"hello",
 /// };
+///
 /// let (mut pack, mut index) = (Vec::new(), Vec::new());
 /// let written = write_pack(
 ///     girt::ObjectFormat::Sha1,
@@ -274,6 +285,7 @@ pub enum PackWriteError {
 ///     &mut index,
 ///     PackWriteLimits::default(),
 /// )?;
+///
 /// assert_eq!(written.objects, 1);
 /// # Ok::<(), girt::PackWriteError>(())
 /// ```
@@ -310,6 +322,7 @@ pub fn write_pack(
 ///     DeltaOptions, ObjectId, ObjectKind, PackCompression, PackObject, PackWriteLimits,
 ///     write_pack_with_compression,
 /// };
+///
 /// let base: Vec<u8> = (0..=255).cycle().take(4096).collect();
 /// let mut edited = base.clone();
 /// edited[1000] ^= 255;
@@ -321,6 +334,7 @@ pub fn write_pack(
 ///         data,
 ///     })
 ///     .collect();
+///
 /// let (mut pack, mut index) = (Vec::new(), Vec::new());
 /// let policy = PackCompression::Delta(DeltaOptions::default().with_max_depth(2));
 /// let written = write_pack_with_compression(
@@ -331,6 +345,7 @@ pub fn write_pack(
 ///     PackWriteLimits::default(),
 ///     policy,
 /// )?;
+///
 /// assert_eq!(written.objects, 2);
 /// assert_eq!(written.deltas.entries, 1);
 /// # Ok::<(), girt::PackWriteError>(())

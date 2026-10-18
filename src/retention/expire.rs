@@ -202,10 +202,13 @@ impl Repository {
     ///         Ok(())
     ///     }
     /// }
+    ///
     /// let first = repo.loose_objects().write_blob(b"older")?;
     /// let second = repo.loose_objects().write_blob(b"newer")?;
+    ///
     /// let refs = repo.references()?;
     /// let name = RefName::new("refs/tags/result")?;
+    ///
     /// for (seconds, id, expected) in [
     ///     (100, first, Expected::Absent),
     ///     (200, second, Expected::Value(Target::Direct(first))),
@@ -227,6 +230,7 @@ impl Repository {
     ///     )
     ///     .with_dereference(Dereference::Stored)])?;
     /// }
+    ///
     /// assert_eq!(refs.reflog(&name)?.unwrap().len(), 2);
     /// let policy =
     ///     RetentionPolicy::default().with_reflog_expiry(ReflogExpiryPolicy::ClassifiedCutoffs {
@@ -235,6 +239,7 @@ impl Repository {
     ///     });
     /// let report = repo.expire_reflogs(&mut PrivateFixture, &policy, &AtomicBool::new(false))?;
     /// assert_eq!(report.changed.len(), 1);
+    ///
     /// let remaining = refs.reflog(&name)?.unwrap();
     /// assert_eq!(remaining.len(), 1);
     /// assert_eq!(remaining[0].committer.seconds, 200);

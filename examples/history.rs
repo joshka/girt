@@ -19,14 +19,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let root = args.commit;
     let git = Repo::discover(args.path)?;
+
     for entry in git.log(root)? {
         let (id, _) = entry?;
         println!("{id}");
     }
+
     if let Some(other) = args.other_commit {
         let objects = git.repository().objects()?;
         println!("ancestor: {}", objects.is_ancestor(root, other)?);
         println!("merge bases: {:?}", objects.merge_bases(root, other)?);
     }
+
     Ok(())
 }

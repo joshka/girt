@@ -80,6 +80,7 @@
 //!     BranchSelection::Default,
 //!     Reflog::Preserve,
 //! )?;
+//!
 //! let cancel = AtomicBool::new(false);
 //! let ready = request.receive_local(
 //!     &source_path,
@@ -87,6 +88,7 @@
 //!     TransportControl::new(&cancel),
 //!     |_progress| ControlFlow::Continue(()),
 //! )?;
+//!
 //! assert!(!destination.exists(), "transfer alone creates nothing");
 //!
 //! let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;

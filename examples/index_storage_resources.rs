@@ -22,6 +22,7 @@ fn measure(mut operation: impl FnMut()) -> u128 {
         operation();
         samples.push(start.elapsed().as_nanos());
     }
+
     samples.sort_unstable();
     samples[15]
 }
@@ -38,19 +39,23 @@ fn probe(count: usize) -> Result<(), Box<dyn std::error::Error>> {
         root.path().join("repo"),
         InitKind::Worktree,
     )?;
+
     let id = repo.loose_objects().write_blob(b"content")?;
     let entries: Vec<_> = (0..count)
         .map(|n| Entry::new(format!("file-{n:08}").into_bytes(), Mode::Regular, id))
         .collect();
+
     let mut edit = repo.edit_index(Limits::default())?;
     edit.replace_entries(entries.clone())?;
     edit.commit()?;
+
     let mut git = std::process::Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
             git.env_remove(key);
         }
     }
+
     let status = git
         .current_dir(repo.worktree().unwrap())
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -63,25 +68,31 @@ fn probe(count: usize) -> Result<(), Box<dyn std::error::Error>> {
         ])
         .status()?;
     assert!(status.success());
+
     let before = descriptors();
     let snapshot = repo.read_index(Limits::default())?.unwrap();
     let retained = descriptors();
     assert_eq!(snapshot.entries().len(), count);
+
     let shared_id = snapshot.shared_index_id().unwrap();
     let main_bytes = std::fs::metadata(repo.git_dir().join("index"))?.len();
     let shared_bytes =
         std::fs::metadata(repo.git_dir().join(format!("sharedindex.{shared_id}")))?.len();
+
     let read_ns = measure(|| {
         drop(repo.read_index(Limits::default()).unwrap());
     });
+
     let publish_ns = measure(|| {
         repo.edit_index(Limits::default())
             .unwrap()
             .commit()
             .unwrap();
     });
+
     drop(snapshot);
     let after = descriptors();
+
     let tree = Tree::new(
         ObjectFormat::Sha1,
         entries
@@ -93,10 +104,12 @@ fn probe(count: usize) -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect(),
     )?;
+
     let tree_id = repo.loose_objects().write_tree(&tree)?;
     let mut directory = Entry::new(b"outside/".to_vec(), Mode::SparseDirectory, tree_id);
     directory.skip_worktree = true;
     let sparse = Index::new(ObjectFormat::Sha1, vec![directory], Limits::default())?;
+
     let objects = repo.objects_with(girt::PackLimits::default())?;
     let expand_ns = measure(|| {
         let mut index = sparse.clone();
@@ -110,11 +123,13 @@ fn probe(count: usize) -> Result<(), Box<dyn std::error::Error>> {
             .unwrap();
         assert_eq!(index.entries().len(), count);
     });
+
     println!(
         "{}",
         serde_json::json!({"entries":count, "samples":30, "main_bytes":main_bytes,
         "shared_bytes":shared_bytes, "read_median_ns":read_ns, "publish_median_ns":publish_ns,
         "expand_median_ns":expand_ns, "fd_before":before, "fd_retained":retained, "fd_after":after})
     );
+
     Ok(())
 }

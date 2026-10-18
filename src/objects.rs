@@ -22,12 +22,14 @@
 //!
 //! ```
 //! use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+//!
 //! let directory = tempfile::tempdir()?;
 //! let repo = Repository::init(
 //!     ObjectFormat::Sha1,
 //!     directory.path().join("r.git"),
 //!     InitKind::Bare,
 //! )?;
+//!
 //! let loose = repo.loose_objects();
 //! let blob = loose.write_blob(b"notes\n")?;
 //! let entry = TreeEntry {
@@ -48,17 +50,20 @@
 //!
 //! ```
 //! use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
+//!
 //! let directory = tempfile::tempdir()?;
 //! let repo = Repository::init(
 //!     ObjectFormat::Sha1,
 //!     directory.path().join("r.git"),
 //!     InitKind::Bare,
 //! )?;
+//!
 //! let id = repo.loose_objects().write_blob(b"notes\n")?;
 //! let objects = repo.objects_with(PackLimits::default())?;
 //! let object = objects
 //!     .read_with(id, ReadLimits::default())?
 //!     .ok_or("missing blob")?;
+//!
 //! assert_eq!(object.kind(), ObjectKind::Blob);
 //! assert_eq!(object.data(), b"notes\n");
 //! assert_eq!(object.id(), id);
@@ -132,17 +137,20 @@ use crate::{LooseObjects, ObjectFormat, ObjectId, ObjectKind};
 ///
 /// ```
 /// use girt::{InitKind, ObjectFormat, PackLimits, ReadLimits, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let id = repo.loose_objects().write_blob(b"payload\n")?;
 /// let objects = repo.objects_with(PackLimits::default())?;
 /// let object = objects
 ///     .read_with(id, ReadLimits::default())?
 ///     .ok_or("missing blob")?;
+///
 /// assert_eq!(object.data(), b"payload\n");
 /// assert_eq!(object.id(), id);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -174,17 +182,20 @@ impl Object {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, PackLimits, ReadLimits, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"payload")?;
     /// let objects = repo.objects_with(PackLimits::default())?;
     /// let object = objects
     ///     .read_with(id, ReadLimits::default())?
     ///     .ok_or("blob absent")?;
+    ///
     /// let retained = object.clone();
     /// let owned = object.into_data(); // A shared payload may be copied; the other owner stays usable.
     /// assert_eq!(owned, retained.data());
@@ -724,14 +735,17 @@ impl Objects {
     ///     AlternateLimits, InitKind, ObjectFormat, ObjectId, ObjectKind, PackLimits, PackObject,
     ///     PackWriteLimits, ReadLimits, Repository, write_pack,
     /// };
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let mut objects = repo.objects_with(PackLimits::default())?;
     /// let retained = objects.clone();
+    ///
     /// let data = b"published only in a new pack";
     /// let id = ObjectId::for_blob(ObjectFormat::Sha1, data);
     /// let input = PackObject {
@@ -739,6 +753,7 @@ impl Objects {
     ///     kind: ObjectKind::Blob,
     ///     data,
     /// };
+    ///
     /// let (mut pack, mut index) = (Vec::new(), Vec::new());
     /// let written = write_pack(
     ///     ObjectFormat::Sha1,
@@ -747,6 +762,7 @@ impl Objects {
     ///     &mut index,
     ///     PackWriteLimits::default(),
     /// )?;
+    ///
     /// let base = repo
     ///     .object_dir()
     ///     .join("pack")
@@ -754,6 +770,7 @@ impl Objects {
     /// // Private fixture only: shared installation requires a coordinated publication path.
     /// std::fs::write(base.with_extension("pack"), pack)?;
     /// std::fs::write(base.with_extension("idx"), index)?;
+    ///
     /// assert!(objects.read_with(id, ReadLimits::default())?.is_none());
     /// objects.refresh(PackLimits::default(), AlternateLimits::default())?;
     /// assert_eq!(
@@ -763,6 +780,7 @@ impl Objects {
     ///         .data(),
     ///     data
     /// );
+    ///
     /// // The clone retains the old generation.
     /// assert!(retained.read_with(id, ReadLimits::default())?.is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -965,6 +983,7 @@ impl Objects {
     ///     kind: ObjectKind::Blob,
     ///     data: b"manifest",
     /// };
+    ///
     /// let (mut bytes, mut index) = (Vec::new(), Vec::new());
     /// let written = write_pack(
     ///     ObjectFormat::Sha1,
@@ -973,12 +992,14 @@ impl Objects {
     ///     &mut index,
     ///     PackWriteLimits::default(),
     /// )?;
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = girt::Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     girt::InitKind::Bare,
     /// )?;
+    ///
     /// let base = repo
     ///     .object_dir()
     ///     .join("pack")
@@ -986,6 +1007,7 @@ impl Objects {
     /// // Private fixture only; shared repositories need a validated installation path.
     /// std::fs::write(base.with_extension("pack"), bytes)?;
     /// std::fs::write(base.with_extension("idx"), index)?;
+    ///
     /// let objects = repo.objects_with(girt::PackLimits::default())?;
     /// objects.verify_packs(&std::sync::atomic::AtomicBool::new(false))?;
     /// assert!(
@@ -1040,12 +1062,14 @@ impl Objects {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, PackLimits, ReadLimits, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"payload\n")?;
     /// let objects = repo.objects_with(PackLimits::default())?;
     /// let limits = ReadLimits::default().with_max_object_bytes(1024);
@@ -1053,6 +1077,7 @@ impl Objects {
     ///     objects.read_with(id, limits)?.ok_or("missing blob")?.data(),
     ///     b"payload\n"
     /// );
+    ///
     /// let absent = girt::ObjectId::for_blob(ObjectFormat::Sha1, b"not written");
     /// assert!(objects.read_with(absent, limits)?.is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1147,12 +1172,14 @@ impl Objects {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, PackLimits, ReadLimits, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"payload")?;
     /// let objects = repo.objects_with(PackLimits::default())?;
     /// let cancelled = std::sync::atomic::AtomicBool::new(true);
@@ -1160,6 +1187,7 @@ impl Objects {
     ///     objects.read_controlled(id, ReadLimits::default(), &cancelled),
     ///     Err(girt::ObjectReadError::Cancelled)
     /// ));
+    ///
     /// assert!(objects.read_with(id, ReadLimits::default())?.is_some());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

@@ -57,6 +57,7 @@ impl ValidationHistory<'_> {
 ///     TransportControl::new(&cancel),
 ///     LocalFetchObserver::default(),
 /// )?;
+///
 /// // `HEAD` and `main` point at the same commit.
 /// assert!(received.wants().iter().all(|&id| id == main));
 /// assert_eq!(received.object_count(), 2);

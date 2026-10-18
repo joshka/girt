@@ -57,12 +57,14 @@ impl Objects {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, PackLimits, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let objects = repo.objects_with(PackLimits::default())?;
     /// let stores: Vec<_> = objects.stores().collect();
     /// assert_eq!(stores.len(), 1);

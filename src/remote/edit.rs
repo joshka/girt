@@ -27,6 +27,7 @@ use crate::config::{ConfigError, Document};
 ///
 /// let mut document = Document::parse(b"[branch \"main\"]\nremote = origin\n")?;
 /// let mut remotes = RemoteConfig::new(&mut document);
+///
 /// remotes.add(
 ///     b"origin",
 ///     b"https://example.com/project.git",
@@ -37,6 +38,7 @@ use crate::config::{ConfigError, Document};
 ///     RemoteKey::PushUrl,
 ///     b"ssh://git@example.com/project.git",
 /// )?;
+///
 /// // Renaming also updates the fetch refspec and branches that track the remote.
 /// remotes.rename(b"origin", b"upstream")?;
 ///
@@ -222,6 +224,7 @@ impl<'a> RemoteConfig<'a> {
     ///     0,
     ///     b"https://new.example.com/project.git",
     /// )?;
+    ///
     /// let urls = RemoteUrls::find(document.config(), b"origin")?.expect("configured");
     /// assert_eq!(
     ///     urls.fetch_url(),

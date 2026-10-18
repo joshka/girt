@@ -118,6 +118,7 @@ pub enum Peel {
 ///
 /// ```
 /// use girt::revision::{Range, Revision};
+///
 /// let range: Range = "main...topic".parse()?;
 /// assert_eq!(
 ///     range,
@@ -126,6 +127,7 @@ pub enum Peel {
 ///         right: "topic".parse()?
 ///     }
 /// );
+///
 /// let since: Range = "v1.0..".parse()?;
 /// assert_eq!(
 ///     since,

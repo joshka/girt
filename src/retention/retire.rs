@@ -201,12 +201,14 @@ impl Repository {
     ///     RepackLimits::default(),
     ///     &cancel,
     /// )?;
+    ///
     /// let other = repo.loose_objects().write_blob(b"second retained object")?;
     /// repo.repack_retained(
     ///     &RetentionPolicy::default(),
     ///     RepackLimits::default(),
     ///     &cancel,
     /// )?;
+    ///
     /// // A future cutoff makes freshly created packs eligible only for this private fixture.
     /// let cutoff = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
     /// let policy = RetentionPolicy::default()
@@ -219,12 +221,14 @@ impl Repository {
     ///     &cancel,
     /// )?;
     /// assert!(report.durable);
+    ///
     /// let old_pack = repo
     ///     .git_dir()
     ///     .join("objects/pack")
     ///     .join(format!("pack-{}.pack", first.written.checksum));
     /// assert!(report.removed.contains(&old_pack));
     /// assert!(!old_pack.exists());
+    ///
     /// let objects = repo.objects_with(Default::default())?;
     /// assert!(objects.read_with(id, Default::default())?.is_some());
     /// assert!(objects.read_with(other, Default::default())?.is_some());

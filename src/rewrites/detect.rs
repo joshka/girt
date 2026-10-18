@@ -50,12 +50,14 @@ impl Objects {
     ///
     /// use girt::rewrites::{Kind, Limits, Options};
     /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let loose = repo.loose_objects();
     /// let tree = |files: &[(&[u8], &[u8])]| -> Result<_, Box<dyn std::error::Error>> {
     ///     let entries = files
@@ -73,6 +75,7 @@ impl Objects {
     ///
     /// let old = tree(&[(b"before", b"same content\n")])?;
     /// let new = tree(&[(b"after", b"same content\n")])?;
+    ///
     /// let records = repo.objects_with(Default::default())?.detect_rewrites(
     ///     Some(old),
     ///     Some(new),
@@ -81,6 +84,7 @@ impl Objects {
     ///     None,
     ///     &AtomicBool::new(false),
     /// )?;
+    ///
     /// assert_eq!(records[0].kind, Kind::Rename);
     /// assert_eq!(records[0].similarity, 100);
     /// assert_eq!(records[0].source_id, records[0].target_id);
@@ -131,12 +135,14 @@ impl Objects {
     ///
     /// use girt::rewrites::{Error, Limits, Options};
     /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let loose = repo.loose_objects();
     /// let tree = |files: &[(&[u8], &[u8])]| -> Result<_, Box<dyn std::error::Error>> {
     ///     let entries = files
@@ -160,6 +166,7 @@ impl Objects {
     ///     (b"exact-new", b"identical\n"),
     ///     (b"edited-new", b"line one\nline THREE\n"),
     /// ])?;
+    ///
     /// let objects = repo.objects_with(Default::default())?;
     /// let options = Options::default().with_candidate_limit(0);
     /// let cancel = AtomicBool::new(false);
@@ -171,11 +178,13 @@ impl Objects {
     ///     None,
     ///     &cancel,
     /// )?;
+    ///
     /// assert_eq!(detection.rewrites.len(), 1); // The identical pair survived.
     /// assert_eq!(detection.rewrites[0].source, b"exact-old");
     /// let skipped = detection.inexact_skipped.expect("one edited pair remains");
     /// assert_eq!((skipped.sources, skipped.targets, skipped.limit), (1, 1, 0));
     /// assert_eq!(skipped.suggested_limit(), 1);
+    ///
     /// assert!(matches!(
     ///     objects.detect_rewrites(
     ///         Some(old),

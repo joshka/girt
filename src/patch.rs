@@ -36,6 +36,7 @@
 //!     directory.path().join("r"),
 //!     InitKind::Bare,
 //! )?;
+//!
 //! let loose = repo.loose_objects();
 //! let mut editor = TreeEditor::new(&loose);
 //! editor.set(b"list.txt", loose.write_blob(b"apples\npears\n")?)?;
@@ -47,6 +48,7 @@
 //! let comparison = objects.diff_trees(Some(old), Some(new))?;
 //! let mut patch = Vec::new();
 //! objects.write_patch(&mut patch, &comparison.entries)?;
+//!
 //! assert_eq!(
 //!     String::from_utf8(patch)?,
 //!     "diff --git a/list.txt b/list.txt\n\

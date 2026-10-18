@@ -86,6 +86,7 @@ use crate::{ObjectId, Repository};
 ///     FetchLimits::default(),
 ///     TransportControl::new(&cancel),
 /// )?;
+///
 /// let updates = request.plan(&discovery.advertisement)?;
 /// assert_eq!(updates.len(), 1);
 /// assert_eq!(
@@ -148,6 +149,7 @@ impl FetchRequest {
     /// use girt::transport::TransportControl;
     /// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
     /// # let commit = include!("../doctest/commit.rs");
+    ///
     /// let cancel = AtomicBool::new(false);
     /// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
     /// let fetch = |authorized: BTreeSet<RefName>| -> Result<_, Box<dyn std::error::Error>> {
@@ -157,6 +159,7 @@ impl FetchRequest {
     ///         authorized,
     ///         Reflog::Preserve,
     ///     )?;
+    ///
     ///     let ready = request.receive_local(
     ///         upstream.git_dir(),
     ///         &KnownHistory::default(),
@@ -359,6 +362,7 @@ impl FetchRequest {
     /// let request =
     ///     FetchRequest::prepare(repo.clone(), origin.fetch_refspecs().clone(), BTreeSet::new(), Reflog::Preserve)?
     ///         .with_depth(NonZeroU32::MIN);
+    ///
     /// let cancel = AtomicBool::new(false);
     /// let ready = request.receive_local(
     ///     upstream.git_dir(),
@@ -367,6 +371,7 @@ impl FetchRequest {
     ///     TransportControl::new(&cancel),
     ///     LocalFetchObserver::default(),
     /// )?;
+    ///
     /// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
     /// assert!(report.shallow_published);
     ///
@@ -402,6 +407,7 @@ impl FetchRequest {
     /// use girt::remote::Remote;
     /// use girt::transport::TransportControl;
     /// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+    ///
     /// let cancel = AtomicBool::new(false);
     /// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
     /// let fetch = || -> Result<_, Box<dyn std::error::Error>> {
@@ -412,6 +418,7 @@ impl FetchRequest {
     ///         Reflog::Preserve,
     ///     )?
     ///     .with_prune();
+    ///
     ///     let ready = request.receive_local(
     ///         upstream.git_dir(),
     ///         &KnownHistory::default(),
@@ -421,6 +428,7 @@ impl FetchRequest {
     ///     )?;
     ///     Ok(ready.finish(FetchUpdateLimits::default(), &cancel)?)
     /// };
+    ///
     /// fetch()?;
     ///
     /// // `main` disappears upstream, so the next fetch prunes its remote-tracking reference.
@@ -428,6 +436,7 @@ impl FetchRequest {
     /// upstream
     ///     .references()?
     ///     .delete_without_reflog(&main_ref, Expected::Value(Target::Direct(main)))?;
+    ///
     /// let report = fetch()?;
     /// assert_eq!(report.updates[0].kind, FetchUpdateKind::Prune);
     /// assert_eq!(
@@ -678,8 +687,10 @@ impl FetchRequest {
     ///     .stdin(Stdio::piped())
     ///     .stdout(Stdio::piped())
     ///     .spawn()?;
+    ///
     /// let mut input = server.stdin.take().expect("piped");
     /// let mut output = server.stdout.take().expect("piped");
+    ///
     /// let cancel = AtomicBool::new(false);
     /// let result = request.receive_session(
     ///     &mut output,
@@ -689,13 +700,16 @@ impl FetchRequest {
     ///     &cancel,
     ///     |_message| ControlFlow::Continue(()),
     /// );
+    ///
     /// // Close the pipes and reap the process whatever happened; stop it first if the fetch failed.
     /// drop((input, output));
     /// if result.is_err() {
     ///     server.kill().ok();
     /// }
+    ///
     /// let status = server.wait()?;
     /// let ready = result?;
+    ///
     /// // Publish only if the server also reported success.
     /// if !status.success() {
     ///     return Err(format!("git upload-pack failed: {status}").into());
@@ -828,6 +842,7 @@ pub(super) fn selected<T>(
 ///     BTreeSet::new(),
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let ready = request.receive_local(
 ///     upstream.git_dir(),
@@ -836,6 +851,7 @@ pub(super) fn selected<T>(
 ///     TransportControl::new(&cancel),
 ///     LocalFetchObserver::default(),
 /// )?;
+///
 /// // A commit and its empty tree, nothing written yet.
 /// assert_eq!(ready.received().object_count(), 2);
 /// assert!(repo.references()?.list()?.is_empty());
@@ -1291,6 +1307,7 @@ impl FetchReady {
 ///     BTreeSet::new(),
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let ready = request.receive_local(
 ///     upstream.git_dir(),
@@ -1478,6 +1495,7 @@ impl FetchUpdateKind {
 ///     BTreeSet::new(),
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let ready = request.receive_local(
 ///     upstream.git_dir(),
@@ -1486,12 +1504,14 @@ impl FetchUpdateKind {
 ///     TransportControl::new(&cancel),
 ///     LocalFetchObserver::default(),
 /// )?;
+///
 /// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
 ///
 /// for update in &report.updates {
 ///     let Some(destination) = &update.mapping.destination else {
 ///         continue;
 ///     };
+///
 ///     let marker = match update.kind {
 ///         FetchUpdateKind::Create => "* [new]",
 ///         FetchUpdateKind::FastForward => "  [updated]",
@@ -1504,6 +1524,7 @@ impl FetchUpdateKind {
 ///         String::from_utf8_lossy(destination.as_bytes())
 ///     );
 /// }
+///
 /// assert_eq!(report.updates[0].kind, FetchUpdateKind::Create);
 /// assert_eq!(report.objects, 2);
 /// # let _ = main;
@@ -1552,6 +1573,7 @@ pub struct FetchReport {
 ///
 /// let specs = Refspecs::parse(Direction::Fetch, ["refs/heads/main:refs/heads/main"])?;
 /// let request = FetchRequest::prepare(repo.clone(), specs, BTreeSet::new(), Reflog::Preserve)?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let result = request.receive_local(
 ///     upstream.git_dir(),
@@ -1560,6 +1582,7 @@ pub struct FetchReport {
 ///     TransportControl::new(&cancel),
 ///     LocalFetchObserver::default(),
 /// );
+///
 /// assert!(matches!(
 ///     result,
 ///     Err(FetchWorkflowError::Plan(FetchPlanError::Destination(_)))

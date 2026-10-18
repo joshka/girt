@@ -116,8 +116,10 @@ $ git worktree add -q ../review
 $ girt worktree list
 /home/me/demo 7ed7a0cc68995713f52d973e6adfd3d9e667324f [main]
 /home/me/review 7ed7a0cc68995713f52d973e6adfd3d9e667324f [review]
+
 $ girt worktree lock review --reason "on a removable disk"
 $ girt worktree unlock review
+
 $ mv ../review ../review-moved
 $ girt worktree repair review ../review-moved
 $ girt worktree list

@@ -41,8 +41,10 @@ impl Objects {
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("repo.git");
     /// let repository = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
     /// let loose = repository.loose_objects();
     /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    ///
     /// let person = Signature {
     ///     name: b"A. Writer".to_vec(),
     ///     email: b"writer@example.com".to_vec(),
@@ -111,6 +113,7 @@ impl Objects {
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("repo.git");
     /// let repository = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
     /// let loose = repository.loose_objects();
     /// let blob = loose.write_blob(b"hello\n")?;
     /// let entry = TreeEntry {
@@ -165,6 +168,7 @@ impl Objects {
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("repo.git");
     /// let repository = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
     /// let loose = repository.loose_objects();
     /// let blob = loose.write_blob(b"release notes\n")?;
     /// let id = loose.write_tag(&Tag::new(TagFields {

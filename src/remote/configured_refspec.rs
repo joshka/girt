@@ -64,6 +64,7 @@ pub enum ConfiguredRefspecKind {
 ///     let spec = ConfiguredRefspec::parse(Direction::Fetch, value).map_err(|_| "invalid")?;
 ///     let text =
 ///         |bytes: Option<&[u8]>| String::from_utf8_lossy(bytes.unwrap_or_default()).into_owned();
+///
 ///     match spec.kind() {
 ///         ConfiguredRefspecKind::Mapping => Ok(format!(
 ///             "{}{} -> {}",
@@ -85,6 +86,7 @@ pub enum ConfiguredRefspecKind {
 ///     describe(b"^refs/heads/wip/*"),
 ///     Ok("not refs/heads/wip/*".to_owned())
 /// );
+///
 /// // `@` is shorthand for HEAD; the descriptor normalizes it.
 /// assert_eq!(
 ///     ConfiguredRefspec::parse(Direction::Fetch, b"@")?.to_bytes(),

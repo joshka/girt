@@ -33,6 +33,7 @@
 //! ```
 //! use girt::ObjectId;
 //! use girt::index::{Entry, Index, Limits, Mode};
+//!
 //! let entry = Entry::new(
 //!     b"hello.txt".to_vec(),
 //!     Mode::Regular,
@@ -40,6 +41,7 @@
 //! );
 //! let index = Index::new(girt::ObjectFormat::Sha1, vec![entry], Limits::default())?;
 //! let bytes = index.encode(Limits::default())?;
+//!
 //! assert_eq!(
 //!     Index::parse(girt::ObjectFormat::Sha1, &bytes, Limits::default())?,
 //!     index

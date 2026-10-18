@@ -12,17 +12,20 @@
 /// use std::error::Error;
 ///
 /// use girt::retention::{RetentionError, RetentionErrorKind};
+///
 /// let error = RetentionError::Read(Box::new(std::io::Error::new(
 ///     std::io::ErrorKind::PermissionDenied,
 ///     "cannot read retention input",
 /// )));
 /// assert_eq!(error.kind(), RetentionErrorKind::Read);
+///
 /// let source = error
 ///     .source()
 ///     .unwrap()
 ///     .downcast_ref::<std::io::Error>()
 ///     .unwrap();
 /// assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+///
 /// // Keep `error` as a source in application diagnostics rather than saving only its text.
 /// ```
 #[derive(Debug, thiserror::Error)]
@@ -234,6 +237,7 @@ impl RetentionError {
     ///     panic!("missing caller head");
     /// };
     /// assert_eq!(detail.kind(), RetentionErrorKind::Malformed);
+    ///
     /// // The category selects a route; retain the typed detail for repair diagnostics.
     /// fn diagnose(error: &dyn std::error::Error) {
     ///     eprintln!("{error}");

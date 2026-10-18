@@ -54,6 +54,10 @@ fmt-md-check:
 docs-check: fmt-md-check
     vale --config .config/vale.ini README.md CONTRIBUTING.md docs/configuration.md docs/reference-transactions.md docs/repositories.md docs/http.md docs/ssh.md docs/working-tree.md
 
+# List code paragraphs that run on without blank lines (docs/rust-conventions.md#vertical-spacing).
+code-spacing *args:
+    python3 scripts/code-spacing.py {{args}}
+
 # Measure the quality scorecard (docs/quality.md); pass --full to remeasure coverage and mutants.
 scorecard *args:
     scripts/quality-scorecard.py {{args}}

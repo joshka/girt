@@ -51,6 +51,7 @@ use crate::{ObjectFormat, ObjectId, ShallowRoots};
 /// let request =
 ///     FetchRequest::prepare(repo.clone(), origin.fetch_refspecs().clone(), BTreeSet::new(), Reflog::Preserve)?
 ///         .with_depth(NonZeroU32::MIN);
+///
 /// let cancel = AtomicBool::new(false);
 /// let ready = request.receive_local(
 ///     upstream.git_dir(),
@@ -59,6 +60,7 @@ use crate::{ObjectFormat, ObjectId, ShallowRoots};
 ///     TransportControl::new(&cancel),
 ///     LocalFetchObserver::default(),
 /// )?;
+///
 /// let error = ready.finish(FetchUpdateLimits::default(), &cancel).unwrap_err();
 /// assert!(matches!(*error.source, FetchFinishFailure::Shallow(FetchShallowError::Io(_))));
 /// // The lock is taken before installation, so nothing was written.

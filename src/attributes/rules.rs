@@ -188,6 +188,7 @@ pub enum Error {
 ///     b"[attr]generated -diff linguist-generated\n",
 /// )?;
 /// attributes.add(Source::Directory(b"api"), b"*.pb.go generated\n")?;
+///
 /// assert_eq!(attributes.get(b"api/v1/x.pb.go", b"diff")?, State::Unset);
 /// assert_eq!(
 ///     attributes.get(b"api/v1/x.pb.go", b"linguist-generated")?,

@@ -44,12 +44,14 @@ impl Repository {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"hello")?;
     /// assert_eq!(
     ///     repo.object_id_from_hex("b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0")?,
