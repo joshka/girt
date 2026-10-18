@@ -473,6 +473,13 @@ fn queued_mail_is_prepared_like_git_and_git_can_finish(
     let expected = tempfile::tempdir().unwrap();
     queued_stop(actual.path(), format, backend);
     queued_stop(expected.path(), format, backend);
+    for root in [actual.path(), expected.path()]
+        .into_iter()
+        .filter(|_| backend == "files")
+    {
+        fs::write(root.join(".git/MERGE_MSG"), b"stale merge message\n").unwrap();
+        fs::write(root.join(".git/AUTO_MERGE"), format!("{}\n", head(root))).unwrap();
+    }
     let repo = Repository::open(actual.path()).unwrap();
     let old = head(actual.path());
     let state = State::read_repository(&repo, Limits::default())
@@ -515,6 +522,7 @@ fn queued_mail_is_prepared_like_git_and_git_can_finish(
     };
     let plan = state
         .prepare_next_am(
+            &repo,
             action,
             old,
             girt::mailinfo::Limits::default(),
@@ -562,6 +570,14 @@ fn queued_mail_is_prepared_like_git_and_git_can_finish(
         );
     }
     for root in [actual.path(), expected.path()] {
+        assert_eq!(
+            root.join(".git/MERGE_MSG").exists(),
+            backend == "files" && continue_current
+        );
+        assert_eq!(
+            root.join(".git/AUTO_MERGE").exists(),
+            backend == "files" && continue_current
+        );
         fs::remove_file(root.join("two")).unwrap();
         stage(root);
         git(root, &["am", "--continue"], b"");
@@ -601,6 +617,7 @@ fn queued_failure_retains_numbered_mail_and_progress(#[case] failure: &str) {
         girt::mailinfo::Limits::default()
     };
     let plan = state.prepare_next_am(
+        &repo,
         Action::Skip,
         head(root.path()),
         limits,
@@ -618,4 +635,70 @@ fn queued_failure_retains_numbered_mail_and_progress(#[case] failure: &str) {
     assert_eq!(fs::read(dir.join("next")).unwrap(), b"1\n");
     assert!(dir.join("0001").exists());
     assert!(dir.join("0003").exists());
+}
+
+#[test]
+fn generated_next_artifacts_obey_the_combined_metadata_budget() {
+    let root = tempfile::tempdir().unwrap();
+    queued_stop(root.path(), "sha1", "files");
+    let dir = root.path().join(".git/rebase-apply");
+    let raw = fs::read_to_string(dir.join("0002")).unwrap();
+    fs::write(
+        dir.join("0002"),
+        raw.replace(
+            "Subject: [PATCH 2/3] two",
+            &format!("Subject: [PATCH 2/3] {}", "large".repeat(1000)),
+        ),
+    )
+    .unwrap();
+    let bytes: usize = fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().metadata().unwrap().len() as usize)
+        .sum::<usize>()
+        + fs::metadata(root.path().join(".git/ORIG_HEAD"))
+            .unwrap()
+            .len() as usize;
+    let repo = Repository::open(root.path()).unwrap();
+    let mut limits = Limits::default();
+    limits.max_bytes = bytes;
+    let state = State::read_repository(&repo, limits).unwrap().unwrap();
+    assert!(matches!(
+        state.prepare_next_am(
+            &repo,
+            Action::Skip,
+            head(root.path()),
+            girt::mailinfo::Limits::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::sequencer::Error::Limit)
+    ));
+    assert_eq!(fs::read(dir.join("next")).unwrap(), b"1\n");
+}
+
+#[rstest]
+#[case("mailinfo.scissors", "true")]
+#[case("mailinfo.quotedCr", "strip")]
+#[case("i18n.commitEncoding", "ISO-8859-1")]
+fn queued_extraction_refuses_unresolved_config_policy(#[case] key: &str, #[case] value: &str) {
+    let root = tempfile::tempdir().unwrap();
+    queued_stop(root.path(), "sha1", "files");
+    git(root.path(), &["config", key, value], b"");
+    let repo = Repository::open(root.path()).unwrap();
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        state.prepare_next_am(
+            &repo,
+            Action::Skip,
+            head(root.path()),
+            girt::mailinfo::Limits::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::sequencer::Error::Unsupported(_))
+    ));
+    assert_eq!(
+        fs::read(repo.git_dir().join("rebase-apply/next")).unwrap(),
+        b"1\n"
+    );
 }

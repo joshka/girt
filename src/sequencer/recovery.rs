@@ -168,6 +168,8 @@ impl Recovery {
                 return Err(Error::Changed);
             }
         }
+        // Advance the am counter only after the next mail artifacts are installed.
+        staged.sort_by_key(|(name, _)| name == Path::new("rebase-apply/next"));
         let mut changed = Vec::new();
         for (name, lock) in &staged {
             let path = self.state.git_dir.join(name);

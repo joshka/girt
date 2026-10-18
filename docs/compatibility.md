@@ -4248,7 +4248,12 @@ limits and cancellation. The API does not execute author scripts or install the 
 object formats and both ref backends, including sessions with an earlier committed mail. It checks
 HEAD, staged entries, working cleanliness, reflog hints and ORIG_HEAD. Linked-worktree cases keep
 private am/original-HEAD state separate from the common repository. Refusal cases cover stale or
-foreign observations, unknown files, bad ranges, absent mail, queued mail, unsafe abort,
-simultaneous operations, apply-backend rebase and metadata/reftable bounds. The retirement fault
-unit checks that cleanup failure leaves original mail in a reported directory outside active Git
-state.
+foreign observations, unknown files, bad ranges, absent mail, unsafe abort, simultaneous operations,
+apply-backend rebase and metadata/reftable bounds. The retirement fault unit checks that cleanup
+failure leaves original mail in a reported directory outside active Git state.
+
+Queued am progression compares continue/skip to Git stopped at the following mail across both object
+formats and ref backends. It checks all next-mail artifacts and numbered source messages, then lets
+Git resume and finish the series. Missing or malformed next mail, nondefault options, mail
+extraction limits, cancellation and stale snapshots preserve progress. Default extraction options
+are admitted; broader options and unborn sessions remain outside this increment.

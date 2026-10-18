@@ -8,8 +8,9 @@
 //! state, including `author-script`, is evaluated.
 //!
 //! Am recovery uses [`crate::am::State`] to interpret author/message artifacts and prepare a commit
-//! from the staged tree. [`Kind::Am`] admits final-mail continue/skip or session abort; it leaves
-//! queued-mail execution unsupported. Repository-aware observation includes `ORIG_HEAD` from files
+//! from the staged tree. [`Kind::Am`] admits final-mail continue/skip or session abort.
+//! [`State::prepare_next_am`] extracts one queued mail for subsequent explicit staging.
+//! Repository-aware observation includes `ORIG_HEAD` from files
 //! or the private reftable stack, and metadata publication rechecks that identity. Callers still
 //! own checkout, object installation, conditional refs/reflogs and exclusive operation access.
 //!
@@ -64,6 +65,7 @@ use std::path::PathBuf;
 
 use crate::replay::todo::{Todo, TodoLimits};
 
+mod am;
 mod recovery;
 mod state;
 use crate::{ObjectFormat, ObjectId};
@@ -215,4 +217,7 @@ pub enum Error {
         #[source]
         source: Box<Error>,
     },
+    /// Extracting the next numbered patch mail failed.
+    #[error("extracting queued am mail")]
+    Mail(#[from] crate::mailinfo::Error),
 }
