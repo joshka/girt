@@ -153,9 +153,11 @@ impl Repository {
                 .persist(directory.join("multi-pack-index"))
                 .map_err(|error| error.error)?;
             published = true;
-            operation = "synchronize pack directory";
             #[cfg(unix)]
-            fs::File::open(&directory)?.sync_all()?;
+            {
+                operation = "synchronize pack directory";
+                fs::File::open(&directory)?.sync_all()?;
+            }
             operation = "release writer lock";
             lock.release()?;
             Ok(report)

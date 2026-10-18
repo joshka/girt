@@ -806,6 +806,7 @@ fn recheck(path: &Path, expected: Stamp) -> Result<(), RetireCause> {
 }
 
 // Cancellation keeps its own cause, as the per-object checks this replaced reported it.
+#[cfg(unix)]
 fn read_cause(error: crate::ObjectReadError) -> RetireCause {
     match error {
         crate::ObjectReadError::Cancelled => RetireCause::Cancelled,
