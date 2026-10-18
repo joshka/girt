@@ -161,3 +161,46 @@ reads or writes the repository while maintenance runs; girt has no repository-wi
 Loose objects and packs less than two weeks old are always kept, and reflog records expire after 90
 days, or 30 when what they point at is unreachable. The phases always run in the same order:
 reflogs, then packs, then loose objects.
+
+## Remove verified loose duplicates (`girt prune-packed`)
+
+<Example cmd="prune-packed">
+
+After packing, the same object can still occupy a loose file. `girt prune-packed --yes` removes a
+loose copy only after decoding and verifying its survivor in an installed primary pack. Loose-only
+objects remain. The command does not remove packs or change references, reflogs or auxiliary indexes.
+
+Create a disposable fixture with one packed duplicate and one loose-only blob:
+
+```sh
+scratch=$(mktemp -d)
+env -i PATH="$PATH" GIT_CONFIG_NOSYSTEM=1 \
+  GIT_CONFIG_GLOBAL="$scratch/absent-config" sh -c '
+  git init --bare --template= "$1/repo" >/dev/null
+  cd "$1/repo"
+  packed=$(printf "packed survivor" | git hash-object -w --stdin)
+  printf "loose only" | git hash-object -w --stdin >/dev/null
+  printf "%s\n" "$packed" | git pack-objects objects/pack/pack >/dev/null
+  girt prune-packed --yes
+' sh "$scratch"
+```
+
+```text
+deleted 1
+retained 1
+verified-bytes 15
+```
+
+</Example>
+
+`--yes` asserts that no other writer, pack installer or dependent reader uses the repository during
+this operation. Without it, argument parsing fails before pruning. The library requires the same
+exclusion through `MaintenanceIsolation`. A maintenance lock alone cannot provide that exclusion.
+
+`--max-entries` bounds visited directories and entries (one million by default), and `--max-bytes`
+bounds the combined survivor payloads verified before deletion (one GiB). Decode and delta-depth
+limits also apply. Cancellation and errors preserve earlier completed removals; the library's typed
+failure carries that report and any uncertain unlink identity. The CLI exits unsuccessfully on an
+error. `--git` suppresses the success summary, matching Git's silent `prune-packed` output; girt's
+content checks can refuse damage that Git's name-only selection accepts. The unreleased library API
+is tracked in [automatic maintenance](https://github.com/joshka/girt/issues/531).

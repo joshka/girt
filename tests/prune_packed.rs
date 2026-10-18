@@ -95,6 +95,7 @@ fn damaged_packed_survivor_never_deletes_the_readable_loose_copy() {
     let fixture = Fixture::new(ObjectFormat::Sha1);
     let mut bytes = fs::read(&fixture.pack).unwrap();
     bytes[14] ^= 0xff;
+    fs::rename(&fixture.pack, fixture._root.path().join("original.pack")).unwrap();
     fs::write(&fixture.pack, bytes).unwrap();
     let failure = fixture
         .repo
@@ -177,4 +178,45 @@ fn byte_budget_and_kept_pack_protection() {
     assert_eq!(report.deleted, [fixture.packed]);
     assert_eq!(fs::read(&keep).unwrap(), b"keep this pack");
     assert!(fixture.pack.exists());
+}
+
+#[test]
+fn alternate_packed_copy_never_authorizes_primary_loose_deletion() {
+    let alternate = Fixture::new(ObjectFormat::Sha1);
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(ObjectFormat::Sha1, root.path().join("r"), InitKind::Bare).unwrap();
+    let id = repo.loose_objects().write_blob(b"packed survivor").unwrap();
+    fs::write(
+        repo.object_dir().join("info/alternates"),
+        format!("{}\n", alternate.repo.object_dir().display()),
+    )
+    .unwrap();
+    let report = repo
+        .prune_packed(
+            &mut PrivateFixture,
+            PrunePackedLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(report.deleted.is_empty());
+    assert_eq!(report.retained, [id]);
+    assert!(repo.loose_objects().read_blob(id, 1024).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_fanout_is_never_followed_for_deletion() {
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    let root = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(root.path(), fixture.repo.object_dir().join("00")).unwrap();
+    let failure = fixture
+        .repo
+        .prune_packed(
+            &mut PrivateFixture,
+            PrunePackedLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(failure.report.deleted.is_empty());
+    assert!(fixture.loose_path(fixture.packed).exists());
 }

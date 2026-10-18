@@ -115,6 +115,8 @@ from_domain_errors! {
     crate::maintenance::LockError,
     crate::maintenance::PolicyError,
     crate::maintenance::GcCoordinationError,
+    crate::retention::PrunePackedCause,
+    crate::retention::PrunePackedFailure,
     crate::am::Error,
     crate::am::ApplyFailure,
     crate::am::PrepareError,
