@@ -203,6 +203,8 @@ from_domain_errors! {
     crate::ignore::Error,
     crate::ignore::LoadError,
     crate::fsck::Error,
+    crate::fsck::LostFoundCause,
+    crate::fsck::LostFoundError,
     crate::fsck::PolicyError,
     crate::fsmonitor::Error,
     crate::index::Error,

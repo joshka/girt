@@ -700,15 +700,16 @@ impl Repository {
         fold_recent_packs: bool,
         cancel: &AtomicBool,
     ) -> RetentionPlan {
-        self.observe_roots(policy, fold_recent_packs, cancel, true)
+        self.observe_roots(policy, fold_recent_packs, cancel, true, true)
     }
 
     fn observe_integrity_roots(
         &self,
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
+        include_reflogs: bool,
     ) -> RetentionPlan {
-        self.observe_roots(policy, false, cancel, false)
+        self.observe_roots(policy, false, cancel, false, include_reflogs)
     }
 
     fn observe_roots(
@@ -717,6 +718,7 @@ impl Repository {
         fold_recent_packs: bool,
         cancel: &AtomicBool,
         include_recent: bool,
+        include_reflogs: bool,
     ) -> RetentionPlan {
         let mut plan = RetentionPlan {
             roots: policy.heads.iter().copied().collect(),
@@ -746,7 +748,14 @@ impl Repository {
             plan.fail(RetentionError::CallerHeadLimit);
             return plan;
         }
-        if let Err(reason) = collect_roots(self, policy, cancel, &mut plan, include_recent) {
+        if let Err(reason) = collect_roots(
+            self,
+            policy,
+            cancel,
+            &mut plan,
+            include_recent,
+            include_reflogs,
+        ) {
             plan.fail(reason);
             return plan;
         }
@@ -757,8 +766,9 @@ impl Repository {
         &self,
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
+        include_reflogs: bool,
     ) -> Result<BTreeSet<ObjectId>, RetentionError> {
-        let plan = self.observe_integrity_roots(policy, cancel);
+        let plan = self.observe_integrity_roots(policy, cancel, include_reflogs);
         match plan.outcome {
             RetentionOutcome::Complete => Ok(plan.roots),
             RetentionOutcome::Incomplete(error) => Err(error),
@@ -1081,6 +1091,7 @@ fn collect_roots(
     cancel: &AtomicBool,
     plan: &mut RetentionPlan,
     include_recent: bool,
+    include_reflogs: bool,
 ) -> Result<(), RetentionError> {
     // Git's hook can designate otherwise old, unreachable objects as recent. Running a hook is
     // outside this read-only library operation, so its presence prevents a complete plan.
@@ -1151,53 +1162,55 @@ fn collect_roots(
                 plan.strong_roots.insert(id);
             }
         }
-        for name in refs
-            .imported_reflog_names(policy.max_entries, cancel)
-            .map_err(RetentionError::read)?
-        {
-            let root = if name.per_worktree() {
-                repo.git_dir()
-            } else {
-                repo.common_dir()
-            };
-            let source = ReflogSource::new(root, name.clone());
-            if !seen_logs.insert(source.clone()) {
-                continue;
-            }
-            let log = refs
-                .imported_reflog(&name, policy.reflog, cancel)
+        if include_reflogs {
+            for name in refs
+                .imported_reflog_names(policy.max_entries, cancel)
                 .map_err(RetentionError::read)?
-                .ok_or_else(|| RetentionError::ReflogDisappeared(name.clone()))?;
-            plan.roots.extend(log.recoverable_roots());
-            for (position, record) in log.records().iter().enumerate() {
-                let size = match record {
-                    ImportedRecord::File { bytes, .. } => bytes.len(),
-                    ImportedRecord::Reftable { value, .. } => value
-                        .name
-                        .len()
-                        .saturating_add(value.email.len())
-                        .saturating_add(value.message.len())
-                        .saturating_add(2 * repo.object_format().digest_len() + 18),
+            {
+                let root = if name.per_worktree() {
+                    repo.git_dir()
+                } else {
+                    repo.common_dir()
                 };
-                reflog_bytes = reflog_bytes.saturating_add(size as u64);
-                if reflog_bytes > policy.max_reflog_bytes {
-                    return Err(RetentionError::AggregateReflogByteLimit);
+                let source = ReflogSource::new(root, name.clone());
+                if !seen_logs.insert(source.clone()) {
+                    continue;
                 }
-                if plan.observed_logs.len() >= policy.max_entries {
-                    return Err(RetentionError::AggregateReflogRecordLimit);
+                let log = refs
+                    .imported_reflog(&name, policy.reflog, cancel)
+                    .map_err(RetentionError::read)?
+                    .ok_or_else(|| RetentionError::ReflogDisappeared(name.clone()))?;
+                plan.roots.extend(log.recoverable_roots());
+                for (position, record) in log.records().iter().enumerate() {
+                    let size = match record {
+                        ImportedRecord::File { bytes, .. } => bytes.len(),
+                        ImportedRecord::Reftable { value, .. } => value
+                            .name
+                            .len()
+                            .saturating_add(value.email.len())
+                            .saturating_add(value.message.len())
+                            .saturating_add(2 * repo.object_format().digest_len() + 18),
+                    };
+                    reflog_bytes = reflog_bytes.saturating_add(size as u64);
+                    if reflog_bytes > policy.max_reflog_bytes {
+                        return Err(RetentionError::AggregateReflogByteLimit);
+                    }
+                    if plan.observed_logs.len() >= policy.max_entries {
+                        return Err(RetentionError::AggregateReflogRecordLimit);
+                    }
+                    if let Ok(fields) = record.fields() {
+                        plan.observed_logs.push(ObservedLog {
+                            source: source.clone(),
+                            position: position + 1,
+                            seconds: fields.seconds,
+                            old: fields.old,
+                            new: fields.new,
+                        });
+                    }
                 }
-                if let Ok(fields) = record.fields() {
-                    plan.observed_logs.push(ObservedLog {
-                        source: source.clone(),
-                        position: position + 1,
-                        seconds: fields.seconds,
-                        old: fields.old,
-                        new: fields.new,
-                    });
+                if !log.is_complete() {
+                    return Err(RetentionError::reflog(log));
                 }
-            }
-            if !log.is_complete() {
-                return Err(RetentionError::reflog(log));
             }
         }
         collect_pseudorefs(&repo, policy, plan)?;

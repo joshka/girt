@@ -15,9 +15,11 @@ use std::collections::BTreeSet;
 
 use crate::{ObjectFormat, ObjectKind, Tree};
 
+mod lost_found;
 mod message;
 mod policy;
 
+pub use lost_found::{LostFoundCause, LostFoundError, LostFoundLimits};
 pub use message::{MessageId, Severity};
 pub use policy::{Policy, PolicyError, PolicyLimits, Scope};
 
@@ -193,6 +195,8 @@ pub struct Options {
     pub read: crate::ReadLimits,
     /// Skip payload convention checks while still decoding and following graph edges.
     pub connectivity_only: bool,
+    /// Exclude reflog roots when finding unreachable objects.
+    pub no_reflogs: bool,
     /// Promote default warnings to errors, without changing explicit severity overrides.
     pub strict: bool,
     /// Explicit policy, or repository `fsck.*` configuration when absent.
@@ -211,6 +215,17 @@ pub enum ObjectFinding {
         id: crate::ObjectId,
         /// Typed payload diagnostic.
         finding: Finding,
+    },
+    /// A decoded object names a dependency that cannot be read from the inventory.
+    BrokenLink {
+        /// Object containing the edge.
+        source: crate::ObjectId,
+        /// Source object's kind.
+        source_kind: ObjectKind,
+        /// Missing or unreadable dependency.
+        target: crate::ObjectId,
+        /// Kind required by the edge.
+        expected: ObjectKind,
     },
     /// An object named by a root or object edge is absent.
     Missing {
@@ -247,6 +262,8 @@ pub struct Report {
     pub unreachable: BTreeSet<crate::ObjectId>,
     /// Unreachable objects that no other stored object references.
     pub dangling: BTreeSet<crate::ObjectId>,
+    /// Kinds observed while decoding objects, for reporting without reopening storage.
+    pub object_kinds: std::collections::BTreeMap<crate::ObjectId, ObjectKind>,
 }
 
 impl ObjectFinding {
@@ -346,7 +363,7 @@ impl crate::Repository {
             &configured
         };
         let roots = self
-            .integrity_roots(&options.roots, cancel)
+            .integrity_roots(&options.roots, cancel, !options.no_reflogs)
             .map_err(Box::new)?;
         let objects = self.objects_controlled(
             options.roots.packs,
@@ -372,6 +389,7 @@ impl crate::Repository {
             reachable: BTreeSet::new(),
             unreachable: BTreeSet::new(),
             dangling: BTreeSet::new(),
+            object_kinds: BTreeMap::new(),
         };
         let mut graph = BTreeMap::new();
         let mut edge_count = 0usize;
@@ -448,7 +466,7 @@ impl crate::Repository {
             })
             .collect();
         let mut referenced = BTreeSet::new();
-        for (_, edges) in graph.values() {
+        for (&source, (source_kind, edges)) in &graph {
             for &(id, expected) in edges {
                 referenced.insert(id);
                 match graph.get(&id) {
@@ -459,8 +477,16 @@ impl crate::Repository {
                             actual: *actual,
                         });
                     }
-                    None if missing.insert(id) => {
-                        report.findings.push(ObjectFinding::Missing { id })
+                    None => {
+                        report.findings.push(ObjectFinding::BrokenLink {
+                            source,
+                            source_kind: *source_kind,
+                            target: id,
+                            expected,
+                        });
+                        if missing.insert(id) {
+                            report.findings.push(ObjectFinding::Missing { id });
+                        }
                     }
                     _ => {}
                 }
@@ -490,6 +516,10 @@ impl crate::Repository {
         report
             .dangling
             .extend(report.unreachable.difference(&referenced).copied());
+        report.object_kinds = graph
+            .into_iter()
+            .map(|(id, (kind, _))| (id, kind))
+            .collect();
         Ok(report)
     }
 }

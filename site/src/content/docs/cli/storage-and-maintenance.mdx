@@ -16,6 +16,40 @@ phases each need their own flag and an explicit `--yes`. None of the maintenance
 The library side is in [Maintenance and GC](/girt/guides/maintenance/) and the
 [safety model](/girt/compatibility/safety-model/).
 
+## Check repository integrity (`girt fsck`)
+
+`girt fsck` verifies pack checksums, decodes stored objects, validates their payloads and checks
+references and object dependencies. It verifies commit-graph and multi-pack-index data against
+objects too. It reports errors on stderr and exits 1 when corruption is found. Warnings alone do not
+fail the command. A clean scan with no dangling objects prints nothing.
+
+```console
+girt fsck --no-dangling
+```
+
+By default it prints `dangling <kind> <id>` for unreachable objects that no stored object
+references. `--unreachable` prints every unreachable object instead; `--no-dangling` suppresses
+dangling output. Refs, reflogs, indexes and all worktree HEADs supply roots. `--no-reflogs` excludes
+reflog history.
+
+`--strict` promotes default warnings to errors. Explicit `fsck.<message-id>` severity settings take
+precedence; `fsck.skipList` suppresses payload findings for listed historical objects, without
+suppressing missing dependencies or unreadable storage. `--connectivity-only` skips payload
+convention diagnostics, but this implementation still decodes objects and verifies packs.
+
+`girt fsck --lost-found` excludes reflog roots and writes dangling objects under the common Git
+directory's `lost-found/commit` and `lost-found/other` directories. Blob files contain their exact
+payload; files for other kinds contain the object ID and a newline. Repeating the export accepts
+identical files. Conflicting files and symlinks are refused, preserving earlier output. It changes
+no objects or refs. Exclude concurrent pruning and recovery-directory replacement while exporting.
+
+The library APIs are
+[`Repository::fsck_with`](https://github.com/joshka/girt/blob/main/src/fsck.rs)
+and
+[`Repository::write_lost_found_with`](https://github.com/joshka/girt/blob/main/src/fsck/lost_found.rs).
+The remaining diagnostic and transfer-policy coverage is tracked in
+[the fsck issue](https://github.com/joshka/girt/issues/524).
+
 ## Plan retention (`girt maintenance plan`)
 
 <Example cmd="maintenance plan">

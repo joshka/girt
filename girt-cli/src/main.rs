@@ -20,6 +20,7 @@ mod common;
 mod complete;
 mod config;
 mod diff;
+mod fsck;
 mod git_hints;
 mod grep;
 mod history;
@@ -148,6 +149,9 @@ enum Command {
     /// remote-tracking value to match; fetch first after a stale rejection. Prefix a refspec
     /// with `+` to permit non-fast-forward updates.
     Push(transfer::PushArgs),
+
+    /// Check repository objects and connectivity; optionally export dangling objects.
+    Fsck(fsck::Args),
 
     /// Verify and rebuild packs.
     #[command(subcommand)]
@@ -317,6 +321,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Remote(command) => config::remote(command, context),
         Command::Fetch(args) => transfer::fetch(args, context),
         Command::Push(args) => transfer::push(args, context),
+        Command::Fsck(args) => fsck::run(args, context),
         Command::Pack(command) => maintenance::pack(command, context),
         Command::MultiPackIndex(command) => maintenance::multi_pack_index(command, context),
         Command::Maintenance(command) => maintenance::run(command, context),
