@@ -58,17 +58,25 @@ pub use types::{
 };
 pub use whitespace::Whitespace;
 
-/// Internal replay entry point; an unstored empty tree supplies root-commit comparisons.
-pub(crate) fn replay_trees(
-    objects: &crate::Objects,
-    base: crate::ObjectId,
-    ours: crate::ObjectId,
-    theirs: crate::ObjectId,
-    empty: crate::Tree,
-    options: TreeMergeOptions,
-    cancel: &std::sync::atomic::AtomicBool,
-) -> Result<TreeMerge, RenameError> {
-    let mut memory = memory::Memory::default();
-    memory.trees.insert(empty.id(), empty);
-    renames::merge_with_memory(objects, [base, ours, theirs], options, cancel, &mut memory)
+/// Object overlay retained across replay steps; never published by computation.
+#[derive(Default)]
+pub(crate) struct ReplayTrees(memory::Memory);
+
+impl ReplayTrees {
+    pub(crate) fn merge(
+        &mut self,
+        objects: &crate::Objects,
+        roots: [crate::ObjectId; 3],
+        empty: crate::Tree,
+        options: TreeMergeOptions,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<TreeMerge, RenameError> {
+        self.0.trees.insert(empty.id(), empty);
+        let result = renames::merge_with_memory(objects, roots, options, cancel, &mut self.0)?;
+        for tree in &result.trees {
+            self.0.trees.insert(tree.id(), tree.clone());
+        }
+        self.0.blobs.extend(result.blobs.iter().cloned());
+        Ok(result)
+    }
 }
