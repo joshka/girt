@@ -94,6 +94,7 @@
 //! | Compose everyday operations on a trusted local repository | [`Repo`], [`repo`] |
 //! | Use HTTP/SSH and credentials | [`transport`], [`remote::CredentialStore`] |
 //! | Compare snapshots and file contents | [`Objects::compare_trees`], [`content_diff`], [`rewrites`] |
+//! | Parse and apply text hunks to in-memory bytes | [`apply`] |
 //! | Write unified patches as `git diff` does | [`patch`], [`Objects::write_patch`] |
 //! | Read `.gitattributes` and diff drivers | [`attributes`], [`patch::DiffAttributes`] |
 //! | Print paths, modes, statuses and dates as Git does | [`display`] |
@@ -183,6 +184,7 @@ pub mod display;
 mod edges;
 mod error;
 pub use error::{Error, Result};
+pub mod apply;
 pub mod fetch;
 pub mod filter;
 #[cfg(any(fuzzing, test))]

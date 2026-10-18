@@ -464,12 +464,33 @@ pub fn reftable(data: &[u8]) {
     assert_eq!(decoded, table);
 }
 
+/// Parses `[preimage part][patch]` and applies under byte and structural bounds.
+pub fn apply(data: &[u8]) {
+    let mut input = Input(data);
+    let preimage = input.part();
+    let mut limits = crate::apply::Limits::default();
+    limits.max_input_bytes = MAX_BYTES;
+    limits.max_output_bytes = MAX_BYTES;
+    limits.max_files = MAX_VISITS;
+    limits.max_hunks = MAX_VISITS;
+    limits.max_lines = MAX_VISITS;
+    if let Ok(patch) = crate::apply::Patch::parse_with(input.rest(), limits) {
+        for file in patch.files() {
+            if let Ok(applied) = file.apply_with(preimage, limits) {
+                assert!(applied.content.len() <= limits.max_output_bytes);
+                assert_eq!(applied.hunks.len(), file.hunk_count());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// Every entry point tolerates empty and short inputs; fuzzing explores the rest.
     #[test]
     fn entry_points_accept_trivial_inputs() {
-        let entries: [fn(&[u8]); 15] = [
+        let entries: [fn(&[u8]); 16] = [
+            super::apply,
             super::object,
             super::loose,
             super::delta,
