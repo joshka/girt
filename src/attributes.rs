@@ -47,6 +47,7 @@ mod lookup;
 mod rules;
 
 pub use lookup::{DirectorySource, LoadError, Lookup};
+pub(crate) use rules::valid_name;
 pub use rules::{Attributes, Error, Limits, Source, State};
 
 pub use crate::ignore::Case;

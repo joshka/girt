@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use girt::attributes::{Attributes, Case, Limits, Source};
 use girt::pathspec::{Context, ParseError, Pathspec};
 
 const PATHS: &[&str] = &[
@@ -252,6 +253,62 @@ fn environment_defaults_match_git() {
     for (variable, context) in cases {
         for specs in SPECS {
             compare(root.path(), "", specs, context, &[(variable, "1")]);
+        }
+    }
+}
+
+const ATTRIBUTES: &[u8] = b"src/*.rs foo\ndocs/** foo=bar\n*.md -foo\nsub/** v=a,b\n";
+
+const ATTR_SPECS: &[&[&str]] = &[
+    &[":(attr:foo)"],
+    &[":(attr:-foo)"],
+    &[":(attr:!foo)"],
+    &[":(attr:foo=bar)"],
+    &[":(attr:foo -foo)"],
+    &[":(attr:foo)src"],
+    &[":(attr:foo)*.md"],
+    &[":(attr:-foo,icase)DOCS"],
+    &[":(attr:foo,exclude)"],
+    &[":(attr:foo,exclude)src"],
+    &[":(attr:  foo  )"],
+    &[r":(attr:v=a\,b)"],
+    &[":(attr:v=a)"],
+    &[":(attr:!foo !v)", ":!.hidden"],
+    &[":(attr:)"],
+    &[":(attr:b@d)"],
+    &[":(attr:a,attr:b)"],
+    &[r":(attr:foo=bar\ x)"],
+];
+
+#[test]
+fn attribute_magic_matches_git() {
+    let root = repository();
+    std::fs::write(root.path().join(".gitattributes"), ATTRIBUTES).unwrap();
+    let mut attributes = Attributes::new(Case::Sensitive, Limits::default());
+    attributes.add(Source::Directory(b""), ATTRIBUTES).unwrap();
+    for specs in ATTR_SPECS {
+        let expected = git_selection(root.path(), "", specs, &[]);
+        let actual = Pathspec::parse(*specs, &Context::new()).map(|spec| {
+            let mut paths: Vec<_> = PATHS
+                .iter()
+                .map(|path| path.as_bytes())
+                .filter(|path| {
+                    spec.matches_with(path, |requirement| {
+                        attributes
+                            .get(path, requirement.name())
+                            .map(|state| requirement.accepts(state))
+                    })
+                    .unwrap()
+                })
+                .map(<[u8]>::to_vec)
+                .collect();
+            paths.sort();
+            paths
+        });
+        match (&expected, &actual) {
+            (Some(expected), Ok(actual)) => assert_eq!(actual, expected, "{specs:?}"),
+            (None, Err(_)) => {}
+            _ => panic!("{specs:?}: git {expected:?}, girt {actual:?}"),
         }
     }
 }

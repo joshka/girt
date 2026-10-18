@@ -24,9 +24,18 @@
 //!
 //! A leading `:` introduces magic, either short (`:/` top, `:!` or `:^` exclude, ended by the first
 //! other byte or a second `:`) or long (`:(top,icase)`). Supported magic is `top`, `exclude`,
-//! `icase`, `literal` and `glob`. `icase` folds ASCII letters only; a filesystem's case
+//! `icase`, `literal`, `glob` and `attr:`. `icase` folds ASCII letters only; a filesystem's case
 //! insensitivity, or `core.ignoreCase`, does not make pathspecs case-insensitive. Unknown magic,
-//! `glob` with `literal`, and magic girt does not implement yet are [`ParseError`]s.
+//! `glob` with `literal`, and malformed `attr:` lists are [`ParseError`]s.
+//!
+//! # Attributes
+//!
+//! `:(attr:text -diff !eol filter=lfs)` adds [`Requirement`]s that a path's attributes must all
+//! meet: set, unset, unspecified, or equal to a value. Matching them needs attribute lookup, so
+//! use [`Pathspec::matches_with`] and answer each requirement from
+//! [`attributes::Lookup`](crate::attributes::Lookup) or
+//! [`attributes::Attributes`](crate::attributes::Attributes).
+//! [`Pathspec::uses_attributes`] reports whether a list needs it.
 //!
 //! # Example
 //!
@@ -51,6 +60,7 @@
 
 use std::fmt;
 
+use crate::attributes::State;
 use crate::display::quote_path;
 
 /// The directory and environment defaults pathspecs are parsed against.
@@ -194,7 +204,7 @@ impl Pathspec {
     /// # Errors
     ///
     /// Returns a [`ParseError`] for an empty spec, malformed or unknown magic, incompatible magic,
-    /// magic girt does not implement, or a path that leaves the repository.
+    /// a malformed `attr:` list, or a path that leaves the repository.
     pub fn parse<I>(specs: I, context: &Context) -> Result<Self, ParseError>
     where
         I: IntoIterator,
@@ -219,16 +229,86 @@ impl Pathspec {
 
     /// Returns whether this pathspec selects every path.
     pub fn is_all(&self) -> bool {
-        self.excludes.is_empty() && self.includes.iter().all(|item| item.pattern.is_empty())
+        self.excludes.is_empty()
+            && self
+                .includes
+                .iter()
+                .all(|item| item.pattern.is_empty() && item.attributes.is_empty())
     }
 
     /// Tests a repository-relative path such as `src/a.rs`.
     ///
     /// The path uses `/` separators with no leading or trailing `/`. Leaf paths (files, symbolic
     /// links and gitlinks) are what Git tests; use [`Self::directory`] for directories.
+    ///
+    /// Every attribute is treated as unspecified, as if no `.gitattributes` applied. When
+    /// [`Self::uses_attributes`] is true, use [`Self::matches_with`] instead.
     pub fn matches(&self, path: &[u8]) -> bool {
-        (self.includes.is_empty() || self.includes.iter().any(|item| item.matches(path)))
-            && !self.excludes.iter().any(|item| item.matches(path))
+        let unspecified = |requirement: &Requirement| {
+            Ok::<_, std::convert::Infallible>(requirement.accepts(State::Unspecified))
+        };
+        match self.matches_with(path, unspecified) {
+            Ok(matched) => matched,
+            Err(never) => match never {},
+        }
+    }
+
+    /// Tests a path, asking `satisfied` whether the path meets each `attr:` [`Requirement`].
+    ///
+    /// `satisfied` is called only for specs whose pattern already matches, and an error from it
+    /// is returned unchanged.
+    ///
+    /// ```
+    /// use girt::attributes::{Attributes, Case, Limits, Source};
+    /// use girt::pathspec::{Context, Pathspec};
+    ///
+    /// let mut attributes = Attributes::new(Case::Sensitive, Limits::default());
+    /// attributes.add(Source::Info, b"*.rs rust\n")?;
+    /// let spec = Pathspec::parse([":(attr:rust)src"], &Context::new())?;
+    ///
+    /// let rust = |path: &[u8]| {
+    ///     spec.matches_with(path, |requirement| {
+    ///         Ok::<_, girt::Error>(requirement.accepts(attributes.get(path, requirement.name())?))
+    ///     })
+    /// };
+    /// assert!(rust(b"src/lib.rs")?);
+    /// assert!(!rust(b"src/notes.md")?);
+    /// assert!(!rust(b"build.rs")?);
+    /// # Ok::<(), girt::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error `satisfied` returns.
+    pub fn matches_with<E>(
+        &self,
+        path: &[u8],
+        mut satisfied: impl FnMut(&Requirement) -> Result<bool, E>,
+    ) -> Result<bool, E> {
+        let mut included = self.includes.is_empty();
+        for item in &self.includes {
+            if item.matches(path, &mut satisfied)? {
+                included = true;
+                break;
+            }
+        }
+        if !included {
+            return Ok(false);
+        }
+        for item in &self.excludes {
+            if item.matches(path, &mut satisfied)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Returns whether any spec has `attr:` magic, so matching needs [`Self::matches_with`].
+    pub fn uses_attributes(&self) -> bool {
+        self.includes
+            .iter()
+            .chain(&self.excludes)
+            .any(|item| !item.attributes.is_empty())
     }
 
     /// Classifies a repository-relative directory for pruning a walk.
@@ -270,6 +350,8 @@ struct Item {
     exclude: bool,
     icase: bool,
     glob: bool,
+    /// `attr:` requirements, all of which must hold.
+    attributes: Vec<Requirement>,
 }
 
 impl Item {
@@ -280,6 +362,7 @@ impl Item {
             exclude: false,
             icase: false,
             glob: false,
+            attributes: Vec::new(),
         }
     }
 
@@ -325,6 +408,7 @@ impl Item {
             exclude: magic.exclude,
             icase: magic.icase || context.icase,
             glob,
+            attributes: magic.attributes.unwrap_or_default(),
         })
     }
 
@@ -332,7 +416,23 @@ impl Item {
         self.literal_len < self.pattern.len()
     }
 
-    fn matches(&self, path: &[u8]) -> bool {
+    fn matches<E>(
+        &self,
+        path: &[u8],
+        satisfied: &mut impl FnMut(&Requirement) -> Result<bool, E>,
+    ) -> Result<bool, E> {
+        if !self.matches_pattern(path) {
+            return Ok(false);
+        }
+        for requirement in &self.attributes {
+            if !satisfied(requirement)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn matches_pattern(&self, path: &[u8]) -> bool {
         let prefix = &self.pattern[..self.literal_len];
         if !path
             .get(..prefix.len())
@@ -370,6 +470,15 @@ impl Item {
     }
 
     fn directory(&self, directory: &[u8]) -> Prune {
+        let prune = self.directory_pattern(directory);
+        if prune == Prune::All && !self.attributes.is_empty() {
+            Prune::Descend
+        } else {
+            prune
+        }
+    }
+
+    fn directory_pattern(&self, directory: &[u8]) -> Prune {
         let named = self.pattern.strip_suffix(b"/").unwrap_or(&self.pattern);
         if named.is_empty() || self.below(directory, named) {
             return Prune::All;
@@ -420,6 +529,7 @@ struct Magic {
     icase: bool,
     literal: bool,
     glob: bool,
+    attributes: Option<Vec<Requirement>>,
 }
 
 impl Magic {
@@ -429,13 +539,25 @@ impl Magic {
             return Ok(spec);
         };
         if let Some(long) = rest.strip_prefix(b"(") {
-            let Some(end) = long.iter().position(|byte| *byte == b')') else {
-                return Err(Reason::UnclosedMagic);
-            };
-            for word in long[..end].split(|byte| *byte == b',') {
-                self.word(word)?;
+            // A backslash keeps the next byte, including `,` and `)`, inside an `attr:` value.
+            let mut start = 0;
+            let mut index = 0;
+            loop {
+                match long.get(index) {
+                    None => return Err(Reason::UnclosedMagic),
+                    Some(b'\\') => index += 2,
+                    Some(b',') => {
+                        self.word(&long[start..index])?;
+                        index += 1;
+                        start = index;
+                    }
+                    Some(b')') => {
+                        self.word(&long[start..index])?;
+                        return Ok(&long[index + 1..]);
+                    }
+                    Some(_) => index += 1,
+                }
             }
-            return Ok(&long[end + 1..]);
         }
         let mut rest = rest;
         while let [byte, after @ ..] = rest {
@@ -458,11 +580,97 @@ impl Magic {
             b"icase" => self.icase = true,
             b"literal" => self.literal = true,
             b"glob" => self.glob = true,
-            _ if word.starts_with(b"attr:") => return Err(Reason::Unsupported(word.to_vec())),
+            _ if let Some(list) = word.strip_prefix(b"attr:") => {
+                if self.attributes.is_some() {
+                    return Err(Reason::MultipleAttr);
+                }
+                self.attributes = Some(Requirement::parse_list(list)?);
+            }
             _ => return Err(Reason::UnknownMagic(word.to_vec())),
         }
         Ok(())
     }
+}
+
+/// One condition from `attr:` magic on a path's attribute.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct Requirement {
+    name: Vec<u8>,
+    expected: Expected,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+enum Expected {
+    Set,
+    Unset,
+    Unspecified,
+    Value(Vec<u8>),
+}
+
+impl Requirement {
+    /// The attribute name to look up for the path.
+    pub fn name(&self) -> &[u8] {
+        &self.name
+    }
+
+    /// Whether the path's state for [`Self::name`] meets this requirement.
+    ///
+    /// `name` requires [`State::Set`], `-name` [`State::Unset`], `!name` [`State::Unspecified`]
+    /// and `name=value` a [`State::Value`] with exactly those bytes.
+    pub fn accepts(&self, state: State<'_>) -> bool {
+        match (&self.expected, state) {
+            (Expected::Set, State::Set)
+            | (Expected::Unset, State::Unset)
+            | (Expected::Unspecified, State::Unspecified) => true,
+            (Expected::Value(expected), State::Value(actual)) => expected == actual,
+            _ => false,
+        }
+    }
+
+    /// Parses the space-separated list after `attr:`.
+    fn parse_list(list: &[u8]) -> Result<Vec<Self>, Reason> {
+        let requirements = list
+            .split(|byte| *byte == b' ')
+            .filter(|word| !word.is_empty())
+            .map(Self::parse)
+            .collect::<Result<Vec<_>, _>>()?;
+        if requirements.is_empty() {
+            return Err(Reason::EmptyAttr);
+        }
+        Ok(requirements)
+    }
+
+    fn parse(word: &[u8]) -> Result<Self, Reason> {
+        let (name, expected) = match word {
+            [b'-', name @ ..] => (name, Expected::Unset),
+            [b'!', name @ ..] => (name, Expected::Unspecified),
+            _ => match crate::bytes::split_once(word, b'=') {
+                Some((name, value)) => (name, Expected::Value(unescape(value)?)),
+                None => (word, Expected::Set),
+            },
+        };
+        if !crate::attributes::valid_name(name) {
+            return Err(Reason::InvalidAttrName(name.to_vec()));
+        }
+        Ok(Self {
+            name: name.to_vec(),
+            expected,
+        })
+    }
+}
+
+/// Removes backslash escapes from an `attr:` value.
+fn unescape(value: &[u8]) -> Result<Vec<u8>, Reason> {
+    let mut unescaped = Vec::with_capacity(value.len());
+    let mut bytes = value.iter();
+    while let Some(byte) = bytes.next() {
+        if *byte == b'\\' {
+            unescaped.push(*bytes.next().ok_or(Reason::TrailingEscape)?);
+        } else {
+            unescaped.push(*byte);
+        }
+    }
+    Ok(unescaped)
 }
 
 /// Resolves `.`, `..` and repeated `/`, keeping a trailing `/` that follows a named component.
@@ -532,10 +740,17 @@ pub enum Reason {
     UnclosedMagic,
     /// A long magic word Git does not define; names are case-sensitive.
     UnknownMagic(Vec<u8>),
-    /// A magic word Git defines that girt does not implement yet.
-    Unsupported(Vec<u8>),
     /// `glob` and `literal` magic on the same spec.
     GlobWithLiteral,
+    /// More than one `attr:` entry on the same spec.
+    MultipleAttr,
+    /// `attr:` with no attribute names.
+    EmptyAttr,
+    /// An `attr:` name with bytes other than ASCII letters, digits, `-`, `.` and `_`, or starting
+    /// with `-`.
+    InvalidAttrName(Vec<u8>),
+    /// An `attr:` value that ends with a backslash.
+    TrailingEscape,
     /// The path is absolute or `..` climbs above the repository root.
     OutsideRepository,
 }
@@ -545,10 +760,13 @@ impl fmt::Display for Reason {
         match self {
             Self::UnclosedMagic => formatter.write_str("missing ')' after pathspec magic"),
             Self::UnknownMagic(word) => write!(formatter, "unknown magic '{}'", quote_path(word)),
-            Self::Unsupported(word) => {
-                write!(formatter, "unsupported magic '{}'", quote_path(word))
-            }
             Self::GlobWithLiteral => formatter.write_str("'glob' and 'literal' are incompatible"),
+            Self::MultipleAttr => formatter.write_str("only one 'attr:' specification is allowed"),
+            Self::EmptyAttr => formatter.write_str("'attr:' must name an attribute"),
+            Self::InvalidAttrName(name) => {
+                write!(formatter, "invalid attribute name '{}'", quote_path(name))
+            }
+            Self::TrailingEscape => formatter.write_str("'attr:' value ends with '\\'"),
             Self::OutsideRepository => formatter.write_str("path is outside the repository"),
         }
     }
