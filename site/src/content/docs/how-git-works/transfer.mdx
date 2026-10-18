@@ -1,0 +1,70 @@
+---
+title: Transfer
+description: How fetch, clone and push decide what to send, and the transports that carry them.
+---
+
+import GirtStatus from '../../../components/GirtStatus.astro';
+import FetchNegotiation from '../../../components/git/FetchNegotiation.astro';
+
+Transfer moves [objects](/girt/how-git-works/storage/) and [refs](/girt/how-git-works/references/)
+between repositories. The goal is to send exactly the objects the other side lacks, as one
+[pack](/girt/how-git-works/storage/#packs), and then update refs safely.
+
+## Fetch and clone
+
+A fetch has four steps:
+
+1. **Advertisement.** The server lists its refs and their IDs.
+2. **Negotiation.** The client sends `want` lines for the commits it needs and `have` lines for
+   commits it already has, newest first. The server acknowledges commits it also has. When they have
+   found enough common commits, the client sends `done`.
+3. **Pack.** The server walks from the wanted commits, stops at the common ones, and sends one pack
+   holding exactly the missing objects.
+4. **Update.** The client writes the pack and its index, checks that every object it now claims to
+   have is present, and updates refs according to the remote's **refspecs**.
+
+<FetchNegotiation />
+
+A refspec maps remote names to local ones. `+refs/heads/*:refs/remotes/origin/*` copies every remote
+branch to a [remote-tracking ref](/girt/how-git-works/references/#refs) under
+`refs/remotes/origin/`; the `+` allows updates that aren't fast-forwards, since the remote's branch
+may have been rewritten.
+
+**Protocol v2** (`protocol.version=2`, the default since Git 2.26) restructures the conversation
+into commands. Its `ls-refs` command lets the client ask only for the refs it cares about, which
+matters on servers with hundreds of thousands of refs. A **partial clone** (`--filter=blob:none`)
+asks the server to leave out file contents and fetches them later on demand.
+
+**Clone** is `git init`, then adding the remote, a fetch, and a
+[checkout](/girt/how-git-works/working-tree/#checkout-of-a-tree) of the default branch.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/505">Protocol v0 and v2, depth and pruning; HTTP sends all haves in one round, tags aren't followed, and partial clone isn't supported.</GirtStatus>
+
+## Push
+
+Push runs the other way. The server advertises its refs; the client sends commands such as "update
+`refs/heads/main` from X to Y" plus a pack of the objects the server lacks, worked out with a
+[history walk](/girt/how-git-works/config-and-revisions/#history-walks) from Y excluding what the
+server already has.
+
+The server checks each update. By default it refuses one that isn't a
+[fast-forward](/girt/how-git-works/config-and-revisions/#ancestry-checks) unless the client forces
+it, and server hooks can refuse anything. It replies `ok refs/heads/main` or
+`ng refs/heads/main non-fast-forward` per ref. A push can partly succeed, so the per-ref status
+matters. `git push --force-with-lease` adds a check that the remote ref still holds the value you
+last fetched, so you don't overwrite someone else's work.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/push/index.html" />
+
+## Transports
+
+The same protocol runs over three transports:
+
+- **Local**: the remote is a path on disk, `/srv/repo.git` or `file:///srv/repo.git`. Git runs the
+  server side as a local process, or for a plain-path clone hard-links the object files.
+- **Smart HTTP(S)**: the client requests `GET /info/refs?service=git-upload-pack` for the
+  advertisement, then `POST /git-upload-pack` (fetch) or `POST /git-receive-pack` (push).
+- **SSH**: the client runs `ssh host git-upload-pack 'repo.git'` (or `git-receive-pack`) and speaks
+  the protocol over the connection.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/transport/index.html">Local is built in; HTTP and SSH are the `http` and `ssh` features. SSH uses system OpenSSH on macOS and Linux.</GirtStatus>

@@ -5,7 +5,8 @@ description: Follow content, identities, names, and storage through girt's APIs.
 
 Git stores immutable content and gives it mutable names. To see how girt models this, follow one
 file into a snapshot, then follow the snapshot's branch name back to its bytes. Each step has its
-own validation rules and lifetime.
+own validation rules and lifetime. For how Git itself stores and moves this data, independent of
+girt, read [How Git works](/girt/how-git-works/).
 
 ## From bytes to a snapshot
 

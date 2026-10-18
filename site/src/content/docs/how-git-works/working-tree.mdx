@@ -1,0 +1,105 @@
+---
+title: The working tree
+description: The index, sparse checkout, status, ignore rules and checkout, and how they connect HEAD to the files you edit.
+---
+
+import GirtStatus from '../../../components/GirtStatus.astro';
+import ThreeTrees from '../../../components/git/ThreeTrees.astro';
+
+The files you edit are the **working tree** (or working directory). Git compares them with the last
+commit through a third copy in between, the index. Most of what `git status`, `git add` and
+`git checkout` do is keep these three in step.
+
+<ThreeTrees />
+
+## The index
+
+The **index**, also called the staging area, is the binary file `.git/index`. It lists every tracked
+path, sorted, with its mode, the ID of the [blob](/girt/how-git-works/storage/#objects) staged for
+it, and **stat data** from the file system: modification time, size, inode and a few other fields.
+`git ls-files --stage` prints the paths, modes and IDs. `git add` hashes a file, writes the blob and
+updates its index entry; `git commit` writes trees from the index and a commit pointing at them.
+
+The stat data is what makes Git fast. If a file's stat data still matches its index entry, Git
+assumes the file is unchanged and doesn't read it. Only files whose stat data changed get rehashed.
+
+During a [merge](/girt/how-git-works/combining-work/#merging) conflict a path has up to three
+entries instead of one, in **stages** 1 (the merge base's version), 2 (ours) and 3 (theirs).
+Resolving the conflict replaces them with a single stage-0 entry.
+
+The index format has optional **extensions**:
+
+- **Cache-tree** stores the tree ID for each directory whose entries haven't changed since it was
+  last computed, so committing only rehashes the directories you touched.
+- **Split index** keeps a small file of recent changes over a large shared base, so updating a huge
+  index doesn't rewrite all of it.
+- **Resolve-undo** remembers the conflict stages of resolved paths so `git checkout -m` can recreate
+  the conflict.
+- **Sparse directory entries** are described next.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/index/index.html">Sparse directory entries are expanded explicitly.</GirtStatus>
+
+## Sparse checkout and expansion
+
+**Sparse checkout** writes only some directories to disk (`git sparse-checkout set src/app`). The
+rest are still in every commit but marked skip-worktree in the index. In cone mode, which works on
+whole directories, the index can go further and replace everything under a skipped directory with
+one **sparse directory entry** pointing at that directory's tree. In a monorepo with a million files
+where you work on a thousand, the index stays small.
+
+Some operations need every path, such as a merge that touches skipped directories. They **expand**
+the sparse entries back into full entries by reading the trees first.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/500">Sparse directory entries can be read and expanded; no sparse-checkout patterns, and checkout refuses skip-worktree entries.</GirtStatus>
+
+## Status
+
+`git status` makes two comparisons and one scan:
+
+1. HEAD's tree against the index gives the **staged** changes, the ones the next commit would make.
+2. The index against the working files gives the **unstaged** changes. Stat data lets Git skip files
+   that haven't been touched.
+3. A scan of the working tree finds **untracked** files, those not in the index, filtered by
+   [ignore rules](#ignore-rules).
+
+Stat data has a blind spot called **racy Git**. If a file is modified within the same timestamp tick
+in which the index was written, its stat data can match while its content differs. Git treats any
+entry whose modification time is not older than the index file itself as suspect and rehashes it.
+
+A full status also has to apply the same [filters](/girt/how-git-works/combining-work/#filters)
+checkout used, such as line-ending conversion, before comparing contents, or every converted file
+looks modified.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">No attributes, filters or line-ending conversion (#496), no pathspec limiting ([#495](https://github.com/joshka/girt/issues/495)), and no untracked cache or fsmonitor ([#519](https://github.com/joshka/girt/issues/519)); macOS and Linux only.</GirtStatus>
+
+## Ignore rules
+
+Untracked files are filtered by ignore rules from per-directory `.gitignore` files, the repository's
+`.git/info/exclude` and the file named by `core.excludesFile` (by default `~/.config/git/ignore`).
+
+- `*.log` matches in any directory; `/build` matches only at the top of the `.gitignore`'s
+  directory.
+- `**` matches any number of directories: `docs/**/*.png`.
+- A trailing `/` matches directories only: `target/`.
+- A leading `!` re-includes something an earlier rule excluded: `!keep.log`.
+
+Later rules override earlier ones, and a deeper `.gitignore` overrides a shallower one. One rule
+surprises people: a file inside an excluded directory can't be re-included, because Git doesn't look
+inside excluded directories at all. Ignore rules only affect untracked files; a tracked file stays
+tracked whatever `.gitignore` says. `git check-ignore -v path` shows which rule matched.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/ignore/index.html" />
+
+## Checkout of a tree
+
+Checking out a tree makes the working tree and index match it: write files that are new or changed,
+delete files that were removed, and record fresh stat data in the index. `git switch`,
+`git checkout` and the last step of `git clone` all do this.
+
+The hard part is safety. Checkout must refuse to overwrite local changes it would lose, so it
+compares each affected path's working file with the index before touching it. It also has to order
+its work so a failure halfway, such as a full disk or a file another program holds open, leaves a
+state that can be recovered rather than a mix of two commits. Directory and file swaps (`a` was a
+file, now it is a directory), symbolic links and executable bits add more cases.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/501">macOS and Linux only; no filters; refuses skip-worktree and intent-to-add entries.</GirtStatus>

@@ -1,0 +1,96 @@
+---
+// Frame and shared drawing styles for the inline SVG diagrams in the "How Git works" guide.
+interface Props {
+  caption: string;
+}
+
+const { caption } = Astro.props;
+---
+
+<figure class="git-figure not-content">
+  <slot />
+  <figcaption>{caption}</figcaption>
+</figure>
+
+<style is:global>
+  .git-figure {
+    margin-block: 1.5rem;
+    padding: 1rem;
+    border: 1px solid var(--sl-color-hairline-light);
+    border-radius: 12px;
+    background: var(--sl-color-bg-sidebar);
+  }
+
+  .git-figure svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 640px;
+    margin-inline: auto;
+    font-family: var(--__sl-font-mono);
+    font-size: 12px;
+  }
+
+  .git-figure figcaption {
+    margin-top: 0.75rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+    text-align: center;
+  }
+
+  .git-figure .box {
+    fill: var(--sl-color-bg);
+    stroke: var(--girt-graph-node);
+    stroke-width: 1.5;
+  }
+
+  .git-figure .box-accent {
+    fill: var(--girt-rust-900);
+    stroke: var(--girt-rust-600);
+    stroke-width: 1.5;
+  }
+
+  :root[data-theme='light'] .git-figure .box-accent {
+    fill: #f3e2dc;
+  }
+
+  .git-figure .box-quiet {
+    fill: var(--girt-verdigris-900);
+    stroke: var(--girt-verdigris-700);
+    stroke-width: 1.5;
+  }
+
+  :root[data-theme='light'] .git-figure .box-quiet {
+    fill: #dcebe4;
+  }
+
+  .git-figure .edge {
+    fill: none;
+    stroke: var(--girt-graph-line);
+    stroke-width: 1.5;
+  }
+
+  .git-figure .edge-strong {
+    fill: none;
+    stroke: var(--girt-graph-node);
+    stroke-width: 1.5;
+  }
+
+  .git-figure .arrow {
+    fill: var(--girt-graph-node);
+  }
+
+  .git-figure text {
+    fill: var(--sl-color-white);
+  }
+
+  .git-figure .muted {
+    fill: var(--sl-color-gray-3);
+  }
+
+  .git-figure .label {
+    fill: var(--sl-color-gray-3);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+  }
+</style>

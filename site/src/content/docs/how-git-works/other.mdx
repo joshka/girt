@@ -1,0 +1,93 @@
+---
+title: Tags, worktrees and other pieces
+description: Attributes, tags, linked worktrees, shallow history and credentials.
+---
+
+import GirtStatus from '../../../components/GirtStatus.astro';
+
+These pieces don't depend on each other, but each builds on [objects](/girt/how-git-works/storage/)
+and [refs](/girt/how-git-works/references/), and several come up again in transfer and merging.
+
+## Attributes
+
+`.gitattributes` files map path patterns to settings. Patterns follow the
+[`.gitignore`](/girt/how-git-works/working-tree/#ignore-rules) rules with two exceptions: `!`
+patterns aren't allowed, and a directory pattern such as `docs/` doesn't match the files inside it,
+so use `docs/**` for that:
+
+```text
+*.rs      diff=rust
+*.sh      text eol=lf
+*.png     binary
+*.psd     filter=lfs diff=lfs merge=lfs -text
+docs/**   export-ignore
+```
+
+The common attributes are `text` and `eol` (line-ending conversion), `diff=` (the
+[diff driver](/girt/how-git-works/diff/#diff-attributes)), `merge=` (the merge driver), `filter=` (a
+[clean and smudge filter](/girt/how-git-works/combining-work/#filters)) and `export-ignore` (leave
+the path out of `git archive`). A **macro** names a group of settings: `binary` means
+`-diff -merge -text`. Diffs, merges, checkout, status and archives all consult attributes, and
+`git check-attr -a path` shows what applies to a path.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">All attributes are read; only the diff-related ones take effect.</GirtStatus>
+
+## Tags
+
+A **lightweight tag** is just a ref, `refs/tags/v1.0`, pointing at a commit. An **annotated tag** is
+a ref pointing at a [tag object](/girt/how-git-works/storage/#objects), which records the tagger,
+date, message and optional signature and points at the commit. Release tags are usually annotated,
+so the release has an author and a message of its own.
+
+**Peeling** follows tag objects until it reaches something that isn't a tag. `v1.0^{}` is the commit
+an annotated tag finally points at, and `git show-ref --dereference` prints peeled values. Because a
+tag can point at another tag, peeling may take several steps.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/tag/index.html" />
+
+## Linked worktrees
+
+`git worktree add ../hotfix hotfix` checks out a second branch in another directory, sharing the
+same repository. The new directory's `.git` is a file, not a directory, containing
+`gitdir: /path/to/repo/.git/worktrees/hotfix`. That administrative directory holds the worktree's
+own `HEAD`, [index](/girt/how-git-works/working-tree/#the-index) and per-worktree refs, while
+objects, branches and configuration are shared. Git refuses to check out the same branch in two
+worktrees, because a commit in one would silently change the other's checkout.
+
+Administration covers listing (`git worktree list`), locking a worktree on a removable drive so it
+isn't cleaned up, moving one, and pruning the records of worktrees whose directories were deleted.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/504">Add, list, lock, unlock, prune and repair; no move.</GirtStatus>
+
+## Shallow history
+
+`git clone --depth 1` downloads only the most recent commit, not the whole history. The file
+`.git/shallow` lists the cut-off commits; Git treats them as having no parents, even though their
+commit objects name parents that aren't in the repository.
+
+Everything that walks history has to respect this boundary.
+[History walks](/girt/how-git-works/config-and-revisions/#history-walks) must stop there instead of
+failing on a missing parent, and every fetch must tell the server where the boundary is, so the
+server doesn't assume the client has commits it lacks. `git fetch --deepen 10` or `--unshallow`
+moves the boundary.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/fetch/index.html" />
+
+## Credentials
+
+When an HTTPS remote asks for a password, Git doesn't store or prompt for it itself. It asks a
+**credential helper**: the OS keychain (`osxkeychain`, `manager`, `libsecret`), the in-memory
+`cache`, the plain-text `store`, or any program named in `credential.helper`. The protocol is
+`key=value` lines on standard input and output:
+
+```text
+protocol=https
+host=github.com
+```
+
+The helper replies with `username=` and `password=` lines. After the server accepts or refuses them,
+Git calls the helper again with `store` or `erase` (`git credential approve` and `reject`), so
+helpers keep working credentials and drop bad ones. If no helper answers, Git falls back to the
+program in `GIT_ASKPASS` or a terminal prompt.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/remote/index.html">Helpers and askpass; no terminal prompts.</GirtStatus>

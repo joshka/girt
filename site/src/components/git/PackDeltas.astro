@@ -1,0 +1,41 @@
+---
+import Figure from './Figure.astro';
+---
+
+<Figure caption="A pack stores most objects as deltas against a similar object. The .idx file maps each ID to its offset in the pack, using a fanout table to jump to the right range first.">
+  <svg viewBox="0 0 640 250" role="img" aria-labelledby="pack-deltas-title">
+    <title id="pack-deltas-title">
+      An index file with a fanout table and sorted IDs points at offsets in a pack file. In the pack,
+      lib.rs version 3 is stored whole, and versions 2 and 1 are deltas that copy ranges from it.
+    </title>
+    <defs>
+      <marker id="pd-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+        <path class="arrow" d="M0,0 L8,4 L0,8 z" />
+      </marker>
+    </defs>
+    <text class="label" x="20" y="22">PACK-1234.IDX</text>
+    <rect class="box" x="20" y="32" width="190" height="200" rx="6" />
+    <text class="muted" x="34" y="56">fanout[0x00..0xff]</text>
+    <path class="edge" d="M34 66 H 196" />
+    <text x="34" y="90">0a91…  → 12</text>
+    <text x="34" y="116">3fc0…  → 1840</text>
+    <text x="34" y="142">7b2e…  → 1922</text>
+    <text x="34" y="168">d401…  → 2015</text>
+    <text class="muted" x="34" y="200">sorted, so lookup is</text>
+    <text class="muted" x="34" y="216">a binary search</text>
+    <text class="label" x="300" y="22">PACK-1234.PACK</text>
+    <rect class="box-quiet" x="300" y="40" width="300" height="44" rx="6" />
+    <text x="316" y="60">lib.rs v3   (whole, 1.8 KB)</text>
+    <text class="muted" x="316" y="76">newest version stored in full</text>
+    <rect class="box" x="300" y="104" width="300" height="44" rx="6" />
+    <text x="316" y="124">lib.rs v2   (delta, 70 B)</text>
+    <text class="muted" x="316" y="140">copy 0..900, insert 12 B, copy …</text>
+    <rect class="box" x="300" y="168" width="300" height="44" rx="6" />
+    <text x="316" y="188">lib.rs v1   (delta, 64 B)</text>
+    <text class="muted" x="316" y="204">base: v2</text>
+    <path class="edge" d="M150 112 C 240 112 240 62 296 62" marker-end="url(#pd-arrow)" />
+    <path class="edge" d="M162 138 C 240 138 240 126 296 126" marker-end="url(#pd-arrow)" />
+    <path class="edge-strong" d="M600 126 C 625 126 625 62 604 62" marker-end="url(#pd-arrow)" />
+    <path class="edge-strong" d="M600 190 C 625 190 625 140 604 136" marker-end="url(#pd-arrow)" />
+  </svg>
+</Figure>

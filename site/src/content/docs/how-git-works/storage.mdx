@@ -1,0 +1,133 @@
+---
+title: Storage
+description: Git's four object types, how object IDs are computed, and the loose files and packs that hold objects.
+---
+
+import GirtStatus from '../../../components/GirtStatus.astro';
+import ObjectGraph from '../../../components/git/ObjectGraph.astro';
+import PackDeltas from '../../../components/git/PackDeltas.astro';
+
+Everything Git remembers about your project's history lives in its object database, the
+`.git/objects/` directory. Branches, the index and the working tree all point into it. This page
+covers what an object is, how it gets its name, and the two ways Git stores objects on disk.
+
+## Objects
+
+An **object** is an immutable piece of data with a type. Git has four types:
+
+- A **blob** holds one file's contents: just the bytes, with no file name, permissions or timestamp.
+- A **tree** is one directory listing. Each entry has a name, a mode (regular file, executable,
+  symbolic link, subdirectory or submodule) and the ID of a blob or another tree.
+- A **commit** names one root tree (the whole project as it was), zero or more parent commits, an
+  author and a committer (each a name, email and timestamp) and a message. A first commit has no
+  parents; a merge commit has two or more.
+- A **tag** object is an annotated tag: a pointer at another object with its own name, tagger, date,
+  message and optional signature.
+
+An object's **ID** (often called its hash) is the hash of a short header followed by the contents.
+The header is the type, a space, the length in bytes and a zero byte. A file containing `hello` and
+a newline is six bytes, so Git hashes `blob 6\0hello\n`:
+
+```sh
+$ printf 'hello\n' | git hash-object --stdin
+ce013625030ba8dba906f756967f9e9ca394464a
+$ printf 'blob 6\0hello\n' | shasum
+ce013625030ba8dba906f756967f9e9ca394464a  -
+```
+
+Because the ID comes from the content, identical content always gets the same ID, wherever and
+whenever it was written, and a different ID always means different content. This is why Git can
+store a file once no matter how many commits contain it, and why it can compare two directories by
+comparing two tree IDs. It also makes history tamper-evident: a commit's ID covers its tree's ID,
+which covers every blob's ID, so changing any byte anywhere changes the commit's ID.
+
+<ObjectGraph />
+
+You can inspect any object with `git cat-file -p <id>`. `git cat-file -p HEAD` shows the current
+commit's tree, parents, author, committer and message as plain text, because that is how commits are
+stored.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/object/index.html" />
+
+## Loose objects
+
+A **loose object** is one object in its own zlib-compressed file. The path comes from the ID: the
+first two hex digits name a directory and the rest name the file, so the blob above lives at
+`.git/objects/ce/013625030ba8dba906f756967f9e9ca394464a`. Splitting on the first byte keeps any one
+directory from holding millions of files.
+
+New objects usually start out loose: `git add` and `git commit` write each new blob, tree and commit
+as a loose file. Writing one file per object is simple and safe, since a half-written object never
+replaces a good one, but it wastes space and file handles once there are many.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/loose/struct.LooseObjects.html" />
+
+## Packs
+
+A **pack** bundles many objects in one `.pack` file under `.git/objects/pack/`. Clones and fetches
+arrive as packs, and `git gc` gathers loose objects into them.
+
+Inside a pack an object can be stored as a **delta**: "take this other object (the base), copy these
+byte ranges from it, insert these new bytes". Successive versions of a file are usually nearly
+identical, so a version stored as a delta against its neighbour costs a few dozen bytes instead of
+the whole file. A delta's base can itself be a delta, forming a chain that the reader replays.
+
+Each pack has a matching `.idx` file. It lists every object ID in the pack in sorted order with the
+object's offset in the `.pack`. Before the list comes a 256-entry **fanout table**: entry `n` says
+how many IDs start with a byte at most `n`. A lookup reads the fanout entries for the ID's first
+byte to find a small range, then binary-searches it.
+
+<PackDeltas />
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/pack/index.html">Multi-pack indexes and bitmaps are not read.</GirtStatus>
+
+## SHA-1 and SHA-256
+
+SHA-1 is the hash Git has always used; IDs are 40 hex digits. SHA-1 can now be deliberately
+collided, so Git also supports SHA-256 repositories, with 64-digit IDs
+(`git init --object-format=sha256`). A repository uses one format, recorded as
+`extensions.objectFormat` in `.git/config`, and the same content gets a different ID in each, so a
+SHA-1 repository and a SHA-256 repository can't share objects directly.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/object/enum.ObjectFormat.html">Reads and writes both formats; doesn't convert between them.</GirtStatus>
+
+## Writing packs with deltas
+
+Reading a delta is cheap; choosing good deltas when writing a pack is the expensive part. For each
+object, the writer needs a similar earlier object to delta against. Git sorts the candidates by
+type, then by a hash of the path name, then by size, so different versions of the same file land
+next to each other. It then tries each object against a sliding window of nearby objects
+(`pack.window`, ten by default), keeps the smallest delta, and limits how long chains may grow
+(`pack.depth`).
+
+This search is most of the work in `git push`, `git repack` and serving a fetch, and it's where
+speed trades off against pack size: a wider window finds smaller deltas but takes longer.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/pack/index.html">Delta search is opt-in.</GirtStatus>
+
+## Repacking and pruning
+
+Over time a repository collects loose objects and many small packs, roughly one per fetch.
+**Repacking** (`git repack`, run by `git gc`) merges them into fewer, better-compressed packs, which
+makes lookups faster and the repository smaller.
+
+**Pruning** deletes objects nothing needs any more: objects that no reference, reflog entry or index
+entry can reach, such as the old commits left behind by an amended commit after their reflog entries
+expire. Pruning waits for a grace period (`gc.pruneExpire`, two weeks by default) after an object
+was last written, because another Git process may have just written that object and be about to
+point a branch at it. Deleting it in that window would corrupt the repository.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/499">The caller supplies the prune cutoff; `gc.pruneExpire` isn't read. Partial clones are refused.</GirtStatus>
+
+## Alternates
+
+The file `.git/objects/info/alternates` lists other object directories that this repository may also
+read from. `git clone --shared` and `git clone --reference` use it to avoid copying objects that
+already exist elsewhere on the machine, and forges use it so that every fork of a project shares one
+object store. Reads check the alternates after the repository's own objects; writes always go to the
+repository's own directory, never to an alternate.
+
+The catch is that the borrowing repository depends on the other one: if that one prunes an object
+the borrower still uses, the borrower breaks.
+
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/objects/index.html">Reads alternates; clone doesn't set them up.</GirtStatus>
