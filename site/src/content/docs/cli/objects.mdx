@@ -140,7 +140,8 @@ prune-packable 0
 
 `object count --git` prints Git's `count-objects -v` lines without `garbage` and `size-garbage`,
 because girt doesn't classify stray files. Both commands see only packs with their own `.idx`:
-multi-pack indexes aren't read, and an `.idx` without its `.pack` is an error rather than garbage.
+multi-pack indexes accelerate verified object reads, while an `.idx` without its `.pack` remains an
+opening error rather than garbage.
 
 ## List a tree (`girt tree list`)
 

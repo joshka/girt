@@ -345,3 +345,57 @@ fn primary(objects: &Objects) -> Result<ObjectStore<'_>> {
         .next()
         .ok_or_else(|| eyre!("object storage has no primary store"))
 }
+
+/// Multi-pack index inspection and explicit writing.
+#[derive(Debug, clap::Subcommand)]
+pub enum MultiPackIndexCommand {
+    /// Write a monolithic index for primary-store packs. Exclude concurrent pack writers.
+    /// With --git, prints no output on success, like git multi-pack-index write.
+    Write {
+        /// Prefer this pack checksum when an object appears in multiple packs.
+        #[arg(long)]
+        preferred_pack: Option<ObjectId>,
+        /// Also write reachability bitmaps (not implemented yet).
+        #[arg(long)]
+        bitmap: bool,
+    },
+    /// Verify a standalone index or incremental chain against its named pack indexes.
+    /// With --git, prints no output on success, like git multi-pack-index verify.
+    Verify,
+}
+
+/// Runs explicit MIDX operations; automatic writing belongs to maintenance policy.
+pub fn multi_pack_index(command: MultiPackIndexCommand, context: &Context) -> Result<ExitCode> {
+    let repository = context.repository()?;
+    match command {
+        MultiPackIndexCommand::Write {
+            preferred_pack,
+            bitmap,
+        } => {
+            if bitmap {
+                bail!(
+                    "bitmap writing is not implemented; see https://github.com/joshka/girt/issues/518"
+                );
+            }
+            let mut options = girt::multi_pack_index::WriteOptions::default();
+            options.preferred_pack = preferred_pack;
+            let report = repository.write_multi_pack_index(&mut UserAsserted, options)?;
+            if !context.git {
+                writeln!(
+                    stdout(),
+                    "{} {} {}",
+                    report.checksum,
+                    report.objects,
+                    report.packs
+                )?;
+            }
+        }
+        MultiPackIndexCommand::Verify => {
+            repository.verify_multi_pack_index()?;
+            if !context.git {
+                writeln!(stdout(), "ok")?;
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}

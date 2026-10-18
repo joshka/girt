@@ -51,8 +51,8 @@ lookup hints retain ordinary pack-index bounds checks and full object identity v
 invalid `core.multiPackIndex` boolean disables this optional acceleration. Missing, corrupt, stale
 or disabled hints fall back to the pack inventory; packs added after MIDX creation remain visible
 when opening a fresh snapshot. Explicit verification checks every claimed ID and offset against the
-named pack indexes. It does not replace whole-pack verification. Bitmap queries and MIDX writing
-remain tracked in [the MIDX issue](https://github.com/joshka/girt/issues/517) and
+named pack indexes. It does not replace whole-pack verification. Bitmap queries and remaining MIDX
+work remain tracked in [the MIDX issue](https://github.com/joshka/girt/issues/517) and
 [the bitmap issue](https://github.com/joshka/girt/issues/518).
 
 With isolated default configuration in an original bare repository, both `git gc --prune=now` and
@@ -60,6 +60,29 @@ With isolated default configuration in an original bare repository, both `git gc
 `git multi-pack-index write --bitmap` then produced a MIDX and its checksum-named bitmap alongside
 the pack bitmap. These are observations of Git 2.56.0, not automatic-maintenance behavior
 implemented by girt.
+
+After adding another reachable commit to each fixture, `git repack -ad` and `git gc` removed both
+the existing MIDX and its checksum-named bitmap. Girt's retirement follows that invalidation order:
+derived MIDX artifacts are removed and their directory synchronized before named packs retire. The
+missing-selected-pack regression independently removes a pack named by a valid MIDX and confirms
+ordinary reads from a surviving duplicate in both object formats.
+
+A release-build full-read timing on 13 small packs (128 blobs each) used 1664 shuffled IDs, 100
+rounds and five alternating repetitions per configuration under `/tmp/girt-timing.lock`. The
+disabled/enabled median ratio was 1.0049, which establishes no material speedup. This workload
+includes hashing and decoding, whose cost can dominate small-pack full reads; it does not isolate
+index-search cost. The run was taken under load (one-minute load 23.74 initially and 22.64 for the
+remaining blocks), so absolute timings are not a baseline. Raw block results are in
+[`midx-lookup-under-load.json`](evidence/midx-lookup-under-load.json).
+
+Benefits are expected mainly with tens to hundreds of packs, or lookup-heavy workloads containing
+many absent IDs, such as existence checks during fetch and negotiation. Current MIDX integration
+only selects candidates for verified reads; `Objects::contains` still scans pack indexes. Faster
+absence checks remain [follow-up work](https://github.com/joshka/girt/issues/687), not a measured
+capability. The `midx_lookup_timing` example provides separate full-read, existence, direct
+pack-index scan and direct MIDX search modes for present/absent ID lists. Direct MIDX search omits
+candidate validation and outside-pack/loose fallback and must not be presented as end-to-end lookup
+performance.
 
 ## Submodule definitions
 

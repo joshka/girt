@@ -1,0 +1,110 @@
+{
+  "packs": 13,
+  "objects": 1664,
+  "rounds": 100,
+  "rows": [
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 770166,
+      "read_ns": 196865292,
+      "enabled": false,
+      "repeat": 0,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 23.74 37.33 47.67"
+    },
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 847042,
+      "read_ns": 196611500,
+      "enabled": true,
+      "repeat": 0,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 22.64 36.87 47.45"
+    },
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 940375,
+      "read_ns": 222815167,
+      "enabled": true,
+      "repeat": 1,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 22.64 36.87 47.45"
+    },
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 693959,
+      "read_ns": 201869542,
+      "enabled": false,
+      "repeat": 1,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 22.64 36.87 47.45"
+    },
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 1071666,
+      "read_ns": 197579750,
+      "enabled": false,
+      "repeat": 2,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 22.64 36.87 47.45"
+    },
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 783416,
+      "read_ns": 196534708,
+      "enabled": true,
+      "repeat": 2,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 22.64 36.87 47.45"
+    },
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 870833,
+      "read_ns": 198248000,
+      "enabled": true,
+      "repeat": 3,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 22.64 36.87 47.45"
+    },
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 820459,
+      "read_ns": 197105334,
+      "enabled": false,
+      "repeat": 3,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 22.64 36.87 47.45"
+    },
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 714709,
+      "read_ns": 197698583,
+      "enabled": false,
+      "repeat": 4,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 22.64 36.87 47.45"
+    },
+    {
+      "objects": 1664,
+      "rounds": 100,
+      "open_ns": 740417,
+      "read_ns": 196450875,
+      "enabled": true,
+      "repeat": 4,
+      "load": "2:44  up 1 day,  3:51, 2 users, load averages: 22.64 36.87 47.45"
+    }
+  ],
+  "disabled": {
+    "read_ns_median": 197579750,
+    "open_ns_median": 770166
+  },
+  "enabled": {
+    "read_ns_median": 196611500,
+    "open_ns_median": 847042
+  },
+  "read_speedup": 1.004924686501044,
+  "context": "Taken under load; compare ratios only. Complete verified reads, not isolated index searches.",
+  "fixture": "13 packs, each 128 original small blobs; shuffle seed 173; SHA-1",
+  "reader_revision": "40223e7a",
+  "command": "target/release/examples/midx_lookup_timing <fixture.git> <ids> 100"
+}

@@ -70,7 +70,7 @@ const ENTRIES: &[Entry] = &[
     // Top-level Git commands: every name in `git_commands.txt` appears exactly once.
     commands(&[
         "blame", "checkout", "clone", "config", "diff", "fetch", "help", "history", "init", "log",
-        "maintenance", "push", "remote", "repo", "status", "worktree",
+        "maintenance", "multi-pack-index", "push", "remote", "repo", "status", "worktree",
     ], Hint::Same),
     commands(&["annotate"], use_(&[("annotate", "blame")])),
     commands(&["cat-file"], use_(&[
@@ -129,7 +129,7 @@ const ENTRIES: &[Entry] = &[
         "verify-tag", "whatchanged",
     ], QUERIES),
     commands(&[
-        "commit-graph", "fsck", "multi-pack-index", "pack-objects", "pack-redundant",
+        "commit-graph", "fsck", "pack-objects", "pack-redundant",
         "prune-packed", "show-index", "unpack-file", "unpack-objects",
     ], STORE),
     commands(&[
@@ -204,7 +204,7 @@ const ENTRIES: &[Entry] = &[
     under("status", &["-s", "--short"], use_(&[("status --short", "status")])),
     under("status", &["--porcelain"], use_(&[("status --porcelain", "status --git")])),
     under("status", &["--untracked-files"], use_(&[("status --untracked-files", "status --untracked")])),
-    under("status", &["-b", "--branch", "--ignored", "-z"], QUERIES),
+    under("status", &["--ignored", "-z"], QUERIES),
     under("worktree", &["add", "remove", "move"], SETUP),
 ];
 

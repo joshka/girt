@@ -111,6 +111,8 @@ impl<E: StdError + Send + Sync + 'static> From<crate::signing::SignTagError<E>> 
 // Keep this list in step with the public error types; `lists_every_public_error_type` checks it.
 from_domain_errors! {
     crate::multi_pack_index::Error,
+    crate::multi_pack_index::WriteError,
+    crate::multi_pack_index::InstallError,
     crate::submodule::Error,
     crate::submodule::LoadError,
     crate::submodule::UrlError,
