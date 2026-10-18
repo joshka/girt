@@ -224,7 +224,7 @@ pub use commit::{
     IdentityRef, Signature,
 };
 pub use config::{Config, ConfigError};
-pub use history::{HistoryError, HistoryLimits};
+pub use history::{HistoryError, HistoryLimits, PathHistoryError, Simplification, SimplifyError};
 pub use loose::LooseObjects;
 pub(crate) use object::{IdMap, IdSet, PeerIdMap, PeerIdSet};
 pub use object::{

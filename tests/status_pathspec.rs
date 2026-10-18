@@ -70,6 +70,7 @@ fn fixture() -> Fixture {
             ("root", "r\n"),
             ("src/lib.rs", "lib\n"),
             ("src/gone.rs", "gone\n"),
+            ("obs/file", "o\n"),
             (".gitignore", "ign/\n"),
         ],
     );
@@ -89,6 +90,11 @@ fn fixture() -> Fixture {
         ],
     );
     fs::remove_file(root.join("src/gone.rs")).unwrap();
+    // An untracked nested repository, and a tracked directory replaced by a file.
+    assert!(git(&home, &home, &["init", "-q", "../repo/nested"]).0);
+    write(&root, &[("nested/file", "n\n")]);
+    fs::remove_dir_all(root.join("obs")).unwrap();
+    write(&root, &[("obs", "now a file\n")]);
     run(&["add", "staged.rs"]);
     Fixture {
         _temp: temp,
@@ -129,6 +135,11 @@ const SPECS: &[&[&str]] = &[
     &["src/gone.rs"],
     &["src"],
     &[":!src", ":!t"],
+    &["nested/file"],
+    &["nested/*"],
+    &["nested"],
+    &["obs/file"],
+    &["obs"],
 ];
 
 /// Renders a report as `git status --porcelain` lines with repository-relative paths.
@@ -162,7 +173,8 @@ fn girt_status(
         lines.entry(change.path.clone()).or_insert([' '; 2])[0] = change.status().letter();
     }
     for change in &report.unstaged {
-        lines.entry(change.path.clone()).or_insert([' '; 2])[1] = change.status().unwrap().letter();
+        lines.entry(change.path.clone()).or_insert([' '; 2])[1] =
+            change.status().map_or('D', |status| status.letter());
     }
     let mut out: Vec<String> = lines
         .into_iter()
@@ -248,5 +260,35 @@ fn refuses_attribute_magic() {
     assert!(matches!(
         result,
         Err(girt::status::Error::Unsupported { .. })
+    ));
+}
+
+/// A selected path below a tracked directory that became a file is reported as obstructed, as an
+/// unlimited scan reports it, not as a plain deletion.
+#[test]
+fn keeps_obstruction_below_unselected_ancestor() {
+    let fixture = fixture();
+    let repository = Repository::open(&fixture.root).unwrap();
+    let report = |specs: &[&str]| {
+        let paths = Pathspec::parse(specs, &Context::new()).unwrap();
+        repository
+            .raw_status_with(
+                Baseline::Head,
+                girt::status::Untracked::Omit,
+                &paths,
+                Limits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap()
+            .unstaged
+            .into_iter()
+            .find(|change| change.path == b"obs/file")
+            .unwrap()
+            .change
+    };
+    assert_eq!(report(&["obs/file"]), report(&["."]));
+    assert!(matches!(
+        report(&["obs/file"]),
+        girt::status::Change::Obstructed { .. }
     ));
 }

@@ -67,8 +67,8 @@ const SPECS: &[&[&str]] = &[
     &[":!old"],
     &["kind"],
     &["kind/inner"],
-    &[":(literal)st*r"],
-    &["st*r"],
+    &[":(literal)st[a]r"],
+    &["st[a]r"],
 ];
 
 fn fixture() -> tempfile::TempDir {
@@ -84,7 +84,7 @@ fn fixture() -> tempfile::TempDir {
             ("docs/guide.md", "g\n"),
             ("old/b.txt", "moved content that is long enough to pair\n"),
             ("kind", "file\n"),
-            ("st*r", "s\n"),
+            ("st[a]r", "s\n"),
             ("stuck", "s\n"),
         ],
     );
@@ -100,7 +100,7 @@ fn fixture() -> tempfile::TempDir {
             ("src/new.rs", "n\n"),
             ("docs/guide.md", "g2\n"),
             ("kind/inner", "dir\n"),
-            ("st*r", "s2\n"),
+            ("st[a]r", "s2\n"),
             ("stuck", "s2\n"),
         ],
     );

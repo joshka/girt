@@ -3213,5 +3213,18 @@ in Git, the pathspec applies before rename detection, so a file moved into the p
 it is an addition. The same test shows that a subtree outside the pathspec is never read: a missing
 tree object there goes unreported.
 
-Limitations: absolute paths are rejected even when they name a path inside the worktree, and status
-and tree comparison refuse `attr:` magic.
+`Objects::simplify_commit` applies Git's default history simplification for `git log -- <pathspec>`:
+a commit is shown when it changes a selected path, and a merge that left the paths as one parent had
+them is hidden and continues through that parent only. `girt log` uses it.
+`girt-cli/tests/pathspec_parity.rs` compares `girt --git log` and `girt --git diff` with Git for 11
+spec lists over a history with two merges (one made with `-s ours`, one followed by a resolving
+commit), including `-n` limits and runs from a subdirectory. `--full-history`, `--simplify-merges`,
+parent rewriting and `--follow` are not provided.
+
+The current-directory prefix is matched literally and with case, as Git does: from a directory named
+`a[b]`, `*.rs` selects `a[b]/x.rs`, and from `src`, `:(icase)*.rs` does not select `SRC/up.rs`.
+`Pathspec::matches` returns `AttributesRequired` for an `attr:` spec rather than assume attribute
+states; `Pathspec::matches_with` answers it.
+
+Limitations: absolute paths are rejected even when they name a path inside the worktree, and status,
+tree comparison and history refuse `attr:` magic.

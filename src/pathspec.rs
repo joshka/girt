@@ -47,16 +47,16 @@
 //! let context = Context::new().with_prefix(b"src");
 //! let spec = Pathspec::parse(["*.rs", ":!gen", ":/README"], &context)?;
 //!
-//! assert!(spec.matches(b"src/lib.rs"));
-//! assert!(spec.matches(b"src/sub/mod.rs"));
-//! assert!(!spec.matches(b"src/gen/out.rs"));
-//! assert!(spec.matches(b"README"));
-//! assert!(!spec.matches(b"tests/t.rs"));
+//! assert!(spec.matches(b"src/lib.rs")?);
+//! assert!(spec.matches(b"src/sub/mod.rs")?);
+//! assert!(!spec.matches(b"src/gen/out.rs")?);
+//! assert!(spec.matches(b"README")?);
+//! assert!(!spec.matches(b"tests/t.rs")?);
 //!
 //! assert_eq!(spec.directory(b"tests"), Prune::Skip);
 //! assert_eq!(spec.directory(b"src/gen"), Prune::Skip);
 //! assert_eq!(spec.directory(b"src"), Prune::Descend);
-//! # Ok::<(), girt::pathspec::ParseError>(())
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use std::fmt;
@@ -98,9 +98,9 @@ impl Context {
     /// let environment = Environment::default().with("GIT_GLOB_PATHSPECS", "1");
     /// let context = Context::from_environment(&environment)?;
     /// let spec = Pathspec::parse(["*.rs"], &context)?;
-    /// assert!(spec.matches(b"main.rs"));
-    /// assert!(!spec.matches(b"src/lib.rs"));
-    /// # Ok::<(), girt::pathspec::ParseError>(())
+    /// assert!(spec.matches(b"main.rs")?);
+    /// assert!(!spec.matches(b"src/lib.rs")?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
@@ -267,16 +267,19 @@ impl Pathspec {
     /// The path uses `/` separators with no leading or trailing `/`. Leaf paths (files, symbolic
     /// links and gitlinks) are what Git tests; use [`Self::directory`] for directories.
     ///
-    /// Every attribute is treated as unspecified, as if no `.gitattributes` applied. When
-    /// [`Self::uses_attributes`] is true, use [`Self::matches_with`] instead.
-    pub fn matches(&self, path: &[u8]) -> bool {
-        let unspecified = |requirement: &Requirement| {
-            Ok::<_, std::convert::Infallible>(requirement.accepts(State::Unspecified))
-        };
-        match self.matches_with(path, unspecified) {
-            Ok(matched) => matched,
-            Err(never) => match never {},
-        }
+    /// # Errors
+    ///
+    /// Returns [`AttributesRequired`] when the deciding spec has `attr:` magic, which only
+    /// [`Self::matches_with`] can answer. A pathspec without it ([`Self::uses_attributes`] is
+    /// false) never fails.
+    pub fn matches(&self, path: &[u8]) -> Result<bool, AttributesRequired> {
+        self.matches_with(path, |_| Err(AttributesRequired))
+    }
+
+    /// [`Self::matches`] for callers that refused `attr:` magic up front.
+    pub(crate) fn matches_unchecked(&self, path: &[u8]) -> bool {
+        debug_assert!(!self.uses_attributes());
+        self.matches(path).unwrap_or(false)
     }
 
     /// Tests a path, asking `satisfied` whether the path meets each `attr:` [`Requirement`].
@@ -378,11 +381,15 @@ struct Item {
     glob: bool,
     /// `attr:` requirements, all of which must hold.
     attributes: Vec<Requirement>,
+    /// Length of the leading current-directory prefix, which is compared literally and with
+    /// case, whatever the spec's magic.
+    fixed: usize,
 }
 
 impl Item {
     fn literal(pattern: Vec<u8>) -> Self {
         Self {
+            fixed: pattern.len(),
             literal_len: pattern.len(),
             pattern,
             exclude: false,
@@ -420,13 +427,19 @@ impl Item {
             &joined
         };
         let pattern = normalize(path).ok_or_else(|| error(Reason::OutsideRepository))?;
+        // The prefix names the directory the user is in; only what they typed is a pattern.
+        let fixed = if magic.top || context.prefix.is_empty() {
+            0
+        } else {
+            fixed_prefix(&pattern, &context.prefix)
+        };
         let literal_len = if literal {
             pattern.len()
         } else {
-            pattern
+            pattern[fixed..]
                 .iter()
                 .position(|byte| matches!(byte, b'*' | b'?' | b'[' | b'\\'))
-                .unwrap_or(pattern.len())
+                .map_or(pattern.len(), |position| fixed + position)
         };
         Ok(Self {
             pattern,
@@ -435,6 +448,7 @@ impl Item {
             icase: magic.icase || context.icase,
             glob,
             attributes: magic.attributes.unwrap_or_default(),
+            fixed,
         })
     }
 
@@ -469,10 +483,11 @@ impl Item {
         if self.names(path) {
             return true;
         }
+        // The fixed prefix already compared equal, so only the typed part is a pattern.
         self.has_wildcards()
             && crate::wildmatch::matches_with_pathname(
-                &self.pattern,
-                path,
+                &self.pattern[self.fixed..],
+                &path[self.fixed..],
                 self.icase,
                 usize::MAX,
                 self.glob,
@@ -539,12 +554,21 @@ impl Item {
             .is_some_and(|start| self.equal(start, short))
     }
 
+    /// Compares two slices that both start at the beginning of a path; bytes within the fixed
+    /// prefix always compare with case.
     fn equal(&self, left: &[u8], right: &[u8]) -> bool {
-        if self.icase {
-            left.eq_ignore_ascii_case(right)
-        } else {
-            left == right
+        if left.len() != right.len() {
+            return false;
         }
+        let fixed = self.fixed.min(left.len());
+        let (left_fixed, left_rest) = left.split_at(fixed);
+        let (right_fixed, right_rest) = right.split_at(fixed);
+        left_fixed == right_fixed
+            && if self.icase {
+                left_rest.eq_ignore_ascii_case(right_rest)
+            } else {
+                left_rest == right_rest
+            }
     }
 }
 
@@ -699,6 +723,22 @@ fn unescape(value: &[u8]) -> Result<Vec<u8>, Reason> {
     Ok(unescaped)
 }
 
+/// Returns how many leading bytes of `pattern` are the unchanged current-directory `prefix`,
+/// including the `/` after it, counting whole components only.
+fn fixed_prefix(pattern: &[u8], prefix: &[u8]) -> usize {
+    let mut fixed = 0;
+    for component in prefix.split(|byte| *byte == b'/') {
+        let end = fixed + component.len();
+        if pattern.get(fixed..end) != Some(component)
+            || !matches!(pattern.get(end), None | Some(b'/'))
+        {
+            break;
+        }
+        fixed = (end + 1).min(pattern.len());
+    }
+    fixed
+}
+
 /// Resolves `.`, `..` and repeated `/`, keeping a trailing `/` that follows a named component.
 ///
 /// Returns `None` when `..` climbs above the root or the path is absolute.
@@ -729,6 +769,11 @@ fn normalize(path: &[u8]) -> Option<Vec<u8>> {
     }
     Some(normalized)
 }
+
+/// [`Pathspec::matches`] met an `attr:` spec, which needs [`Pathspec::matches_with`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("pathspec has attr: magic; match it with attribute lookup")]
+pub struct AttributesRequired;
 
 /// A pathspec that could not be compiled.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
