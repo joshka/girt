@@ -2940,3 +2940,18 @@ claim Git's repeated-line placement or internal common-line conflict refinement;
 in [the refinement task](https://github.com/joshka/girt/issues/498). Tree merging, renames, virtual
 bases, attributes, configured whitespace and index/working-file publication are not implemented by
 this increment. See the [content merge guide](merging.md).
+
+## Tree Entry Merging
+
+`tests/merge_tree.rs` generates original SHA-1/SHA-256 trees and histories through Git. Clean
+content/mode combinations and nested additions/deletions match `git merge-tree --write-tree` tree
+identities. Content, add/add and modify/delete conflicts preserve the same original stage entries as
+Git's merge-tree output. Focused fixtures cover symbolic links, type/directory conflicts, unresolved
+gitlinks without readable submodule commits, object-store side-effect absence, cancellation and
+traversal entry limits. All Git calls isolate system/global configuration.
+
+`Objects::merge_tree_entries` is explicitly path-based and does not infer renames or directory
+renames. Directory conflicts remain structured entries and cannot yet become leaf index stages. The
+provisional conflicted tree selects ours (or the surviving side for modify/delete), rather than
+Git's marker blobs and conflict-path renaming. Generated objects remain in memory until the caller
+installs them. Virtual merge bases, driver selection and publication are separate layers.
