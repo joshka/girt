@@ -104,7 +104,7 @@ impl CommitGraph {
         Ok(Self {
             commits,
             format: objects.object_format(),
-            generation_order: super::history::GenerationOrder::Unavailable,
+            history: super::history::HistoryIndex::default(),
         })
     }
 

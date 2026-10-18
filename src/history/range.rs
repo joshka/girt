@@ -2,7 +2,8 @@
 use std::collections::BinaryHeap;
 
 use super::Graph;
-use crate::{HistoryError, HistoryLimits, IdMap, ObjectId, Objects};
+use crate::commit_graph::CommitGraph;
+use crate::{HistoryError, HistoryLimits, ObjectId, Objects};
 
 impl Objects {
     /// Collects commits reachable from `include` but not from `exclude`, using default bounds.
@@ -43,9 +44,14 @@ impl Objects {
             include
                 .iter()
                 .chain(exclude)
-                .all(|id| graph.generation(*id).is_some())
+                .all(|id| graph.position(*id).is_some())
         }) {
-            return Ok(paint(self, graph, include, exclude, Sides::Include, limits)?.0);
+            let painted = paint(self, graph, include, exclude, Sides::Include, limits)?;
+            return Ok(painted
+                .included
+                .into_iter()
+                .map(|p| graph.id_at(p))
+                .collect());
         }
         let roots: Vec<_> = include.iter().chain(exclude).copied().collect();
         let graph = Graph::read(self, &roots, limits)?;
@@ -140,12 +146,12 @@ impl Objects {
         if let Some(graph) = self
             .commit_graph
             .as_ref()
-            .filter(|graph| graph.generation(left).is_some() && graph.generation(right).is_some())
+            .filter(|graph| graph.position(left).is_some() && graph.position(right).is_some())
         {
-            let (ahead, behind) = paint(self, graph, &[left], &[right], Sides::Both, limits)?;
+            let painted = paint(self, graph, &[left], &[right], Sides::Both, limits)?;
             return Ok(AheadBehind {
-                ahead: ahead.len(),
-                behind: behind.len(),
+                ahead: painted.included.len(),
+                behind: painted.excluded.len(),
             });
         }
         let graph = Graph::read(self, &[left, right], limits)?;
@@ -178,107 +184,121 @@ enum Sides {
     Both,
 }
 
-struct Paint {
-    marks: IdMap<u8>,
-    queue: BinaryHeap<(u64, ObjectId)>,
+impl Sides {
+    /// Whether a commit with `color` is still interesting: one side reaches it, not both.
+    fn counts(self, color: u8) -> bool {
+        match self {
+            Sides::Include => color == INCLUDE,
+            Sides::Both => color == INCLUDE || color == EXCLUDE,
+        }
+    }
+}
+
+const INCLUDE: u8 = 1;
+const EXCLUDE: u8 = 2;
+
+/// Single-color commits found by a paint, as commit-graph positions.
+struct Painted {
+    included: Vec<u32>,
+    excluded: Vec<u32>,
+}
+
+struct Paint<'a> {
+    graph: &'a CommitGraph,
+    /// Colors by graph position; zero means not yet reached.
+    colors: Vec<u8>,
+    queue: BinaryHeap<(u64, u32)>,
     sides: Sides,
+    marked: usize,
+    /// Queued commits that one side reaches and the other does not (yet).
     interesting: usize,
-    remaining_edges: usize,
     max_commits: usize,
 }
 
-impl Paint {
-    fn enqueue(&mut self, id: ObjectId, generation: u64, color: u8) -> Result<(), HistoryError> {
-        let old = self.marks.get(&id).copied().unwrap_or(0);
+impl Paint<'_> {
+    fn enqueue(&mut self, position: u32, color: u8) -> Result<(), HistoryError> {
+        let old = self.colors[position as usize];
         let new = old | color;
         if old == new {
             return Ok(());
         }
         if old == 0 {
-            if self.marks.len() >= self.max_commits {
+            if self.marked >= self.max_commits {
                 return Err(HistoryError::Limit("commits"));
             }
-            self.queue.push((generation, id));
+            self.marked += 1;
+            self.queue
+                .push((self.graph.generation_at(position), position));
         }
-        self.interesting += usize::from(self.counts(new));
-        self.interesting -= usize::from(self.counts(old));
-        self.marks.insert(id, new);
+        self.interesting += usize::from(self.sides.counts(new));
+        self.interesting -= usize::from(self.sides.counts(old));
+        self.colors[position as usize] = new;
         Ok(())
-    }
-
-    /// Whether a commit with `color` is still interesting: one side reaches it, not both.
-    fn counts(&self, color: u8) -> bool {
-        match self.sides {
-            Sides::Include => color == 1,
-            Sides::Both => color == 1 || color == 2,
-        }
     }
 }
 
+/// Paints both sides through the commit-graph in one walk, highest generation first.
+///
+/// Colors live in a dense array indexed by graph position and the queue holds positions, so a
+/// visited commit costs array reads rather than identity searches or hashing. The walk stops once
+/// no queued commit has a color the result needs: one side only for counts, the include side only
+/// for ranges. Generations strictly decrease along every edge, so a commit's color is final when it
+/// is popped and nothing below the queue can change the result.
 fn paint(
     objects: &Objects,
-    graph: &crate::commit_graph::CommitGraph,
+    graph: &CommitGraph,
     include: &[ObjectId],
     exclude: &[ObjectId],
     sides: Sides,
     limits: HistoryLimits,
-) -> Result<(Vec<ObjectId>, Vec<ObjectId>), HistoryError> {
+) -> Result<Painted, HistoryError> {
     let mut state = Paint {
-        marks: IdMap::default(),
+        graph,
+        colors: vec![0; graph.positions()],
         queue: BinaryHeap::new(),
         sides,
+        marked: 0,
         interesting: 0,
-        remaining_edges: limits.max_parents,
         max_commits: limits.max_commits,
     };
-    for (roots, color) in [(include, 1), (exclude, 2)] {
+    for (roots, color) in [(include, INCLUDE), (exclude, EXCLUDE)] {
         for root in roots {
-            let record = graph.get(*root).ok_or(HistoryError::Missing(*root))?;
-            state.enqueue(
-                *root,
-                graph
-                    .generation(record.id)
-                    .ok_or(HistoryError::Missing(record.id))?,
-                color,
-            )?;
+            let position = graph.position(*root).ok_or(HistoryError::Missing(*root))?;
+            state.enqueue(position, color)?;
         }
     }
-    let mut included = Vec::new();
-    let mut excluded = Vec::new();
+    let shallow = objects.shallow_roots();
+    let mut remaining_edges = limits.max_parents;
+    let mut painted = Painted {
+        included: Vec::new(),
+        excluded: Vec::new(),
+    };
     while state.interesting != 0 {
-        let Some((_, id)) = state.queue.pop() else {
+        let Some((_, position)) = state.queue.pop() else {
             break;
         };
-        // Every child of `id` has a higher generation and was popped first, so its color is final.
-        let color = state.marks[&id];
-        if state.counts(color) {
+        // Every child has a higher generation and was popped first, so this color is final.
+        let color = state.colors[position as usize];
+        if sides.counts(color) {
             state.interesting -= 1;
-            if color == 1 {
-                included.push(id)
+            if color == INCLUDE {
+                painted.included.push(position);
             } else {
-                excluded.push(id)
+                painted.excluded.push(position);
             }
         }
-        if objects.shallow_roots().contains(id) {
+        if !shallow.is_empty() && shallow.contains(graph.id_at(position)) {
             continue;
         }
-        let record = graph.get(id).ok_or(HistoryError::Missing(id))?;
-        state.remaining_edges = state
-            .remaining_edges
-            .checked_sub(record.parents.len())
+        let parents = graph.parent_positions(position);
+        remaining_edges = remaining_edges
+            .checked_sub(parents.len())
             .ok_or(HistoryError::Limit("parent occurrences"))?;
-        for parent in &record.parents {
-            let record = graph.get(*parent).ok_or(HistoryError::Missing(*parent))?;
-            state.enqueue(
-                *parent,
-                graph
-                    .generation(record.id)
-                    .ok_or(HistoryError::Missing(record.id))?,
-                color,
-            )?;
+        for parent in parents {
+            state.enqueue(*parent, color)?;
         }
     }
-    Ok((included, excluded))
+    Ok(painted)
 }
 
 impl Objects {

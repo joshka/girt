@@ -34,41 +34,55 @@ impl Objects {
         if graph.format != self.object_format() {
             return Err(GraphError::HashFormat);
         }
-        graph.generation_order = graph.prepare_history()?;
+        graph.history = graph.prepare_history()?;
         self.commit_graph = Some(Arc::new(graph));
         Ok(())
     }
 }
 
 impl CommitGraph {
-    fn prepare_history(&self) -> Result<GenerationOrder, GraphError> {
-        let positions = ParentLookup::new(&self.commits);
+    fn prepare_history(&self) -> Result<HistoryIndex, GraphError> {
+        let lookup = ParentLookup::new(&self.commits);
         let mut corrected = true;
         let mut topological = true;
+        let mut parent_starts = Vec::with_capacity(self.commits.len() + 1);
+        let mut parents = Vec::new();
+        parent_starts.push(0);
         for commit in &self.commits {
             corrected &= commit.corrected_commit_date.is_some();
             topological &= commit.generation != 0 && commit.generation < 0x3fffffff;
             for parent in &commit.parents {
-                let parent = positions
-                    .get(*parent)
-                    .map(|position| &self.commits[position])
-                    .ok_or(bad("missing indexed parent"))?;
+                let position = lookup.get(*parent).ok_or(bad("missing indexed parent"))?;
+                let parent = &self.commits[position];
                 corrected &= match (parent.corrected_commit_date, commit.corrected_commit_date) {
                     (Some(parent), Some(child)) => parent < child,
                     _ => false,
                 };
                 topological &= parent.generation < commit.generation;
+                parents.push(u32::try_from(position).map_err(|_| bad("commit count"))?);
             }
+            parent_starts.push(u32::try_from(parents.len()).map_err(|_| bad("parent count"))?);
         }
         // A strictly decreasing value on every edge also proves acyclic ancestry.
-        if corrected {
-            return Ok(GenerationOrder::CorrectedDates);
-        }
-        if topological {
-            return Ok(GenerationOrder::Topological);
-        }
-        self.check_ancestry(&positions)?;
-        Ok(GenerationOrder::Unavailable)
+        let (order, generations) = if corrected {
+            let dates = self
+                .commits
+                .iter()
+                .map(|c| c.corrected_commit_date.unwrap_or(0));
+            (GenerationOrder::CorrectedDates, dates.collect())
+        } else if topological {
+            let levels = self.commits.iter().map(|c| u64::from(c.generation));
+            (GenerationOrder::Topological, levels.collect())
+        } else {
+            self.check_ancestry(&lookup)?;
+            return Ok(HistoryIndex::default());
+        };
+        Ok(HistoryIndex {
+            order,
+            generations,
+            parent_starts,
+            parents,
+        })
     }
 
     fn check_ancestry(&self, positions: &ParentLookup<'_>) -> Result<(), GraphError> {
@@ -105,20 +119,64 @@ impl CommitGraph {
 
     pub(crate) fn generation(&self, id: crate::ObjectId) -> Option<u64> {
         let record = self.get(id)?;
-        match self.generation_order {
+        match self.history.order {
             GenerationOrder::Unavailable => None,
             GenerationOrder::Topological => Some(u64::from(record.generation)),
             GenerationOrder::CorrectedDates => record.corrected_commit_date,
         }
     }
+
+    /// Finds a record's position for position-indexed walks, when a generation order is checked.
+    pub(crate) fn position(&self, id: crate::ObjectId) -> Option<u32> {
+        if matches!(self.history.order, GenerationOrder::Unavailable) {
+            return None;
+        }
+        let position = self.commits.binary_search_by_key(&id, |c| c.id).ok()?;
+        u32::try_from(position).ok()
+    }
+
+    /// Returns the number of record positions.
+    pub(crate) fn positions(&self) -> usize {
+        self.commits.len()
+    }
+
+    /// Returns the commit at a position from [`Self::position`] or [`Self::parent_positions`].
+    pub(crate) fn id_at(&self, position: u32) -> crate::ObjectId {
+        self.commits[position as usize].id
+    }
+
+    /// Returns the checked generation at a position from [`Self::position`].
+    pub(crate) fn generation_at(&self, position: u32) -> u64 {
+        self.history.generations[position as usize]
+    }
+
+    /// Returns the parent positions, in stored order, of a position from [`Self::position`].
+    pub(crate) fn parent_positions(&self, position: u32) -> &[u32] {
+        let position = position as usize;
+        let starts = &self.history.parent_starts;
+        &self.history.parents[starts[position] as usize..starts[position + 1] as usize]
+    }
 }
 
 /// A locally checked strict ordering; exact generation equations remain object-verifier work.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) enum GenerationOrder {
+    #[default]
     Unavailable,
     Topological,
     CorrectedDates,
+}
+
+/// Generations and parent positions indexed by record position, filled only for a checked order.
+///
+/// Walks index dense arrays with these positions instead of searching identities per edge.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HistoryIndex {
+    order: GenerationOrder,
+    generations: Vec<u64>,
+    /// `parents[parent_starts[i]..parent_starts[i + 1]]` are the parents of position `i`.
+    parent_starts: Vec<u32>,
+    parents: Vec<u32>,
 }
 
 // Sorted cryptographic identities usually leave only one or two records per 16-bit bucket.

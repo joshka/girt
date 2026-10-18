@@ -412,8 +412,10 @@ fn branch_header(repository: &Repository) -> Result<Vec<u8>> {
         )
         .wrap_err("peeling the upstream")?
         .target;
+    // Like the history commands: a branch behind by a Linux merge window explores more than the
+    // default bound on the excluded side.
     let counts = objects
-        .ahead_behind(id, upstream_commit)
+        .ahead_behind_with(id, upstream_commit, girt::HistoryLimits::trusted())
         .wrap_err("counting commits")?;
     let distance = match (counts.ahead, counts.behind) {
         (0, 0) => String::new(),
