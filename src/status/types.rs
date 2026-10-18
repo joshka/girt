@@ -229,9 +229,27 @@ pub struct Limits {
     /// uses no more than the platform reports as available; 0 and 1 both walk on the calling
     /// thread alone.
     pub max_threads: usize,
+    /// Maximum populated submodule nesting (default 8, hard ceiling 64). Raw status ignores this.
+    pub max_submodule_depth: usize,
+    /// Total submodule paths inspected across the complete nested scan (default 1024).
+    pub max_submodules: usize,
 }
 
 impl Limits {
+    /// Sets [`Self::max_submodule_depth`].
+    #[must_use]
+    pub fn with_max_submodule_depth(mut self, depth: usize) -> Self {
+        self.max_submodule_depth = depth;
+        self
+    }
+
+    /// Sets [`Self::max_submodules`].
+    #[must_use]
+    pub fn with_max_submodules(mut self, count: usize) -> Self {
+        self.max_submodules = count;
+        self
+    }
+
     /// Sets [`Self::index`].
     #[must_use]
     pub fn with_index(mut self, index: index::Limits) -> Self {
@@ -323,6 +341,8 @@ impl Default for Limits {
             max_path_bytes: 64 * 1024 * 1024,
             max_depth: 64,
             max_threads: 8,
+            max_submodule_depth: 8,
+            max_submodules: 1024,
         }
     }
 }
@@ -345,8 +365,10 @@ pub enum Comparison {
 /// Paths are sorted by raw bytes within each list. Empty change lists do not establish Git-default
 /// cleanliness: inspect unmerged entries, unchecked gitlinks, boundaries, and untracked policy.
 /// [`Comparison`] identifies whether index flags and configuration were applied. Raw results treat
-/// assume-valid entries exactly like other entries. Index blob targets (including
-/// conflict stages), baseline leaf targets and gitlink commit targets are not read.
+/// assume-valid entries exactly like other entries. Ordinary index blob targets and baseline leaf
+/// targets are not read for file comparison. Submodule metadata can use the index `.gitmodules`
+/// blob. Gitlink commits are never resolved in the parent's object database; configured inspection
+/// reads HEAD commits in populated children.
 ///
 /// # Inspect unresolved entries before declaring a worktree clean
 ///
@@ -399,12 +421,17 @@ pub struct Report {
     pub index_missing: bool,
     /// Baseline-to-index leaf changes; conflicted paths appear only in `unmerged`.
     pub staged: Vec<TreeChange>,
-    /// Stage-zero index-to-working-tree changes; gitlinks appear only in `unchecked_gitlinks`.
+    /// Stage-zero index-to-working-tree changes. Inspected gitlinks can be modified by commit
+    /// identity or visible nested dirtiness; raw status leaves them in `unchecked_gitlinks`.
     pub unstaged: Vec<WorktreeChange>,
     /// Exact unresolved entries, including stage, mode, ID and original index metadata.
     pub unmerged: Vec<index::Entry>,
-    /// All stage-zero gitlinks. Their presence, identity and dirtiness are uninspected.
+    /// Uninspected stage-zero gitlinks: all in raw status, or those explicitly ignored with
+    /// `ignore=all` in configured status. Ignored paths are not opened.
     pub unchecked_gitlinks: Vec<index::Entry>,
+    /// Inspected submodule checkouts in configured status; empty for raw status. Gitlink commit
+    /// changes and visible dirtiness also appear as `Modified` in `unstaged`.
+    pub submodules: Vec<crate::submodule::Checkout>,
     /// Raw listing policy; [`Untracked::Omit`] for [`Repository::status`], which lists into
     /// [`Self::untracked`] instead.
     ///
@@ -545,7 +572,8 @@ pub enum Change {
     Added(TreeValue),
     /// The exact byte name or one of its ancestor directories was absent.
     Deleted,
-    /// Content identity and/or leaf mode differ; compare against the index value.
+    /// Content identity and/or leaf mode differ, or an inspected submodule is dirty. A dirty
+    /// submodule can retain the same identity; inspect `Report::submodules` for details.
     Modified(TreeValue),
     /// A directory or special file occupies this leaf, or a non-directory/boundary blocks an
     /// ancestor. No descendant behind the obstruction was opened.
@@ -588,6 +616,9 @@ pub enum Change {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// Reading or inspecting a nested repository failed; no partial report is returned.
+    #[error("inspecting submodules")]
+    Submodules(#[source] Box<crate::submodule::StatusError>),
     /// Converting a working file for comparison failed, for example because a required filter
     /// driver failed or a command would run under
     /// [`filter::Commands::Refuse`](crate::filter::Commands::Refuse).

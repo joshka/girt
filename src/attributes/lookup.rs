@@ -112,6 +112,8 @@ impl From<FileError> for LoadError {
 /// ```
 #[derive(Debug)]
 pub struct Lookup {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    environment: Environment,
     attributes: Attributes,
     directories: Directories,
     loaded: BTreeSet<Vec<u8>>,
@@ -134,6 +136,11 @@ enum Directories {
 }
 
 impl Lookup {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn environment(&self) -> &Environment {
+        &self.environment
+    }
+
     /// The files loaded so far, as one rule set.
     #[must_use]
     pub fn attributes(&self) -> &Attributes {
@@ -419,6 +426,8 @@ impl Repository {
             DirectorySource::None => Directories::None,
         };
         let mut lookup = Lookup {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            environment: environment.clone(),
             attributes: Attributes::new(case, limits),
             directories,
             loaded: BTreeSet::new(),

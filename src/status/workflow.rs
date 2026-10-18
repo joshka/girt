@@ -265,11 +265,12 @@ impl Repository {
         return supported::run(
             self,
             baseline,
-            super::worktree::Listing::Ignoring(
-                Box::new(ignore.base().clone()),
-                untracked,
-                supported::git_names(self)?,
-            ),
+            super::worktree::Listing::Ignoring {
+                rules: Box::new(ignore.base().clone()),
+                files: untracked,
+                names: supported::git_names(self)?,
+                environment: Box::new(ignore.environment().clone()),
+            },
             paths,
             limits,
             cancel,
@@ -329,11 +330,12 @@ impl Repository {
         return supported::run_with_checkpoint(
             self,
             baseline,
-            super::worktree::Listing::Ignoring(
-                Box::new(ignore.base().clone()),
-                untracked,
-                supported::git_names(self)?,
-            ),
+            super::worktree::Listing::Ignoring {
+                rules: Box::new(ignore.base().clone()),
+                files: untracked,
+                names: supported::git_names(self)?,
+                environment: Box::new(ignore.environment().clone()),
+            },
             paths,
             Some(filters),
             limits,
@@ -427,8 +429,66 @@ mod supported {
         listing: Listing,
         paths: &Pathspec,
         filters: Option<&mut crate::filter::Pipeline>,
+        limits: Limits,
+        cancel: &AtomicBool,
+        before_recheck: impl FnOnce(),
+    ) -> Result<Report, Error> {
+        let configured = matches!(listing, Listing::Ignoring { .. });
+        let environment = filters
+            .as_ref()
+            .and_then(|filters| filters.environment())
+            .cloned()
+            .unwrap_or_else(|| match &listing {
+                Listing::Ignoring { environment, .. } => (**environment).clone(),
+                Listing::Raw(_) => crate::workflow::Environment::default(),
+            });
+        let (commands, driver_limits) = filters.as_ref().map_or(
+            (
+                crate::filter::Commands::Refuse,
+                crate::filter::Limits::default(),
+            ),
+            |filters| filters.driver_policy(),
+        );
+        run_finishing(
+            repo,
+            baseline,
+            listing,
+            paths,
+            filters,
+            limits,
+            cancel,
+            |report| {
+                if configured {
+                    crate::submodule::complete_status(
+                        repo,
+                        report,
+                        commands,
+                        driver_limits,
+                        &environment,
+                        limits,
+                        cancel,
+                    )
+                    .map_err(|error| Error::Submodules(Box::new(error)))?;
+                }
+                Ok(())
+            },
+            before_recheck,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one status run plus completion before recheck"
+    )]
+    pub(super) fn run_finishing(
+        repo: &Repository,
+        baseline: Baseline,
+        listing: Listing,
+        paths: &Pathspec,
+        filters: Option<&mut crate::filter::Pipeline>,
         mut limits: Limits,
         cancel: &AtomicBool,
+        finish: impl FnOnce(&mut Report) -> Result<(), Error>,
         before_recheck: impl FnOnce(),
     ) -> Result<Report, Error> {
         if paths.uses_attributes() {
@@ -526,9 +586,9 @@ mod supported {
         staged.retain(|change| paths.matches_unchecked(&change.path));
         let (untracked_policy, untracked_files) = match &listing {
             Listing::Raw(policy) => (*policy, None),
-            Listing::Ignoring(_, files, _) => (Untracked::Omit, Some(*files)),
+            Listing::Ignoring { files, .. } => (Untracked::Omit, Some(*files)),
         };
-        let configured = matches!(listing, Listing::Ignoring(..));
+        let configured = matches!(listing, Listing::Ignoring { .. });
         let comparison = if filters.is_some() {
             super::super::Comparison::ConvertedContent
         } else if configured {
@@ -551,18 +611,7 @@ mod supported {
             limits,
             cancel,
         )?;
-        before_recheck();
-        check(cancel)?;
-        if !repo.index_unchanged(index.as_ref(), limits.index)? {
-            return Err(Error::Changed(b"index".to_vec()));
-        }
-        if let Some(head) = head
-            && resolve_head(repo)? != head
-        {
-            return Err(Error::Changed(b"HEAD".to_vec()));
-        }
-        check(cancel)?;
-        Ok(Report {
+        let mut report = Report {
             comparison,
             baseline_tree: tree,
             index_missing: index.is_none(),
@@ -574,12 +623,26 @@ mod supported {
                 .collect(),
             unmerged,
             unchecked_gitlinks: gitlinks,
+            submodules: Vec::new(),
             untracked_policy,
             raw_untracked: observed.untracked,
             untracked_files,
             untracked: observed.listed,
             boundaries: observed.boundaries,
-        })
+        };
+        finish(&mut report)?;
+        before_recheck();
+        check(cancel)?;
+        if !repo.index_unchanged(index.as_ref(), limits.index)? {
+            return Err(Error::Changed(b"index".to_vec()));
+        }
+        if let Some(head) = head
+            && resolve_head(repo)? != head
+        {
+            return Err(Error::Changed(b"HEAD".to_vec()));
+        }
+        check(cancel)?;
+        Ok(report)
     }
 
     /// Compares every baseline leaf with the stage-zero entries, leaving conflicted paths to
@@ -705,4 +768,38 @@ mod supported {
             }
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn nested_status(
+    repo: &Repository,
+    untracked: UntrackedFiles,
+    environment: &crate::workflow::Environment,
+    filters: &mut crate::filter::Pipeline,
+    limits: Limits,
+    cancel: &AtomicBool,
+    finish: impl FnOnce(&mut Report) -> Result<(), crate::submodule::StatusError>,
+) -> Result<Report, Error> {
+    let rules = repo.ignore_rules(environment).map_err(|error| {
+        Error::Submodules(Box::new(crate::submodule::StatusError::AtPath {
+            path: vec![],
+            source: error.into(),
+        }))
+    })?;
+    supported::run_finishing(
+        repo,
+        Baseline::Head,
+        super::worktree::Listing::Ignoring {
+            rules: Box::new(rules.base().clone()),
+            files: untracked,
+            names: supported::git_names(repo)?,
+            environment: Box::new(environment.clone()),
+        },
+        &Pathspec::all(),
+        Some(filters),
+        limits,
+        cancel,
+        |report| finish(report).map_err(|error| Error::Submodules(Box::new(error))),
+        || {},
+    )
 }

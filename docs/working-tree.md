@@ -27,6 +27,14 @@ Use `Repository::status` with rules from `Repository::ignore_rules` for reposito
 handle with `Repository::open_with_config` when the application needs system, global or runtime
 configuration layers; `Repository::open` reads repository configuration only.
 
+Configured status also inspects populated submodules and records their HEAD/dirtiness in
+`Report::submodules`. Visible changes appear in `unstaged` even when a dirty submodule retains the
+recorded commit. `ignore=all` leaves that submodule unchecked without opening it. Nested
+repositories inherit explicit non-local configuration sources and use their own local configuration,
+attributes, filters and ignore rules. Raw status does not inspect nested repositories. See
+[working with submodules](../site/src/content/docs/guides/submodules.md#inspect-existing-checkouts)
+for ignore precedence, command permission and recursion limits.
+
 Intent-to-add entries contribute no staged content. Their existing working files appear as
 `Change::Added`, including empty files; deleted files appear as `Change::Deleted`. Assume-unchanged
 and skip-worktree entries suppress working differences but retain staged differences. These flags

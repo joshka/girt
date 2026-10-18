@@ -208,6 +208,8 @@ pub enum LoadError {
 /// ```
 #[derive(Clone, Debug)]
 pub struct WorktreeRules {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    environment: Environment,
     root: PathBuf,
     base: Ignore,
     checked: Ignore,
@@ -216,6 +218,11 @@ pub struct WorktreeRules {
 }
 
 impl WorktreeRules {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn environment(&self) -> &Environment {
+        &self.environment
+    }
+
     /// The comparison policy chosen from `core.ignoreCase`.
     #[must_use]
     pub fn case(&self) -> Case {
@@ -410,6 +417,8 @@ impl Repository {
             _ => Case::Sensitive,
         };
         let mut rules = WorktreeRules {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            environment: environment.clone(),
             base: Ignore::new(case, limits),
             checked: Ignore::new(case, limits),
             root,

@@ -25,7 +25,8 @@
 //! rules from [`Repository::ignore_rules`](crate::Repository::ignore_rules) and an
 //! [`UntrackedFiles`] listing, and read [`Report::untracked`].
 //! As in Git, a working file is not read when its `lstat` matches every cached index stat word and
-//! the entry is not racily clean; index blobs are never read. Configured status also trusts
+//! the entry is not racily clean; ordinary file comparison does not read index blobs. Submodule
+//! metadata can use the index `.gitmodules` blob. Configured status also trusts
 //! assume-unchanged and skip-worktree promises; raw status inspects those files. No index
 //! refresh, locks, hooks, writes, rename detection, staging or checkout occur.
 //!
@@ -34,8 +35,9 @@
 //! directory-name matching prevents case-folded aliases from being mistaken for tracked names.
 //! Unsafe components and metadata aliases are rejected before conversion to platform paths.
 //! NUL, backslashes, colons, empty/dot/parent components and case-insensitive `.git` components
-//! are rejected on both platforms. Gitlinks and nested repositories are never recursively
-//! inspected.
+//! are rejected on both platforms. Raw status never enters gitlinks. Configured status inspects
+//! them separately through [`submodule`](crate::submodule), with depth/count bounds and each
+//! child's own attributes and filters. Non-gitlink nested repositories remain boundaries.
 //!
 //! # Example
 //!
@@ -76,6 +78,8 @@
 //! ```
 mod types;
 mod workflow;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use workflow::nested_status;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod worktree;
 
