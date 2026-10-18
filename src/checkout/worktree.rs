@@ -1637,7 +1637,7 @@ fn names(
     }
     Ok(names)
 }
-fn read_leaf(
+pub(crate) fn read_leaf(
     fd: &OwnedFd,
     path: &[u8],
     stat: &Stat,

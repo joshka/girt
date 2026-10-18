@@ -244,7 +244,10 @@ impl Patch {
         if self.files().len() > limits.content.max_files {
             return Err(TreeError::Limit("files"));
         }
-        let (mappings, removals) = map_files(self, &options, &mut state)?;
+        let (mappings, removals) = map_files(self, &mut |path| {
+            state.check()?;
+            state.map_path(path, &options)
+        })?;
         state.load(Vec::new(), base)?;
         apply_mapped(state, mappings, removals)
     }
@@ -396,7 +399,10 @@ pub(super) fn apply_index_tree(
         generated: 0,
         path_bytes: 0,
     };
-    let (mappings, removals) = map_files(patch, &options, &mut state)?;
+    let (mappings, removals) = map_files(patch, &mut |path| {
+        state.check()?;
+        state.map_path(path, &options)
+    })?;
     state.directories.insert(Vec::new(), Directory::new());
     let identity = TreeOptions {
         strip_components: 0,
@@ -428,33 +434,25 @@ pub(super) fn apply_index_tree(
     apply_mapped(state, mappings, removals)
 }
 
-struct MappedFile<'a> {
-    file: &'a super::FilePatch,
-    old: Option<Vec<u8>>,
-    new: Option<Vec<u8>>,
+pub(super) struct MappedFile<'a> {
+    pub(super) file: &'a super::FilePatch,
+    pub(super) old: Option<Vec<u8>>,
+    pub(super) new: Option<Vec<u8>>,
 }
 
-type Paths = std::collections::BTreeSet<Vec<u8>>;
+pub(super) type Paths = std::collections::BTreeSet<Vec<u8>>;
 
-fn map_files<'a>(
+pub(super) fn map_files<'a>(
     patch: &'a Patch,
-    options: &TreeOptions,
-    state: &mut State<'_>,
+    map: &mut impl FnMut(&[u8]) -> Result<Vec<u8>, TreeError>,
 ) -> Result<(Vec<MappedFile<'a>>, Paths), TreeError> {
     let mut mappings = Vec::new();
     let mut removals = Paths::new();
     let mut destinations = Paths::new();
     let mut sources = Paths::new();
     for file in patch.files() {
-        state.check()?;
-        let old = file
-            .old_path()
-            .map(|path| state.map_path(path, options))
-            .transpose()?;
-        let new = file
-            .new_path()
-            .map(|path| state.map_path(path, options))
-            .transpose()?;
+        let old = file.old_path().map(&mut *map).transpose()?;
+        let new = file.new_path().map(&mut *map).transpose()?;
         let path = new.as_ref().or(old.as_ref()).unwrap();
         if file.operation == super::FileOperation::Edit
             && old.is_some()
@@ -676,7 +674,7 @@ impl State<'_> {
     }
 }
 
-fn mapped(
+pub(super) fn mapped(
     path: &[u8],
     options: &TreeOptions,
     limits: TreeLimits,
