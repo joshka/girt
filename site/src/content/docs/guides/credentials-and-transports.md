@@ -146,6 +146,8 @@ repository. Terminal prompts and job control are unavailable; use an agent or as
 variants, percent encoding, query/fragment fields and repository paths starting with `~` remain
 unsupported.
 
-HTTP(S) clone and discovery currently allow anonymous access only. Fetch and push use configured
-credential helpers through `workflow`, but do not prompt interactively for missing credentials.
+HTTP(S) clone, fetch, push and `remote heads <remote>` use configured credential helpers through
+`workflow`, then the askpass program from `GIT_ASKPASS`, `core.askPass` or `SSH_ASKPASS`. The CLI
+does not prompt on the terminal itself. `remote heads` with a bare HTTP(S) URL is still anonymous
+([issue 721](https://github.com/joshka/girt/issues/721)).
 Clone checks out the default branch unless `--bare` is used.

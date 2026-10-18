@@ -325,6 +325,41 @@ pub fn remote_head(
     repository.remote_head(remote_name, environment, callbacks)
 }
 
+/// Lists a configured remote's references, as `git ls-remote <remote>` does.
+///
+/// The remote is resolved, authenticated and configured exactly as for [`fetch`]: URL rewrites,
+/// protocol policy, `http.*` settings, credential helpers, askpass and
+/// [`TransferCallbacks::credential`]. Nothing is downloaded and nothing changes locally. The
+/// result holds every advertised reference with its peeled tag hints, the object format, the
+/// interpreted `HEAD` and the protocol version.
+///
+/// # Examples
+///
+/// ```
+/// use girt::workflow::{self, Environment, NoCallbacks};
+/// # let (_directory, _, repo, main, _) = include!("doctest/remote.rs");
+///
+/// // `repo` has a remote `origin` whose `main` branch points at `main`.
+/// let listing =
+///     workflow::remote_refs(&repo, "origin", &Environment::default(), &mut NoCallbacks)?;
+/// assert!(listing.advertisement.refs.iter().any(|reference| {
+///     reference.name.as_bytes() == b"refs/heads/main" && reference.id == main
+/// }));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// Returns the errors from [`remote_head`].
+pub fn remote_refs(
+    repository: &Repository,
+    remote_name: &str,
+    environment: &Environment,
+    callbacks: &mut dyn TransferCallbacks,
+) -> Result<crate::fetch::RemoteDiscovery, TransferError> {
+    repository.discover_remote(remote_name, environment, callbacks)
+}
+
 /// Downloads objects from a configured remote and updates local references to match.
 ///
 /// The refspecs in `options` choose which remote references to fetch and where to record them,
@@ -1862,6 +1897,16 @@ impl Repository {
         environment: &Environment,
         callbacks: &mut dyn TransferCallbacks,
     ) -> Result<RemoteHead, TransferError> {
+        self.discover_remote(remote_name, environment, callbacks)
+            .map(|discovery| discovery.head)
+    }
+
+    fn discover_remote(
+        &self,
+        remote_name: &str,
+        environment: &Environment,
+        callbacks: &mut dyn TransferCallbacks,
+    ) -> Result<crate::fetch::RemoteDiscovery, TransferError> {
         let (endpoint, _) =
             self.endpoint(remote_name, Direction::Fetch, environment, &*callbacks)?;
         let cancel = AtomicBool::new(false);
@@ -1895,7 +1940,6 @@ impl Repository {
         };
         let _ = &callbacks;
         discovery
-            .map(|discovery| discovery.head)
             .map_err(|error| TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error))))
     }
 

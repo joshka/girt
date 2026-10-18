@@ -40,8 +40,8 @@ including the selected Windows scope and exact tested revision.
 
 ## Reachability bitmap files
 
-`girt::bitmap` reads bitmap v1 and reverse-index v1 files for SHA-1 and SHA-256 packs and
-multi-pack indexes. Git CLI fixtures compare decoded type maps and selected-commit closures with
+`girt::bitmap` reads bitmap v1 and reverse-index v1 files for SHA-1 and SHA-256 packs and multi-pack
+indexes. Git CLI fixtures compare decoded type maps and selected-commit closures with
 `git rev-list --use-bitmap-index --objects`; `.rev` mappings translate bitmap order into ordinary
 index order. Git-written optional name-hash caches and lookup tables are accepted. XOR dependencies
 are decoded under an expansion budget. Unsupported pseudo-merge extensions are refused explicitly.
@@ -52,11 +52,12 @@ fixtures prove covered roots use bitmaps. Corrupt sidecars, zero metadata-work b
 loose tips, missing roots, independent closure limits, tag/tree/blob roots, skipped gitlinks and
 shallow boundaries are covered by `tests/bitmaps.rs`. Packed file handles remain pinned in results.
 
-Checksums and structure establish association with an inventory, not the truth of graph
-reachability claims. Forced walking provides an independent graph result. Reusing verified bindings
-across queries is tracked in [the bitmap cache issue](https://github.com/joshka/girt/issues/717). Incremental MIDX and
-alternate-store bitmap acceleration, pseudo-merges and bitmap writing remain tracked in
-[the bitmap issue](https://github.com/joshka/girt/issues/518). See [the reader guide](bitmaps.md).
+Checksums and structure establish association with an inventory, not the truth of graph reachability
+claims. Forced walking provides an independent graph result. Reusing verified bindings across
+queries is tracked in [the bitmap cache issue](https://github.com/joshka/girt/issues/717).
+Incremental MIDX and alternate-store bitmap acceleration, pseudo-merges and bitmap writing remain
+tracked in [the bitmap issue](https://github.com/joshka/girt/issues/518). See
+[the reader guide](bitmaps.md).
 
 ## Multi-pack indexes
 
@@ -364,6 +365,11 @@ turning askpass off, an empty answer, a failing program, a configured `credentia
 `Username for '<scheme>://<host>':` and then `Password for '<scheme>://<user>@<host>': `, dropping
 `<user>@` for an empty username. A failing program leaves the question to the next prompt: Git's
 terminal, girt's `TransferCallbacks::credential`. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
+
+`girt-cli/tests/http_remote.rs` lists a configured remote on the same kind of server with
+`girt remote heads origin` and `git ls-remote origin`, using one recording askpass script. The
+output, including a peeled annotated tag, and the questions asked are identical. The CLI reaches the
+remote through `workflow::remote_refs`. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
 
 ## Git Capability Audit: Transfer
 
