@@ -203,7 +203,7 @@ impl Repository {
                 baseline,
                 target,
                 Some(super::worktree::Filters {
-                    baseline: baseline_filters,
+                    baseline: Some(baseline_filters),
                     target: target_filters,
                 }),
                 limits,

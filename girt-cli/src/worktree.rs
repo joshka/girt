@@ -128,8 +128,9 @@ pub struct CheckoutArgs {
 ///
 /// Without paths, moves the branch HEAD names (or a detached HEAD) to the revision, records the old
 /// commit in `ORIG_HEAD` and appends `reset: moving to <revision>` to the reflogs. `--soft` keeps
-/// the index; the default, `--mixed`, replaces it with the revision's tree. Working files are never
-/// changed. With paths after `--`, only those index entries are reset from the revision, which
+/// the index; the default, `--mixed`, replaces it with the revision's tree; `--hard` also rewrites
+/// tracked working files, discarding local changes, and converts them as `girt checkout` does. With
+/// paths after `--`, only those index entries are reset from the revision, which
 /// unstages them; no reference moves.
 #[derive(Debug, clap::Args)]
 pub struct ResetArgs {
@@ -137,8 +138,13 @@ pub struct ResetArgs {
     #[arg(long, conflicts_with = "mixed")]
     soft: bool,
     /// Also replace the index with the revision's tree (the default).
-    #[arg(long)]
+    #[arg(long, conflicts_with = "hard")]
     mixed: bool,
+    /// Also make tracked working files match the revision, discarding local changes.
+    #[arg(long, conflicts_with = "soft")]
+    hard: bool,
+    #[command(flatten)]
+    filters: FilterArgs,
     /// Revision to reset to; `HEAD` when omitted.
     #[arg(add = ArgValueCompleter::new(complete::revisions))]
     revision: Option<String>,
@@ -155,13 +161,23 @@ pub fn reset(args: ResetArgs, context: &Context) -> Result<ExitCode> {
     // `git reset` on an unborn branch empties the index instead of moving anything.
     let unborn =
         args.revision.is_none() && repository.head().wrap_err("reading HEAD")?.id.is_none();
-    if unborn && args.soft && args.pathspecs.is_empty() {
-        // Nothing to move and the index stays, as with `git reset --soft`.
+    if unborn && args.pathspecs.is_empty() {
+        // Nothing to move: soft keeps the index, mixed empties it, hard also removes its files.
+        let mode = if args.soft {
+            ResetMode::Soft
+        } else if args.hard {
+            ResetMode::Hard
+        } else {
+            ResetMode::Mixed
+        };
+        repository
+            .reset_unborn(mode, &Default::default())
+            .wrap_err("resetting")?;
         return Ok(ExitCode::SUCCESS);
     }
     if !args.pathspecs.is_empty() || unborn {
-        if args.soft {
-            bail!("--soft cannot reset paths");
+        if args.soft || args.hard {
+            bail!("--soft and --hard cannot reset paths");
         }
         let paths = if args.pathspecs.is_empty() {
             girt::pathspec::Pathspec::all()
@@ -188,13 +204,28 @@ pub fn reset(args: ResetArgs, context: &Context) -> Result<ExitCode> {
         .wrap_err(
             "building reflog committer: set user.name/user.email or GIT_COMMITTER_NAME/EMAIL",
         )?;
+    let options = ResetOptions::new(committer, revision);
+    if args.hard {
+        match args.filters.commands() {
+            None => repository.reset(commit, ResetMode::Hard, &options),
+            Some(commands) => {
+                let tree = objects.read_commit(commit)?.tree();
+                let mut filters = repository
+                    .filters_for_checkout(&context.environment, tree, commands)
+                    .wrap_err("loading attributes")?;
+                repository.reset_hard_with_filters(commit, &options, &mut filters)
+            }
+        }
+        .wrap_err("resetting")?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let mode = if args.soft {
         ResetMode::Soft
     } else {
         ResetMode::Mixed
     };
     repository
-        .reset(commit, mode, &ResetOptions::new(committer, revision))
+        .reset(commit, mode, &options)
         .wrap_err("resetting")?;
     Ok(ExitCode::SUCCESS)
 }

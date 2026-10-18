@@ -25,7 +25,9 @@
 //! content verification and repeated identity checks detect observed changes, but POSIX has no
 //! conditional rename/unlink by inode: arbitrary writers racing the final check are not excluded.
 //! Hardlink/mount attacks and ABA replacements are outside this contract. No batch atomicity,
-//! automatic rollback, crash durability, branch switching or force mode is provided.
+//! automatic rollback, crash durability, branch switching or force mode is provided;
+//! [`Repository::reset`](crate::Repository::reset) with
+//! [`ResetMode::Hard`](crate::reset::ResetMode::Hard) uses a variant that discards local changes.
 //!
 //! Linux/macOS only, on filesystems with native hard links, symlinks and POSIX modes. Colons,
 //! backslashes and non-ASCII names are ordinary name bytes.
@@ -137,4 +139,4 @@ mod worktree;
 
 pub use types::*;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(crate) use worktree::run_with_index;
+pub(crate) use worktree::{run_discarding, run_with_index};
