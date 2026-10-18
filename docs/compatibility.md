@@ -59,6 +59,14 @@ Incremental MIDX and alternate-store bitmap acceleration, pseudo-merges and bitm
 tracked in [the bitmap issue](https://github.com/joshka/girt/issues/518). See
 [the reader guide](bitmaps.md).
 
+The bitmap encoders produce pack and MIDX artifacts in both hash formats. Isolated
+`git rev-list --test-bitmap` validates the selected commit graph and prints `OK!` for each generated
+fixture, and `--use-bitmap-index --objects` agrees with decoded girt output. `git verify-pack` and
+`git multi-pack-index verify` also accept their associated inventories. Output uses independent
+EWAH records, lookup tables and reverse indexes; MIDX output includes RIDX/BTMP and unknown (zero)
+pathname-hash hints. This establishes format and graph compatibility, not identical compression or
+selection to Git.
+
 ## Multi-pack indexes
 
 The MIDX fixtures in `tests/multi_pack_index.rs` use isolated Git configuration and original pack

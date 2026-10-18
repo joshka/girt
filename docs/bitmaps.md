@@ -100,3 +100,43 @@ Repeated queries currently reload optional sidecars and revalidate MIDX entries.
 verification is cached by the pinned pack reader. Reusing complete validated bitmap bindings is
 tracked in [the snapshot-cache follow-up](https://github.com/joshka/girt/issues/717); this increment
 makes no serving-throughput claim.
+
+## Encode bitmap artifacts
+
+`Objects::encode_pack_bitmap` writes caller-owned bitmap and reverse-index bytes for a primary pack.
+`encode_multi_pack_bitmap` also writes the associated MIDX, including RIDX and BTMP ordering chunks.
+Neither method changes storage. Keep maintenance exclusion through encoding and installation so
+another writer cannot retire the named packs.
+
+```rust,no_run
+use girt::Repository;
+use girt::bitmap::{WriteLimits, WriteOptions};
+use std::sync::atomic::AtomicBool;
+
+let repository = Repository::open("repo.git")?;
+let objects = repository.objects()?;
+let pack = objects.packs().next().ok_or("no pack")?;
+let written = objects.encode_pack_bitmap(
+    pack.checksum(), WriteOptions::default(), WriteLimits::default(), &AtomicBool::new(false),
+)?;
+println!("{} selected commits, {} bitmap bytes", written.commits, written.bitmap.len());
+// Install under maintenance exclusion; keep the complete bitmap private until its reverse
+// ordering is available. Encoding by itself does not publish these bytes.
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The writer verifies every inventory object's contents and graph edges, including dependencies of
+unselected commits. An inventory that omits a reachable object is refused even if another pack or an
+alternate contains it. Shallow repositories cannot establish full-DAG claims and are refused.
+Existing bitmaps are never used to construct new claims.
+
+Supply `WriteOptions::commits` for explicit selection. An empty list chooses graph tips first, then
+samples remaining commits evenly in sorted ID order, up to `max_commits` (64 by default). Explicit
+selections are deduplicated and must fit that cap. This policy is deterministic; it does not copy
+Git's commit-selection heuristic.
+
+Output uses EWAH runs and literals, independent commit records and a lookup table. XOR search is not
+performed. MIDX output includes zero pathname-hash hints for unknown names; those hints affect delta
+heuristics only. Both artifact types carry the inventory checksum and their own checksums.
+`WriteLimits` separately bounds input objects/packs, decoded graph bytes/edges, repeated selected
+reachability work, per-object reads and combined output bytes. No partial artifacts are returned.

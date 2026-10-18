@@ -621,3 +621,262 @@ fn malformed_objects_and_wrong_edge_kinds_preserve_query_errors() {
         matches!(objects.reachable_difference(&[tree], &[]), Err(Error::Kind(id)) if id == history.ids[0])
     );
 }
+
+#[rstest]
+#[case::sha1_pack(ObjectFormat::Sha1, false)]
+#[case::sha256_pack(ObjectFormat::Sha256, false)]
+#[case::sha1_midx(ObjectFormat::Sha1, true)]
+#[case::sha256_midx(ObjectFormat::Sha256, true)]
+fn encoded_bitmaps_pass_git_graph_verification(#[case] format: ObjectFormat, #[case] midx: bool) {
+    let fixture = pack_git::Fixture::new(format, true, 8);
+    let root = fixture.root.path();
+    let objects = fixture.repo.objects().unwrap();
+    let pack = objects.packs().next().unwrap();
+    let commit = fixture
+        .records
+        .iter()
+        .find(|(_, kind, _)| *kind == ObjectKind::Commit)
+        .unwrap()
+        .0;
+    let options = girt::bitmap::WriteOptions::default();
+    let limits = girt::bitmap::WriteLimits::default();
+    let written = if midx {
+        let artifacts = objects
+            .encode_multi_pack_bitmap(Default::default(), options, limits, &AtomicBool::new(false))
+            .unwrap();
+        fs::write(root.join("objects/pack/multi-pack-index"), &artifacts.index).unwrap();
+        let index =
+            girt::multi_pack_index::MultiPackIndex::parse(&artifacts.index, format).unwrap();
+        index.verify(&objects).unwrap();
+        pack_git::git(root, &["multi-pack-index", "verify"], b"");
+        let base = root.join(format!(
+            "objects/pack/multi-pack-index-{}",
+            artifacts.bitmap.anchor
+        ));
+        fs::write(base.with_extension("bitmap"), &artifacts.bitmap.bitmap).unwrap();
+        fs::write(base.with_extension("rev"), &artifacts.bitmap.reverse_index).unwrap();
+        artifacts.bitmap
+    } else {
+        let written = objects
+            .encode_pack_bitmap(pack.checksum(), options, limits, &AtomicBool::new(false))
+            .unwrap();
+        fs::write(pack.path().with_extension("bitmap"), &written.bitmap).unwrap();
+        let reverse_path = pack.path().with_extension("rev");
+        if reverse_path.exists() {
+            replace_sidecar(&reverse_path, &written.reverse_index);
+        } else {
+            fs::write(reverse_path, &written.reverse_index).unwrap();
+        }
+        written
+    };
+    assert_eq!(written.objects, fixture.records.len());
+    assert_eq!(written.commits, 1);
+    let index = BitmapIndex::parse(&written.bitmap, written.anchor, written.objects).unwrap();
+    let reverse =
+        ReverseIndex::parse(&written.reverse_index, written.anchor, written.objects).unwrap();
+    let ids: Vec<_> = pack.ids().collect();
+    let order: Vec<_> = reverse.positions().collect();
+    let position = ids.binary_search(&commit).unwrap() as u32;
+    let actual: BTreeSet<_> = index
+        .reachable(position)
+        .unwrap()
+        .unwrap()
+        .positions()
+        .map(|bit| ids[order[bit] as usize])
+        .collect();
+    assert_eq!(actual, reachable_ids(root, commit));
+    let verified = pack_git::git_output(
+        root,
+        &["rev-list", "--test-bitmap", &commit.to_string()],
+        b"",
+    );
+    assert!(
+        verified.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&verified.stderr).contains("OK!"),
+        "{}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+    pack_git::git(
+        root,
+        &["verify-pack", pack.index_path().to_str().unwrap()],
+        b"",
+    );
+    let reopened = girt::Repository::open(root).unwrap().objects().unwrap();
+    let mut query = girt::bitmap::QueryLimits::default();
+    query.max_walk_bytes = 0;
+    assert_eq!(
+        reopened
+            .reachable_difference_with(&[commit], &[], query, &AtomicBool::new(false))
+            .unwrap()
+            .ids()
+            .collect::<BTreeSet<_>>(),
+        actual
+    );
+}
+
+#[test]
+fn writer_refuses_nonclosed_graphs_and_bounds_selection_work_output() {
+    let fixture = pack_git::Fixture::new(ObjectFormat::Sha1, true, 3);
+    let root = fixture.root.path();
+    let objects = fixture.repo.objects().unwrap();
+    let checksum = objects.packs().next().unwrap().checksum();
+    let commit = fixture
+        .records
+        .iter()
+        .find(|(_, kind, _)| *kind == ObjectKind::Commit)
+        .unwrap()
+        .0;
+    let mut options = girt::bitmap::WriteOptions::default();
+    options.commits = vec![commit, commit];
+    options.max_commits = 1;
+    let written = objects
+        .encode_pack_bitmap(
+            checksum,
+            options.clone(),
+            Default::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(written.commits, 1);
+    options.commits = vec![fixture.ordinary];
+    assert!(
+        matches!(objects.encode_pack_bitmap(checksum, options, Default::default(), &AtomicBool::new(false)), Err(girt::bitmap::WriteError::Commit(id)) if id == fixture.ordinary)
+    );
+    for field in 0..5 {
+        let mut limits = girt::bitmap::WriteLimits::default();
+        match field {
+            0 => limits.max_objects = 0,
+            1 => limits.max_edges = 0,
+            2 => limits.max_input_bytes = 0,
+            3 => limits.max_visits = 0,
+            _ => limits.max_bytes = 0,
+        }
+        assert!(matches!(
+            objects.encode_pack_bitmap(
+                checksum,
+                Default::default(),
+                limits,
+                &AtomicBool::new(false)
+            ),
+            Err(girt::bitmap::WriteError::Limit(_))
+        ));
+    }
+    assert!(matches!(
+        objects.encode_pack_bitmap(
+            checksum,
+            Default::default(),
+            Default::default(),
+            &AtomicBool::new(true)
+        ),
+        Err(girt::bitmap::WriteError::Cancelled)
+    ));
+    // A commit-only pack cannot claim full closure just because its tree exists elsewhere.
+    let output = pack_git::git(
+        root,
+        &["pack-objects", "objects/pack/pack"],
+        format!("{commit}\n").as_bytes(),
+    );
+    let checksum: ObjectId = std::str::from_utf8(&output)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let refreshed = fixture.repo.objects().unwrap();
+    assert!(matches!(
+        refreshed.encode_pack_bitmap(
+            checksum,
+            Default::default(),
+            Default::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::bitmap::WriteError::Closure(_))
+    ));
+    fs::write(root.join("shallow"), format!("{commit}\n")).unwrap();
+    let shallow = girt::Repository::open(root).unwrap().objects().unwrap();
+    assert!(matches!(
+        shallow.encode_pack_bitmap(
+            checksum,
+            Default::default(),
+            Default::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::bitmap::WriteError::Shallow)
+    ));
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn writer_selects_bounded_commits_across_duplicate_midx_packs(#[case] format: ObjectFormat) {
+    let parents: Vec<_> = (0..12)
+        .map(|i| if i == 0 { vec![] } else { vec![i - 1] })
+        .collect();
+    let history = history_git::History::with_format(&parents, false, format);
+    let root = history.root.path();
+    let tree = format.hash_object(ObjectKind::Tree, b"");
+    let prefix = root.join("objects/pack/pack");
+    for ids in [&history.ids[..8], &history.ids[4..]] {
+        let input = ids
+            .iter()
+            .chain(std::iter::once(&tree))
+            .map(|id| format!("{id}\n"))
+            .collect::<String>();
+        pack_git::git(
+            root,
+            &["pack-objects", prefix.to_str().unwrap()],
+            input.as_bytes(),
+        );
+    }
+    let objects = girt::Repository::open(root).unwrap().objects().unwrap();
+    let mut options = girt::bitmap::WriteOptions::default();
+    options.max_commits = 3;
+    let written = objects
+        .encode_multi_pack_bitmap(
+            Default::default(),
+            options,
+            Default::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(written.bitmap.commits, 3);
+    assert_eq!(written.bitmap.objects, 13);
+    let midx = girt::multi_pack_index::MultiPackIndex::parse(&written.index, format).unwrap();
+    midx.verify(&objects).unwrap();
+    let ids: Vec<_> = history
+        .ids
+        .iter()
+        .copied()
+        .chain(std::iter::once(tree))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let parsed = BitmapIndex::parse(&written.bitmap.bitmap, written.bitmap.anchor, 13).unwrap();
+    let reverse =
+        ReverseIndex::parse(&written.bitmap.reverse_index, written.bitmap.anchor, 13).unwrap();
+    let order: Vec<_> = reverse.positions().collect();
+    fs::write(root.join("objects/pack/multi-pack-index"), &written.index).unwrap();
+    let base = root.join(format!(
+        "objects/pack/multi-pack-index-{}",
+        written.bitmap.anchor
+    ));
+    fs::write(base.with_extension("bitmap"), &written.bitmap.bitmap).unwrap();
+    fs::write(base.with_extension("rev"), &written.bitmap.reverse_index).unwrap();
+    for position in parsed.entry_positions() {
+        let commit = ids[position as usize];
+        let bitmap = parsed.reachable(position).unwrap().unwrap();
+        let actual: BTreeSet<_> = bitmap
+            .positions()
+            .map(|bit| ids[order[bit] as usize])
+            .collect();
+        assert_eq!(actual, reachable_ids(root, commit));
+        pack_git::git(
+            root,
+            &["rev-list", "--test-bitmap", &commit.to_string()],
+            b"",
+        );
+    }
+}
