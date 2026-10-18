@@ -1,5 +1,11 @@
 //! Deterministic format-patch mail framing for a commit and its prepared diff artifacts.
 //!
+//! [`Objects::format_patch`](crate::Objects::format_patch) reads an explicit oldest-first commit
+//! selection and composes matching patches and statistics. [`Series::into_mbox`] assembles the
+//! returned messages without publishing them. [`CoverLetter`] supplies explicit cover author/date
+//! and message; [`SeriesOptions`] controls numbering, content policy and optional attributes.
+//! Merge/gapped selections and distant bases needing prerequisite IDs are refused explicitly.
+//!
 //! [`Message`] borrows a commit, its [`Diffstat`] and patch bytes. It does not inspect storage or
 //! verify that those artifacts describe the commit: the caller owns comparison and attributes.
 //! Rendering returns a complete owned message before any caller publishes it. Dates come from
@@ -44,11 +50,16 @@
 //!     --- /dev/null\n+++ b/hello\n@@ -0,0 +1 @@\n+Hello\n";
 //!
 //! // Comparison is caller-owned; the formatter does not install or inspect this commit.
-//! let mail = Message::new(&commit, &stat, patch).render()?;
+//! let mail = Message::new(&commit, &stat, patch)
+//!     .with_change_summary(b" create mode 100644 hello\n")
+//!     .render()?;
 //! assert!(String::from_utf8(mail)?.contains("Subject: [PATCH] Add greeting\n"));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 use std::sync::atomic::{AtomicBool, Ordering};
+
+mod series;
+pub use series::{CoverLetter, Numbering, Series, SeriesError, SeriesLimits, SeriesOptions};
 
 use crate::diffstat::{Diffstat, StatLayout};
 use crate::{Commit, ObjectId};
@@ -59,6 +70,7 @@ pub struct Message<'a> {
     commit: &'a Commit,
     stat: &'a Diffstat,
     patch: &'a [u8],
+    summary: &'a [u8],
 }
 
 /// Explicit presentation of one numbered message in a series.
@@ -210,7 +222,18 @@ impl<'a> Message<'a> {
             commit,
             stat,
             patch,
+            summary: b"",
         }
+    }
+
+    /// Supplies caller-prepared change-summary lines below diffstat, such as `create mode`.
+    ///
+    /// Bytes must already be LF-framed. No parsing or consistency validation occurs; stored
+    /// series composition supplies these from the same comparison as the patch.
+    #[must_use]
+    pub fn with_change_summary(mut self, summary: &'a [u8]) -> Self {
+        self.summary = summary;
+        self
     }
 
     /// Renders an unnumbered message with default prefix, signature and bounds.
@@ -245,14 +268,33 @@ impl<'a> Message<'a> {
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Vec<u8>, Error> {
+        self.render_as(options, limits, cancel, MailKind::Patch)
+    }
+
+    fn render_as(
+        &self,
+        options: Options<'_>,
+        limits: Limits,
+        cancel: &AtomicBool,
+        kind: MailKind,
+    ) -> Result<Vec<u8>, Error> {
         let mut out = Output {
             bytes: Vec::new(),
             limit: limits.max_output_bytes,
             cancel,
         };
         out.check()?;
-        let headers = prepare_headers(self.commit, options, limits)?;
-        out.append(format!("From {} Mon Sep 17 00:00:00 2001\n", self.commit.id()).as_bytes())?;
+        let headers = prepare_headers(
+            self.commit,
+            options,
+            limits,
+            matches!(kind, MailKind::Cover { .. }),
+        )?;
+        let envelope = match kind {
+            MailKind::Patch => self.commit.id(),
+            MailKind::Cover { envelope, .. } => envelope,
+        };
+        out.append(format!("From {envelope} Mon Sep 17 00:00:00 2001\n").as_bytes())?;
         out.append(headers.from.as_bytes())?;
         out.append(format!("Date: {}\n", headers.date).as_bytes())?;
         out.append(headers.title.as_bytes())?;
@@ -267,9 +309,15 @@ impl<'a> Message<'a> {
                 out.append(b"\n")?;
             }
         }
-        if !self.patch.is_empty() || !self.stat.files().is_empty() {
+        if let MailKind::Cover { include_stat, .. } = kind {
+            if include_stat {
+                out.append(&self.stat.stat(StatLayout::default())?)?;
+                out.append(b"\n")?;
+            }
+        } else if !self.patch.is_empty() || !self.stat.files().is_empty() {
             out.append(b"---\n")?;
             out.append(&self.stat.stat(StatLayout::default())?)?;
+            out.append(self.summary)?;
             out.append(b"\n")?;
             out.append(self.patch)?;
         }
@@ -289,6 +337,14 @@ impl<'a> Message<'a> {
     }
 }
 
+enum MailKind {
+    Patch,
+    Cover {
+        envelope: ObjectId,
+        include_stat: bool,
+    },
+}
+
 struct PreparedHeaders<'a> {
     from: String,
     date: String,
@@ -301,6 +357,7 @@ fn prepare_headers<'a>(
     commit: &'a Commit,
     options: Options<'_>,
     limits: Limits,
+    cover: bool,
 ) -> Result<PreparedHeaders<'a>, Error> {
     let size = [
         commit.as_bytes(),
@@ -356,10 +413,13 @@ fn prepare_headers<'a>(
         return Err(Error::Metadata("base object format"));
     }
     let numbering = match options.position {
-        Some(Position { number, total }) if number != 0 && number <= total => {
+        Some(Position { number, total })
+            if (number != 0 || cover) && total != 0 && number <= total =>
+        {
             format!(
-                "{}{number}/{total}",
-                if prefix.is_empty() { "" } else { " " }
+                "{}{number:0width$}/{total}",
+                if prefix.is_empty() { "" } else { " " },
+                width = total.to_string().len(),
             )
         }
         Some(_) => return Err(Error::Position),

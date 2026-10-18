@@ -132,6 +132,7 @@ from_domain_errors! {
     crate::apply::WorktreeFailure,
     crate::diffstat::Error,
     crate::format_patch::Error,
+    crate::format_patch::SeriesError,
     crate::apply::IndexError,
     crate::mailmap::Error,
     crate::notes::Error,
