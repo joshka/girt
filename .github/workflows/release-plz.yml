@@ -10,13 +10,58 @@ permissions:
   contents: read
 
 jobs:
+  # A release run is the push whose commit introduces a workspace version missing
+  # from crates.io. Release runs use per-commit groups so later pushes can neither
+  # cancel them nor replace their pending jobs; GitHub keeps one pending job per group.
+  # Later pushes never publish, so they cannot race the release commit. To recover
+  # a failed publish, re-run the release commit's Release run.
+  unpublished:
+    name: Find unpublished versions
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - id: check
+        # Any failure fails the run rather than treating it as a non-release run.
+        run: |
+          packages=$(cargo metadata --no-deps --format-version 1 --locked |
+            jq -r '.packages[] | select(.publish != []) | "\(.name) \(.version) \(.manifest_path)"')
+          test -n "$packages"
+          release=false
+          while read -r name version manifest; do
+            lower=${name,,}
+            case ${#lower} in
+              1) path=1/$lower ;;
+              2) path=2/$lower ;;
+              3) path=3/${lower:0:1}/$lower ;;
+              *) path=${lower:0:2}/${lower:2:2}/$lower ;;
+            esac
+            index=$(curl -fsS --retry 3 "https://index.crates.io/$path")
+            if jq -e --arg v "$version" 'select(.vers == $v)' <<< "$index" > /dev/null; then
+              continue
+            fi
+            echo "$name $version is not on crates.io"
+            if git diff HEAD^ HEAD -- "$manifest" | grep -qxF "+version = \"$version\""; then
+              echo "$name $version is introduced by this commit"
+              release=true
+            fi
+          done <<< "$packages"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
   ci:
     name: Linux publish check
-    # Cancel obsolete checks without cancelling a publisher that already passed.
+    # Cancel obsolete checks, except on release runs.
     concurrency:
-      group: release-plz-check-${{ github.ref }}
+      group: release-plz-check-${{ needs.unpublished.outputs.release == 'true' && github.sha || github.ref }}
       cancel-in-progress: true
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: unpublished
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -44,14 +89,15 @@ jobs:
         # Tracing fixture dispatchers share tracing-core's global callsite cache.
         run: cargo +stable test --locked --all-features --lib -- --test-threads=1
 
-  # Keep cancellation at job scope: publishing must finish once it starts.
+  # Only release runs publish, each in its own group, so no later push can cancel
+  # or displace a pending publish.
   release:
     name: Publish
     concurrency:
-      group: release-plz-publish
+      group: release-plz-publish-${{ github.sha }}
       cancel-in-progress: false
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [unpublished, ci]
+    if: needs.unpublished.outputs.release == 'true'
     runs-on: ubuntu-26.04
     permissions:
       contents: write
