@@ -219,8 +219,21 @@ fn git_terminated_on_windows_leaves_its_index_lock_and_published_index() {
         .args(["/F", "/T", "/PID", &child.id().to_string()])
         .output()
         .unwrap();
-    assert!(killed.status.success(), "{killed:?}");
-    assert!(!child.wait().unwrap().success());
+    // taskkill can return 255 if a filter child exits during tree enumeration,
+    // even when it successfully terminates Git. Observe our root process instead.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("Git did not terminate: {killed:?}");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(!status.success(), "Git exited successfully: {killed:?}");
     assert!(root.path().join(".git/index.lock").exists());
     // Unregistered locks belong to Git; caller cleanup never removes them.
     let report = girt::locks::cleanup().unwrap();
