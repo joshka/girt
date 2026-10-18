@@ -246,3 +246,33 @@ fn gitlink_conflict_does_not_read_submodule_commits() {
     assert_eq!(result.conflicts[0].kind, ConflictKind::Gitlink);
     assert_eq!(result.conflicts[0].index_entries().unwrap()[2].id, c);
 }
+
+#[rstest]
+fn add_add_mode_conflict_retains_content_markers(#[values("sha1", "sha256")] format: &str) {
+    let f = Fixture::new(format);
+    let base = f.tree(&[]);
+    let ours = f.tree(&[("100644", f.blob(b"one\ntwo\nours\n"), b"file")]);
+    let theirs = f.tree(&[("100755", f.blob(b"one\ntwo\ntheirs\n"), b"file")]);
+    let b = commit(&f, base, None);
+    let o = commit(&f, ours, Some(b));
+    let t = commit(&f, theirs, Some(b));
+    let expected = oracle::merge_tree(f.root.path(), &o.to_string(), &t.to_string());
+    assert_eq!(expected.status.code(), Some(1));
+    let objects = f.objects();
+    let result = objects.merge_tree_entries(base, ours, theirs).unwrap();
+    assert!(!result.is_clean());
+    let conflict = &result.conflicts[0];
+    assert_eq!(conflict.kind, ConflictKind::Mode);
+    assert!(!conflict.content.as_ref().unwrap().is_clean());
+    let mut markers = girt::merge::MarkerOptions::default();
+    markers.ours = o.to_string().into_bytes();
+    markers.theirs = t.to_string().into_bytes();
+    let plan = result.prepare_checkout(&objects, &markers).unwrap();
+    assert_eq!(
+        plan.tree_id(),
+        id(expected.stdout.split(|b| *b == b'\n').next().unwrap())
+    );
+    assert_eq!(plan.index().entries().len(), 2);
+    assert_eq!(plan.index().entries()[0].stage, Stage::Ours);
+    assert_eq!(plan.index().entries()[1].stage, Stage::Theirs);
+}

@@ -3025,3 +3025,22 @@ cancellation have focused checks. The existing exact-byte content oracle matrix 
 Matching uses comparison-only line keys and maps edits back to original byte ranges. Missing final
 LF remains distinct even for a line whose normalized body is empty. Repeated-line placement and
 internal conflict-refinement limits remain tracked in the content-refinement issue.
+
+## Per-path Merge Drivers
+
+`tests/merge_path_drivers.rs` compares union, binary, unset and undefined custom merge attributes
+with isolated `git merge-tree --write-tree`. The bare oracle receives the same explicit attribute
+rules through `info/attributes`; no working-tree attribute lookup is implied. Tests also cover
+destination paths after similarity renames, caller-provided resolved bytes without object
+publication, retained callback error sources, cancellation after callbacks, and one mutable driver
+shared by recursive virtual-base and final merges.
+
+Driver selection remains caller policy: attribute/configuration snapshots and any custom process
+execution are explicit. Existing content refinement, rename normalization and conflicted virtual
+base limitations remain. Directory conflict publication still requires leaf-stage expansion, tracked
+in [issue 575](https://github.com/joshka/girt/issues/575).
+
+Add/add regular files with differing executable modes still compare content independently. SHA-1 and
+SHA-256 oracle cases compare prepared marker-tree identities with Git and retain original
+stage-two/stage-three modes. A focused assertion confirms generated recursive-base trees remain
+available in the returned object collection.

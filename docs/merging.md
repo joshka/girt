@@ -94,12 +94,22 @@ driver. Unspecified attributes select automatic detection. `Driver::configured` 
 does not turn binary conflicts into text. A custom driver returns `CustomRequired` with its name.
 Match `Driver::Custom` to invoke your own callback or command, using caller-owned process, resource
 and trust policy. Return `ContentMerge::resolved` for accepted output or `ContentMerge::conflicted`
-to preserve original whole-input sides. No configured shell command is run implicitly.
+to preserve original whole-input sides. No configured shell command is run implicitly. A named
+attribute alone does not establish that a custom driver is configured. To match Git's fallback for
+an undefined name, check the explicit configuration snapshot for `merge.<name>.driver` and select
+`Driver::Text` when it is absent. `Driver::from_attribute` deliberately retains the name because it
+has no configuration snapshot.
 
 `MarkerOptions::from_config` interprets `merge.conflictStyle` from the supplied snapshot. Values are
 case-sensitive: merge, diff3 and zdiff3 are accepted; implicit, empty and unknown values return a
-typed error. Missing configuration selects merge. Attribute/configuration lookup and this driver
-selection are explicit composition; path-based tree merging does not yet route attributes itself.
+typed error. Missing configuration selects merge.
+
+Implement `TreeDriver` to route each regular-file content merge through an explicit attribute or
+configuration snapshot. Pass it to `Objects::merge_trees_with_driver` or
+`Objects::merge_commits_with_driver`. The callback receives the destination path after rename
+alignment, original content bytes, content options and cancellation flag. The same mutable driver
+serves recursive virtual bases and the final commit merge. Callback failures retain their source and
+path in `TreeError::Driver`; callback process execution and side effects remain caller-owned.
 
 ## Renamed Paths
 

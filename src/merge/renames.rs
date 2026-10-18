@@ -126,6 +126,17 @@ pub(super) fn merge_with_memory(
     cancel: &AtomicBool,
     memory: &mut Memory,
 ) -> Result<TreeMerge, RenameError> {
+    merge_with_memory_and_driver(objects, roots, options, cancel, memory, None)
+}
+
+pub(super) fn merge_with_memory_and_driver<'a, 'd>(
+    objects: &'a Objects,
+    roots: [ObjectId; 3],
+    options: TreeMergeOptions,
+    cancel: &'a AtomicBool,
+    memory: &'a mut Memory,
+    driver: Option<&'a mut (dyn super::TreeDriver + 'd)>,
+) -> Result<TreeMerge, RenameError> {
     let [base, ours, theirs] = roots;
     let left = infer(objects, base, ours, options, cancel, memory)?;
     let right = infer(objects, base, theirs, options, cancel, memory)?;
@@ -191,7 +202,14 @@ pub(super) fn merge_with_memory(
         memory.build(objects, o)?,
         memory.build(objects, t)?,
     ];
-    let mut result = super::tree::merge_prepared(objects, roots, options.trees, cancel, memory)?;
+    let mut result = super::tree::merge_prepared_with_driver(
+        objects,
+        roots,
+        options.trees,
+        cancel,
+        memory,
+        driver,
+    )?;
     for conflict in &mut result.conflicts {
         if let Some((source, _)) = left
             .iter()
@@ -210,6 +228,9 @@ pub(super) fn merge_with_memory(
         .collect();
     trees.append(&mut result.trees);
     result.trees = trees;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(TreeError::Cancelled.into());
+    }
     Ok(result)
 }
 

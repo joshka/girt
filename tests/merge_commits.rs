@@ -69,6 +69,13 @@ fn criss_cross_virtual_content_base_is_available_to_rename_scoring() {
         b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nTEN\n",
     );
     assert_eq!(result.bases.len(), 2);
+    assert!(
+        result
+            .result
+            .trees
+            .iter()
+            .any(|tree| tree.id() == result.base_tree)
+    );
     assert!(!objects.contains(virtual_blob).unwrap());
     assert!(
         result
