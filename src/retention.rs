@@ -701,7 +701,7 @@ impl Repository {
         fold_recent_packs: bool,
         cancel: &AtomicBool,
     ) -> RetentionPlan {
-        self.observe_roots(policy, fold_recent_packs, cancel, true, true)
+        self.observe_roots(policy, fold_recent_packs, cancel, true, true, false)
     }
 
     fn observe_integrity_roots(
@@ -710,7 +710,8 @@ impl Repository {
         cancel: &AtomicBool,
         include_reflogs: bool,
     ) -> RetentionPlan {
-        self.observe_roots(policy, false, cancel, false, include_reflogs)
+        // Integrity checks only read; missing promised objects are the caller's concern.
+        self.observe_roots(policy, false, cancel, false, include_reflogs, true)
     }
 
     fn observe_roots(
@@ -720,6 +721,7 @@ impl Repository {
         cancel: &AtomicBool,
         include_recent: bool,
         include_reflogs: bool,
+        allow_partial_clone: bool,
     ) -> RetentionPlan {
         let mut plan = RetentionPlan {
             roots: policy.heads.iter().copied().collect(),
@@ -756,6 +758,7 @@ impl Repository {
             &mut plan,
             include_recent,
             include_reflogs,
+            allow_partial_clone,
         ) {
             plan.fail(reason);
             return plan;
@@ -1093,6 +1096,7 @@ fn collect_roots(
     plan: &mut RetentionPlan,
     include_recent: bool,
     include_reflogs: bool,
+    allow_partial_clone: bool,
 ) -> Result<(), RetentionError> {
     // Git's hook can designate otherwise old, unreachable objects as recent. Running a hook is
     // outside this read-only library operation, so its presence prevents a complete plan.
@@ -1126,11 +1130,7 @@ fn collect_roots(
         {
             return Err(RetentionError::PreciousObjects);
         }
-        if repo
-            .config()
-            .value("extensions", None, "partialClone")
-            .is_some()
-        {
+        if !allow_partial_clone && repo.is_partial_clone() {
             return Err(RetentionError::PartialClone);
         }
         if repo

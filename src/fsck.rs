@@ -264,6 +264,9 @@ pub struct Report {
 
 impl ObjectFinding {
     /// Effective severity; missing, mistyped and unreadable objects always remain errors.
+    ///
+    /// Missing objects that a partial clone's promisor packs reference are not findings at all;
+    /// see [`crate::Repository::fsck_with`].
     pub fn severity(&self) -> Severity {
         match self {
             Self::Payload { finding, .. } => finding.severity,
@@ -324,8 +327,14 @@ impl crate::Repository {
     ///
     /// Includes alternate stores and skips external gitlinks and declared shallow parent edges.
     /// Pack checksums and CRCs are verified before inventory. No accelerator supplies graph truth.
-    /// Root discovery currently uses conservative retention policy, including pseudorefs; partial
-    /// clone, precious-object and recent-object-hook repositories explicitly refuse completion.
+    /// Root discovery currently uses conservative retention policy, including pseudorefs;
+    /// precious-object and recent-object-hook repositories explicitly refuse completion.
+    ///
+    /// In a partial clone, an object that is missing but referenced by an object in a promisor
+    /// pack (a pack with a `.promisor` file) is promised, not damaged, so it produces neither a
+    /// [`ObjectFinding::Missing`] nor a [`ObjectFinding::BrokenLink`], as with `git fsck`.
+    /// Missing objects that no promisor-pack object references remain errors. Nothing is
+    /// fetched.
     /// Findings do not stop other object checks. No repository data is changed.
     ///
     /// # Errors
@@ -504,6 +513,7 @@ impl crate::Repository {
                 pending.extend(edges.iter().map(|&(id, _)| id));
             }
         }
+        forgive_promised(&objects, &mut report.findings)?;
         report.unreachable.extend(
             graph
                 .keys()
@@ -519,4 +529,42 @@ impl crate::Repository {
             .collect();
         Ok(report)
     }
+}
+
+/// Drops missing-object findings for objects that a promisor-pack object references.
+///
+/// As with Git, this applies only in a partial clone, and to every kind, commit parents
+/// included. Only the sources of broken links are looked up, so repositories without promisor
+/// packs and repositories without broken links do no extra work.
+fn forgive_promised(
+    objects: &crate::Objects,
+    findings: &mut Vec<ObjectFinding>,
+) -> Result<(), crate::ObjectReadError> {
+    if !objects.partial_clone {
+        return Ok(());
+    }
+    let promisor_packs: Vec<_> = objects.packs().filter(|pack| pack.is_promisor()).collect();
+    if promisor_packs.is_empty() {
+        return Ok(());
+    }
+    let mut promised = BTreeSet::new();
+    for finding in findings.iter() {
+        if let ObjectFinding::BrokenLink { source, target, .. } = finding
+            && !promised.contains(target)
+        {
+            for pack in &promisor_packs {
+                if pack.contains(*source)? {
+                    promised.insert(*target);
+                    break;
+                }
+            }
+        }
+    }
+    findings.retain(|finding| match finding {
+        ObjectFinding::BrokenLink { target: id, .. } | ObjectFinding::Missing { id } => {
+            !promised.contains(id)
+        }
+        _ => true,
+    });
+    Ok(())
 }

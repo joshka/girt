@@ -1310,6 +1310,7 @@ impl Repository {
             self.multi_pack_index_enabled(),
         )?;
         objects.shallow = self.shallow.clone();
+        objects.partial_clone = self.is_partial_clone();
         self.attach_default_commit_graph(&mut objects);
         Ok(objects)
     }
@@ -1361,6 +1362,7 @@ impl Repository {
             self.multi_pack_index_enabled(),
         )?;
         objects.shallow = self.shallow.clone();
+        objects.partial_clone = self.is_partial_clone();
         self.attach_default_commit_graph(&mut objects);
         if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(crate::ObjectReadError::Cancelled);
