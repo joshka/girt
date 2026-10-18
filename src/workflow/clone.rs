@@ -146,6 +146,9 @@ pub struct CloneOutcome {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CloneError {
+    /// Configured fetch integrity policy refused the pack before creating the destination.
+    #[error("clone integrity policy")]
+    Integrity(#[source] Box<crate::fsck::TransferError>),
     /// Recursive population requires a checked-out worktree; nothing was created.
     #[error("recursive clone requires a working tree with checkout enabled")]
     SubmoduleLayout,
@@ -442,9 +445,16 @@ pub fn clone_with(
                 })
         }
     }?;
+    let integrity = ready
+        .received()
+        .enforce_fsck(&config, crate::fsck::Scope::Fetch, &base, &cancel)
+        .map_err(|error| CloneError::Integrity(Box::new(error)))?;
     let mut report = ready
         .finish(options.update_limits, &cancel)
         .map_err(|error| CloneError::Finish(Box::new(error)))?;
+    if let Some(fetch) = &mut report.fetch {
+        fetch.integrity = integrity;
+    }
     match Repository::open_with_config(&report.destination, inputs) {
         Ok(repository) => report.repository = Some(repository),
         Err(source) => {

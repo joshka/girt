@@ -311,6 +311,11 @@ pub struct CloneReady {
 }
 
 impl CloneReady {
+    /// Validated pack artifact for explicit pre-installation integrity policy checks.
+    pub fn received(&self) -> &ReceivedFetch {
+        &self.received
+    }
+
     /// Advertised initial HEAD; commit-kind checks happen after installation during finish.
     pub fn head(&self) -> &CloneHead {
         &self.head

@@ -18,10 +18,14 @@ use crate::{ObjectFormat, ObjectKind, Tree};
 mod lost_found;
 mod message;
 mod policy;
+mod transfer;
 
 pub use lost_found::{LostFoundCause, LostFoundError, LostFoundLimits};
 pub use message::{MessageId, Severity};
 pub use policy::{Policy, PolicyError, PolicyLimits, Scope};
+pub use transfer::{
+    TransferError, TransferFinding, TransferLimits, TransferReport, transfer_enabled,
+};
 
 /// One payload defect. Repeated instances of the same category are reported once per object.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

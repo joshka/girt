@@ -95,7 +95,6 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
         configured_boolean(&repository, "receive", "denynonfastforwards")?.unwrap_or(false);
     let log_policy = log_policy(&repository)?;
     let hide = HideRules::parse(&repository)?;
-    // Objects are always validated, which satisfies `receive.fsckObjects`.
     if repository
         .config()
         .value("receive", None, "procreceiverefs")
@@ -305,6 +304,16 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
     } else {
         (None, None)
     };
+    if let Some(received) = &received {
+        report.integrity = received
+            .enforce_fsck(
+                repository.config(),
+                crate::fsck::Scope::Receive,
+                repository.worktree().unwrap_or(repository.git_dir()),
+                control.cancel,
+            )
+            .map_err(|error| PushError::NotSent(PushFailure::Integrity(Box::new(error))))?;
+    }
     let mut quarantine = received
         .as_ref()
         .filter(|_| hooks.has("pre-receive"))
