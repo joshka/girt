@@ -824,6 +824,12 @@ fn published_repack_is_git_usable_and_preserves_readers(#[case] format: &str) {
     let result = repo
         .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
         .unwrap();
+    // Unset bitmap configuration stays disabled even in a bare repository. In particular,
+    // publication must not add bitmap/reverse-index sidecars to this ordinary pair.
+    assert!(matches!(
+        result.bitmap,
+        girt::retention::BitmapOutcome::Disabled
+    ));
     let basename = root
         .path()
         .join("objects/pack")
