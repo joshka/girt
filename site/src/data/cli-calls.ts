@@ -128,6 +128,14 @@ export const calls: Record<string, CliCalls> = {
     git: 'git merge-base',
     api: [objects('merge_bases_with')],
   },
+  'history describe': {
+    git: 'git describe',
+    api: [
+      repository('describe'),
+      method('DescribeOptions', 'describe/struct.DescribeOptions.html', 'with_lightweight_tags'),
+      method('Description', 'describe/struct.Description.html', 'format'),
+    ],
+  },
   'history contains': {
     git: 'git merge-base --is-ancestor',
     api: [objects('is_ancestor_with')],
@@ -157,7 +165,13 @@ export const calls: Record<string, CliCalls> = {
   },
   status: {
     git: 'git status --porcelain',
-    api: [repository('status'), ['status::Baseline', 'status/enum.Baseline.html'], ['status::UntrackedFiles', 'status/enum.UntrackedFiles.html']],
+    api: [
+      repository('status'),
+      ['status::Baseline', 'status/enum.Baseline.html'],
+      ['status::UntrackedFiles', 'status/enum.UntrackedFiles.html'],
+      objects('ahead_behind'),
+      resolver('upstream_name'),
+    ],
   },
   'ignore check': {
     git: 'git check-ignore -v',
@@ -166,6 +180,14 @@ export const calls: Record<string, CliCalls> = {
   checkout: {
     git: 'git read-tree -m -u',
     api: [repository('checkout_tree'), repository('checkout_tree_with_progress')],
+  },
+  reset: {
+    git: 'git reset',
+    api: [
+      repository('reset'),
+      repository('reset_paths'),
+      ['reset::ResetMode', 'reset/enum.ResetMode.html'],
+    ],
   },
   worktree: {
     command: 'girt worktree list, lock, unlock, prune, repair',
