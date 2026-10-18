@@ -13,20 +13,7 @@ use girt::{ObjectId, Repository};
 use rstest::rstest;
 
 fn commit(fixture: &Fixture, tree: ObjectId, parent: Option<ObjectId>) -> ObjectId {
-    let tree = tree.to_string();
-    let parent = parent.map(|p| p.to_string());
-    let mut args = vec![
-        "-c",
-        "user.name=Merge Author",
-        "-c",
-        "user.email=merge@example.com",
-        "commit-tree",
-        &tree,
-    ];
-    if let Some(parent) = &parent {
-        args.extend(["-p", parent]);
-    }
-    id(&git(fixture.root.path(), &args, b"fixture\n"))
+    oracle::commit(fixture.root.path(), tree, parent)
 }
 
 fn oracle_clean(fixture: &Fixture, base: ObjectId, ours: ObjectId, theirs: ObjectId) -> ObjectId {

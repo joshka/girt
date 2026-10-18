@@ -83,3 +83,24 @@ to preserve original whole-input sides. No configured shell command is run impli
 case-sensitive: merge, diff3 and zdiff3 are accepted; implicit, empty and unknown values return a
 typed error. Missing configuration selects merge. Attribute/configuration lookup and this driver
 selection are explicit composition; path-based tree merging does not yet route attributes itself.
+
+## Renamed Paths
+
+`Objects::merge_trees` infers base-to-side renames, aligns the paths and invokes the same content
+and mode computation. `merge_trees_with` selects similarity/candidate policy and inference limits. A
+rename on one side carries the other side's source modification to its destination. A source renamed
+to two destinations or renamed on one side and deleted on the other remains a structured conflict.
+`TreeConflict::rename_source` retains the original path; `stage_paths` records distinct
+base/ours/theirs index paths when necessary.
+
+A removed directory with one inferred destination can relocate an opposite-side addition. The result
+reports a directory-rename conflict at the new path, leaving the caller to confirm that placement.
+Existing content and its original side remain available. Git's conservative default also reports
+this case as a conflict.
+
+The operation refuses destination collisions, directory moves with several destinations, incomplete
+candidate search and stored empty subdirectories. It never substitutes a plain addition/deletion
+approximation for those layouts. Normalized trees remain in memory with the other generated objects
+and must be installed before publishing the candidate root. The path-based `merge_tree_entries`
+primitive remains available to consumers that already own path alignment and want to preserve stored
+empty subdirectories.

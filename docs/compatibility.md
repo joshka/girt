@@ -2968,3 +2968,16 @@ explicit custom dispatch and unresolved binary input under text/union. Original 
 Custom drivers are returned to the caller, not executed implicitly. Configuration and attributes are
 explicit input snapshots; tree-path routing and configured external command execution remain
 caller-owned composition.
+
+## Rename-Aware Tree Merging
+
+`tests/merge_renames.rs` compares independently generated exact and similarity rename/modification
+histories with isolated `git merge-tree --write-tree`. Clean SHA-1/SHA-256 tree identities match.
+Rename/rename conflicts preserve Git's distinct stage paths; rename/delete and directory-rename
+addition fixtures match conflicted candidate tree identities. Explicit refusals cover destination
+collisions and stored empty subdirectories.
+
+The normalization layer uses existing rewrite inference and refuses skipped inexact search. Removed
+directories with multiple inferred destinations and destination collisions return typed errors.
+Stored non-root empty trees require the path-based primitive instead. This increment does not claim
+complete ort rename behavior for those layouts.
