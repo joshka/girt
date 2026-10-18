@@ -39,7 +39,7 @@ pub struct WriteLimits {
     pub max_edges: usize,
     /// Maximum total decoded payload bytes used to build the graph (1 GiB).
     pub max_input_bytes: u64,
-    /// Maximum node/edge visits and cached word unions across selected traversals (100 million).
+    /// Maximum ordering/traversal node and edge visits plus cached word unions (100 million).
     pub max_visits: usize,
     /// Maximum combined returned artifact bytes (64 MiB).
     /// Separately caps retained selected-closure words; a full cache falls back to walking.

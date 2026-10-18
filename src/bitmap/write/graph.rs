@@ -177,6 +177,75 @@ mod tests {
     use crate::bitmap::write::reachable::Closures;
 
     #[test]
+    fn selected_ancestry_handles_merges_and_shared_parents() {
+        let ids: Vec<_> = (0..4)
+            .map(|number| ObjectFormat::Sha1.hash_object(ObjectKind::Commit, &[number]))
+            .collect();
+        let graph = Graph {
+            ids: &ids,
+            kinds: vec![ObjectKind::Commit; 4],
+            edges: vec![0..2, 2..3, 3..4, 4..4],
+            targets: vec![1, 2, 3, 3],
+            parents: vec![false; 4],
+        };
+        let inverse = vec![0, 1, 2, 3];
+        let cancel = AtomicBool::new(false);
+        let mut closures = Closures::new(&graph, &inverse, WriteLimits::default());
+        assert_eq!(
+            closures.ancestors_first(&[0, 1, 3], &cancel).unwrap(),
+            [3, 1, 0]
+        );
+        assert_eq!(closures.reachable(0, &cancel).unwrap(), [15]);
+        assert_eq!(closures.reachable(3, &cancel).unwrap(), [8]);
+    }
+
+    #[test]
+    fn ancestry_ordering_is_iterative_budgeted_and_cancellable() {
+        let ids: Vec<_> = (0_u32..10_000)
+            .map(|number| ObjectFormat::Sha1.hash_object(ObjectKind::Commit, &number.to_be_bytes()))
+            .collect();
+        let count = ids.len();
+        let graph = Graph {
+            ids: &ids,
+            kinds: vec![ObjectKind::Commit; count],
+            edges: (0..count)
+                .map(|index| index..(index + 1).min(count - 1))
+                .collect(),
+            targets: (1..count).collect(),
+            parents: vec![false; count],
+        };
+        let inverse: Vec<_> = (0..count).collect();
+        let cancel = AtomicBool::new(false);
+        let selected = [0, count - 1];
+        let limits = WriteLimits {
+            max_visits: 3 * count - 1,
+            ..WriteLimits::default()
+        };
+        let mut closures = Closures::new(&graph, &inverse, limits);
+        assert_eq!(
+            closures.ancestors_first(&selected, &cancel).unwrap(),
+            [count - 1, 0]
+        );
+        let mut closures = Closures::new(
+            &graph,
+            &inverse,
+            WriteLimits {
+                max_visits: limits.max_visits - 1,
+                ..limits
+            },
+        );
+        assert!(matches!(
+            closures.ancestors_first(&selected, &cancel),
+            Err(WriteError::Limit("reachability visits"))
+        ));
+        let mut closures = Closures::new(&graph, &inverse, limits);
+        assert!(matches!(
+            closures.ancestors_first(&selected, &AtomicBool::new(true)),
+            Err(WriteError::Cancelled)
+        ));
+    }
+
+    #[test]
     fn retained_closures_obey_word_capacity_and_charge_multiword_unions() {
         let ids: Vec<_> = (0..70)
             .map(|number| ObjectFormat::Sha1.hash_object(ObjectKind::Commit, &[number]))

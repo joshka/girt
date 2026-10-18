@@ -136,10 +136,13 @@ samples remaining commits evenly in sorted ID order, up to `max_commits` (64 by 
 selections are deduplicated and must fit that cap. This policy is deterministic; it does not copy
 Git's commit-selection heuristic.
 
-Selected traversals may reuse complete closures already computed from the same verified graph and
-bit order. Each unioned word consumes the shared work budget. Retained closure words have a separate
-cap equal to `WriteLimits::max_bytes`; a full cache walks instead, and closures cheaper to walk than
-union are not cached. This does not consume existing file bitmap claims.
+Selected commits are computed after their selected ancestors, so closure reuse is independent of
+object-ID order. Physical records follow that traversal order; lookup rows remain sorted by object
+ID. Ordering visits and edges consume the same work budget as reachability and cached word unions.
+Selected traversals may reuse only complete closures from the same verified graph and bit order.
+Retained closure words have a separate cap equal to `WriteLimits::max_bytes`; a full cache walks
+instead, and closures cheaper to walk than union are not cached. This does not consume existing file
+bitmap claims.
 
 Output uses EWAH runs and literals, independent commit records and a lookup table. XOR search is not
 performed. MIDX output includes zero pathname-hash hints for unknown names; those hints affect delta

@@ -45,15 +45,17 @@ pub(super) fn artifacts(
     }
     let mut offsets = Vec::with_capacity(selected.len());
     let mut closures = Closures::new(graph, &inverse, limits);
-    for &position in &selected {
+    let ordered = closures.ancestors_first(&selected, cancel)?;
+    for position in ordered {
         check(cancel)?;
-        offsets.push(output.data.len());
+        offsets.push((position, output.data.len()));
         output.word(position as u32)?;
         output.bytes(&[0, 0])?; // Independent record, no reuse flag or XOR dependency.
         let words = closures.reachable(position, cancel)?;
         ewah(&mut output, &words, cancel)?;
     }
-    for (&position, offset) in selected.iter().zip(offsets) {
+    offsets.sort_unstable_by_key(|&(position, _)| position);
+    for (position, offset) in offsets {
         check(cancel)?;
         output.word(position as u32)?;
         output.long(offset as u64)?;

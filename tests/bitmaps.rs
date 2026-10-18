@@ -1238,7 +1238,7 @@ fn configured_bitmap_limit_does_not_block_old_pack_retirement() {
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
-fn writer_reuses_verified_ancestor_closure_with_word_work_charged(#[case] format: ObjectFormat) {
+fn writer_orders_selected_ancestors_with_all_work_charged(#[case] format: ObjectFormat) {
     let root = tempfile::tempdir().unwrap();
     let hash = if format == ObjectFormat::Sha1 {
         "sha1"
@@ -1269,8 +1269,8 @@ fn writer_reuses_verified_ancestor_closure_with_word_work_charged(#[case] format
         &["commit-tree", &tree.to_string()],
         b"parent\n",
     ));
-    // Records are emitted by sorted ID. Choose a child that follows its ancestor, so this
-    // fixture exercises reuse rather than depending on the hash format's accidental ID order.
+    // Choose a child before its ancestor in ID order. Ancestor-first computation must still
+    // permit closure reuse, independently of the hash format's accidental ID order.
     let child = (0..1024)
         .find_map(|number| {
             let id = parse(pack_git::git(
@@ -1278,7 +1278,7 @@ fn writer_reuses_verified_ancestor_closure_with_word_work_charged(#[case] format
                 &["commit-tree", &tree.to_string(), "-p", &parent.to_string()],
                 format!("child {number}\n").as_bytes(),
             ));
-            (id > parent).then_some(id)
+            (id < parent).then_some(id)
         })
         .unwrap();
     pack_git::git(
@@ -1299,9 +1299,9 @@ fn writer_reuses_verified_ancestor_closure_with_word_work_charged(#[case] format
     let mut options = girt::bitmap::WriteOptions::default();
     options.commits = vec![parent, child];
     let mut limits = girt::bitmap::WriteLimits::default();
-    // Parent: two nodes and one edge. Child: three pops, two edges and one cached word union.
-    // Without ancestor reuse, the child walks its parent's tree edge again and needs ten total.
-    limits.max_visits = 9;
+    // Ordering: two enter/exit pairs and three edges. Closures: three units for the parent
+    // and six for the child, including its cached word union.
+    limits.max_visits = 16;
     let written = objects
         .encode_pack_bitmap(
             pack.checksum(),
@@ -1315,6 +1315,13 @@ fn writer_reuses_verified_ancestor_closure_with_word_work_charged(#[case] format
         ReverseIndex::parse(&written.reverse_index, written.anchor, written.objects).unwrap();
     let ids: Vec<_> = pack.ids().collect();
     let order: Vec<_> = reverse.positions().collect();
+    fs::write(pack.path().with_extension("bitmap"), &written.bitmap).unwrap();
+    let reverse_path = pack.path().with_extension("rev");
+    if reverse_path.exists() {
+        replace_sidecar(&reverse_path, &written.reverse_index);
+    } else {
+        fs::write(reverse_path, &written.reverse_index).unwrap();
+    }
     for commit in [parent, child] {
         let position = ids.binary_search(&commit).unwrap() as u32;
         let actual = bitmap
@@ -1325,8 +1332,19 @@ fn writer_reuses_verified_ancestor_closure_with_word_work_charged(#[case] format
             .map(|bit| ids[order[bit] as usize])
             .collect::<BTreeSet<_>>();
         assert_eq!(actual, reachable_ids(root.path(), commit));
+        let verified = pack_git::git_output(
+            root.path(),
+            &["rev-list", "--test-bitmap", &commit.to_string()],
+            b"",
+        );
+        assert!(
+            verified.status.success(),
+            "{}",
+            String::from_utf8_lossy(&verified.stderr)
+        );
+        assert!(String::from_utf8_lossy(&verified.stderr).contains("OK!"));
     }
-    limits.max_visits = 8;
+    limits.max_visits = 15;
     assert!(matches!(
         objects.encode_pack_bitmap(pack.checksum(), options, limits, &AtomicBool::new(false)),
         Err(girt::bitmap::WriteError::Limit("reachability visits"))

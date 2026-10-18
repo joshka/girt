@@ -27,6 +27,48 @@ impl<'graph, 'ids> Closures<'graph, 'ids> {
         }
     }
 
+    /// Visit the commit subgraph once, emitting selected ancestors before descendants. Physical
+    /// record order can differ from ID order; the writer sorts its lookup rows independently.
+    pub fn ancestors_first(
+        &mut self,
+        selected: &[usize],
+        cancel: &AtomicBool,
+    ) -> Result<Vec<usize>, WriteError> {
+        let mut seen = vec![false; self.graph.ids.len()];
+        let mut ordered = Vec::with_capacity(selected.len());
+        let mut stack = Vec::new();
+        for &root in selected {
+            check(cancel)?;
+            if seen[root] {
+                continue;
+            }
+            stack.push((root, false));
+            while let Some((index, expanded)) = stack.pop() {
+                check(cancel)?;
+                charge(&mut self.remaining)?;
+                if expanded {
+                    if selected.binary_search(&index).is_ok() {
+                        ordered.push(index);
+                    }
+                    continue;
+                }
+                if seen[index] {
+                    continue;
+                }
+                seen[index] = true;
+                stack.push((index, true));
+                for &target in self.graph.targets(index) {
+                    check(cancel)?;
+                    charge(&mut self.remaining)?;
+                    if self.graph.kinds[target] == ObjectKind::Commit && !seen[target] {
+                        stack.push((target, false));
+                    }
+                }
+            }
+        }
+        Ok(ordered)
+    }
+
     pub fn reachable(&mut self, root: usize, cancel: &AtomicBool) -> Result<Vec<u64>, WriteError> {
         let before = self.remaining;
         let mut bitmap = vec![0_u64; self.graph.kinds.len().div_ceil(64)];
