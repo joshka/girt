@@ -188,6 +188,7 @@ pub mod diffstat;
 pub mod display;
 mod edges;
 mod error;
+pub mod format_patch;
 pub mod multi_pack_index;
 pub use error::{Error, Result};
 pub mod apply;

@@ -214,3 +214,17 @@ using original directory sizes plus all planned insertions as an upper bound. A 
 failure therefore has an empty mutation report. Large patches in wide directories can require a
 higher `max_directory_entries`; the limit covers repeated scans rather than only distinct names.
 Live checks retain the budget in case an excluded concurrent writer changes the directory sizes.
+
+## Frame a patch as mail
+
+`format_patch::Message::new(&commit, &diffstat, &patch_bytes)` borrows a commit and prepared diff
+artifacts. `render` returns complete format-patch mbox bytes before the caller writes or sends them;
+`render_with` selects a signature, subject prefix, optional series position and explicit base ID.
+Author dates come from the commit. The library reads no clock, environment or mail configuration.
+
+This formatter supports UTF-8 metadata, including RFC 2047 author names and subjects, and retains
+body and patch bytes. Other declared commit encodings, invalid metadata and header injection are
+explicit refusals. It does not verify that the supplied summary and patch match the commit, select
+commits, generate cover letters or update references. Those operations belong to the storage and
+series composition layer. Metadata and total returned mail bytes have independent bounds, and a
+failure returns no artifact. The supplied diffstat retains its own rendering limits.
