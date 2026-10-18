@@ -182,6 +182,7 @@ pub mod commit;
 pub mod commit_graph;
 pub mod config;
 pub mod content_diff;
+pub mod describe;
 pub mod display;
 mod edges;
 mod error;

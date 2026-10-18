@@ -78,6 +78,29 @@ $ girt history merge-base main topic
 
 </Example>
 
+## Name a commit by its nearest tag (`girt history describe`)
+
+<Example cmd="history describe">
+
+`girt history describe` names a commit by the nearest earlier tag, as build tools do for version
+strings. `v0.1-1-g7ed7a0c` means one commit after `v0.1`, at commit `7ed7a0c`; a tagged commit
+prints just the tag. By default only annotated tags count: `--tags` adds lightweight tags and
+`--all` any reference, printed as `heads/main` or `tags/v0.1`. `--match` and `--exclude` filter
+names by glob, `--first-parent` counts only first-parent steps, `--long` always prints the count,
+`--abbrev=0` prints only the name and `--always` falls back to the abbreviated ID.
+
+```console
+$ git tag -a v0.1 -m 'First release' main~1
+$ girt history describe main
+v0.1-1-g7ed7a0c
+```
+
+</Example>
+
+The count is exact: the commits reachable from the described commit and not from the tag.
+`git describe` estimates it while walking by commit date, so on merge-heavy history it can print a
+larger count, or a different tag whose estimate was smaller.
+
 ## Test ancestry (`girt history contains`)
 
 <Example cmd="history contains">

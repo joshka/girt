@@ -1314,9 +1314,10 @@ reproducing `git commit -F` drop those lines first. Git deprecates `auto`. Every
 through eight `--trailer` argument sets under 16 configurations, comparing every output byte for
 byte with `girt::message::trailers` and `add_trailers` (Git 2.56.0, isolated configuration). The
 corpus covers block detection (the first paragraph, comment lines, continuation lines, the 25% rule
-with `Signed-off-by: `, cherry-pick notes and configured keys, URLs, scissors lines and `---`
-dividers), separators, `trailer.where`, `trailer.ifExists` and `trailer.ifMissing` globally and per
-key, configured key abbreviations, and how Git rewrites the existing block.
+with `Signed-off-by:` lines (followed by a space), cherry-pick notes and configured keys, URLs,
+scissors lines and `---` dividers), separators, `trailer.where`, `trailer.ifExists` and
+`trailer.ifMissing` globally and per key, configured key abbreviations, and how Git rewrites the
+existing block.
 
 Rules learned from the Git CLI that its documentation does not state: a key matches a configured
 section when, without trailing `-`, it abbreviates the section name or key; a new trailer matches an
@@ -1359,6 +1360,36 @@ writes `ORIG_HEAD` and a `reset: moving to <revision>` reflog entry; path resets
 leave operation files alone; rebase and sequencer directories are not touched. girt refuses indexes
 with skip-worktree entries or sparse directories instead of resetting them partially; hard, keep and
 merge resets are not implemented yet.
+
+## Describe
+
+`tests/describe_git.rs` generates four original 50-commit histories with merges and nondecreasing
+commit dates, tags about a sixth of the commits (annotated with repeated tagger dates, or
+lightweight, some sharing a commit) and adds branches, a remote-tracking branch and a notes ref. For
+every other commit it runs `git describe --long --abbrev=40` under twelve option sets (default,
+`--tags`, `--all`, `--match`, repeated `--match`, `--exclude`, `--all --match`, `--candidates` of 0,
+1 and 2, and `--first-parent` with and without `--tags`), with and without a commit-graph, using Git
+2.56.0 with isolated configuration. Both tools find a name for the same commits, girt's distance
+always equals `git rev-list --count` from the commit to its chosen reference, and wherever Git's
+printed distance is exact the two outputs are byte-identical. `girt-cli/tests/git_parity.rs`
+compares `girt history describe` with `git describe` for default, `--tags`, `--long --abbrev=12` and
+`--all`.
+
+Git's distance is an estimate made while walking newest commit date first. On two of the four
+histories it differed from the exact count 18 and 9 times, printing a larger number or preferring a
+reference whose estimate was smaller although another was nearer (for example `notes/x-8` where
+`tags/rel-3` is 6 commits away). girt reports the exact count and the nearest reference among the
+same candidates. Tie-breaking rules observed with the Git CLI and matched: among equally near
+candidates the newer one wins; at one commit annotated tags beat lightweight tags, which beat other
+references, the newest tagger date wins, then the alphabetically first name. `--match` and
+`--exclude` are case-sensitive globs whose `*` crosses `/`; with `--all` they apply to names under
+`refs/tags/`, `refs/heads/` and `refs/remotes/` and exclude every other reference. A symbolic
+reference names its target's commit under its own name, as in Git, and tags of trees and blobs are
+skipped. An annotated tag whose reference was renamed is printed under the tag object's name and
+always in the long form (with the full commit ID under `--abbrev=0`), while patterns match the
+reference name; `tests/describe_git.rs` compares these cases and a recent tag on a 400-commit
+history found within a 20-commit bound. `--dirty`, `--broken`, `--contains` and revision parsing of
+the `-g<hex>` form are not implemented.
 
 ## Commit History
 

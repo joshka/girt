@@ -40,6 +40,46 @@ pub enum Command {
         #[arg(long)]
         all: bool,
     },
+    /// Name a commit by the nearest tag (like `git describe`).
+    ///
+    /// Prints `<tag>-<count>-g<id>`: the commit is `<count>` commits after `<tag>`. A commit that
+    /// is itself tagged prints just the tag. Counts are exact; on merge-heavy history `git
+    /// describe` estimates and can print a larger count or a different tag.
+    Describe {
+        /// Commit to describe; `HEAD` when omitted.
+        #[arg(default_value = "HEAD", add = ArgValueCompleter::new(complete::revisions))]
+        rev: String,
+        /// Also use lightweight tags.
+        #[arg(long, conflicts_with = "all")]
+        tags: bool,
+        /// Use any reference, printed with its category such as `heads/main`.
+        #[arg(long)]
+        all: bool,
+        /// Only use names matching this glob; may be repeated.
+        #[arg(long = "match", value_name = "PATTERN")]
+        matches: Vec<String>,
+        /// Skip names matching this glob; may be repeated.
+        #[arg(long = "exclude", value_name = "PATTERN")]
+        excludes: Vec<String>,
+        /// Consider at most this many tagged ancestors.
+        #[arg(long, default_value_t = 10, value_name = "N")]
+        candidates: usize,
+        /// Only accept a tag on the commit itself.
+        #[arg(long)]
+        exact_match: bool,
+        /// Follow only first parents.
+        #[arg(long)]
+        first_parent: bool,
+        /// Always print the count and ID, even at a tag.
+        #[arg(long)]
+        long: bool,
+        /// Abbreviate the ID to at least this many hex digits; 0 prints only the name.
+        #[arg(long, value_name = "N")]
+        abbrev: Option<usize>,
+        /// Print the abbreviated ID when no name is found.
+        #[arg(long)]
+        always: bool,
+    },
     /// Test whether one commit is an ancestor of another (like `git merge-base --is-ancestor`).
     ///
     /// Exits 0 when it is and 1 when not; prints `yes` or `no` unless `--git` is set.
@@ -114,6 +154,81 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
             } else {
                 ExitCode::SUCCESS
             }
+        }
+        Command::Describe {
+            rev,
+            tags,
+            all,
+            matches,
+            excludes,
+            candidates,
+            exact_match,
+            first_parent,
+            long,
+            abbrev,
+            always,
+        } => {
+            use girt::describe::{Candidates, DescribeOptions};
+            let id = commit(&rev)?;
+            let mut options = DescribeOptions::new()
+                .with_candidates(if exact_match { 0 } else { candidates })
+                .with_first_parent(first_parent)
+                .with_limits(limits);
+            if all {
+                options = options.with_candidates_from(Candidates::All);
+            } else if tags {
+                options = options.with_lightweight_tags();
+            }
+            for pattern in matches {
+                options = options.with_match(pattern);
+            }
+            for pattern in excludes {
+                options = options.with_exclude(pattern);
+            }
+            if long && abbrev == Some(0) {
+                return Err(eyre!("--long and --abbrev=0 cannot be used together"));
+            }
+            let length = match abbrev {
+                Some(length) => length,
+                None => common::abbrev_len(&repository, &objects)?,
+            };
+            let abbreviated = (length != 0)
+                .then(|| objects.abbreviate(id, length))
+                .transpose()?;
+            match repository
+                .describe(&objects, id, &options)
+                .wrap_err("describing")?
+            {
+                Some(description) => {
+                    if description.renamed {
+                        let reference = description.reference.as_bytes();
+                        let shown = if all {
+                            reference.strip_prefix(b"refs/").unwrap_or(reference)
+                        } else {
+                            reference.strip_prefix(b"refs/tags/").unwrap_or(reference)
+                        };
+                        eprintln!(
+                            "warning: tag '{}' is externally known as '{}'",
+                            display_bytes(shown),
+                            display_bytes(
+                                description
+                                    .name
+                                    .strip_prefix(b"tags/")
+                                    .filter(|_| all)
+                                    .unwrap_or(&description.name)
+                            )
+                        );
+                    }
+                    out.write_all(&description.format(abbreviated.as_ref(), long))?;
+                    out.write_all(b"\n")?;
+                }
+                None if always => {
+                    let abbreviated = objects.abbreviate(id, length.max(4))?;
+                    writeln!(out, "{abbreviated}")?;
+                }
+                None => return Err(eyre!("no names found to describe {id}")),
+            }
+            ExitCode::SUCCESS
         }
         Command::Contains {
             ancestor,

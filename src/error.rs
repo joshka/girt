@@ -159,6 +159,7 @@ from_domain_errors! {
     crate::config::ResolveFailure,
     crate::content_diff::ContentReadError,
     crate::content_diff::DiffError,
+    crate::describe::DescribeError,
     crate::fetch::FetchError,
     crate::filter::DriverError,
     crate::filter::Error,
