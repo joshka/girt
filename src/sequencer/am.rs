@@ -7,11 +7,12 @@ use crate::{ObjectId, mailinfo};
 impl State {
     /// Prepares one queued am message after continuing or skipping the current message.
     ///
-    /// Extracts the next numbered message from this snapshot with explicit bounds. Only default
-    /// am options are admitted. The repository supplies its already-loaded config snapshot;
-    /// configured scissors, quoted-CR or commit encoding is refused in this increment. All numbered
-    /// mail is retained, the next patch remains unapplied, and the abort-safety checkpoint
-    /// advances to the proposed destination. After caller-owned checkout/object/HEAD
+    /// Extracts the next numbered message from this snapshot with explicit bounds. Persisted
+    /// subject retention, Message-ID, scissors and quiet options are admitted. Explicit scissors
+    /// overrides the repository's loaded `mailinfo.scissors` configuration. Signoff,
+    /// apply/three-way flags, quoted-CR policy and output encoding remain unsupported. All
+    /// numbered mail is retained, the next patch remains unapplied, and the abort-safety
+    /// checkpoint advances to the proposed destination. After caller-owned checkout/object/HEAD
     /// publication, publish the returned metadata and stage the next patch
     /// through [`crate::am::apply_current`] or Git. Git `am --continue` can then resume the series.
     /// Final-mail completion and session abort use [`Self::prepare`].
@@ -37,11 +38,7 @@ impl State {
         if repository.git_dir() != self.git_dir || repository.object_format() != self.format {
             return Err(Error::Changed);
         }
-        for (section, key) in [
-            ("mailinfo", "scissors"),
-            ("mailinfo", "quotedCr"),
-            ("i18n", "commitEncoding"),
-        ] {
+        for (section, key) in [("mailinfo", "quotedCr"), ("i18n", "commitEncoding")] {
             if repository.config().string(section, None, key).is_some() {
                 return Err(Error::Unsupported(PathBuf::from(format!(
                     "config/{section}.{key}"
@@ -55,14 +52,14 @@ impl State {
         if next >= last {
             return Err(Error::Unsupported(PathBuf::from("rebase-apply/next")));
         }
-        self.default_am_options()?;
+        let options = self.am_mailinfo_options(repository)?;
         let mut plan = self.prepare_inner(action, head, true)?;
         let name = PathBuf::from(format!("rebase-apply/{:04}", next + 1));
         let raw = self
             .files
             .get(&name)
             .ok_or_else(|| Error::Unsupported(name.clone()))?;
-        let mail = mailinfo::parse_with(raw, mailinfo::Options::default(), limits, cancel)?;
+        let mail = mailinfo::parse_with(raw, options, limits, cancel)?;
         let required = |value: Option<String>| {
             value
                 .filter(|value| !value.is_empty())
@@ -140,23 +137,58 @@ impl State {
         Ok(plan)
     }
 
-    fn default_am_options(&self) -> Result<(), Error> {
+    fn am_mailinfo_options(
+        &self,
+        repository: &crate::Repository,
+    ) -> Result<mailinfo::Options, Error> {
         for (name, expected) in [
             ("apply-opt", b"".as_slice()),
-            ("keep", b"f\n"),
-            ("messageid", b"f\n"),
-            ("quiet", b"f\n"),
             ("quoted-cr", b""),
-            ("scissors", b""),
             ("sign", b"f\n"),
             ("threeway", b"f\n"),
             ("utf8", b"t\n"),
         ] {
-            let path = Path::new("rebase-apply").join(name);
-            if self.files.get(&path).map(Vec::as_slice) != Some(expected) {
-                return Err(Error::Unsupported(path));
+            if self.am_option(name)? != expected {
+                return Err(Error::Unsupported(Path::new("rebase-apply").join(name)));
             }
         }
-        Ok(())
+        let subject = match self.am_option("keep")? {
+            b"f\n" => mailinfo::Subject::Clean,
+            b"t\n" => mailinfo::Subject::Keep,
+            b"b\n" => mailinfo::Subject::KeepNonPatch,
+            _ => return Err(Error::Unsupported(PathBuf::from("rebase-apply/keep"))),
+        };
+        let message_id = self.am_boolean("messageid")?;
+        // Quiet changes command output only; retain its exact bytes in the plan.
+        self.am_boolean("quiet")?;
+        let configured_scissors = repository
+            .config()
+            .boolean("mailinfo", None, "scissors")
+            .map_err(|_| Error::Unsupported(PathBuf::from("config/mailinfo.scissors")))?;
+        let scissors = if self.am_option("scissors")?.is_empty() {
+            configured_scissors.unwrap_or(false)
+        } else {
+            self.am_boolean("scissors")?
+        };
+        Ok(mailinfo::Options::default()
+            .with_subject(subject)
+            .with_message_id(message_id)
+            .with_scissors(scissors))
+    }
+
+    fn am_option(&self, name: &str) -> Result<&[u8], Error> {
+        let path = Path::new("rebase-apply").join(name);
+        self.files
+            .get(&path)
+            .map(Vec::as_slice)
+            .ok_or(Error::Unsupported(path))
+    }
+
+    fn am_boolean(&self, name: &str) -> Result<bool, Error> {
+        match self.am_option(name)? {
+            b"t\n" => Ok(true),
+            b"f\n" => Ok(false),
+            _ => Err(Error::Unsupported(Path::new("rebase-apply").join(name))),
+        }
     }
 }

@@ -381,10 +381,11 @@ rebase are refused. Broader options and unborn sessions remain tracked in
 
 When another numbered mail remains, use `State::prepare_next_am` with explicit mailinfo bounds and
 cancellation. It prepares exactly one next message from the snapshot, retains all numbered mails,
-and updates abort-safety to the proposed destination. Default am options are supported; nondefault
-option values are refused. The method takes the repository for its loaded config snapshot and
-refuses configured mailinfo scissors/quoted-CR or commit encoding. Author, email, date and subject
-must all be nonempty; no missing-header or current-time fallback runs. Publish caller-owned
-checkout/HEAD changes before metadata, then stage the next patch explicitly. Git can finish with
-`am --continue` after staging. The publisher replaces `next` after the derived artifacts; failures
-still require rereading the reported partial state.
+and updates abort-safety to the proposed destination. Persisted subject retention (`-k`/`-b`),
+Message-ID, scissors and quiet options are supported. Explicit scissors takes precedence over the
+repository's loaded `mailinfo.scissors` configuration. Signoff, three-way/apply flags, quoted-CR
+policies and output encodings remain refused. Author, email, date and subject must all be nonempty;
+no missing-header or current-time fallback runs. Publish caller-owned checkout/HEAD changes before
+metadata, then stage the next patch explicitly. Git can finish with `am --continue` after staging.
+The publisher replaces `next` after the derived artifacts; failures still require rereading the
+reported partial state.
