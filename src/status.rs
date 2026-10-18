@@ -1,4 +1,4 @@
-//! Read-only staged changes and literal working-tree observations.
+//! Read-only staged changes and configured or raw working-tree observations.
 //!
 //! Call [`Repository::raw_status`](crate::Repository::raw_status) with [`Baseline`] to choose the
 //! comparison tree and [`Untracked`] to choose whether raw untracked leaves are listed. It uses
@@ -17,12 +17,15 @@
 //! working file it reads through a [`filter::Pipeline`](crate::filter::Pipeline) before hashing,
 //! as `git status` does for line-ending conversion, `ident` and filter drivers such as Git LFS.
 //!
-//! [`Repository::status`](crate::Repository::status) compares tracked content as raw status does
-//! but lists untracked paths as `git status` does: pass it the rules from
+//! [`Repository::status`](crate::Repository::status) and filtered status apply intent-to-add,
+//! assume-unchanged and skip-worktree flags, and ignore regular-file executable-bit changes when
+//! `core.fileMode=false`. Status without filters compares literal content bytes. Both forms
+//! list untracked paths as `git status` does: pass the rules from
 //! [`Repository::ignore_rules`](crate::Repository::ignore_rules) and an [`UntrackedFiles`] listing,
 //! and read [`Report::untracked`].
 //! As in Git, a working file is not read when its `lstat` matches every cached index stat word and
-//! the entry is not racily clean; index blobs are never read. Assume-valid is ignored. No index
+//! the entry is not racily clean; index blobs are never read. Configured status also trusts
+//! assume-unchanged and skip-worktree promises; raw status inspects those files. No index
 //! refresh, locks, hooks, writes, rename detection, staging or checkout occur.
 //!
 //! Traversal is supported on Linux and macOS. Linux preserves non-UTF-8 filename bytes; macOS

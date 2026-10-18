@@ -1041,3 +1041,113 @@ fn valid_posix_path_characters_match_git_status(#[case] path: &str) {
     assert_eq!(report.unstaged.len(), 1);
     assert_eq!(report.unstaged[0].path, path.as_bytes());
 }
+
+fn configured_status(repo: &Repository) -> Report {
+    let rules = repo
+        .ignore_rules(&girt::workflow::Environment::default())
+        .unwrap();
+    repo.status(Baseline::Head, girt::status::UntrackedFiles::All, &rules)
+        .unwrap()
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn configured_intent_to_add_matches_git(#[case] format: ObjectFormat) {
+    let (_temp, repo) = fixture_in(format);
+    let root = repo.worktree().unwrap();
+    for bytes in [b"".as_slice(), b"new content"] {
+        fs::write(root.join("intent"), bytes).unwrap();
+        git(root, &["add", "-N", "intent"]);
+        assert_eq!(
+            git(root, &["status", "--porcelain=v1", "-z"]),
+            b" A intent\0"
+        );
+        let report = configured_status(&repo);
+        assert_eq!(report.comparison, Comparison::Configured);
+        assert!(report.staged.is_empty());
+        assert_eq!(report.unstaged.len(), 1);
+        assert_eq!(report.unstaged[0].status(), Some(girt::ChangeStatus::Added));
+        assert!(matches!(report.unstaged[0].change, Change::Added(_)));
+    }
+
+    fs::remove_file(root.join("intent")).unwrap();
+    assert_eq!(
+        git(root, &["status", "--porcelain=v1", "-z"]),
+        b" D intent\0"
+    );
+    let report = configured_status(&repo);
+    assert!(report.staged.is_empty());
+    assert_eq!(
+        report.unstaged[0].status(),
+        Some(girt::ChangeStatus::Deleted)
+    );
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1, "--assume-unchanged")]
+#[case(ObjectFormat::Sha256, "--assume-unchanged")]
+#[case(ObjectFormat::Sha1, "--skip-worktree")]
+#[case(ObjectFormat::Sha256, "--skip-worktree")]
+fn configured_index_promises_preserve_staged_changes(
+    #[case] format: ObjectFormat,
+    #[case] flag: &str,
+) {
+    let (_temp, repo) = fixture_in(format);
+    seed(&repo, Some(b"head"), Some(b"staged"), Some(b"staged"));
+    let root = repo.worktree().unwrap();
+    git(root, &["update-index", flag, "file"]);
+    for present in [true, false] {
+        if present {
+            fs::write(root.join("file"), b"changed working content").unwrap();
+        } else {
+            fs::remove_file(root.join("file")).unwrap();
+        }
+        assert_eq!(git(root, &["status", "--porcelain=v1", "-z"]), b"M  file\0");
+        let report = configured_status(&repo);
+        assert_eq!(report.staged.len(), 1);
+        assert!(report.unstaged.is_empty());
+        if flag == "--assume-unchanged" {
+            assert_eq!(status(&repo).unstaged.len(), 1);
+        } else {
+            assert!(repo.raw_status(Baseline::Head, Untracked::Omit).is_err());
+        }
+    }
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1, "false", false)]
+#[case(ObjectFormat::Sha256, "false", false)]
+#[case(ObjectFormat::Sha1, "true", true)]
+#[case(ObjectFormat::Sha256, "true", true)]
+fn configured_file_mode_matches_git(
+    #[case] format: ObjectFormat,
+    #[case] setting: &str,
+    #[case] changed: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let (_temp, repo) = fixture_in(format);
+    seed(&repo, Some(b"same"), Some(b"same"), Some(b"same"));
+    let root = repo.worktree().unwrap();
+    git(root, &["config", "core.filemode", setting]);
+    fs::set_permissions(root.join("file"), fs::Permissions::from_mode(0o755)).unwrap();
+    let repo = Repository::open(root).unwrap();
+    let override_setting = format!("core.filemode={setting}");
+    let actual = git(
+        root,
+        &["-c", &override_setting, "status", "--porcelain=v1", "-z"],
+    );
+    assert_eq!(!actual.is_empty(), changed);
+    assert_eq!(!configured_status(&repo).unstaged.is_empty(), changed);
+    assert_eq!(status(&repo).unstaged.len(), 1);
+
+    fs::write(root.join("file"), b"content still matters").unwrap();
+    assert!(
+        !git(
+            root,
+            &["-c", &override_setting, "status", "--porcelain=v1", "-z"]
+        )
+        .is_empty()
+    );
+    assert_eq!(configured_status(&repo).unstaged.len(), 1);
+}
