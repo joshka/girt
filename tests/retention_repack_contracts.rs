@@ -10,7 +10,13 @@ use girt::retention::{RepackLimits, RetentionPolicy};
 use girt::{ObjectId, Repository};
 
 fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let mut child = command
         .current_dir(root)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", root.join("absent-config"))

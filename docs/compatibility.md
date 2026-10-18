@@ -38,6 +38,29 @@ historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec 
 [R06 evidence](evidence/r06.md) records the native Linux/macOS/Windows refresh for these increments,
 including the selected Windows scope and exact tested revision.
 
+## Git Capability Audit: Storage
+
+The storage audit uses Git 2.56.0 on macOS and original temporary fixtures. Git oracle helpers clear
+inherited `GIT_*` variables and disable system and global configuration. Supported means the stated
+operations interoperate; it does not imply identical compression choices or maintenance policy.
+
+| Area                  | Executable comparison                                                                | Result                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Objects               | `tests/sha256.rs::public_objects_interoperate_both_directions`                       | All four types in both formats; Git checks identities and reads girt writes.    |
+| Loose objects         | `tests/blobs.rs::interoperates_with_git_in_both_directions`, `tests/trees.rs`        | Empty, text, binary and 8 MiB blobs; empty trees, all modes and byte names.     |
+| Packs                 | `tests/packs.rs::agrees_with_git_for_exact_packed_objects`                           | Both formats, all four kinds, REF and OFS deltas; exact `cat-file` bytes.       |
+| SHA-1 and SHA-256     | `tests/sha256.rs`                                                                    | Bidirectional objects, packed history, index, checkout and status.              |
+| Writing delta packs   | `tests/packs.rs::git_indexes_and_reads_internal_deltas`                              | Git regenerates the same index, verifies delta depths and reads every object.   |
+| Repacking and pruning | `tests/retention.rs::expire_and_prune_match_git_gc_retained_set_and_reflogs`         | Explicit expiry policy matches Git retained objects and reflog bytes.           |
+| Alternates            | `tests/alternates.rs::reads_nested_shared_cycles_after_move_without_borrowed_writes` | Relative nested stores, cycles and relocation; borrowed files remain unchanged. |
+
+Repacking and pruning remain partial under [issue 499](https://github.com/joshka/girt/issues/499).
+`tests/retention.rs::configured_gc_prune_expiry_requires_caller_policy` compares Git's configured
+`gc --no-cruft` with girt's default retention policy for `gc.pruneExpire=now` and `never`, in both
+formats. Git removes the old unreachable blob for `now`; girt preserves it until the caller supplies
+a cutoff. Pack retirement also deliberately preserves whole recent or protected packs. Partial
+clones are refused. Auxiliary indexes and bitmaps remain separate capabilities.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger

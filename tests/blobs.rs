@@ -63,18 +63,29 @@ fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
 /// Checks empty, text, and binary blobs against Git's identities and readers in both directions.
 /// Removing girt's file before Git writes ensures the final read exercises Git-produced storage.
 #[rstest]
-#[case::empty(Vec::new())]
-#[case::text(b"girt original fixture\n".to_vec())]
-#[case::binary((0..=255).cycle().take(16384).collect())]
-fn interoperates_with_git_in_both_directions(#[case] bytes: Vec<u8>) {
+#[case::empty_sha1(ObjectFormat::Sha1, Vec::new())]
+#[case::empty_sha256(ObjectFormat::Sha256, Vec::new())]
+#[case::text_sha1(ObjectFormat::Sha1, b"girt original fixture\n".to_vec())]
+#[case::text_sha256(ObjectFormat::Sha256, b"girt original fixture\n".to_vec())]
+#[case::binary_sha1(ObjectFormat::Sha1, (0..=255).cycle().take(16384).collect())]
+#[case::binary_sha256(ObjectFormat::Sha256, (0..=255).cycle().take(16384).collect())]
+#[case::large_sha1(ObjectFormat::Sha1, vec![0; 8 * 1024 * 1024])]
+#[case::large_sha256(ObjectFormat::Sha256, vec![0; 8 * 1024 * 1024])]
+fn interoperates_with_git_in_both_directions(#[case] format: ObjectFormat, #[case] bytes: Vec<u8>) {
     let root = tempfile::tempdir().unwrap();
     git(
         root.path(),
-        &["init", "--bare", "--object-format=sha1", "--template=", "."],
+        &[
+            "init",
+            "--bare",
+            &format!("--object-format={format}"),
+            "--template=",
+            ".",
+        ],
         b"",
     );
     let directory = root.path().join("objects");
-    let objects = LooseObjects::new(&directory, ObjectFormat::Sha1);
+    let objects = LooseObjects::new(&directory, format);
     let expected = git(root.path(), &["hash-object", "--stdin"], &bytes);
     let expected: ObjectId = std::str::from_utf8(&expected)
         .unwrap()

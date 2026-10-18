@@ -3431,3 +3431,42 @@ fn configured_noop_expiry_does_not_audit_missing_history(#[case] format: &str) {
     assert!(report.changed.is_empty());
     assert_eq!(fs::read(path).unwrap(), before);
 }
+
+/// The explicit retention API does not derive its cutoff from gc.pruneExpire (#499).
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::now("now", true)]
+#[case::never("never", false)]
+fn configured_gc_prune_expiry_requires_caller_policy(
+    #[case] expiry: &str,
+    #[case] git_deletes: bool,
+    #[values("sha1", "sha256")] format: &str,
+) {
+    let (root, _repo, _, _) = fixture_format(format);
+    let (oracle, _, _, _) = fixture_format(format);
+    let mut ids = Vec::new();
+    for path in [root.path(), oracle.path()] {
+        git(path, &["config", "gc.pruneExpire", expiry], b"");
+        let id: ObjectId = git(path, &["hash-object", "-w", "--stdin"], b"expiry audit")
+            .parse()
+            .unwrap();
+        fs::File::open(loose_path(path, id))
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1))
+            .unwrap();
+        ids.push(id);
+    }
+    let repo = Repository::open(root.path()).unwrap();
+    assert_eq!(ids[0], ids[1]);
+    git(oracle.path(), &["gc", "--no-cruft"], b"");
+    assert_eq!(!loose_path(oracle.path(), ids[0]).exists(), git_deletes);
+    assert!(
+        prune_at_cutoff(
+            &repo,
+            &RetentionPolicy::default(),
+            CutoffOperation::GarbageCollection,
+        )
+        .is_empty()
+    );
+    assert!(loose_path(root.path(), ids[0]).exists());
+}
