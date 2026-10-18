@@ -109,96 +109,108 @@ impl Objects {
         options: TreeMergeOptions,
         cancel: &AtomicBool,
     ) -> Result<TreeMerge, RenameError> {
-        let left = infer(self, base, ours, options, cancel)?;
-        let right = infer(self, base, theirs, options, cancel)?;
-        let mut reader = FlatReader {
-            objects: self,
-            options: options.trees,
+        merge_with_memory(
+            self,
+            [base, ours, theirs],
+            options,
             cancel,
-            remaining: options.trees.max_entries,
-        };
-        let mut b = reader.read(base, &[], 0)?;
-        let mut o = reader.read(ours, &[], 0)?;
-        let mut t = reader.read(theirs, &[], 0)?;
-        let original = b.clone();
-        let left_dirs = directory_moves(&left, &o)?;
-        let right_dirs = directory_moves(&right, &t)?;
-        let mut conflicts = Vec::new();
-        let sources: BTreeSet<_> = left.keys().chain(right.keys()).cloned().collect();
-        for source in sources {
-            let base_value = b.get(&source).copied();
-            match (left.get(&source), right.get(&source)) {
-                (Some(a), Some(c)) if a != c => {
-                    conflicts.push(TreeConflict {
-                        path: source.clone(),
-                        kind: ConflictKind::RenameRename,
-                        base: base_value,
-                        ours: o.get(a).copied(),
-                        theirs: t.get(c).copied(),
-                        content: None,
-                        rename_source: Some(source.clone()),
-                        stage_paths: Some([source.clone(), a.clone(), c.clone()]),
-                    });
-                    b.remove(&source);
-                }
-                (Some(target), Some(_)) => {
-                    if b.contains_key(target) {
-                        return Err(RenameError::DestinationCollision(target.clone()));
-                    }
-                    if let Some(value) = b.remove(&source) {
-                        b.insert(target.clone(), value);
-                    }
-                }
-                (Some(target), _) => align(
-                    &source,
-                    target,
-                    &mut b,
-                    &mut o,
-                    &mut t,
-                    true,
-                    &mut conflicts,
-                )?,
-                (_, Some(target)) => align(
-                    &source,
-                    target,
-                    &mut b,
-                    &mut t,
-                    &mut o,
-                    false,
-                    &mut conflicts,
-                )?,
-                _ => {}
-            }
-        }
-        relocate_additions(&original, &left_dirs, &mut t, false, &mut conflicts)?;
-        relocate_additions(&original, &right_dirs, &mut o, true, &mut conflicts)?;
-        let mut memory = Memory::default();
-        let roots = [
-            memory.build(self, b)?,
-            memory.build(self, o)?,
-            memory.build(self, t)?,
-        ];
-        let mut result = super::tree::merge_prepared(self, roots, options.trees, cancel, &memory)?;
-        for conflict in &mut result.conflicts {
-            if let Some((source, _)) = left
-                .iter()
-                .chain(right.iter())
-                .find(|(_, target)| **target == conflict.path)
-            {
-                conflict.rename_source = Some(source.clone());
-            }
-        }
-        result.conflicts.extend(conflicts);
-        result.conflicts.sort_by(|a, b| a.path.cmp(&b.path));
-        let mut trees: Vec<_> = memory
-            .order
-            .iter()
-            .map(|id| memory.trees[id].clone())
-            .collect();
-        trees.append(&mut result.trees);
-        result.trees = trees;
-        Ok(result)
+            &mut Memory::default(),
+        )
     }
+}
+
+pub(super) fn merge_with_memory(
+    objects: &Objects,
+    roots: [ObjectId; 3],
+    options: TreeMergeOptions,
+    cancel: &AtomicBool,
+    memory: &mut Memory,
+) -> Result<TreeMerge, RenameError> {
+    let [base, ours, theirs] = roots;
+    let left = infer(objects, base, ours, options, cancel, memory)?;
+    let right = infer(objects, base, theirs, options, cancel, memory)?;
+    let mut reader = FlatReader::new(objects, options, cancel, memory);
+
+    let mut b = reader.read(base, &[], 0)?;
+    let mut o = reader.read(ours, &[], 0)?;
+    let mut t = reader.read(theirs, &[], 0)?;
+    let original = b.clone();
+    let left_dirs = directory_moves(&left, &o)?;
+    let right_dirs = directory_moves(&right, &t)?;
+    let mut conflicts = Vec::new();
+    let sources: BTreeSet<_> = left.keys().chain(right.keys()).cloned().collect();
+    for source in sources {
+        let base_value = b.get(&source).copied();
+        match (left.get(&source), right.get(&source)) {
+            (Some(a), Some(c)) if a != c => {
+                conflicts.push(TreeConflict {
+                    path: source.clone(),
+                    kind: ConflictKind::RenameRename,
+                    base: base_value,
+                    ours: o.get(a).copied(),
+                    theirs: t.get(c).copied(),
+                    content: None,
+                    rename_source: Some(source.clone()),
+                    stage_paths: Some([source.clone(), a.clone(), c.clone()]),
+                });
+                b.remove(&source);
+            }
+            (Some(target), Some(_)) => {
+                if b.contains_key(target) {
+                    return Err(RenameError::DestinationCollision(target.clone()));
+                }
+                if let Some(value) = b.remove(&source) {
+                    b.insert(target.clone(), value);
+                }
+            }
+            (Some(target), _) => align(
+                &source,
+                target,
+                &mut b,
+                &mut o,
+                &mut t,
+                true,
+                &mut conflicts,
+            )?,
+            (_, Some(target)) => align(
+                &source,
+                target,
+                &mut b,
+                &mut t,
+                &mut o,
+                false,
+                &mut conflicts,
+            )?,
+            _ => {}
+        }
+    }
+    relocate_additions(&original, &left_dirs, &mut t, false, &mut conflicts)?;
+    relocate_additions(&original, &right_dirs, &mut o, true, &mut conflicts)?;
+    let roots = [
+        memory.build(objects, b)?,
+        memory.build(objects, o)?,
+        memory.build(objects, t)?,
+    ];
+    let mut result = super::tree::merge_prepared(objects, roots, options.trees, cancel, memory)?;
+    for conflict in &mut result.conflicts {
+        if let Some((source, _)) = left
+            .iter()
+            .chain(right.iter())
+            .find(|(_, target)| **target == conflict.path)
+        {
+            conflict.rename_source = Some(source.clone());
+        }
+    }
+    result.conflicts.extend(conflicts);
+    result.conflicts.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut trees: Vec<_> = memory
+        .order
+        .iter()
+        .map(|id| memory.trees[id].clone())
+        .collect();
+    trees.append(&mut result.trees);
+    result.trees = trees;
+    Ok(result)
 }
 
 fn infer(
@@ -207,10 +219,51 @@ fn infer(
     side: ObjectId,
     options: TreeMergeOptions,
     cancel: &AtomicBool,
+    memory: &Memory,
 ) -> Result<Renames, RenameError> {
     let policy = options
         .renames
         .with_copies(crate::rewrites::Copies::Disabled);
+    if memory.trees.contains_key(&base) || memory.trees.contains_key(&side) {
+        let mut reader = FlatReader::new(objects, options, cancel, memory);
+        let old = reader.read(base, &[], 0)?;
+        let new = reader.read(side, &[], 0)?;
+        let names: BTreeSet<_> = old.keys().chain(new.keys()).collect();
+        let mut changes = Vec::new();
+        for path in names {
+            let a = old.get(path).copied();
+            let b = new.get(path).copied();
+            if a != b {
+                if changes.len() == options.rename_limits.trees.max_changes {
+                    return Err(TreeError::Limit("changes").into());
+                }
+                changes.push(crate::TreeChange {
+                    path: path.clone(),
+                    old: a,
+                    new: b,
+                });
+            }
+        }
+        let detection = objects
+            .detect_rewrites_with_memory(
+                &changes,
+                policy,
+                options.rename_limits,
+                None,
+                cancel,
+                Some(&memory.blobs),
+            )
+            .map_err(crate::tree_diff::Error::from)?;
+        if detection.inexact_skipped.is_some() {
+            return Err(RenameError::Incomplete);
+        }
+        return Ok(detection
+            .rewrites
+            .into_iter()
+            .filter(|r| r.kind == crate::rewrites::Kind::Rename)
+            .map(|r| (r.source, r.target))
+            .collect());
+    }
     let comparison = objects.diff_trees_with(
         Some(base),
         Some(side),
@@ -357,20 +410,55 @@ fn relocate_additions(
 
 struct FlatReader<'a> {
     objects: &'a Objects,
+    memory: &'a Memory,
     options: TreeOptions,
+    traversal: crate::TreeCompareLimits,
+    reads: usize,
+    bytes: usize,
+    paths: usize,
     cancel: &'a AtomicBool,
     remaining: usize,
 }
 
-impl FlatReader<'_> {
+impl<'a> FlatReader<'a> {
+    fn new(
+        objects: &'a Objects,
+        options: TreeMergeOptions,
+        cancel: &'a AtomicBool,
+        memory: &'a Memory,
+    ) -> Self {
+        let traversal = options.rename_limits.trees;
+        Self {
+            objects,
+            memory,
+            options: options.trees,
+            traversal,
+            cancel,
+            remaining: options.trees.max_entries.min(traversal.max_entries),
+            reads: traversal.max_trees,
+            bytes: traversal.max_tree_bytes,
+            paths: traversal.max_path_bytes,
+        }
+    }
+
     fn read(&mut self, id: ObjectId, path: &[u8], depth: usize) -> Result<Leaves, RenameError> {
         if self.cancel.load(Ordering::Relaxed) {
             return Err(TreeError::Cancelled.into());
         }
-        if depth > self.options.max_depth {
+        if depth > self.options.max_depth.min(self.traversal.max_depth) {
             return Err(TreeError::Limit("depth").into());
         }
-        let tree = self.objects.read_tree(id).map_err(TreeError::from)?;
+        self.reads = self
+            .reads
+            .checked_sub(1)
+            .ok_or(TreeError::Limit("tree reads"))?;
+        let tree = self
+            .memory
+            .read_tree_with(self.objects, id, self.traversal.read)?;
+        self.bytes = self
+            .bytes
+            .checked_sub(tree.encode().len())
+            .ok_or(TreeError::Limit("tree bytes"))?;
         self.remaining = self
             .remaining
             .checked_sub(tree.entries().len())
@@ -384,6 +472,14 @@ impl FlatReader<'_> {
             if !child.is_empty() {
                 child.push(b'/');
             }
+            let length = child
+                .len()
+                .checked_add(entry.name.len())
+                .ok_or(TreeError::Limit("path bytes"))?;
+            self.paths = self
+                .paths
+                .checked_sub(length)
+                .ok_or(TreeError::Limit("path bytes"))?;
             child.extend_from_slice(&entry.name);
             if entry.mode == EntryMode::Tree {
                 leaves.extend(self.read(entry.id, &child, depth + 1)?);

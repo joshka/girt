@@ -219,6 +219,19 @@ impl Objects {
         targets: Option<&[&[u8]]>,
         cancel: &AtomicBool,
     ) -> Result<Detection, Error> {
+        self.detect_rewrites_with_memory(changes, options, limits, targets, cancel, None)
+    }
+
+    /// Includes verified, newly generated merge blobs without installing them in the store.
+    pub(crate) fn detect_rewrites_with_memory(
+        &self,
+        changes: &[TreeChange],
+        options: Options,
+        limits: Limits,
+        targets: Option<&[&[u8]]>,
+        cancel: &AtomicBool,
+        memory: Option<&BTreeMap<ObjectId, Vec<u8>>>,
+    ) -> Result<Detection, Error> {
         let mut budget = Budget {
             remaining: limits,
             cancel,
@@ -234,7 +247,7 @@ impl Objects {
             if let std::collections::btree_map::Entry::Vacant(entry) =
                 blobs.entry(candidate.value.id)
             {
-                entry.insert(read(self, candidate.value.id, &mut budget)?);
+                entry.insert(read(self, candidate.value.id, &mut budget, memory)?);
             }
         }
         let mut selection = Selection::new(&sources, &destinations, options);
@@ -329,9 +342,29 @@ impl Blob {
     }
 }
 
-fn read(objects: &Objects, id: ObjectId, budget: &mut Budget<'_>) -> Result<Blob, Error> {
+fn read(
+    objects: &Objects,
+    id: ObjectId,
+    budget: &mut Budget<'_>,
+    memory: Option<&BTreeMap<ObjectId, Vec<u8>>>,
+) -> Result<Blob, Error> {
     let mut limits = budget.remaining.read;
     limits.max_object_bytes = limits.max_object_bytes.min(budget.remaining.max_blob_bytes);
+    if let Some(bytes) = memory.and_then(|memory| memory.get(&id)) {
+        if bytes.len() > limits.max_object_bytes {
+            return Err(Error::Limit("overlay blob bytes"));
+        }
+        spend(
+            &mut budget.remaining.max_blob_bytes,
+            bytes.len(),
+            "blob bytes",
+        )?;
+        budget.check()?;
+        return Ok(Blob {
+            bytes: bytes.clone(),
+            content: None,
+        });
+    }
     let object = objects
         .read_with(id, limits)
         .map_err(|source| Error::Read { id, source })?

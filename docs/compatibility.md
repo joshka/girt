@@ -2981,3 +2981,17 @@ The normalization layer uses existing rewrite inference and refuses skipped inex
 directories with multiple inferred destinations and destination collisions return typed errors.
 Stored non-root empty trees require the path-based primitive instead. This increment does not claim
 complete ort rename behavior for those layouts.
+
+## Commit Merging and Virtual Bases
+
+`tests/merge_commits.rs` creates original ordinary and criss-cross graphs through isolated Git
+commands. Ordinary SHA-1/SHA-256 clean results and a two-base criss-cross merge with final rename
+inference match `git merge-tree --write-tree` identities. The criss-cross fixture requires an
+unstored virtual content blob for rename scoring and verifies that computation never installs it.
+Focused tests cover explicit unrelated-history policy, cancellation and unresolved-base refusal.
+
+Virtual bases fold deterministic object-ID-ordered sets using existing best-common-ancestor queries.
+Unresolved virtual bases remain an explicit typed error with their intermediate conflict data;
+conflict-bearing recursive-base compatibility is a separate increment. The rename-layout and
+content-refinement limitations above still apply. No reference or merge commit is implicitly
+published.

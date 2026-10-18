@@ -20,6 +20,14 @@ pub fn merge_tree(root: &Path, ours: &str, theirs: &str) -> Output {
 }
 
 pub fn commit(root: &Path, tree: girt::ObjectId, parent: Option<girt::ObjectId>) -> girt::ObjectId {
+    commit_parents(root, tree, &parent.into_iter().collect::<Vec<_>>())
+}
+
+pub fn commit_parents(
+    root: &Path,
+    tree: girt::ObjectId,
+    parents: &[girt::ObjectId],
+) -> girt::ObjectId {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -40,7 +48,7 @@ pub fn commit(root: &Path, tree: girt::ObjectId, parent: Option<girt::ObjectId>)
             "-m",
             "fixture",
         ]);
-    if let Some(parent) = parent {
+    for parent in parents {
         command.args(["-p", &parent.to_string()]);
     }
     let output = command.output().unwrap();

@@ -19,6 +19,23 @@ impl Memory {
         }
     }
 
+    pub fn read_tree_with(
+        &self,
+        objects: &Objects,
+        id: ObjectId,
+        limits: crate::ReadLimits,
+    ) -> Result<Tree, TreeError> {
+        match self.trees.get(&id) {
+            Some(tree) => {
+                if tree.encode().len() > limits.max_object_bytes {
+                    return Err(TreeError::Limit("overlay tree bytes"));
+                }
+                Ok(tree.clone())
+            }
+            None => Ok(objects.read_tree_with(id, limits)?),
+        }
+    }
+
     pub fn read_blob(&self, objects: &Objects, id: ObjectId) -> Result<Vec<u8>, TreeError> {
         match self.blobs.get(&id) {
             Some(bytes) => Ok(bytes.clone()),
