@@ -249,6 +249,8 @@ pub use retention::{FetchRetention, RetainedFetchError};
 mod shallow;
 pub use shallow::FetchShallowError;
 mod known;
+mod object_filter;
+pub use object_filter::{ObjectFilter, ObjectFilterParseError};
 mod local;
 mod local_native;
 mod protocol;
