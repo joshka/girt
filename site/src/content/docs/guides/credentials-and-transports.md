@@ -3,15 +3,17 @@ title: Credentials and transports
 description: How girt reaches local paths, HTTP(S) and SSH remotes, and where credentials come from.
 ---
 
-girt has three transports. Which one a transfer uses depends on the remote's URL after `insteadOf`
-rewriting:
+girt has three built-in transports, and applications can add their own. Which one a transfer uses
+depends on the remote's URL after `insteadOf` rewriting:
 
 | URL                                                | Transport      | Needs                         |
 | -------------------------------------------------- | -------------- | ----------------------------- |
 | `/srv/repo.git`, `../repo`, `file:///srv/repo.git` | Native local   | nothing                       |
 | `https://host/repo.git`, `http://…`                | Smart HTTP     | `http` feature                |
 | `ssh://user@host/repo.git`, `user@host:repo.git`   | System OpenSSH | `ssh` feature, macOS or Linux |
-| `git://…`, `<helper>::<address>`                   | —              | unsupported                   |
+| `mem::/srv/repo`, `vault://team/project`           | Application    | a registered `Transport`      |
+| `<name>::<address>`, `<name>://…`                  | Remote helper  | approved `git-remote-<name>`  |
+| `git://…`                                          | —              | unsupported                   |
 
 The `workflow` module reads the settings and environment variables described below for you. The core
 transport APIs read nothing themselves: the application passes in each setting, so it decides which
@@ -40,9 +42,42 @@ The `http` feature adds the smart HTTP protocol over reqwest with rustls. Throug
 - `http.sslVerify=false` and `GIT_SSL_NO_VERIFY` disable verification, as in Git.
 - `http.proxy`, `remote.<name>.proxy`, `https_proxy`, `http_proxy`, `all_proxy` and `no_proxy`
   select a proxy. Only HTTP proxies, using CONNECT, are supported.
+- A proxy URL that names a user, `http://alice@proxy:3128`, gets its password from the credential
+  helpers or askpass, as in Git.
+- `http.sslCert` and `http.sslKey`, or `GIT_SSL_CERT` and `GIT_SSL_KEY`, select a client
+  certificate.
+- `http.extraHeader` adds request headers and `http.userAgent` or `GIT_HTTP_USER_AGENT` replaces the
+  `girt/<version>` user agent. Headers that frame or route the request, such as `Host`, are refused.
 - A redirect on the first request is followed if it stays on the same origin.
-- Settings girt does not implement, such as client certificates, fail before any network I/O instead
-  of being ignored.
+- Settings that only tune Git's libcurl backend, such as `http.sslBackend` and `http.postBuffer`,
+  are ignored. Settings girt does not implement that affect security or routing, such as
+  `http.sslCAPath` and `http.pinnedPubkey`, fail before any network I/O instead of being ignored.
+
+To decide about server certificates yourself, for example to pin a self-signed certificate, return a
+`CertificateCheck` from `TransferCallbacks::certificate_check`. It sees the host, the certificate
+chain and girt's own verdict, and answers `Accept`, `Reject` or `UseDefault`:
+
+```rust
+use std::sync::Arc;
+
+use girt::transport::http::{CertificateCheck, CertificateDecision, ServerCertificate};
+use girt::workflow::TransferCallbacks;
+
+struct Pinned(Vec<u8>);
+
+impl TransferCallbacks for Pinned {
+    fn certificate_check(&self) -> Option<Arc<dyn CertificateCheck>> {
+        let pinned = self.0.clone();
+        Some(Arc::new(move |server: &ServerCertificate<'_>| {
+            if server.end_entity() == pinned.as_slice() {
+                CertificateDecision::Accept
+            } else {
+                CertificateDecision::UseDefault
+            }
+        }))
+    }
+}
+```
 
 With the core API, the application resolves `HttpSettings` from the configuration and an
 `HttpEnvironment` it fills in itself: the CA bundle's bytes (girt never opens the file), the proxy
@@ -63,6 +98,17 @@ The `ssh` feature runs the system OpenSSH client, so authentication, host keys, 
 `~/.ssh/config` behave as they do for `ssh` itself. girt never sees a key or password. `workflow`
 chooses the command the way Git does, from `GIT_SSH_COMMAND`, `core.sshCommand` or `GIT_SSH`, and
 runs it through `/bin/sh` as Git does. Only the OpenSSH variant is accepted.
+
+OpenSSH checks the server's host key before girt sees the connection, so there is no per-key
+callback. Instead, `TransferCallbacks::host_key_policy` (or `SshRemote::with_host_keys`) can fix the
+`known_hosts` files to trust and whether an unknown host is rejected or accepted and recorded:
+
+```rust
+use girt::transport::ssh::{HostKeyPolicy, UnknownHost};
+
+let policy = HostKeyPolicy::new(UnknownHost::AcceptNew)
+    .with_files(vec!["/srv/app/known_hosts".into()]);
+```
 
 With the core API, `SshRemote::openssh` keeps the user's OpenSSH configuration, and the application
 must approve any configured command by giving its executable and arguments explicitly
@@ -100,9 +146,12 @@ a credential once and retries:
    command. An absolute path runs that program. Any other name runs the `git-credential-<name>`
    program found on `PATH` or in Git's exec path, so helpers such as `osxkeychain` and `manager`
    keep working.
-2. If no helper supplies a complete credential, `TransferCallbacks::credential` asks the user for
-   the username, then the password. Return `None` to cancel.
-3. When the server accepts the credential, every helper is told to store it. When the server rejects
+2. If no helper supplies a complete credential, the askpass program from `GIT_ASKPASS`,
+   `core.askPass` or `SSH_ASKPASS` is asked, as in Git, with Git's question text. An empty
+   `GIT_ASKPASS` or `core.askPass` turns it off.
+3. If that does not answer either, `TransferCallbacks::credential` asks the user for the username,
+   then the password. Return `None` to cancel.
+4. When the server accepts the credential, every helper is told to store it. When the server rejects
    it, every helper is told to erase it.
 
 Because `workflow` runs the helpers a repository's configuration names, it trusts that configuration
@@ -117,6 +166,60 @@ the helpers itself.
 
 Credentials are not written to logs or `Debug` output. Errors name the remote URL without its
 username or password. Plain `http://` sends credentials unencrypted.
+
+## Custom transports and remote helpers
+
+For any URL scheme girt does not handle itself, an application can carry the Git protocol over its
+own connection. Implement `Transport`, which opens one `Connection` (a `Read + Write` stream to
+`git-upload-pack` or `git-receive-pack`) per request, and return it from
+`TransferCallbacks::transport`. Listing, fetch, clone and push then work over it. A transport that
+runs a Git service as a child process can use `ChildConnection`:
+
+```rust
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+
+use girt::transport::{ChildConnection, ConnectError, ConnectRequest, Connection, Transport};
+use girt::workflow::TransferCallbacks;
+
+// Serves `local::<path>` URLs with the installed Git.
+struct LocalGit;
+
+impl Transport for LocalGit {
+    fn connect(&self, request: &ConnectRequest<'_>) -> Result<Box<dyn Connection>, ConnectError> {
+        let mut command = Command::new(request.service().name());
+        if let Some(protocol) = request.protocol().git_protocol() {
+            command.env("GIT_PROTOCOL", protocol);
+        }
+        let child = command
+            .arg(String::from_utf8_lossy(request.address()).as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(ConnectError::new)?;
+        Ok(Box::new(ChildConnection::new(child)))
+    }
+}
+
+struct Callbacks;
+
+impl TransferCallbacks for Callbacks {
+    fn transport(&self, scheme: &[u8]) -> Option<Arc<dyn Transport>> {
+        (scheme == b"local").then(|| Arc::new(LocalGit) as Arc<dyn Transport>)
+    }
+}
+```
+
+This is also how to test against an in-memory or fake server without a network. Registering a
+transport does not override the user's protocol policy: the URL must still be allowed by
+`protocol.<scheme>.allow`, as for any scheme Git does not know.
+
+Git also runs `git-remote-<name>` programs for such URLs. girt runs them only when the application
+approves their names, because a URL then chooses a program to run with the application's
+permissions. Return `RemoteHelpers::Run(vec!["name".into()])` from
+`TransferCallbacks::remote_helpers`. girt passes the same arguments and `GIT_DIR` as Git and speaks
+the `connect` part of the remote-helper protocol. Helpers that offer only `fetch`, `push`, `import`
+or `export`, such as Mercurial bridges, are refused with an error.
 
 ## Reference
 
