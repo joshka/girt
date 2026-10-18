@@ -40,8 +40,8 @@ including the selected Windows scope and exact tested revision.
 
 ## Reachability bitmap files
 
-`girt::bitmap` reads bitmap v1 and reverse-index v1 files for SHA-1 and SHA-256 packs and
-multi-pack indexes. Git CLI fixtures compare decoded type maps and selected-commit closures with
+`girt::bitmap` reads bitmap v1 and reverse-index v1 files for SHA-1 and SHA-256 packs and multi-pack
+indexes. Git CLI fixtures compare decoded type maps and selected-commit closures with
 `git rev-list --use-bitmap-index --objects`; `.rev` mappings translate bitmap order into ordinary
 index order. Git-written optional name-hash caches and lookup tables are accepted. XOR dependencies
 are decoded under an expansion budget. Unsupported pseudo-merge extensions are refused explicitly.
@@ -52,11 +52,12 @@ fixtures prove covered roots use bitmaps. Corrupt sidecars, zero metadata-work b
 loose tips, missing roots, independent closure limits, tag/tree/blob roots, skipped gitlinks and
 shallow boundaries are covered by `tests/bitmaps.rs`. Packed file handles remain pinned in results.
 
-Checksums and structure establish association with an inventory, not the truth of graph
-reachability claims. Forced walking provides an independent graph result. Reusing verified bindings
-across queries is tracked in [the bitmap cache issue](https://github.com/joshka/girt/issues/717). Incremental MIDX and
-alternate-store bitmap acceleration, pseudo-merges and bitmap writing remain tracked in
-[the bitmap issue](https://github.com/joshka/girt/issues/518). See [the reader guide](bitmaps.md).
+Checksums and structure establish association with an inventory, not the truth of graph reachability
+claims. Forced walking provides an independent graph result. Reusing verified bindings across
+queries is tracked in [the bitmap cache issue](https://github.com/joshka/girt/issues/717).
+Incremental MIDX and alternate-store bitmap acceleration, pseudo-merges and bitmap writing remain
+tracked in [the bitmap issue](https://github.com/joshka/girt/issues/518). See
+[the reader guide](bitmaps.md).
 
 ## Multi-pack indexes
 
@@ -1452,13 +1453,18 @@ reference names its target's commit under its own name, as in Git, and tags of t
 skipped. An annotated tag whose reference was renamed is printed under the tag object's name and
 always in the long form (with the full commit ID under `--abbrev=0`), while patterns match the
 reference name; `tests/describe_git.rs` compares these cases and a recent tag on a 400-commit
-history found within a 20-commit bound. `--dirty`, `--broken` and `--contains` are not implemented.
+history found within a 20-commit bound. `--contains` is not implemented.
 
 `tests/revisions.rs` compares revision parsing of `git describe` output (`<name>-<count>-g<hex>`)
 with `git rev-parse --verify`: the name is not looked up but must be a valid branch name, the count
 must be decimal, the hex needs at least four digits (a full ID may carry trailing zeros), a
 reference with the whole name wins, an ambiguous prefix resolves to its one commit even when a blob
 shares it, and steps such as `~1` and `^{tree}` may follow.
+
+`girt history describe --dirty` and `--broken` are compared with `git describe` in
+`girt-cli/tests/git_parity.rs` for a clean tree, untracked files only, a modified file, a staged
+file, a damaged index, a deleted intent-to-add entry, an untracked file in a submodule and a failing
+required clean filter on a resized file; as in Git, only tracked and staged changes count.
 
 ## Commit History
 

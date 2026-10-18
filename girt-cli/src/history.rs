@@ -47,8 +47,28 @@ pub enum Command {
     /// describe` estimates and can print a larger count or a different tag.
     Describe {
         /// Commit to describe; `HEAD` when omitted.
-        #[arg(default_value = "HEAD", add = ArgValueCompleter::new(complete::revisions))]
-        rev: String,
+        #[arg(add = ArgValueCompleter::new(complete::revisions))]
+        rev: Option<String>,
+        /// Append `-dirty`, or MARK, when tracked files or the index differ from `HEAD`.
+        /// Untracked files do not count. Describes `HEAD` only.
+        #[arg(
+            long,
+            value_name = "MARK",
+            num_args = 0..=1,
+            require_equals = true,
+            default_missing_value = "-dirty"
+        )]
+        dirty: Option<String>,
+        /// Like `--dirty`, and append `-broken`, or MARK, when the working tree cannot be
+        /// compared, such as with a damaged index.
+        #[arg(
+            long,
+            value_name = "MARK",
+            num_args = 0..=1,
+            require_equals = true,
+            default_missing_value = "-broken"
+        )]
+        broken: Option<String>,
         /// Also use lightweight tags.
         #[arg(long, conflicts_with = "all")]
         tags: bool,
@@ -120,6 +140,81 @@ pub struct LogArgs {
     pathspecs: Vec<std::ffi::OsString>,
 }
 
+/// Whether tracked files or the index differ from `HEAD`, as `git describe --dirty` asks: staged,
+/// unstaged or conflicted changes, with files converted as `girt status` converts them.
+///
+/// As in Git, untracked files do not count, nor does a submodule whose only change is untracked
+/// content, nor an intent-to-add entry whose file was deleted. When converting a file fails (a
+/// required clean filter erroring), a raw comparison decides: Git reports such a file dirty from
+/// its changed size without running the filter.
+fn tracked_changes(repository: &girt::Repository, context: &Context) -> Result<bool> {
+    use girt::status::{Baseline, Change, Limits, Report, UntrackedFiles};
+    let rules = repository
+        .ignore_rules(&context.environment)
+        .wrap_err("loading ignore rules")?;
+    let mut filters = repository
+        .filters(&context.environment, girt::filter::Commands::Run)
+        .wrap_err("loading attributes")?;
+    let all = girt::pathspec::Pathspec::all();
+    let cancel = AtomicBool::new(false);
+    let report = match repository.status_with_filters(
+        Baseline::Head,
+        UntrackedFiles::Omit,
+        &rules,
+        &all,
+        &mut filters,
+        Limits::default(),
+        &cancel,
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            let raw = repository
+                .status_with(
+                    Baseline::Head,
+                    UntrackedFiles::Omit,
+                    &rules,
+                    &all,
+                    Limits::default(),
+                    &cancel,
+                )
+                .wrap_err("comparing the working tree")?;
+            if raw.staged.is_empty() && raw.unstaged.is_empty() && raw.unmerged.is_empty() {
+                return Err(error).wrap_err("comparing the working tree");
+            }
+            return Ok(true);
+        }
+    };
+    let intent_to_add: HashSet<Vec<u8>> = repository
+        .read_index(Default::default())
+        .wrap_err("reading the index")?
+        .map(|index| {
+            index
+                .entries()
+                .iter()
+                .filter(|entry| entry.intent_to_add)
+                .map(|entry| entry.path.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let only_untracked = |report: &Report, path: &[u8]| {
+        report.submodules.iter().any(|submodule| {
+            submodule.path == path
+                && submodule.head == Some(submodule.recorded)
+                && !submodule.tracked_dirty
+        })
+    };
+    let unstaged = report.unstaged.iter().any(|change| match &change.change {
+        Change::Deleted if intent_to_add.contains(&change.path) => false,
+        Change::Modified(value)
+            if *value == change.index && only_untracked(&report, &change.path) =>
+        {
+            false
+        }
+        _ => true,
+    });
+    Ok(!report.staged.is_empty() || unstaged || !report.unmerged.is_empty())
+}
+
 pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let objects = repository.objects()?;
@@ -157,6 +252,8 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
         }
         Command::Describe {
             rev,
+            dirty,
+            broken,
             tags,
             all,
             matches,
@@ -169,7 +266,24 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
             always,
         } => {
             use girt::describe::{Candidates, DescribeOptions};
-            let id = commit(&rev)?;
+            if (dirty.is_some() || broken.is_some()) && rev.is_some() {
+                return Err(eyre!(
+                    "--dirty and --broken describe HEAD; they cannot take a revision"
+                ));
+            }
+            let id = commit(rev.as_deref().unwrap_or("HEAD"))?;
+            let suffix = if dirty.is_none() && broken.is_none() {
+                None
+            } else {
+                match tracked_changes(&repository, context) {
+                    Ok(false) => None,
+                    Ok(true) => Some(dirty.clone().unwrap_or_else(|| "-dirty".to_owned())),
+                    Err(error) => match &broken {
+                        Some(mark) => Some(mark.clone()),
+                        None => return Err(error),
+                    },
+                }
+            };
             let mut options = DescribeOptions::new()
                 .with_candidates(if exact_match { 0 } else { candidates })
                 .with_first_parent(first_parent)
@@ -220,11 +334,12 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
                         );
                     }
                     out.write_all(&description.format(abbreviated.as_ref(), long))?;
+                    out.write_all(suffix.as_deref().unwrap_or("").as_bytes())?;
                     out.write_all(b"\n")?;
                 }
                 None if always => {
                     let abbreviated = objects.abbreviate(id, length.max(4))?;
-                    writeln!(out, "{abbreviated}")?;
+                    writeln!(out, "{abbreviated}{}", suffix.as_deref().unwrap_or(""))?;
                 }
                 None => return Err(eyre!("no names found to describe {id}")),
             }
