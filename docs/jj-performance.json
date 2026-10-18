@@ -1766,40 +1766,40 @@
     "variant": "ancestry",
     "girt_samples": 1,
     "girt_attempts": 1,
-    "girt_ms": 86577.56495800277,
-    "girt_rss_mb": 386.28125,
+    "girt_ms": 66049.37166700256,
+    "girt_rss_mb": 388.71875,
     "stock_samples": 1,
     "stock_attempts": 1,
-    "stock_ms": 64955.51629099646,
-    "stock_rss_mb": 520.140625,
+    "stock_ms": 104867.1926669922,
+    "stock_rss_mb": 518.4375,
     "git_samples": 1,
     "git_attempts": 1,
-    "git_ms": 1102.4487910035532,
-    "git_rss_mb": 139.359375,
-    "ratio_vs_stock": 1.3328747102885141,
+    "git_ms": 2968.098541998188,
+    "git_rss_mb": 140.25,
+    "ratio_vs_stock": 0.6298382743661655,
     "sample_policy": "adaptive",
-    "stock_vs_git_ratio": 58.91930475234845,
+    "stock_vs_git_ratio": 35.331439028433785,
     "jj_level_gap": true,
-    "notes": "full output consumed to /dev/null; girt n=1 range=86577.565..86577.565ms; stock n=1 range=64955.516..64955.516ms; git n=1 range=1102.449..1102.449ms",
+    "notes": "full output consumed to /dev/null; girt n=1 range=66049.372..66049.372ms; stock n=1 range=104867.193..104867.193ms; git n=1 range=2968.099..2968.099ms; timed on a fresh copy per sample after adapter d9c0ceb1 stopped log writing loose copies of packed trees; one sample per tool at load 24.9-34.9. This single sample was faster than stock; parity or a speedup is not established.",
     "harness_op": "log-ancestry",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        86577.56495800277,
-        86577.56495800277
+        66049.37166700256,
+        66049.37166700256
       ],
       "stock": [
-        64955.51629099646,
-        64955.51629099646
+        104867.1926669922,
+        104867.1926669922
       ],
       "git": [
-        1102.4487910035532,
-        1102.4487910035532
+        2968.098541998188,
+        2968.098541998188
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
+        "632dd28b002e2a60adaf582e644e0a05582766ddd799ddb79632f3813bdf1adf"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -1811,27 +1811,19 @@
       "stock": "ok",
       "git": "ok"
     },
-    "profiles": [
-      {
-        "tool": "girt",
-        "path": "/Users/joshka/tmp/girt-bench/matrix-0.14.0/jj-matrix-profiles/git-git-log-ancestry.json.gz",
-        "binary_sha256": "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
-      }
-    ],
+    "profiles": [],
     "run_epochs": [
-      "2026-10-17T19:14:29-0700"
+      "2026-10-17T22:00:40-0700"
     ],
     "girt_version": "0.14.0",
     "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
-    "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
+    "jj_adapter_commit": "d9c0ceb1f7869825116fadda854bbb15a816c812",
     "measured_on": "2026-10-17",
     "load_1m_range": [
-      6.5,
-      11.3
+      24.9,
+      34.9
     ],
-    "issues": [
-      221
-    ]
+    "issues": []
   },
   {
     "repo": "git-git",
@@ -1980,40 +1972,40 @@
     "variant": "limited",
     "girt_samples": 6,
     "girt_attempts": 6,
-    "girt_ms": 242.73297950094275,
-    "girt_rss_mb": 86.265625,
+    "girt_ms": 222.53306250058813,
+    "girt_rss_mb": 87.75,
     "stock_samples": 6,
     "stock_attempts": 6,
-    "stock_ms": 134.54127049953968,
-    "stock_rss_mb": 82.625,
+    "stock_ms": 203.5547920022509,
+    "stock_rss_mb": 84.328125,
     "git_samples": 6,
     "git_attempts": 6,
-    "git_ms": 516.9309795001027,
-    "git_rss_mb": 140.984375,
-    "ratio_vs_stock": 1.8041525741484152,
-    "sample_policy": "fixed-six",
-    "stock_vs_git_ratio": 0.26026931221968475,
+    "git_ms": 633.5952709996491,
+    "git_rss_mb": 141.265625,
+    "ratio_vs_stock": 1.0932342113475146,
+    "sample_policy": "adaptive",
+    "stock_vs_git_ratio": 0.3212694306905009,
     "jj_level_gap": false,
-    "notes": "100 revisions maximum from full ancestry; full output consumed to /dev/null; girt n=6 range=230.280..433.377ms; stock n=6 range=124.344..218.290ms; git n=6 range=500.586..623.748ms",
+    "notes": "100 revisions maximum from full ancestry; full output consumed to /dev/null; girt n=6 range=218.140..1228.758ms; stock n=6 range=197.434..208.850ms; git n=6 range=623.527..668.403ms; timed on a fresh copy per sample after adapter d9c0ceb1.",
     "harness_op": "log-limited",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        230.27987500245217,
-        433.3765000010317
+        218.13974999531638,
+        1228.758375000325
       ],
       "stock": [
-        124.34366700108512,
-        218.29045800041058
+        197.4342499888735,
+        208.85000000998843
       ],
       "git": [
-        500.58624999655876,
-        623.7477920003585
+        623.5273329948541,
+        668.4026250004536
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+        "632dd28b002e2a60adaf582e644e0a05582766ddd799ddb79632f3813bdf1adf"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -2025,27 +2017,19 @@
       "stock": "ok",
       "git": "ok"
     },
-    "profiles": [
-      {
-        "tool": "girt",
-        "path": "/Users/joshka/tmp/girt-bench/matrix-0.11.1/jj-matrix-profiles/git-git-log-limited.json.gz",
-        "binary_sha256": "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
-      }
-    ],
+    "profiles": [],
     "run_epochs": [
-      "2026-10-17T06:58:53-0700"
+      "2026-10-17T22:00:40-0700"
     ],
-    "girt_version": "0.11.1",
-    "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-    "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
+    "girt_version": "0.14.0",
+    "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
+    "jj_adapter_commit": "d9c0ceb1f7869825116fadda854bbb15a816c812",
     "measured_on": "2026-10-17",
     "load_1m_range": [
-      20.7,
-      21.0
+      28.5,
+      31.3
     ],
-    "issues": [
-      221
-    ]
+    "issues": []
   },
   {
     "repo": "git-git",
@@ -5316,40 +5300,40 @@
     "variant": "ancestry",
     "girt_samples": 6,
     "girt_attempts": 6,
-    "girt_ms": 71.16983299965796,
-    "girt_rss_mb": 25.515625,
+    "girt_ms": 354.4149169974844,
+    "girt_rss_mb": 25.640625,
     "stock_samples": 6,
     "stock_attempts": 6,
-    "stock_ms": 64.0023129999463,
-    "stock_rss_mb": 24.484375,
+    "stock_ms": 419.8810624948237,
+    "stock_rss_mb": 24.3125,
     "git_samples": 6,
     "git_attempts": 6,
-    "git_ms": 32.695583498934866,
-    "git_rss_mb": 11.546875,
-    "ratio_vs_stock": 1.1119884526629167,
-    "sample_policy": "fixed-six",
-    "stock_vs_git_ratio": 1.95752166350025,
+    "git_ms": 211.12945850472897,
+    "git_rss_mb": 11.578125,
+    "ratio_vs_stock": 0.844084072026596,
+    "sample_policy": "adaptive",
+    "stock_vs_git_ratio": 1.9887374574278986,
     "jj_level_gap": false,
-    "notes": "full output consumed to /dev/null; girt n=6 range=68.503..73.623ms; stock n=6 range=62.250..67.158ms; git n=6 range=31.191..33.390ms",
+    "notes": "full output consumed to /dev/null; girt n=6 range=152.347..922.512ms; stock n=6 range=139.164..1291.528ms; git n=6 range=81.037..895.061ms; timed on a fresh copy per sample after adapter d9c0ceb1.",
     "harness_op": "log-ancestry",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        68.50254199889605,
-        73.62266699783504
+        152.34674999373965,
+        922.5121250055963
       ],
       "stock": [
-        62.24979200123926,
-        67.15783300023759
+        139.16358300775755,
+        1291.528458998073
       ],
       "git": [
-        31.190708999929484,
-        33.38974999860511
+        81.03670900163706,
+        895.0606250000419
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+        "632dd28b002e2a60adaf582e644e0a05582766ddd799ddb79632f3813bdf1adf"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -5363,15 +5347,15 @@
     },
     "profiles": [],
     "run_epochs": [
-      "2026-10-17T04:21:11-0700"
+      "2026-10-17T21:59:21-0700"
     ],
-    "girt_version": "0.11.1",
-    "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-    "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
+    "girt_version": "0.14.0",
+    "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
+    "jj_adapter_commit": "d9c0ceb1f7869825116fadda854bbb15a816c812",
     "measured_on": "2026-10-17",
     "load_1m_range": [
-      19.1,
-      19.1
+      42.7,
+      47.5
     ],
     "issues": []
   },
@@ -5514,40 +5498,40 @@
     "variant": "limited",
     "girt_samples": 6,
     "girt_attempts": 6,
-    "girt_ms": 29.90718749970256,
-    "girt_rss_mb": 23.5,
+    "girt_ms": 276.1462295020465,
+    "girt_rss_mb": 23.703125,
     "stock_samples": 6,
     "stock_attempts": 6,
-    "stock_ms": 28.010916499624727,
-    "stock_rss_mb": 23.359375,
+    "stock_ms": 139.27302048978163,
+    "stock_rss_mb": 23.71875,
     "git_samples": 6,
     "git_attempts": 6,
-    "git_ms": 28.564562500832835,
-    "git_rss_mb": 11.546875,
-    "ratio_vs_stock": 1.067697570699025,
-    "sample_policy": "fixed-six",
-    "stock_vs_git_ratio": 0.9806177321570402,
+    "git_ms": 134.29849950625794,
+    "git_rss_mb": 11.59375,
+    "ratio_vs_stock": 1.9827690139190106,
+    "sample_policy": "adaptive",
+    "stock_vs_git_ratio": 1.037040778577663,
     "jj_level_gap": false,
-    "notes": "100 revisions maximum from full ancestry; full output consumed to /dev/null; girt n=6 range=29.348..32.695ms; stock n=6 range=26.524..30.995ms; git n=6 range=27.127..29.507ms",
+    "notes": "100 revisions maximum from full ancestry; full output consumed to /dev/null; girt n=6 range=58.559..441.578ms; stock n=6 range=62.599..457.287ms; git n=6 range=54.388..787.577ms; timed on a fresh copy per sample after adapter d9c0ceb1. Inconclusive: samples ranged 59-442 ms (girt) and 63-457 ms (stock) at load 39-42, and both fell to about 60 ms by the third block. Re-run pending on a quieter machine.",
     "harness_op": "log-limited",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        29.34829100195202,
-        32.69537500091246
+        58.55866598722059,
+        441.57841701235157
       ],
       "stock": [
-        26.523708998865914,
-        30.99474999908125
+        62.59937499999069,
+        457.28691600379534
       ],
       "git": [
-        27.12704199802829,
-        29.507166997063905
+        54.388042000937276,
+        787.5774590065703
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+        "632dd28b002e2a60adaf582e644e0a05582766ddd799ddb79632f3813bdf1adf"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -5559,19 +5543,27 @@
       "stock": "ok",
       "git": "ok"
     },
-    "profiles": [],
-    "run_epochs": [
-      "2026-10-17T04:21:11-0700"
+    "profiles": [
+      {
+        "tool": "girt",
+        "path": "/Users/joshka/tmp/girt-bench/matrix-d9c0/jj-matrix-profiles/jj-historic-log-limited.json.gz",
+        "binary_sha256": "632dd28b002e2a60adaf582e644e0a05582766ddd799ddb79632f3813bdf1adf"
+      }
     ],
-    "girt_version": "0.11.1",
-    "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-    "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
+    "run_epochs": [
+      "2026-10-17T21:59:21-0700"
+    ],
+    "girt_version": "0.14.0",
+    "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
+    "jj_adapter_commit": "d9c0ceb1f7869825116fadda854bbb15a816c812",
     "measured_on": "2026-10-17",
     "load_1m_range": [
-      19.1,
-      19.1
+      38.7,
+      42.4
     ],
-    "issues": []
+    "issues": [
+      66
+    ]
   },
   {
     "repo": "jj-historic",
