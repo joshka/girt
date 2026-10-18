@@ -100,23 +100,10 @@ impl Diffstat {
             .min(available_name_width)
             .max(minimum_name_width);
         let name_width = name_width.min(self.limits.max_layout_width);
-        let graph_width = layout.width.saturating_sub(1 + name_width + 6).max(6);
         let has_binary = self
             .files
             .iter()
             .any(|file| matches!(file.counts, Counts::Binary { .. }));
-        let count_width = self
-            .files
-            .iter()
-            .filter_map(|file| match file.counts {
-                Counts::Text { added, removed } => {
-                    Some(added.saturating_add(removed).to_string().len())
-                }
-                Counts::Binary { .. } => None,
-            })
-            .max()
-            .unwrap_or(1)
-            .max(if has_binary { 3 } else { 1 });
         let max_changes = self
             .files
             .iter()
@@ -126,6 +113,11 @@ impl Diffstat {
             })
             .max()
             .unwrap_or_default();
+        let count_width = max_changes
+            .to_string()
+            .len()
+            .max(if has_binary { 3 } else { 1 });
+        let graph_width = layout.width.saturating_sub(1 + name_width + 6).max(6);
 
         for (file, path) in self.files.iter().zip(paths) {
             output.append(b" ")?;
@@ -149,15 +141,22 @@ impl Diffstat {
                         output.append(format!("{count:>count_width$}").as_bytes())?;
                     } else {
                         output.append(format!("{count:>count_width$} ").as_bytes())?;
-                        let graph_len = if count <= graph_width as u64 || max_changes == 0 {
+                        let graph_len = if max_changes <= graph_width as u64 {
                             usize::try_from(count)
                                 .unwrap_or(usize::MAX)
                                 .min(graph_width)
                         } else {
                             let scaled = u128::from(count) * graph_width as u128;
-                            usize::try_from(scaled.div_ceil(u128::from(max_changes)))
-                                .unwrap_or(graph_width)
-                                .clamp(1, graph_width)
+                            let scaled = usize::try_from(
+                                (scaled + u128::from(max_changes) / 2) / u128::from(max_changes),
+                            )
+                            .unwrap_or(graph_width)
+                            .clamp(1, graph_width);
+                            if added > 0 && removed > 0 {
+                                scaled.max(2).min(graph_width)
+                            } else {
+                                scaled
+                            }
                         };
                         let plus = graph_added(added, removed, graph_len, count)?;
                         append_repeat(&mut output, b'+', plus)?;
@@ -363,8 +362,7 @@ fn graph_added(added: u64, removed: u64, width: usize, count: u64) -> Result<usi
     if count <= width as u64 {
         return Ok(usize::try_from(added).unwrap_or(usize::MAX).min(width));
     }
-    let scaled = (u128::from(added) * width as u128 + u128::from(count / 2))
-        / u128::from(count);
+    let scaled = (u128::from(added) * width as u128 + u128::from(count / 2)) / u128::from(count);
     let mut plus = usize::try_from(scaled).unwrap_or(width).min(width);
     if added > 0 && plus == 0 {
         plus = 1;
