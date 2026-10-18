@@ -1234,3 +1234,101 @@ fn configured_bitmap_limit_does_not_block_old_pack_retirement() {
     assert!(report.removed.contains(&old_index));
     assert!(repo.objects().unwrap().read(commit).unwrap().is_some());
 }
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn writer_reuses_verified_ancestor_closure_with_word_work_charged(#[case] format: ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let hash = if format == ObjectFormat::Sha1 {
+        "sha1"
+    } else {
+        "sha256"
+    };
+    pack_git::git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            &format!("--object-format={hash}"),
+            ".",
+        ],
+        b"",
+    );
+    let parse = |bytes: Vec<u8>| {
+        std::str::from_utf8(&bytes)
+            .unwrap()
+            .trim()
+            .parse::<ObjectId>()
+            .unwrap()
+    };
+    let tree = parse(pack_git::git(root.path(), &["mktree"], b""));
+    let parent = parse(pack_git::git(
+        root.path(),
+        &["commit-tree", &tree.to_string()],
+        b"parent\n",
+    ));
+    // Records are emitted by sorted ID. Choose a child that follows its ancestor, so this
+    // fixture exercises reuse rather than depending on the hash format's accidental ID order.
+    let child = (0..1024)
+        .find_map(|number| {
+            let id = parse(pack_git::git(
+                root.path(),
+                &["commit-tree", &tree.to_string(), "-p", &parent.to_string()],
+                format!("child {number}\n").as_bytes(),
+            ));
+            (id > parent).then_some(id)
+        })
+        .unwrap();
+    pack_git::git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &child.to_string()],
+        b"",
+    );
+    pack_git::git(
+        root.path(),
+        &["-c", "repack.writeBitmaps=false", "repack", "-ad"],
+        b"",
+    );
+    let objects = girt::Repository::open(root.path())
+        .unwrap()
+        .objects()
+        .unwrap();
+    let pack = objects.packs().next().unwrap();
+    let mut options = girt::bitmap::WriteOptions::default();
+    options.commits = vec![parent, child];
+    let mut limits = girt::bitmap::WriteLimits::default();
+    // Parent: two nodes and one edge. Child: three pops, two edges and one cached word union.
+    // Without ancestor reuse, the child walks its parent's tree edge again and needs ten total.
+    limits.max_visits = 9;
+    let written = objects
+        .encode_pack_bitmap(
+            pack.checksum(),
+            options.clone(),
+            limits,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let bitmap = BitmapIndex::parse(&written.bitmap, written.anchor, written.objects).unwrap();
+    let reverse =
+        ReverseIndex::parse(&written.reverse_index, written.anchor, written.objects).unwrap();
+    let ids: Vec<_> = pack.ids().collect();
+    let order: Vec<_> = reverse.positions().collect();
+    for commit in [parent, child] {
+        let position = ids.binary_search(&commit).unwrap() as u32;
+        let actual = bitmap
+            .reachable(position)
+            .unwrap()
+            .unwrap()
+            .positions()
+            .map(|bit| ids[order[bit] as usize])
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, reachable_ids(root.path(), commit));
+    }
+    limits.max_visits = 8;
+    assert!(matches!(
+        objects.encode_pack_bitmap(pack.checksum(), options, limits, &AtomicBool::new(false)),
+        Err(girt::bitmap::WriteError::Limit("reachability visits"))
+    ));
+}

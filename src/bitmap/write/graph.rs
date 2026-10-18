@@ -152,32 +152,8 @@ impl<'a> Graph<'a> {
         Ok(selected)
     }
 
-    pub fn reachable(
-        &self,
-        root: usize,
-        inverse: &[usize],
-        budget: &mut usize,
-        cancel: &AtomicBool,
-    ) -> Result<Vec<u64>, WriteError> {
-        let mut bitmap = vec![0_u64; self.kinds.len().div_ceil(64)];
-        let mut stack = vec![root];
-        while let Some(index) = stack.pop() {
-            check(cancel)?;
-            charge(budget)?;
-            let bit = inverse[index];
-            let word = &mut bitmap[bit / 64];
-            let mask = 1 << (bit % 64);
-            if *word & mask != 0 {
-                continue;
-            }
-            *word |= mask;
-            for &target in &self.targets[self.edges[index].clone()] {
-                check(cancel)?;
-                charge(budget)?;
-                stack.push(target);
-            }
-        }
-        Ok(bitmap)
+    pub fn targets(&self, position: usize) -> &[usize] {
+        &self.targets[self.edges[position].clone()]
     }
 }
 
@@ -187,16 +163,54 @@ fn sample(input: &[usize], count: usize) -> Vec<usize> {
         .map(|index| input[(index as u64 * input.len() as u64 / count as u64) as usize])
         .collect()
 }
-fn charge(budget: &mut usize) -> Result<(), WriteError> {
-    *budget = budget
-        .checked_sub(1)
-        .ok_or(WriteError::Limit("reachability visits"))?;
-    Ok(())
-}
 fn malformed(id: ObjectId, source: impl std::error::Error + Send + Sync + 'static) -> WriteError {
     super::super::Error::Object {
         id,
         source: Box::new(source),
     }
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bitmap::write::reachable::Closures;
+
+    #[test]
+    fn retained_closures_obey_word_capacity_and_charge_multiword_unions() {
+        let ids: Vec<_> = (0..70)
+            .map(|number| ObjectFormat::Sha1.hash_object(ObjectKind::Commit, &[number]))
+            .collect();
+        let mut edges = vec![0..0; ids.len()];
+        edges[0] = 0..1;
+        edges[1] = 1..2;
+        edges[69] = 2..3;
+        let graph = Graph {
+            ids: &ids,
+            kinds: vec![ObjectKind::Commit; ids.len()],
+            edges,
+            targets: vec![1, 2, 0],
+            parents: vec![false; ids.len()],
+        };
+        let inverse: Vec<_> = (0..ids.len()).rev().collect();
+        let cancel = AtomicBool::new(false);
+        let mut limits = WriteLimits {
+            max_visits: 10,
+            max_bytes: 16, // Exactly one two-word cached closure.
+            ..WriteLimits::default()
+        };
+        let mut closures = Closures::new(&graph, &inverse, limits);
+        assert_eq!(closures.reachable(0, &cancel).unwrap(), vec![0, 56]);
+        assert_eq!(closures.reachable(69, &cancel).unwrap(), vec![1, 56]);
+        for (bytes, visits) in [(8, 10), (16, 9)] {
+            limits.max_bytes = bytes;
+            limits.max_visits = visits;
+            let mut closures = Closures::new(&graph, &inverse, limits);
+            closures.reachable(0, &cancel).unwrap();
+            assert!(matches!(
+                closures.reachable(69, &cancel),
+                Err(WriteError::Limit("reachability visits"))
+            ));
+        }
+    }
 }
