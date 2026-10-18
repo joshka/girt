@@ -547,3 +547,45 @@ fn read_ahead_collects_no_edges_past_the_walk_limits() {
         assert_eq!(alone, format!("{:?}", plan(4)));
     }
 }
+
+/// Classifying a missing object checks cancellation before building the promised set, and a
+/// missing commit is never a boundary.
+#[test]
+fn promised_boundaries_check_cancellation_and_refuse_commits() {
+    use super::{Boundaries, RetentionError};
+    use crate::{InitKind, ObjectFormat, ObjectId, ObjectKind};
+
+    let directory = tempfile::tempdir().unwrap();
+    let repository = Repository::init(
+        ObjectFormat::Sha1,
+        directory.path().join("r.git"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let store = repository.objects().unwrap();
+    let policy = RetentionPolicy::default();
+    let id = ObjectId::for_blob(ObjectFormat::Sha1, b"absent\n");
+    let mut boundaries = Boundaries {
+        enabled: true,
+        promised: None,
+        found: Default::default(),
+    };
+    let cancelled = boundaries.admit(
+        &store,
+        &policy,
+        &AtomicBool::new(true),
+        id,
+        Some(ObjectKind::Blob),
+    );
+    assert!(matches!(cancelled, Err(RetentionError::Cancelled)));
+    assert!(boundaries.promised.is_none());
+    let commit = boundaries.admit(
+        &store,
+        &policy,
+        &AtomicBool::new(false),
+        id,
+        Some(ObjectKind::Commit),
+    );
+    assert!(matches!(commit, Err(RetentionError::MissingObject(missing)) if missing == id));
+    assert!(boundaries.promised.is_none() && boundaries.found.is_empty());
+}

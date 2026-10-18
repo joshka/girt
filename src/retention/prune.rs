@@ -335,6 +335,13 @@ impl Repository {
         {
             return Err(failure(PruneCause::Changed, report));
         }
+        // Checked before the empty-inventory shortcut, so a partial clone always refuses.
+        if current.is_partial_clone() {
+            return Err(failure(
+                PruneCause::Incomplete(RetentionError::PartialClone),
+                report,
+            ));
+        }
         let observed = candidates(&current, policy, cancel)
             .map_err(|cause| failure(cause, PruneReport::default()))?;
         before_plan();

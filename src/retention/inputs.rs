@@ -292,6 +292,10 @@ impl Session {
     ) -> Result<Self, RetentionError> {
         let inputs = Inputs::observe(repository, policy, cancel)?;
         let current = Repository::open(repository.git_dir()).map_err(RetentionError::read)?;
+        // Execution never trusts promised boundaries yet, whatever the planning policy allows.
+        if current.is_partial_clone() {
+            return Err(RetentionError::PartialClone);
+        }
         let plan = current.plan_retention_folding(policy, fold_recent_packs, cancel);
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
             return Err(reason);

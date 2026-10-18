@@ -287,6 +287,36 @@ fn promisor_pack_counts_but_stays_in_place() {
     git(root.path(), &["fsck", "--full", "--strict"], b"");
 }
 
+// A `.promisor` pack in a repository without partial-clone configuration is never retired, nor is
+// its marker removed, even when it is old: configuration can return later, and the marker keeps the
+// repository recoverable as a partial clone.
+#[rstest::rstest]
+#[case::consolidating(PackConsolidation::Always)]
+#[case::retiring_only(PackConsolidation::Never)]
+fn old_promisor_pack_and_marker_survive_gc(#[case] consolidation: PackConsolidation) {
+    let root = fetched_packs(4);
+    let promisor = packs(root.path())[0].clone();
+    let marker = promisor.with_extension("promisor");
+    fs::write(&marker, b"").unwrap();
+    let promisor_bytes = fs::read(&promisor).unwrap();
+    let index_bytes = fs::read(promisor.with_extension("idx")).unwrap();
+    age_packs(root.path(), Duration::from_secs(10 * 86400));
+    assert!(!Repository::open(root.path()).unwrap().is_partial_clone());
+
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() - Duration::from_secs(5 * 86400))
+        .with_pack_consolidation(consolidation);
+    collect(root.path(), &policy);
+
+    assert_eq!(fs::read(&promisor).unwrap(), promisor_bytes);
+    assert_eq!(
+        fs::read(promisor.with_extension("idx")).unwrap(),
+        index_bytes
+    );
+    assert_eq!(fs::read(&marker).unwrap(), b"");
+    git(root.path(), &["fsck", "--full", "--strict"], b"");
+}
+
 // With a cutoff, unreachable objects in old packs go and those in recent packs stay, matching
 // the objects `git gc --prune=<cutoff>` keeps from the same layout.
 #[test]

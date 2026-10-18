@@ -33,6 +33,8 @@
 //! traversal at shallow boundaries. Gitlinks refer to another repository and stay external.
 //! A partial clone, precious-object repository or unsupported recent-object hook refuses a
 //! complete plan rather than treating unknown objects as disposable.
+//! [`PartialClonePolicy::Promised`] instead plans a partial clone, stopping at objects its
+//! promisor remote promised; maintenance that changes storage still refuses partial clones.
 //!
 //! Default [`RetentionPolicy`] keeps all reflog records, loose objects and packs regardless of
 //! age. Choose a recent cutoff to enable reclamation; choose reflog expiry separately. Loose
@@ -221,7 +223,8 @@ use std::time::SystemTime;
 
 use crate::refs::{ImportedRecord, RefName, ReflogLimits, Target};
 use crate::{
-    Commit, IdMap, Object, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag, index,
+    Commit, IdMap, IdSet, Object, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag,
+    index,
 };
 
 mod error;
@@ -384,6 +387,60 @@ pub struct RetentionPolicy {
     /// packs are retired (default 8). Zero or one reads on the calling thread alone. Fewer are
     /// used when the host has fewer.
     pub max_threads: usize,
+    /// How planning treats a partial clone; the default refuses one.
+    pub partial_clone: PartialClonePolicy,
+    /// Maximum distinct promised objects one plan records in
+    /// [`RetentionPlan::promised_boundaries`].
+    pub max_promised_boundaries: usize,
+}
+
+/// How retention planning treats a partial clone, whose promisor remote can supply objects that
+/// are not stored locally.
+///
+/// [`Repository::is_partial_clone`] decides whether a repository is a partial clone. Only its
+/// configuration is read, so neither policy costs anything in other repositories.
+///
+/// # Plan around promised objects
+///
+/// In this sketch, `repository` is a `git clone --filter=blob:none` clone, so its blobs are
+/// promised rather than stored. The plan names them instead of reporting them missing:
+///
+/// ```no_run
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::Repository;
+/// use girt::retention::{PartialClonePolicy, RetentionPolicy};
+///
+/// let repository = Repository::open("partial-clone")?;
+/// let policy = RetentionPolicy::default().with_partial_clone(PartialClonePolicy::Promised);
+/// let plan = repository.plan_retention(&policy, &AtomicBool::new(false));
+/// assert!(plan.is_complete(), "{:?}", plan.outcome);
+/// for (id, kind) in &plan.promised_boundaries {
+///     println!("{id} {kind:?} is promised, not stored");
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PartialClonePolicy {
+    /// Refuse to plan for a partial clone with [`RetentionError::PartialClone`].
+    #[default]
+    Refuse,
+    /// Plan for a partial clone, stopping the walk at missing objects the promisor remote has
+    /// promised and recording them in [`RetentionPlan::promised_boundaries`].
+    ///
+    /// A missing tree or blob counts as promised only when an object in a promisor pack names it
+    /// (see [`Objects::promised_objects`](crate::Objects::promised_objects)), as with
+    /// `git rev-list --missing=allow-promisor`. Missing commits, missing roots and missing objects
+    /// nothing promised remain [`RetentionError::MissingObject`]. The promised set is built only
+    /// when the first missing object needs classifying, and nothing is ever fetched.
+    ///
+    /// Maintenance that deletes or writes storage still refuses a partial clone under this
+    /// policy: [`Repository::repack_retained`], [`Repository::retire_old_packs`],
+    /// [`Repository::prune_unreachable_loose`], [`Repository::run_maintenance`] and the
+    /// `collect_garbage` methods return [`RetentionError::PartialClone`] before changing
+    /// anything.
+    Promised,
 }
 
 impl RetentionPolicy {
@@ -505,6 +562,20 @@ impl RetentionPolicy {
         self.max_threads = max_threads;
         self
     }
+
+    /// Sets [`Self::max_promised_boundaries`].
+    #[must_use]
+    pub fn with_max_promised_boundaries(mut self, max_promised_boundaries: usize) -> Self {
+        self.max_promised_boundaries = max_promised_boundaries;
+        self
+    }
+
+    /// Sets [`Self::partial_clone`].
+    #[must_use]
+    pub fn with_partial_clone(mut self, partial_clone: PartialClonePolicy) -> Self {
+        self.partial_clone = partial_clone;
+        self
+    }
 }
 
 impl Default for RetentionPolicy {
@@ -525,6 +596,8 @@ impl Default for RetentionPolicy {
             packs: PackLimits::default(),
             read: ReadLimits::default(),
             max_threads: 8,
+            partial_clone: PartialClonePolicy::Refuse,
+            max_promised_boundaries: 1_000_000,
         }
     }
 }
@@ -546,6 +619,7 @@ impl RetentionPolicy {
             index: index::Limits::trusted(),
             packs: PackLimits::trusted(),
             read: ReadLimits::trusted(),
+            max_promised_boundaries: usize::MAX / 4,
             ..Self::default()
         }
     }
@@ -621,6 +695,11 @@ pub struct RetentionPlan {
     fold_recent_packs: bool,
     /// Successfully visited objects reachable from candidates.
     pub reachable: BTreeSet<ObjectId>,
+    /// Missing objects a promisor remote promised, where the walk stopped, with the kind the
+    /// naming edge asserts. Only [`PartialClonePolicy::Promised`] records any. These are not in
+    /// [`Self::reachable`] or [`Self::required`]; their number is bounded by
+    /// [`RetentionPolicy::max_promised_boundaries`].
+    pub promised_boundaries: BTreeMap<ObjectId, ObjectKind>,
     /// Packs protected by `.keep` or by a recent pack modification time. Planning for pack
     /// consolidation instead protects `.keep`, promisor and other sidecar-bearing packs of any
     /// age, and leaves recent packs retirable with all of their objects retained.
@@ -741,6 +820,7 @@ impl Repository {
             folded_packs: BTreeSet::new(),
             fold_recent_packs,
             reachable: BTreeSet::new(),
+            promised_boundaries: BTreeMap::new(),
             protected_packs: BTreeSet::new(),
             alternate_stores: Vec::new(),
             outcome: RetentionOutcome::Complete,
@@ -794,19 +874,20 @@ impl Repository {
     /// this plan. All packs are outside deletion scope; protected pack names are reported for
     /// later repacking policy. Unknown or incomplete reads return an incomplete report, preserving
     /// recovered candidates. `gc.recentObjectsHook`, precious objects and partial clones block
-    /// completion. The caller supplies cutoffs in place of Git's `gc.pruneExpire`,
-    /// reflog configuration, or selects [`ReflogExpiryPolicy::Configured`] with a resolved
-    /// snapshot. Scans are synchronous and do not coordinate concurrent writers. The default
-    /// policy retains all reflog entries, loose objects and packs regardless of their timestamps.
-    /// Valid registered private metadata remains a root even when its checkout is missing or
-    /// now points to another registration. Malformed or unrelated registration metadata makes
-    /// the scan incomplete. Commits, trees and tags are identity-checked and parsed. Blob edges
-    /// are located through the same pinned store and checked for kind, size and bounded delta
-    /// ancestry; their payload, zlib completion, CRC and identity are not validated.
-    /// Blob-shaped untyped roots use ordinary identity-verified reads so a damaged graph header
-    /// cannot erase root edges. `max_bytes` counts only decoded commit, tree and tag bytes,
-    /// including when a blob root requires a verified read. Replacement retirement still
-    /// decodes every retained object from a surviving copy before deleting an old pack.
+    /// completion; [`PartialClonePolicy::Promised`] lifts the partial-clone block. The caller
+    /// supplies cutoffs in place of Git's `gc.pruneExpire`, reflog configuration, or selects
+    /// [`ReflogExpiryPolicy::Configured`] with a resolved snapshot. Scans are synchronous and
+    /// do not coordinate concurrent writers. The default policy retains all reflog entries,
+    /// loose objects and packs regardless of their timestamps. Valid registered private
+    /// metadata remains a root even when its checkout is missing or now points to another
+    /// registration. Malformed or unrelated registration metadata makes the scan incomplete.
+    /// Commits, trees and tags are identity-checked and parsed. Blob edges are located through
+    /// the same pinned store and checked for kind, size and bounded delta ancestry; their
+    /// payload, zlib completion, CRC and identity are not validated. Blob-shaped untyped roots
+    /// use ordinary identity-verified reads so a damaged graph header cannot erase root edges.
+    /// `max_bytes` counts only decoded commit, tree and tag bytes, including when a blob root
+    /// requires a verified read. Replacement retirement still decodes every retained object
+    /// from a surviving copy before deleting an old pack.
     ///
     /// Recent packs and `.keep` packs remain protected without contributing to `roots`,
     /// `strong_roots`, `reachable` or reflog live classification. If loose or unprotected packed
@@ -880,7 +961,16 @@ impl Repository {
             .collect();
         let roots = plan.roots.clone();
         let strong_roots = plan.strong_roots.clone();
-        match walk(self, &store, policy, cancel, &roots, &mut plan.object_info) {
+        let mut boundaries = Boundaries::new(policy, &store);
+        match walk(
+            self,
+            &store,
+            policy,
+            cancel,
+            &roots,
+            &mut plan.object_info,
+            &mut boundaries,
+        ) {
             Ok(reachable) => plan.reachable = reachable,
             Err(reason) => {
                 plan.fail(reason);
@@ -898,6 +988,7 @@ impl Repository {
                 cancel,
                 &strong_roots,
                 &mut plan.object_info,
+                &mut boundaries,
             ) {
                 Ok(reachable) => reachable,
                 Err(reason) => {
@@ -966,6 +1057,7 @@ impl Repository {
                 cancel,
                 &required_roots,
                 &mut plan.object_info,
+                &mut boundaries,
             ) {
                 Ok(required) => plan.required = required,
                 Err(reason) => plan.fail(reason),
@@ -1070,6 +1162,7 @@ impl Repository {
                 cancel,
                 &protected_roots,
                 &mut plan.object_info,
+                &mut boundaries,
             ) {
                 Ok(objects) => plan.protected_objects.extend(objects),
                 Err(reason) => plan.fail(reason),
@@ -1090,6 +1183,7 @@ impl Repository {
         if let Err(error) = store.check_packs_unchanged(cancel) {
             plan.fail(RetentionError::read(error));
         }
+        plan.promised_boundaries = boundaries.found;
         plan.store = Some(store);
         plan
     }
@@ -1136,7 +1230,10 @@ fn collect_roots(
         {
             return Err(RetentionError::PreciousObjects);
         }
-        if !allow_partial_clone && repo.is_partial_clone() {
+        if !allow_partial_clone
+            && policy.partial_clone == PartialClonePolicy::Refuse
+            && repo.is_partial_clone()
+        {
             return Err(RetentionError::PartialClone);
         }
         if repo
@@ -1454,24 +1551,96 @@ fn walk(
     cancel: &AtomicBool,
     roots: &BTreeSet<ObjectId>,
     object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
+    boundaries: &mut Boundaries,
 ) -> Result<BTreeSet<ObjectId>, RetentionError> {
     let visit = |id| visit(repo, store, policy, cancel, id);
-    let (nodes, blobs) = walk_reads::with_reader(policy.max_threads, &visit, |reader| {
-        walk_with(policy, cancel, roots, object_info, reader)
-    })?;
+    let mut admit = |id, kind| boundaries.admit(store, policy, cancel, id, kind);
+    let (nodes, blobs, mut missing) =
+        walk_reads::with_reader(policy.max_threads, &visit, |reader| {
+            walk_with(policy, cancel, roots, object_info, reader, &mut admit)
+        })?;
     // Only blobs are located, after the graph walk and in pack order: they add no edges, and
     // locating them in graph order would read headers scattered across the pack.
     let located = store
         .locate_all(blobs, policy.read, cancel)
         .map_err(RetentionError::read)?;
     for (id, located) in located {
-        let (kind, size) = located.ok_or_else(|| RetentionError::MissingObject(id))?;
+        let Some((kind, size)) = located else {
+            admit(id, Some(ObjectKind::Blob))?;
+            missing.insert(id);
+            continue;
+        };
         if kind != ObjectKind::Blob {
             return Err(RetentionError::WrongObjectKind(id));
         }
         object_info.insert(id, ObjectInfo { kind, size });
     }
-    Ok(nodes.into_keys().collect())
+    Ok(nodes
+        .into_keys()
+        .filter(|id| !missing.contains(id))
+        .collect())
+}
+
+/// Promised objects where a [`PartialClonePolicy::Promised`] walk stops, shared by every walk
+/// of one plan.
+struct Boundaries {
+    /// Whether the policy allows boundaries and the store belongs to a partial clone.
+    enabled: bool,
+    /// Built when the first missing object needs classifying.
+    promised: Option<crate::PromisedObjects>,
+    found: BTreeMap<ObjectId, ObjectKind>,
+}
+
+impl Boundaries {
+    fn new(policy: &RetentionPolicy, store: &crate::Objects) -> Self {
+        Self {
+            enabled: policy.partial_clone == PartialClonePolicy::Promised && store.partial_clone,
+            promised: None,
+            found: BTreeMap::new(),
+        }
+    }
+
+    /// Records missing `id` as a boundary if it is a promised tree or blob, or explains why the
+    /// walk cannot stop there. `expected` is the kind an edge asserts; roots have none.
+    fn admit(
+        &mut self,
+        store: &crate::Objects,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+        id: ObjectId,
+        expected: Option<ObjectKind>,
+    ) -> Result<(), RetentionError> {
+        // Missing commits stay errors, as with `git rev-list --missing=allow-promisor`.
+        let Some(kind @ (ObjectKind::Tree | ObjectKind::Blob)) = expected else {
+            return Err(RetentionError::MissingObject(id));
+        };
+        if !self.enabled {
+            return Err(RetentionError::MissingObject(id));
+        }
+        check(cancel)?;
+        let promised = match &mut self.promised {
+            Some(promised) => promised,
+            slot => {
+                let limits = crate::ListLimits::default().with_max_entries(policy.max_entries);
+                let promised = store
+                    .promised_objects(limits, policy.read, cancel)
+                    .map_err(|error| match error {
+                        crate::ObjectReadError::Cancelled => RetentionError::Cancelled,
+                        crate::ObjectReadError::Limit(_) => RetentionError::PromisedObjectLimit,
+                        error => RetentionError::read(error),
+                    })?;
+                slot.insert(promised)
+            }
+        };
+        if !promised.contains(id) {
+            return Err(RetentionError::MissingObject(id));
+        }
+        if !self.found.contains_key(&id) && self.found.len() >= policy.max_promised_boundaries {
+            return Err(RetentionError::PromisedBoundaryLimit);
+        }
+        self.found.insert(id, kind);
+        Ok(())
+    }
 }
 
 /// Walks the graph in breadth-first order on the calling thread, which alone applies every
@@ -1483,7 +1652,8 @@ fn walk_with(
     roots: &BTreeSet<ObjectId>,
     object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
     reader: &mut walk_reads::Reader<'_>,
-) -> Result<(IdMap<Node>, Vec<ObjectId>), RetentionError> {
+    admit: &mut dyn FnMut(ObjectId, Option<ObjectKind>) -> Result<(), RetentionError>,
+) -> Result<(IdMap<Node>, Vec<ObjectId>, IdSet), RetentionError> {
     // Each identity is queued once, when it is first named, and keeps one entry for its asserted
     // and read kinds. Trees name most identities many times over (tens of millions of edges on a
     // large history), so an edge to a queued identity costs one hashed probe and no queue entry.
@@ -1504,6 +1674,8 @@ fn walk_with(
     let mut bytes = 0u64;
     let mut edges = 0usize;
     let mut blobs = Vec::new();
+    // Promised boundaries keep their node, so later edges to them are still kind-checked.
+    let mut missing = IdSet::default();
     while let Some((id, read)) = reader.next() {
         check(cancel)?;
         if visited >= policy.max_entries {
@@ -1521,7 +1693,14 @@ fn walk_with(
             size,
             edges: named,
             malformed,
-        } = read?;
+        } = match read {
+            Err(RetentionError::MissingObject(absent)) if absent == id && !roots.contains(&id) => {
+                admit(id, nodes.get(&id).and_then(|node| node.expected))?;
+                missing.insert(id);
+                continue;
+            }
+            read => read?,
+        };
         // An edge named this identity with another kind after it was queued.
         let expected = nodes.get(&id).and_then(|node| node.expected);
         if expected.is_some_and(|asserted| asserted != kind) {
@@ -1576,7 +1755,7 @@ fn walk_with(
             return Err(error);
         }
     }
-    Ok((nodes, blobs))
+    Ok((nodes, blobs, missing))
 }
 
 /// One object's kind, payload size and the typed edges it names, in the order it names them.
