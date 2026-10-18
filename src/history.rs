@@ -1,9 +1,10 @@
-//! Bounded ancestry queries over verified loose and packed commit objects.
+//! Bounded ancestry queries over commit-graph metadata or verified commit objects.
 //!
 //! Use [`Objects::walk`] to collect reachable commit IDs, [`Objects::is_ancestor`] to test
 //! ancestry, and [`Objects::merge_bases`] to find every best common ancestor. Roots are explicit
 //! commit IDs: resolve references and peel annotated tags first. Queries read graph records, not
-//! trees or blobs.
+//! trees or blobs. Repository readers use structurally validated commit-graphs by default;
+//! [`Objects::without_commit_graph`] selects commit-object reads for every query.
 //!
 //! # Inspect a branch point
 //!
@@ -262,7 +263,7 @@ impl Objects {
     /// # Errors
     ///
     /// Without an attached commit-graph, validates both complete ancestries before answering.
-    /// With explicitly trusted indexed metadata and checked generation order, stops at the target
+    /// With trusted indexed metadata and checked generation order, stops at the target
     /// generation or an early match. Returns the same failures as [`Self::walk`] for explored data.
     ///
     /// ```

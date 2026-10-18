@@ -828,3 +828,94 @@ fn empty_index_retains_its_hash_format_at_attachment() {
         Err(GraphError::HashFormat)
     ));
 }
+
+#[rstest]
+fn repository_readers_trust_graphs_without_decoding_commits(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(false, true)] controlled: bool,
+) {
+    let h = History::with_format(&[vec![], vec![0]], false, format);
+    graph(&h, "2");
+    for id in &h.ids {
+        let hex = id.to_string();
+        std::fs::remove_file(
+            h.root
+                .path()
+                .join("objects")
+                .join(&hex[..2])
+                .join(&hex[2..]),
+        )
+        .unwrap();
+    }
+    let repo = girt::Repository::open(h.root.path()).unwrap();
+    let objects = if controlled {
+        repo.objects_controlled(
+            girt::PackLimits::default(),
+            girt::AlternateLimits::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap()
+    } else {
+        repo.objects().unwrap()
+    };
+    assert!(objects.is_ancestor(h.ids[0], h.ids[1]).unwrap());
+    assert!(
+        repo.commit_graph()
+            .unwrap()
+            .unwrap()
+            .verify(&objects)
+            .is_err()
+    );
+    assert!(
+        objects
+            .without_commit_graph()
+            .is_ancestor(h.ids[0], h.ids[1])
+            .is_err()
+    );
+    git(h.root.path(), &["config", "core.commitGraph", "false"], b"");
+    let disabled = girt::Repository::open(h.root.path()).unwrap();
+    assert!(
+        disabled
+            .objects()
+            .unwrap()
+            .is_ancestor(h.ids[0], h.ids[1])
+            .is_err()
+    );
+}
+
+#[rstest]
+fn repository_readers_fall_back_from_unusable_graphs(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(false, true)] cyclic: bool,
+) {
+    let h = History::with_format(&[vec![], vec![0]], false, format);
+    let mut bytes = graph(&h, "2");
+    if cyclic {
+        let (entries, _) = bytes[8..].as_chunks::<12>();
+        let chunk = entries.iter().find(|entry| &entry[..4] == b"CDAT").unwrap();
+        let offset = u64::from_be_bytes(chunk[4..12].try_into().unwrap()) as usize;
+        // Each record points at itself: checksum-valid but structurally unusable for walks.
+        for position in 0..2u32 {
+            let at = offset + position as usize * (format.digest_len() + 16) + format.digest_len();
+            bytes[at..at + 4].copy_from_slice(&position.to_be_bytes());
+        }
+        bytes.truncate(bytes.len() - format.digest_len());
+        use sha2::Digest;
+        let checksum = match format {
+            ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes).to_vec(),
+            ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes).to_vec(),
+            _ => unreachable!("test only supplies SHA-1 and SHA-256"),
+        };
+        bytes.extend_from_slice(&checksum);
+    } else {
+        bytes[8] ^= 1;
+    }
+    let graph_path = h.root.path().join("objects/info/commit-graph");
+    std::fs::remove_file(&graph_path).unwrap();
+    std::fs::write(graph_path, bytes).unwrap();
+    let repo = girt::Repository::open(h.root.path()).unwrap();
+    assert_eq!(
+        repo.objects().unwrap().walk(&[h.ids[1]]).unwrap(),
+        vec![h.ids[1], h.ids[0]]
+    );
+}

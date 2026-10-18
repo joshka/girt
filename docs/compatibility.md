@@ -255,9 +255,12 @@ explicitly attach a graph to `Objects` to reuse metadata for walks and merge bas
 checks closed, acyclic ancestry; range and ancestry pruning additionally require a strict
 corrected-date or topological-generation order. Unknown coverage or generation order uses full
 traversal. Indexed queries preserve shallow boundaries and commit/parent bounds; per-object read
-limits apply to fallback reads. Repository object readers do not enable this trust policy
-automatically. Supported Bloom filters can skip tree comparisons in first-parent path walks and
-single-parent blame steps; unknown filters fall back to tree reads.
+limits apply to fallback reads. Repository object readers attach valid graphs by default, honoring
+`core.commitGraph=false`, and fall back to object reads for missing, corrupt or structurally
+unusable graphs. Explicit `CommitGraph::verify` checks object claims before querying;
+`Objects::without_commit_graph` removes the index from a reader. Supported Bloom filters can skip
+tree comparisons in first-parent path walks and single-parent blame steps; unknown filters fall back
+to tree reads.
 
 `tests/commit_graph.rs` generates original histories using the installed Git executable, writes both
 generation versions with `git commit-graph write --reachable`, runs `git commit-graph verify`, and

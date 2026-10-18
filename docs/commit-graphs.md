@@ -7,18 +7,19 @@ with the object database.
 
 ## Choose the trust boundary
 
-`Repository::commit_graph` loads a standalone graph or split chain and honors `core.commitGraph`. An
-absent setting enables loading. A disabled or missing graph returns `None`; damaged files return an
-error. Applications can report that error and continue with ordinary object reads. Opening the graph
-writes nothing. Bloom read configuration settings are not interpreted; callers choose whether to
-attach the graph and use path queries.
+Repository object readers attach a standalone graph or split chain by default after checksum and
+structural validation, honoring `core.commitGraph=false`. Missing, damaged or unusable graphs fall
+back to ordinary object reads. This trusts indexed object claims without decoding every commit, as
+Git does. Loading writes nothing. Bloom read configuration settings are not interpreted.
 
-`Objects::with_commit_graph` explicitly trusts indexed object claims. It checks that indexed
-ancestry is closed and acyclic, and enables generation pruning only when every parent edge strictly
-decreases an available generation value. To check indexed tree, parent and timestamp claims against
-verified commit objects first, call `CommitGraph::verify`. This initial scan costs object reads;
-reuse the resulting reader across queries to amortize it. Verification does not check exact
-generation equations.
+For diagnostics, `Repository::commit_graph` exposes loading errors rather than silently falling
+back. To require object verification before using indexed history, call `CommitGraph::verify`. This
+initial scan checks indexed trees, parents and timestamps against verified commit objects; reuse the
+resulting reader across queries to amortize it. It does not check generation equations. Use
+`Objects::without_commit_graph` when every history query must read commit objects directly.
+
+Attachment checks closed, acyclic ancestry. Generation pruning requires every parent edge to
+strictly decrease an available generation value. Typed object reads always verify objects.
 
 ```rust
 use girt::{ObjectId, Repository};
@@ -28,7 +29,7 @@ fn difference(
     tip: ObjectId,
     base: ObjectId,
 ) -> girt::Result<Vec<ObjectId>> {
-    let mut objects = repository.objects()?;
+    let mut objects = repository.objects()?.without_commit_graph();
     match repository.commit_graph() {
         Ok(Some(graph)) => {
             graph.verify(&objects)?;
@@ -41,7 +42,7 @@ fn difference(
 }
 ```
 
-For Git's checksum-based auxiliary-index trust model, omit the explicit object-verification call.
+For the default checksum-based auxiliary-index trust model, use `repository.objects()` directly.
 Typed commit/tree/blob reads still read and verify objects. Indexed history queries can answer from
 metadata even when indexed objects have since been removed; refresh or verify according to the
 application's storage and concurrency policy. Do not use trusted auxiliary metadata to authorize

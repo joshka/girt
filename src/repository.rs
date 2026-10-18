@@ -1154,6 +1154,12 @@ impl Repository {
     /// See [`crate::Objects`] for supported versions, validation timing, snapshot lifetime,
     /// external-base policy, and filesystem assumptions. Does not create files or directories.
     ///
+    /// Attaches the repository's commit-graph by default after checksum and structural checks,
+    /// honoring `core.commitGraph=false`. Missing or unusable indexes fall back to object reads.
+    /// Indexed history trusts the graph's object claims, as Git does. Use
+    /// [`crate::commit_graph::CommitGraph::verify`] before querying when object verification is
+    /// required, or [`crate::Objects::without_commit_graph`] to read commits during each query.
+    ///
     /// # Errors
     ///
     /// Returns [`crate::ObjectReadError`] for malformed or unsupported packed storage, I/O
@@ -1218,7 +1224,8 @@ impl Repository {
     /// I/O or metadata error; callers needing a consistent graph must exclude writers. No
     /// borrowed store is modified. `GIT_ALTERNATE_OBJECT_DIRECTORIES` and
     /// `GIT_OBJECT_DIRECTORY` are ignored, as with opening. HTTP alternates metadata is inert.
-    /// Missing promised objects return absence without fetching.
+    /// Missing promised objects return absence without fetching. Commit-graph loading and trust
+    /// follow [`Self::objects_with`], with [`crate::commit_graph::GraphLimits::default`].
     ///
     /// # Errors
     ///
@@ -1232,6 +1239,7 @@ impl Repository {
         let mut objects =
             crate::Objects::open(self.object_format, &self.object_dir, packs, alternates)?;
         objects.shallow = self.shallow.clone();
+        self.attach_default_commit_graph(&mut objects);
         Ok(objects)
     }
 
@@ -1239,9 +1247,10 @@ impl Repository {
     ///
     /// Checks cancellation around alternate discovery and bounded index parsing, between directory
     /// entries and after pack header/trailer checks. Pack bodies are not read during opening.
-    /// Individual filesystem calls cannot be interrupted. Run the whole operation on a caller-owned
-    /// blocking worker when needed. On failure all opened artifacts are closed and no files are
-    /// changed.
+    /// Commit-graph loading is bounded, with cancellation checked after attachment; individual
+    /// graph parsing and filesystem calls cannot be interrupted. Run the whole operation on a
+    /// caller-owned blocking worker when needed. On failure all opened artifacts are closed and
+    /// no files are changed.
     ///
     /// # Errors
     ///
@@ -1280,7 +1289,18 @@ impl Repository {
             cancelled,
         )?;
         objects.shallow = self.shallow.clone();
+        self.attach_default_commit_graph(&mut objects);
+        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(crate::ObjectReadError::Cancelled);
+        }
         Ok(objects)
+    }
+
+    fn attach_default_commit_graph(&self, objects: &mut crate::Objects) {
+        if let Ok(Some(graph)) = self.commit_graph() {
+            // Auxiliary-index failures must not prevent reading the object database.
+            let _ = objects.attach_commit_graph(graph);
+        }
     }
 
     /// Connects to the existing loose-object API without creating directories or files.

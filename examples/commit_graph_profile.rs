@@ -1,5 +1,8 @@
 //! Phase timings for object-backed and explicitly indexed history queries.
 //!
+//! Opening includes default graph attachment. The reader then drops that snapshot to measure
+//! explicit parsing/attachment separately; object mode queries read commits directly.
+//!
 //! Usage: `commit_graph_profile REPO TIP BASE objects|indexed|verified walk|range|ancestor`.
 use std::time::Instant;
 
@@ -14,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let query = args.next().ok_or("walk, range or ancestor required")?;
     let start = Instant::now();
     let repo = Repository::open(path)?;
-    let mut objects = repo.objects()?;
+    let mut objects = repo.objects()?.without_commit_graph();
     eprintln!("open={:?}", start.elapsed());
     if trust != "objects" {
         let start = Instant::now();
