@@ -54,6 +54,32 @@ pub struct StatusArgs {
     /// repository root, `:!` to exclude, `:(icase)`, `:(glob)`.
     #[arg(last = true, value_name = "PATHSPEC")]
     pathspecs: Vec<std::ffi::OsString>,
+    #[command(flatten)]
+    filters: FilterArgs,
+}
+
+/// How working files are converted, as `.gitattributes` and `core.autocrlf` ask.
+#[derive(Debug, clap::Args)]
+pub struct FilterArgs {
+    /// Compare or write raw bytes: no line-ending conversion, `ident` or filter programs.
+    #[arg(long)]
+    raw: bool,
+    /// Convert line endings and `ident`, but fail on a path whose filter would run a program
+    /// (such as Git LFS) instead of running it.
+    #[arg(long, conflicts_with = "raw")]
+    refuse_filter_commands: bool,
+}
+
+impl FilterArgs {
+    pub fn commands(&self) -> Option<girt::filter::Commands> {
+        if self.raw {
+            None
+        } else if self.refuse_filter_commands {
+            Some(girt::filter::Commands::Refuse)
+        } else {
+            Some(girt::filter::Commands::Run)
+        }
+    }
 }
 
 /// Explain ignore decisions for paths.
@@ -75,8 +101,10 @@ pub enum IgnoreCommand {
 /// Replace the index and working tree with a tree; HEAD does not move.
 ///
 /// The baseline must describe the current index and working tree exactly: girt refuses dirty,
-/// staged or conflicted paths rather than overwriting them. Content is written raw (no filters or
-/// EOL conversion). Afterwards `git status` may report staged changes relative to HEAD.
+/// staged or conflicted paths rather than overwriting them. Files are converted as Git writes
+/// them (line endings, `ident`, filter programs such as Git LFS) unless `--raw` is given; progress
+/// is shown only for raw checkouts. Afterwards `git status` may report staged changes relative to
+/// HEAD.
 ///
 /// Derived index caches (`TREE`, `FSMN`, `UNTR`, `EOIE`, `IEOT`) are dropped for Git to rebuild.
 /// Split/sparse indexes, resolve-undo data and unknown extensions are refused.
@@ -89,6 +117,8 @@ pub struct CheckoutArgs {
     /// a fresh `clone --no-checkout`) means empty.
     #[arg(long, default_value = "HEAD", add = ArgValueCompleter::new(complete::revisions))]
     from: String,
+    #[command(flatten)]
+    filters: FilterArgs,
 }
 
 /// Manage linked worktrees.
@@ -164,16 +194,31 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
         .ignore_rules(&context.environment)
         .wrap_err("loading ignore rules")?;
     let paths = context.pathspec(&repository, &args.pathspecs)?;
-    let report = repository
-        .status_with(
+    let report = match args.filters.commands() {
+        None => repository.status_with(
             Baseline::Head,
             listing,
             &rules,
             &paths,
             Limits::default(),
             &AtomicBool::new(false),
-        )
-        .wrap_err("computing status")?;
+        ),
+        Some(commands) => {
+            let mut filters = repository
+                .filters(&context.environment, commands)
+                .wrap_err("loading attributes")?;
+            repository.status_with_filters(
+                Baseline::Head,
+                listing,
+                &rules,
+                &paths,
+                &mut filters,
+                Limits::default(),
+                &AtomicBool::new(false),
+            )
+        }
+    }
+    .wrap_err("computing status")?;
 
     let mut lines: BTreeMap<Vec<u8>, [char; 2]> = BTreeMap::new();
     for change in &report.staged {
@@ -348,13 +393,36 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
     };
     let target = tree(&args.revision)?;
     let mut progress = crate::progress::Progress::new(context.progress);
-    let report = match repository.checkout_tree_with_progress(
-        baseline,
-        target,
-        Default::default(),
-        &AtomicBool::new(false),
-        |done, total| progress.update("Updating files", done, Some(total)),
-    ) {
+    let result = match (args.filters.commands(), target) {
+        (Some(commands), Some(target)) => {
+            let mut current = repository
+                .filters(&context.environment, commands)
+                .wrap_err("loading attributes")?;
+            let mut next = repository
+                .filters_with_source(
+                    &context.environment,
+                    girt::attributes::DirectorySource::Tree(target),
+                    commands,
+                )
+                .wrap_err("loading attributes")?;
+            repository.checkout_tree_with_filters(
+                baseline,
+                Some(target),
+                &mut current,
+                &mut next,
+                Default::default(),
+                &AtomicBool::new(false),
+            )
+        }
+        _ => repository.checkout_tree_with_progress(
+            baseline,
+            target,
+            Default::default(),
+            &AtomicBool::new(false),
+            |done, total| progress.update("Updating files", done, Some(total)),
+        ),
+    };
+    let report = match result {
         Ok(report) => report,
         Err(failure) => {
             let applied = failure.report.applied.len();

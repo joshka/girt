@@ -77,6 +77,10 @@ pub struct HashArgs {
     /// Read the contents from stdin instead of a file.
     #[arg(long)]
     stdin: bool,
+    /// Hash the contents as Git stores them at this repository-relative path: apply its
+    /// line-ending conversion, `ident` and filter (running filter programs such as Git LFS).
+    #[arg(long, value_name = "PATH")]
+    path: Option<String>,
 }
 
 /// A single revision argument.
@@ -155,6 +159,35 @@ fn hash(args: HashArgs, context: &Context) -> Result<ExitCode> {
     if args.write && repository.is_none() {
         bail!("--write needs a repository");
     }
+    let bytes = match (&args.path, &repository) {
+        (Some(_), _) if args.kind != ObjectKind::Blob => bail!("--path applies only to blobs"),
+        (Some(_), None) => bail!("--path needs a repository"),
+        (Some(path), Some(repository)) => {
+            let mut filters = repository
+                .filters(&context.environment, girt::filter::Commands::Run)
+                .wrap_err("loading attributes")?;
+            // As `git hash-object`: `core.safecrlf` applies only when writing, and the staged
+            // blob is not consulted.
+            if !args.write {
+                let settings = filters
+                    .settings()
+                    .with_safecrlf(girt::filter::SafeCrlf::Allow);
+                filters = filters.with_settings(settings);
+            }
+            let staged = girt::filter::Staged::Absent;
+            let converted = filters
+                .to_repository(path.as_bytes(), &bytes, staged)
+                .wrap_err_with(|| format!("converting {path}"))?;
+            if let Some(warning) = converted.warning {
+                eprintln!("warning: in the working copy of '{path}', {warning}");
+            }
+            if let Some(failure) = &converted.skipped {
+                eprintln!("error: {failure}");
+            }
+            converted.bytes.into_owned()
+        }
+        (None, _) => bytes,
+    };
     let id = match args.kind {
         ObjectKind::Blob => {
             if let Some(repository) = repository.as_ref().filter(|_| args.write) {

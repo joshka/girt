@@ -16,11 +16,29 @@ use crate::{Commit, LooseObjects, ObjectId, ObjectKind, Repository, Signature};
 /// exposes that interface for operations needing more control. Shared reads use immutable object
 /// snapshots and a synchronized lazy cache. This type is `Send + Sync`; `Log` owns its reader
 /// state and can outlive the handle. See the [module contract](super).
+///
+/// # Filter programs
+///
+/// [`Self::status`] and [`Self::switch`] convert files as `git` does, and that includes running
+/// filter programs: the `filter.<name>.clean`, `smudge` and `process` commands configured in
+/// local, global or system configuration, chosen for each path by the repository's
+/// `.gitattributes`. Git LFS installs one of these. To convert line endings and `ident` without
+/// running any program, opt out; a path that needs a program then fails with an error:
+///
+/// ```no_run
+/// use girt::Repo;
+/// use girt::filter::Commands;
+///
+/// let repo = Repo::discover(".")?.with_filter_commands(Commands::Refuse);
+/// let report = repo.status()?;
+/// # Ok::<(), girt::Error>(())
+/// ```
 #[derive(Debug)]
 pub struct Repo {
     pub(super) reader: Arc<ObjectView>,
     loose: LooseObjects,
     environment: Environment,
+    filter_commands: crate::filter::Commands,
 }
 
 /// A convenience-policy refusal or a switch that failed after checkout.
@@ -107,6 +125,7 @@ impl Repo {
             reader: Arc::new(ObjectView::new(repository)),
             loose,
             environment: Environment::from_process(),
+            filter_commands: crate::filter::Commands::Run,
         }
     }
 
@@ -146,6 +165,16 @@ impl Repo {
     #[must_use]
     pub fn with_environment(mut self, environment: Environment) -> Self {
         self.environment = environment;
+        self
+    }
+
+    /// Chooses whether [`Self::status`] and [`Self::switch`] run filter programs.
+    ///
+    /// The default is [`Commands::Run`](crate::filter::Commands::Run), as `git` runs them; see
+    /// [Filter programs](Self#filter-programs).
+    #[must_use]
+    pub fn with_filter_commands(mut self, commands: crate::filter::Commands) -> Self {
+        self.filter_commands = commands;
         self
     }
 
@@ -282,20 +311,27 @@ impl Repo {
     ///
     /// Loads [`Repository::ignore_rules`] with the captured environment, then calls
     /// [`Repository::status`] with HEAD as baseline and
-    /// [`crate::status::UntrackedFiles::Collapsed`]. Tracked content still uses raw bytes;
-    /// attributes, filters and normalization remain explicit policy. Use [`Self::repository`]
-    /// and [`Repository::raw_status`] for a raw untracked listing.
+    /// [`crate::status::UntrackedFiles::Collapsed`]. Tracked files are compared after the
+    /// conversions of [`Repository::filters`], through [`Repository::status_with_filters`],
+    /// running filter programs unless [`Self::with_filter_commands`] refuses them. Use
+    /// [`Self::repository`] and [`Repository::raw_status`] for raw bytes.
     ///
     /// # Errors
     ///
     /// Returns ignore-rule loading and status platform, storage and resource failures unchanged.
     /// No mutation occurs.
     pub fn status(&self) -> crate::Result<crate::status::Report> {
-        let rules = self.reader.repository.ignore_rules(&self.environment)?;
-        Ok(self.reader.repository.status(
+        let repository = &self.reader.repository;
+        let rules = repository.ignore_rules(&self.environment)?;
+        let mut filters = repository.filters(&self.environment, self.filter_commands)?;
+        Ok(repository.status_with_filters(
             crate::status::Baseline::Head,
             crate::status::UntrackedFiles::Collapsed,
             &rules,
+            &crate::pathspec::Pathspec::all(),
+            &mut filters,
+            crate::status::Limits::default(),
+            &std::sync::atomic::AtomicBool::new(false),
         )?)
     }
 
@@ -398,13 +434,15 @@ impl Repo {
         Ok(id)
     }
 
-    /// Checks out an existing local branch through [`Repository::checkout_tree`] and changes
-    /// stored HEAD through [`crate::refs::References::transaction`], appending a Git-style checkout
-    /// reflog on HEAD even when `core.logAllRefUpdates` is disabled.
+    /// Checks out an existing local branch through [`Repository::checkout_tree_with_filters`] and
+    /// changes stored HEAD through [`crate::refs::References::transaction`], appending a
+    /// Git-style checkout reflog on HEAD even when `core.logAllRefUpdates` is disabled.
     /// Holds prepared HEAD/reference locks across checkout. Caller must exclude all other working
     /// tree and reference writers, including activity in linked worktrees; branch occupancy is not
-    /// checked. [`Repository::operation_state`] refuses recognized in-progress operations. Raw
-    /// checkout requires Linux/macOS and refuses dirty or obstructed paths. The index and files
+    /// checked. [`Repository::operation_state`] refuses recognized in-progress operations. Files
+    /// are written as `git` writes them, running filter programs unless
+    /// [`Self::with_filter_commands`] refuses them; see [Filter programs](Self#filter-programs).
+    /// Checkout requires Linux/macOS and refuses dirty or obstructed paths. The index and files
     /// must already match HEAD: a preceding `commit(tree, message)` does not stage or check out
     /// that tree.
     ///
@@ -464,10 +502,22 @@ impl Repo {
         let revision = format!("refs/heads/{branch_name}");
         let target = self.reader.resolve(&revision, Some(ObjectKind::Commit))?;
         let target_tree = self.reader.read_commit(target)?.tree();
-        let checkout = self
-            .reader
-            .repository
-            .checkout_tree(baseline, Some(target_tree))?;
+        // The baseline is checked with the attributes now in the working tree, and the target is
+        // written with its own, as Git reads them from the index it checks out.
+        let mut current = repository.filters(&self.environment, self.filter_commands)?;
+        let mut next = repository.filters_with_source(
+            &self.environment,
+            crate::attributes::DirectorySource::Tree(target_tree),
+            self.filter_commands,
+        )?;
+        let checkout = repository.checkout_tree_with_filters(
+            baseline,
+            Some(target_tree),
+            &mut current,
+            &mut next,
+            crate::checkout::Limits::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )?;
         after_checkout();
         if let Err(source) = prepared.publish() {
             return Err(Error::SwitchHead {

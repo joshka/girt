@@ -636,3 +636,57 @@ fn assert_log_date_parity(date: &str) {
     assert!(expected.status.success());
     assert_eq!(ours.stdout, expected.stdout);
 }
+
+/// `object hash --path` converts as `git hash-object --path` does: no staged-blob rule, and
+/// `core.safecrlf` only when writing.
+#[test]
+fn hash_with_path_matches_git_hash_object() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path();
+    let repository = home.join("repo");
+    fs::create_dir_all(&repository).unwrap();
+    let git = |args: &[&str], stdin: Option<&str>| {
+        run(Command::new("git").args(args), home, &repository, stdin)
+    };
+    let girt = |args: &[&str]| {
+        run(
+            Command::new(env!("CARGO_BIN_EXE_girt")).args(args),
+            home,
+            &repository,
+            None,
+        )
+    };
+    git(&["init", "--quiet"], None);
+    git(&["config", "core.autocrlf", "true"], None);
+    fs::write(repository.join(".gitattributes"), "a text=auto\n").unwrap();
+    let staged = git(&["hash-object", "-w", "--stdin"], Some("x\r\n"));
+    let staged = String::from_utf8(staged.stdout).unwrap();
+    let info = format!("100644,{},a", staged.trim());
+    git(&["update-index", "--add", "--cacheinfo", &info], None);
+    fs::write(repository.join("f"), "new\r\n").unwrap();
+    let expected = git(&["hash-object", "--path=a", "f"], None);
+    assert_eq!(
+        girt(&["object", "hash", "--path", "a", "f"]).stdout,
+        expected.stdout
+    );
+
+    git(&["config", "core.autocrlf", "input"], None);
+    git(&["config", "core.safecrlf", "true"], None);
+    fs::write(repository.join(".gitattributes"), "a text\n").unwrap();
+    let expected = git(&["hash-object", "--path=a", "f"], None);
+    assert!(expected.status.success());
+    assert_eq!(
+        girt(&["object", "hash", "--path", "a", "f"]).stdout,
+        expected.stdout
+    );
+    assert!(
+        !git(&["hash-object", "-w", "--path=a", "f"], None)
+            .status
+            .success()
+    );
+    assert!(
+        !girt(&["object", "hash", "-w", "--path", "a", "f"])
+            .status
+            .success()
+    );
+}
