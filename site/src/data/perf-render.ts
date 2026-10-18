@@ -20,7 +20,7 @@ export interface CellData {
   when: string;
   /** girt release the cell was measured on, if recorded. */
   version: string | null;
-  /** Whether that release is older than the matrix's current release. */
+  /** Whether that release differs from the release most cells were measured on. */
   stale: boolean;
   notes: string[];
 }

@@ -470,5 +470,112 @@
     "scope": "operation-type",
     "checks": 51,
     "failures": 0
-  }
+  },
+  "refreshes": [
+    {
+      "girt_version": "0.13.0+642cbbba",
+      "girt_commit": "642cbbbaf9e152dac5b27ff2714b7b1e6f11161f",
+      "jj_adapter_commit": "e22fb846e4443f81735b6d347bdebedf79c64b1a",
+      "binaries": {
+        "girt": "1cab3380669ab9dc73bb39ec49195077b2e1acd57f7e83a1edccf80c5c2fc425",
+        "stock": "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
+      },
+      "run_epochs": [
+        {
+          "started": "2026-10-17T16:34:42-0700",
+          "argv": [
+            "--matrix",
+            "--resume",
+            "--fsck-scope",
+            "operation-type",
+            "--girt-jj",
+            "/Users/joshka/tmp/girt-bench/bin/jj-girt-main-642cbbba",
+            "--stock-jj",
+            "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+            "--girt-rev",
+            "642cbbbaf9e152dac5b27ff2714b7b1e6f11161f",
+            "--jj-rev",
+            "3f467553c59c978037c0d8b9541a2ad17755f504",
+            "--stock-rev",
+            "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+            "--repo",
+            "small:jj-historic=/Users/joshka/tmp/girt-fixtures/jj-historic.git",
+            "--runs",
+            "6",
+            "--ops",
+            "status-clean,status-small-edit,status-many-edits,status-untracked,status-untracked-unique",
+            "--work",
+            "/Users/joshka/tmp/girt-bench/matrix-status-642cbbba/run",
+            "--out",
+            "/Users/joshka/tmp/girt-bench/matrix-status-642cbbba/jj-bench-matrix.json"
+          ],
+          "adaptive": false,
+          "load_average_at_start": [
+            12.14306640625,
+            11.28076171875,
+            12.0380859375
+          ]
+        },
+        {
+          "started": "2026-10-17T16:47:02-0700",
+          "argv": [
+            "--matrix",
+            "--resume",
+            "--fsck-scope",
+            "operation-type",
+            "--girt-jj",
+            "/Users/joshka/tmp/girt-bench/bin/jj-girt-main-642cbbba",
+            "--stock-jj",
+            "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+            "--girt-rev",
+            "642cbbbaf9e152dac5b27ff2714b7b1e6f11161f",
+            "--jj-rev",
+            "3f467553c59c978037c0d8b9541a2ad17755f504",
+            "--stock-rev",
+            "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+            "--repo",
+            "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+            "--runs",
+            "6",
+            "--ops",
+            "status-clean,status-small-edit,status-many-edits,status-untracked,status-untracked-unique",
+            "--work",
+            "/Users/joshka/tmp/girt-bench/matrix-status-642cbbba/run",
+            "--out",
+            "/Users/joshka/tmp/girt-bench/matrix-status-642cbbba/jj-bench-matrix.json"
+          ],
+          "adaptive": false,
+          "load_average_at_start": [
+            11.94189453125,
+            11.65576171875,
+            12.20947265625
+          ]
+        }
+      ],
+      "load_1m": {
+        "min": 9.0,
+        "median": 11.8,
+        "max": 23.8,
+        "cores": 12
+      },
+      "fsck": {
+        "scope": "operation-type",
+        "checks": 4,
+        "failures": 0
+      },
+      "cells": [
+        "git-git/status/clean",
+        "git-git/status/many-edits",
+        "git-git/status/small-edit",
+        "git-git/status/untracked",
+        "git-git/status/untracked-unique",
+        "jj-historic/status/clean",
+        "jj-historic/status/many-edits",
+        "jj-historic/status/small-edit",
+        "jj-historic/status/untracked",
+        "jj-historic/status/untracked-unique"
+      ],
+      "build_note": "girt main 642cbbba applied to adapter e22fb846 through a local [patch.crates-io] (not pushed)"
+    }
+  ]
 }
