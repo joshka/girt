@@ -115,6 +115,8 @@ from_domain_errors! {
     crate::replace::LoadError,
     crate::replace::SettingsError,
     crate::replace::WriteError,
+    crate::bisect::Error,
+    crate::bisect::CandidatesError,
     crate::bitmap::Error,
     crate::bitmap::WriteError,
     crate::bitmap::InstallError,

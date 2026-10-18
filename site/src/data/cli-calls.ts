@@ -167,6 +167,14 @@ export const calls: Record<string, CliCalls> = {
     git: 'git diff',
     api: [objects('write_patch_with'), repository('diff_attributes')],
   },
+  'bisect run': {
+    git: 'git bisect run',
+    api: [
+      unreleased('Bisect::start', 527),
+      unreleased('Bisect::run', 527),
+      unreleased('Candidates::select', 527),
+    ],
+  },
   blame: {
     git: 'git blame',
     api: [method('Repo', 'repo/struct.Repo.html', 'blame')],

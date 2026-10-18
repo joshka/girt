@@ -14,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 mod archive;
+mod bisect;
 mod blame;
 mod color;
 mod common;
@@ -96,6 +97,10 @@ enum Command {
     /// Make one object stand for another when history and objects are read.
     #[command(subcommand)]
     Replace(replace::Command),
+
+    /// Find the commit that introduced a change by binary search.
+    #[command(subcommand)]
+    Bisect(bisect::Command),
 
     /// Attribute file lines (commit, final start, count, original start, path).
     Blame(blame::Args),
@@ -309,6 +314,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Grep(args) => grep::run(args, context),
         Command::Log(args) => history::log(args, context),
         Command::Replace(command) => replace::run(command, context),
+        Command::Bisect(command) => bisect::run(command, context),
         Command::History(command) => history::run(command, context),
         Command::Diff(args) => diff::run(args, context),
         Command::Index(command) => worktree::index(command, context),

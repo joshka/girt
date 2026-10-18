@@ -163,3 +163,40 @@ Patterns are POSIX basic (the default), extended (`-E`) or fixed strings (`-F`).
 attribute decides which files are binary and which function lines `-p` and `-W` show, as in Git.
 Back-references, Perl-compatible patterns (`-P`), `--textconv`, `--recurse-submodules` and color are
 refused.
+
+## Find the commit that introduced a change (`girt bisect`)
+
+<Example cmd="bisect run">
+
+`girt bisect start <new> <old>...` checks out the commit halfway between a commit that has a change
+(*new*, `bad` by default) and commits from before it (*old*, `good`). Mark each tested commit with
+`girt bisect new` or `girt bisect old`, or let `girt bisect run <command>` test them: exit status 0
+marks the commit old, 125 skips it, 1 to 127 mark it new, and 128 or more stops the run.
+
+```console
+$ girt bisect start main main~9
+Bisecting: 4 revisions left to test after this (roughly 2 steps)
+[66187a1e4dbe53a8b19d556154b66a2ce1761b4a] Release 1.5
+$ girt bisect run grep -q "limit = 10" config.toml
+running grep -q limit = 10 config.toml
+running grep -q limit = 10 config.toml
+running grep -q limit = 10 config.toml
+e9980ef2971225b8931c0d27b7d077e37c4840b1 is the first 'bad' commit
+commit e9980ef2971225b8931c0d27b7d077e37c4840b1
+Author: A. Writer <writer@example.com>
+Date:   Tue Nov 14 22:13:20 2023 +0000
+
+    Release 1.7
+$ girt bisect reset
+```
+
+</Example>
+
+girt keeps the state in the same files and `refs/bisect/` references as Git and picks the same
+commits, so `git bisect` can continue a bisection girt started and the other way round.
+`girt bisect skip` steps away from a commit that can't be tested, and `A..B` skips a range;
+`girt bisect log` and `girt bisect replay <file>` save and repeat a session. `--term-new` and
+`--term-old` rename the states, `--first-parent` follows only first parents, `--no-checkout` records
+the commit to test in `BISECT_HEAD` instead of checking it out, and paths after `--` limit the
+search to commits that change them. `girt bisect visualize` lists the commits still in question. The
+report names the first new commit without Git's diffstat.
