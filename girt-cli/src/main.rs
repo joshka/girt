@@ -31,6 +31,7 @@ mod progress;
 mod refs;
 mod replace;
 mod repo;
+mod rerere;
 mod transfer;
 mod tree;
 mod worktree;
@@ -101,6 +102,9 @@ enum Command {
     /// Find the commit that introduced a change by binary search.
     #[command(subcommand)]
     Bisect(bisect::Command),
+
+    /// Reuse recorded conflict resolutions.
+    Rerere(rerere::Args),
 
     /// Attribute file lines (commit, final start, count, original start, path).
     Blame(blame::Args),
@@ -315,6 +319,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Log(args) => history::log(args, context),
         Command::Replace(command) => replace::run(command, context),
         Command::Bisect(command) => bisect::run(command, context),
+        Command::Rerere(args) => rerere::run(args, context),
         Command::History(command) => history::run(command, context),
         Command::Diff(args) => diff::run(args, context),
         Command::Index(command) => worktree::index(command, context),

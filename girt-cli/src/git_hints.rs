@@ -71,7 +71,7 @@ const ENTRIES: &[Entry] = &[
     commands(&[
         "archive", "bisect", "blame", "checkout", "clone", "config", "diff", "fetch", "grep",
         "help", "history", "init", "log", "maintenance", "multi-pack-index", "push", "remote",
-        "replace", "repo", "reset", "status", "worktree",
+        "replace", "repo", "rerere", "reset", "status", "worktree",
         "fsck",
     ], Hint::Same),
     commands(&["annotate"], use_(&[("annotate", "blame")])),
@@ -141,7 +141,7 @@ const ENTRIES: &[Entry] = &[
     commands(&[
         "cherry-pick", "citool", "difftool", "filter-branch", "fmt-merge-msg", "gitk",
         "gui", "merge", "merge-file", "merge-index", "merge-one-file", "merge-tree", "mergetool",
-        "pull", "rebase", "replay", "rerere", "revert", "stash", "switch",
+        "pull", "rebase", "replay", "revert", "stash", "switch",
     ], PORCELAIN),
     commands(&[
         "am", "apply", "archimport", "bugreport", "column", "cvsexportcommit", "cvsimport",

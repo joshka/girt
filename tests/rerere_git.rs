@@ -275,3 +275,34 @@ fn conflicted_symlinks_are_never_followed() {
     assert!(report.recorded_conflicts.is_empty());
     assert!(!path.join(".git/MERGE_RR").exists());
 }
+
+#[test]
+fn run_on_index_finds_the_unmerged_paths() {
+    let root = conflicting("merge");
+    let path = root.path();
+    git(path, &["config", "rerere.enabled", "true"]);
+    merge_without_rerere(path);
+
+    let repo = Repository::open(path).unwrap();
+    let report = Rerere::open(&repo).unwrap().run_on_index().unwrap();
+    assert_eq!(report.recorded_conflicts, paths(&["f", "g"]));
+    assert_eq!(git(path, &["rerere", "remaining"]), "f\ng");
+}
+
+#[test]
+fn delete_conflicts_are_left_to_the_user() {
+    let root = conflicting("merge");
+    let path = root.path();
+    git(path, &["config", "rerere.enabled", "true"]);
+    git(path, &["checkout", "-q", "side"]);
+    git(path, &["rm", "-q", "g"]);
+    git(path, &["commit", "-q", "-m", "drop g"]);
+    git(path, &["checkout", "-q", "main"]);
+    merge_without_rerere(path);
+
+    let repo = Repository::open(path).unwrap();
+    let report = Rerere::open(&repo).unwrap().run_on_index().unwrap();
+    assert_eq!(report.recorded_conflicts, paths(&["f"]));
+    assert_eq!(rerere::unhandled(&repo).unwrap(), paths(&["g"]));
+    assert_eq!(git(path, &["rerere", "remaining"]), "f\ng");
+}
