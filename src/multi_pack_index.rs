@@ -12,6 +12,8 @@
 //! Optional read-path discovery falls back on unusable metadata; explicit verification reports it.
 //! [`crate::Repository::expire_multi_pack_index`] verifies packed survivors and publishes a
 //! replacement standalone index before retiring redundant packs, under caller-owned isolation.
+//! [`crate::Repository::plan_incremental_repack`] estimates a bounded batch from MIDX ownership,
+//! with explicit protection and skip reasons. Its advisory report does not authorize retirement.
 //!
 //! ```no_run
 //! use girt::ObjectFormat;
@@ -25,6 +27,9 @@
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+
+mod batch;
+pub use batch::{BatchError, BatchLimits, BatchPack, BatchSkipReason, BatchSkipped, RepackBatch};
 
 mod expire;
 pub use expire::{ExpireCause, ExpireFailure, ExpireLimits, ExpireReport};

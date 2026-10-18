@@ -19,6 +19,7 @@ the operation.
 
 | Task                     | API                       | What changes                                             |
 | ------------------------ | ------------------------- | -------------------------------------------------------- |
+| Select a repack batch    | `plan_incremental_repack` | Read-only MIDX ownership/size selection and typed skips  |
 | Explain retention        | `plan_retention`          | Read-only plan and typed outcome                         |
 | Add packed storage       | `repack_retained`         | New/reused indexed pack; old storage remains             |
 | Expire history           | `expire_reflogs`          | Eligible reflog records, with durable replacement        |
@@ -47,6 +48,13 @@ indexed objects. It verifies packed survivors and publishes a replacement index 
 redundant artifacts. The operation requires isolation, preserves protected and unlisted storage, and
 currently refuses incremental-chain expiry and non-Unix destructive publication. The unreleased API
 is tracked in [automatic maintenance](https://github.com/joshka/girt/issues/531).
+
+`plan_incremental_repack(batch_bytes, limits, cancel)` reports a batch without changing storage. It
+estimates each pack's size from the fraction of objects the MIDX selects there, then chooses the
+oldest eligible packs up to the target. A zero target considers every eligible pack; fewer than two
+selects none. The report explains protected and omitted packs. Promisor and cruft packs stay out of
+these batches. Execution must repeat selection under isolation; the returned paths do not authorize
+retirement. Incremental-chain selection is currently refused.
 
 ## Understand roots and plan outcomes
 
