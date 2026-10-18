@@ -228,3 +228,29 @@ pub fn abbrev_len(repository: &Repository, objects: &Objects) -> Result<usize> {
     }
     Ok(usize::try_from(i32::try_from(length)?)?)
 }
+
+/// Loads presentation identities, expanding only the current user's home in the CLI.
+pub fn mailmap(
+    repository: &girt::Repository,
+    objects: &girt::Objects,
+) -> Result<girt::mailmap::Mailmap> {
+    if let Some(file) = repository.config().string("mailmap", None, "file")
+        && let Some(suffix) = file.strip_prefix(b"~/")
+    {
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .ok_or_else(|| color_eyre::eyre::eyre!("mailmap.file requires a home directory"))?;
+        #[cfg(unix)]
+        let suffix = {
+            use std::os::unix::ffi::OsStrExt;
+            std::ffi::OsStr::from_bytes(suffix)
+        };
+        #[cfg(not(unix))]
+        let suffix = std::ffi::OsStr::new(std::str::from_utf8(suffix)?);
+        let path = std::path::PathBuf::from(home).join(suffix);
+        return Ok(girt::mailmap::Mailmap::load_with_file(
+            repository, objects, &path,
+        )?);
+    }
+    Ok(girt::mailmap::Mailmap::load(repository, objects)?)
+}

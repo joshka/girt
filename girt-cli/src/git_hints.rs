@@ -151,7 +151,7 @@ const ENTRIES: &[Entry] = &[
 
     // Flags and subcommands of girt commands that share a name with a Git command.
     under("blame", &[
-        "-L", "-w", "-M", "-e", "-s", "--porcelain", "--line-porcelain", "--reverse", "--date",
+        "-L", "-w", "-M", "-s", "--porcelain", "--line-porcelain", "--reverse", "--date",
     ], QUERIES),
     under("checkout", &["-b", "-B", "--orphan", "--detach", "-p", "--patch"], PORCELAIN),
     under("clone", &[
