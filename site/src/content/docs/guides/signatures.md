@@ -1,6 +1,6 @@
 ---
 title: Sign and verify commits
-description: Split signatures out of commits and tags, sign with ssh-keygen, and check signatures against an allowed signers file as Git does.
+description: Split signatures out of commits and tags, sign with gpg, gpgsm or ssh-keygen, and check signatures as Git does.
 ---
 
 A signed commit carries a signature in a `gpgsig` header; a signed tag has the signature appended to
@@ -9,8 +9,10 @@ split, makes signatures with a `Signer`, and checks them with a verifier that gi
 `Verification` instead of program output.
 
 Git signs with one of three programs, chosen by `gpg.format`: `gpg` for `openpgp` (the default),
-`gpgsm` for `x509`, and `ssh-keygen` for `ssh`. girt has built-in support for SSH so far; OpenPGP
-and X.509 are tracked in [the signatures issue](https://github.com/joshka/girt/issues/510). Any
+`gpgsm` for `x509`, and `ssh-keygen` for `ssh`. girt runs the same programs with the same arguments:
+`SshSigner` and `GpgSigner` sign, `SshVerifier` and `GpgVerifier` verify. `Settings::from_config`
+reads `gpg.format`, `commit.gpgSign` and `tag.gpgSign`, and `Settings::signer` builds the configured
+signer. `Verifier` picks the verifier from the signature's armor, as `git verify-commit` does. Any
 other signer can be plugged in through the `Signer` trait or a closure.
 
 ## Running signing programs is opt-in
@@ -83,9 +85,10 @@ Store the commit with `LooseObjects` or `Objects` as usual; building it writes n
 ## Read the verdict
 
 `Verification::status` has one variant per letter that `git log --format=%G?` prints, and
-`Status::letter` returns it. `signer`, `fingerprint` and `trust` match `%GS`, `%GF` and `%GT`, and
-`output` holds what `git verify-commit --raw` would print. `Verification::is_good` is true exactly
-when `git verify-commit` would succeed.
+`Status::letter` returns it. `signer`, `key`, `fingerprint`, `primary_fingerprint` and `trust` match
+`%GS`, `%GK`, `%GF`, `%GP` and `%GT`, and `output` holds what `git verify-commit --raw` would print.
+`Verification::is_good` is true exactly when `git verify-commit` would succeed, which depends on the
+format and on `gpg.minTrustLevel` as well as the letter.
 
 For SSH signatures, as in Git:
 
@@ -95,6 +98,18 @@ For SSH signatures, as in Git:
   `signer` is empty; `fingerprint` names the key.
 - **Bad (`B`)**: the payload does not match, or the owning principal's entry rejects the key for its
   namespace or because it is revoked.
+
+A key an allowed signer owns has `fully` trust, so `gpg.minTrustLevel=ultimate` rejects every SSH
+signature, as in Git.
+
+For OpenPGP and X.509 signatures, `gpg` or `gpgsm` decides, using the keyring `GNUPGHOME` names:
+
+- **Good (`G`)** needs a correct signature from a key of `marginal` trust or better; a correct
+  signature from a key of `undefined` or `never` trust is **unknown validity (`U`)**.
+- **Expired signature (`X`)**, **expired key (`Y`)** and **revoked key (`R`)** are correct
+  signatures with a time or revocation problem; **cannot check (`E`)** means the key is missing.
+- `is_good` accepts `G`, `U` and `Y` when trust is at least `gpg.minTrustLevel` (default
+  `undefined`, so `never` is rejected), and rejects the rest. This is what Git does.
 
 Without `gpg.ssh.allowedSignersFile`, `verify` returns `Error::NoAllowedSigners`, where Git prints
 an error and reports `N`. Unlike Git, girt passes the date to `ssh-keygen` in UTC, so the result

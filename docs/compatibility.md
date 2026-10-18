@@ -3587,8 +3587,7 @@ conservative refusal separately.
 ## Signed payloads
 
 `girt::signing` splits a commit or tag into its signature and the exact bytes the signature covers,
-and signs and verifies SSH signatures. OpenPGP and X.509 signing and verification are tracked in
-[the signatures issue](https://github.com/joshka/girt/issues/510).
+and signs and verifies OpenPGP, X.509 and SSH signatures.
 
 `Commit::signed_payload` reads the signature header for the commit's own format (`gpgsig` for SHA-1,
 `gpgsig-sha256` for SHA-256), unfolds it, and joins repeated headers. The payload drops every
@@ -3628,3 +3627,25 @@ revoked key with and without an owning principal, a missing allowed signers file
 commit, and compares tags with `git verify-tag`'s exit status. Without `gpg.ssh.allowedSignersFile`,
 girt returns `Error::NoAllowedSigners` where Git reports `N`. The `gpg.ssh.defaultKeyCommand` and
 literal-key paths are not compared with Git, because they need an SSH agent.
+
+### OpenPGP and X.509 signing and verification
+
+`GpgSigner` runs `gpg --status-fd=2 -bsau <key>` (`gpgsm` for X.509) with the payload on standard
+input and requires `SIG_CREATED`, as Git does; without `user.signingKey` it signs as the committer
+`Name <email>`. The OpenPGP program is the later of `gpg.program` and `gpg.openpgp.program`.
+`GpgVerifier` runs `gpg --keyid-format=long --status-fd=1 --verify <signature> -` (`gpgsm` without
+`--keyid-format`) and reads `GOODSIG`, `BADSIG`, `EXPSIG`, `EXPKEYSIG`, `REVKEYSIG`, `ERRSIG`,
+`VALIDSIG` and `TRUST_*` status lines. A good signature is `G` at `marginal` trust or better and `U`
+below. `verify-commit` accepts `G`, `U` and `Y` at or above `gpg.minTrustLevel`, whose default
+`undefined` sits above `never`; the same minimum applies to SSH, whose owned keys have `fully`
+trust. `gpg.format` values are matched case-sensitively and `gpg.minTrustLevel` case-insensitively,
+as Git does.
+
+`tests/signing_gpg.rs` generates throwaway keys in temporary `GNUPGHOME` directories and stops their
+agents afterwards. It checks that Git accepts commits girt signs and that girt reads Git's
+signatures in SHA-1 and SHA-256 repositories. It compares `%G?|%GS|%GK|%GF|%GP|%GT` and
+`verify-commit`'s exit status for unknown, `never`, `marginal` and `full` ownertrust under several
+`gpg.minTrustLevel` values, a missing key, a tampered commit, an expired key, an expired signature,
+a revoked key, a signed tag, and an X.509 certificate from `gpgsm`. Expired keys and signatures are
+made with `--faked-system-time` through a POSIX shell wrapper; those cases and all tests skip when
+`gpg` or `gpgsm` is absent.

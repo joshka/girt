@@ -163,6 +163,7 @@ pub struct SshVerifier {
     program: OsString,
     programs: Programs,
     environment: Option<Environment>,
+    min_trust: Trust,
 }
 
 impl SshVerifier {
@@ -175,17 +176,20 @@ impl SshVerifier {
             program: "ssh-keygen".into(),
             programs: Programs::Refuse,
             environment: None,
+            min_trust: Trust::Undefined,
         }
     }
 
-    /// Reads `gpg.ssh.allowedSignersFile`, `gpg.ssh.revocationFile` and `gpg.ssh.program`.
+    /// Reads `gpg.ssh.allowedSignersFile`, `gpg.ssh.revocationFile`, `gpg.ssh.program` and
+    /// `gpg.minTrustLevel`.
     ///
     /// A leading `~/` in a path is expanded from `HOME` in `environment`. A missing allowed signers
     /// file is not an error here; [`Self::verify`] reports it.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Path`] for a path that cannot be expanded.
+    /// Returns [`Error::Path`] for a path that cannot be expanded and [`Error::Config`] for an
+    /// unknown `gpg.minTrustLevel`.
     pub fn from_config(
         config: &Config,
         environment: &Environment,
@@ -203,7 +207,16 @@ impl SshVerifier {
             program: program(config)?.unwrap_or_else(|| "ssh-keygen".into()),
             programs,
             environment: None,
+            min_trust: super::min_trust(config)?.unwrap_or(Trust::Undefined),
         })
+    }
+
+    /// Requires at least `min_trust` for [`Verification::is_good`], as `gpg.minTrustLevel` does.
+    /// A key an allowed signer owns has [`Trust::Fully`].
+    #[must_use]
+    pub fn with_min_trust(mut self, min_trust: Trust) -> Self {
+        self.min_trust = min_trust;
+        self
     }
 
     /// Also rejects keys listed in `revocations`, as `gpg.ssh.revocationFile` does.
@@ -303,6 +316,7 @@ impl SshVerifier {
             principal.is_some(),
             &output.stdout,
             report,
+            self.min_trust,
         ))
     }
 }
@@ -311,14 +325,23 @@ impl SshVerifier {
 ///
 /// A good line reads `Good "git" signature for <principal> with <type> key <fingerprint>`, or
 /// without `for <principal>` from `check-novalidate`.
-fn interpret(success: bool, validated: bool, stdout: &[u8], output: Vec<u8>) -> Verification {
+fn interpret(
+    success: bool,
+    validated: bool,
+    stdout: &[u8],
+    output: Vec<u8>,
+    min_trust: Trust,
+) -> Verification {
     if !success {
         return Verification {
             status: Status::Bad,
             signer: None,
+            key: None,
             fingerprint: None,
+            primary_fingerprint: None,
             trust: Trust::Never,
             output,
+            accepted: false,
         };
     }
     let line = String::from_utf8_lossy(
@@ -343,9 +366,12 @@ fn interpret(success: bool, validated: bool, stdout: &[u8], output: Vec<u8>) -> 
     Verification {
         status,
         signer: signer.filter(|_| validated),
+        key: fingerprint.clone(),
         fingerprint,
+        primary_fingerprint: None,
         trust,
         output,
+        accepted: validated && trust.at_least(min_trust),
     }
 }
 
@@ -420,14 +446,14 @@ fn expand(value: &[u8], environment: &Environment) -> Result<PathBuf, Error> {
     }
 }
 
-fn temporary(contents: &[u8]) -> Result<tempfile::NamedTempFile, Error> {
+pub(super) fn temporary(contents: &[u8]) -> Result<tempfile::NamedTempFile, Error> {
     let mut file = tempfile::NamedTempFile::new().map_err(Error::Temporary)?;
     file.write_all(contents).map_err(Error::Temporary)?;
     file.flush().map_err(Error::Temporary)?;
     Ok(file)
 }
 
-fn run(
+pub(super) fn run(
     program: &std::ffi::OsStr,
     args: &[OsString],
     input: &[u8],
@@ -490,13 +516,13 @@ mod tests {
     #[test]
     fn good_lines_give_signer_and_fingerprint() {
         let stdout = b"Good \"git\" signature for a@x with ED25519 key SHA256:abc\n";
-        let verification = interpret(true, true, stdout, Vec::new());
+        let verification = interpret(true, true, stdout, Vec::new(), Trust::Undefined);
         assert_eq!(verification.status, Status::Good);
         assert_eq!(verification.signer.as_deref(), Some("a@x"));
         assert_eq!(verification.fingerprint.as_deref(), Some("SHA256:abc"));
 
         let stdout = b"Good \"git\" signature with ED25519 key SHA256:abc\n";
-        let verification = interpret(true, false, stdout, Vec::new());
+        let verification = interpret(true, false, stdout, Vec::new(), Trust::Undefined);
         assert_eq!(verification.status, Status::UnknownValidity);
         assert_eq!(verification.signer, None);
         assert_eq!(verification.fingerprint.as_deref(), Some("SHA256:abc"));
