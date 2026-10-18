@@ -231,9 +231,10 @@ pub fn clone(url: &str, destination: impl AsRef<Path>) -> Result<CloneOutcome, C
 /// platforms refuse before transfer when checkout is requested; use [`CloneOptions::with_checkout`]
 /// with `false`, or bare mode. Unborn or unavailable HEAD skips checkout; a detached remote HEAD
 /// stays detached. A symbolic HEAD naming a missing branch in a nonempty remote is refused by the
-/// core planner. No origin/HEAD alias, shallow clone, submodules, hardlinks or automatic rollback
-/// is provided. HTTP/SSH runtime constraints match [`fetch`]. Like fetch, this synchronous workflow
-/// has no cancellation or deadline; use the core APIs for caller-controlled cancellation.
+/// core planner. No origin/HEAD alias, shallow clone, recursive submodule checkout, hardlinks or
+/// automatic rollback is provided. HTTP/SSH runtime constraints match [`fetch`]. Like fetch, this
+/// synchronous workflow has no cancellation or deadline; use the core APIs for caller-controlled
+/// cancellation.
 ///
 /// # Errors
 ///

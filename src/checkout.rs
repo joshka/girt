@@ -44,11 +44,14 @@
 //! metadata names Git refuses: `.git` in any ASCII case, the NTFS spellings of `.git` (`git~1`,
 //! trailing dots or spaces, `:stream`) unless `core.protectNTFS` is false, and on macOS the HFS+
 //! spellings with ignorable code points unless `core.protectHFS` is false. Also refused are
-//! gitlinks, nested repositories and index extensions other than `TREE`, `FSMN`, `UNTR`, `EOIE`
-//! and `IEOT`. Intent-to-add and skip-worktree
-//! entries require caller policy and are refused. Path components are limited to 255 bytes. Windows
-//! returns unsupported. Raw checkout preserves blob bytes without attributes, filters, EOL
-//! conversion, ignores or config overrides;
+//! general gitlink transitions, nested repositories and index extensions other than `TREE`, `FSMN`,
+//! `UNTR`, `EOIE` and `IEOT`. Intent-to-add and skip-worktree
+//! entries require caller policy and are refused. An absent baseline with an empty index can
+//! initialize gitlinks: their external commit IDs stay in the index and their worktree directories
+//! are created empty, without reading objects or entering child repositories. Existing nonempty
+//! child directories and name collisions involving gitlinks are refused. Path components are
+//! limited to 255 bytes. Windows returns unsupported. Raw checkout preserves blob bytes without
+//! attributes, filters, EOL conversion, ignores or config overrides;
 //! [`Repository::checkout_tree_with_filters`](crate::Repository::checkout_tree_with_filters)
 //! writes regular files through a [`filter::Pipeline`](crate::filter::Pipeline) instead. Symlink
 //! blobs must be nonempty, NUL-free and at most 1024 bytes. Mode changes replace files, with

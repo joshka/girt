@@ -214,6 +214,11 @@ Inspect `UpdateError::Checkout` for partial file/index effects with HEAD unchang
 reference transaction effects. No rollback is attempted: observe the residual state under exclusion
 before deciding how to recover. Successful reports do not authorize later writes.
 
+An ordinary clone can check out a superproject without populating its children. It writes each
+recorded gitlink into the index and creates an empty directory at its path, as Git clone does.
+Initial checkout never reads those commit IDs from the parent's object store or enters a child.
+General checkout transitions involving existing gitlinks remain explicitly refused.
+
 ## Populate a missing child
 
 Call `plan.populate(&parent, &options, &mut callbacks)` when transport is authorized. It clones
