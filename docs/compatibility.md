@@ -119,17 +119,20 @@ filter, pathspec, monitor-cache and checkout restrictions remain tracked by
 [issue 519](https://github.com/joshka/girt/issues/519) and
 [issue 501](https://github.com/joshka/girt/issues/501).
 
-The status summary also needs Git-compatible index and configuration policy. The new
+The raw status comparisons preserve literal index and configuration observation. The
 `intent_to_add_status_is_explicitly_refused` comparison records Git's unstaged-addition result
-versus girt's refusal ([issue 576](https://github.com/joshka/girt/issues/576)). Cone and non-cone
-fixtures produce clean Git status but are refused by girt because of skip-worktree flags
-([issue 500](https://github.com/joshka/girt/issues/500)). Existing
+versus raw status's refusal ([issue 576](https://github.com/joshka/girt/issues/576)). Cone and
+non-cone fixtures produce clean Git status but are refused by raw status because of skip-worktree
+flags ([issue 500](https://github.com/joshka/girt/issues/500)). Existing
 `assume_valid_does_not_claim_unverified_content_is_clean` records Git omitting a change that girt
 reports ([issue 579](https://github.com/joshka/girt/issues/579)). New configured comparisons show
 executable-bit differences under `core.fileMode=false`
 ([issue 577](https://github.com/joshka/girt/issues/577)) and placeholder symlinks under
 `core.symlinks=false` ([issue 578](https://github.com/joshka/girt/issues/578)); the checkout
-comparison also verifies Git writing a regular placeholder where girt writes a real symlink.
+comparison also verifies Git writing a regular placeholder where raw checkout writes a real symlink.
+Configured status applies all four policies; configured checkout writes placeholders. See
+[configured index flags and file modes](#configured-index-flags-and-file-modes) and
+[configured symlink representation](#configured-symlink-representation).
 
 `case_alias_status_requires_git_policy` records that raw status still compares exact bytes,
 reporting a deletion and an untracked case alias where Git with `core.ignoreCase=true` is clean.
@@ -147,8 +150,8 @@ a deleted index path `file` is not listed. Girt matches, and the comparison test
 image as well as on the default volume. `valid_posix_path_characters_match_git_status` compares
 clean and modified Git status for colon and backslash names, including a nested `dir:x/a\b`; girt
 matches ([issue 583](https://github.com/joshka/girt/issues/583)). These comparisons distinguish the
-raw API's documented policy from a future Git-compatible workflow; they do not authorize changing
-its existing contract implicitly.
+raw API's documented policy from configured workflows; they do not authorize changing its existing
+contract implicitly.
 
 Two additional comparisons use Git 2.56.0 on macOS.
 `existing_user_home_excludes_are_a_git_compatibility_gap` shows that Git expands a real named user's
@@ -3419,10 +3422,10 @@ configuration and fixed identities/dates. SHA-1 and SHA-256 cases apply a Git-ge
 postimage. Focused cases cover insertion, deletion, exact context, CR/non-UTF-8 bytes, missing final
 LF, quoted paths, malformed/truncated counts, overflow, limits and late-hunk failure.
 
-This establishes exact-position text application only. Extended file operations, binary and
-combined diffs are explicitly refused. Offset/fuzz matching, whitespace policy, reverse/recount,
-publication and mail workflows remain [issue 506](https://github.com/joshka/girt/issues/506).
-The `apply` fuzz target exercises bounded parsing and application to independently framed preimages.
+This establishes exact-position text application only. Extended file operations, binary and combined
+diffs are explicitly refused. Offset/fuzz matching, whitespace policy, reverse/recount, publication
+and mail workflows remain [issue 506](https://github.com/joshka/girt/issues/506). The `apply` fuzz
+target exercises bounded parsing and application to independently framed preimages.
 
 ### Configured index flags and file modes
 
@@ -3437,4 +3440,30 @@ The original SHA-1 and SHA-256 fixtures in `tests/status.rs` compare these cases
 Git executable. Raw status retains its literal mode comparison, verifies assume-unchanged content
 and refuses intent-to-add/skip-worktree. Neither status form authorizes overwriting working files;
 checkout verifies its own baseline independently. Sparse-directory expansion and sparse-checkout
-pattern selection remain separate operations.
+pattern selection remain separate operations. A promised file replaced by a directory keeps its
+untracked children visible with `-uall`; the alias-directory comparison also checks Git's spelling
+and pathspec selection on folding volumes.
+
+### Configured symlink representation
+
+Configured status, filtered checkout and `Repository::checkout_tree_configured` read `core.symlinks`
+from the repository handle, defaulting to true. With false, a regular file's bytes are compared as
+the target of an indexed symlink, and checkout writes that representation without changing the index
+mode. Real symlinks still compare by their target bytes. Placeholder content changes remain unstaged
+modifications; regular-file index entries retain ordinary type-change detection. Raw status and
+checkout retain native-symlink semantics. Native symlinks bypass status conversion, and checkout of
+symlink blobs bypasses smudge conversion even when writing placeholders. Filtered status reads
+regular-file placeholders through clean/EOL conversion. An original isolated Git 2.56 fixture with
+index mode `120000`, `core.symlinks=false` and `link filter=reject text eol=crlf` exits 128 when the
+required clean driver is `exit 1`; an identity clean driver reports the same placeholder clean.
+`tests/filter_status.rs::symlink_placeholders_apply_clean_filters` preserves that comparison, and
+`tests/filter_checkout.rs::configured_symlink_placeholders_bypass_smudge_filters` verifies the
+separate checkout rule in both object formats.
+
+Original SHA-1/SHA-256 fixtures in `tests/status.rs` and `tests/checkout.rs` compare both settings
+with isolated Git status and read-tree. Checkout independently verifies placeholders during
+preparation, removal and final publication; assume-unchanged cannot hide a dirty target from these
+checks. Configured checkout has the same platform, exclusion and recovery contract as raw checkout.
+Its executable-bit baseline verification remains literal under `core.fileMode=false`;
+[configured checkout file-mode policy](https://github.com/joshka/girt/issues/652) tracks that
+conservative refusal separately.

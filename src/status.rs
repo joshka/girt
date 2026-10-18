@@ -19,10 +19,11 @@
 //!
 //! [`Repository::status`](crate::Repository::status) and filtered status apply intent-to-add,
 //! assume-unchanged and skip-worktree flags, and ignore regular-file executable-bit changes when
-//! `core.fileMode=false`. Status without filters compares literal content bytes. Both forms
-//! list untracked paths as `git status` does: pass the rules from
-//! [`Repository::ignore_rules`](crate::Repository::ignore_rules) and an [`UntrackedFiles`] listing,
-//! and read [`Report::untracked`].
+//! `core.fileMode=false`. With `core.symlinks=false`, regular files containing target bytes
+//! represent indexed symlinks; filtered status still converts these regular files. Status without
+//! filters compares literal bytes. Both forms list untracked paths as `git status` does: pass the
+//! rules from [`Repository::ignore_rules`](crate::Repository::ignore_rules) and an
+//! [`UntrackedFiles`] listing, and read [`Report::untracked`].
 //! As in Git, a working file is not read when its `lstat` matches every cached index stat word and
 //! the entry is not racily clean; index blobs are never read. Configured status also trusts
 //! assume-unchanged and skip-worktree promises; raw status inspects those files. No index

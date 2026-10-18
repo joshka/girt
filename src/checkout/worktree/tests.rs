@@ -1155,8 +1155,8 @@ fn projection_checks_intermediate_states_not_only_the_final_tree() {
     let mut plan = Plan::prepare(
         &f.repo,
         f.root(),
-        old,
-        Some(target),
+        [old, Some(target)],
+        true,
         &mut edit,
         None,
         Limits::default(),

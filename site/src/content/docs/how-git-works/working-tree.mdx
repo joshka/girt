@@ -37,7 +37,7 @@ The index format has optional **extensions**:
   the conflict.
 - **Sparse directory entries** are described next.
 
-<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/index/index.html">Sparse directory entries are expanded explicitly; configured status applies intent-to-add, assume-unchanged and skip-worktree flags ([#635](https://github.com/joshka/girt/issues/635)).</GirtStatus>
+<GirtStatus status="supported" href="https://github.com/joshka/girt/issues/635">Sparse directory entries are expanded explicitly; configured status applies intent-to-add, assume-unchanged and skip-worktree flags ([#635](https://github.com/joshka/girt/issues/635)).</GirtStatus>
 
 ## Sparse checkout and expansion
 
@@ -72,7 +72,7 @@ looks modified. Git only does that when it reads a file: a file whose size no lo
 size recorded in the index is reported as modified without conversion, so changing only a file's
 line endings shows up in `git status` even though `git diff` is empty.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/534">macOS/Linux only. Filters apply through `Repository::status_with_filters` ([#496](https://github.com/joshka/girt/issues/496)); applies index flags, core.fileMode and filesystem name policy ([#635](https://github.com/joshka/girt/issues/635)); no `attr:` pathspecs or monitor caches; still refuses sparse directories and lacks symlink placeholders.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/534">macOS/Linux only. Filters apply through `Repository::status_with_filters` ([#496](https://github.com/joshka/girt/issues/496)); applies index flags, core.fileMode, core.symlinks and filesystem name policy ([#635](https://github.com/joshka/girt/issues/635)); no `attr:` pathspecs or monitor caches; still refuses sparse directories.</GirtStatus>
 
 ## Ignore rules
 
@@ -104,4 +104,4 @@ its work so a failure halfway, such as a full disk or a file another program hol
 state that can be recovered rather than a mix of two commits. Directory and file swaps (`a` was a
 file, now it is a directory), symbolic links and executable bits add more cases.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/501">macOS and Linux only; filters only through `Repository::checkout_tree_with_filters` ([#496](https://github.com/joshka/girt/issues/496)); refuses skip-worktree and intent-to-add entries and case-only renames on case-insensitive volumes ([#620](https://github.com/joshka/girt/issues/620)); no symlink placeholders ([#578](https://github.com/joshka/girt/issues/578)).</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/501">macOS and Linux only; filters through `Repository::checkout_tree_with_filters` ([#496](https://github.com/joshka/girt/issues/496)); refuses skip-worktree and intent-to-add entries and case-only renames on case-insensitive volumes ([#620](https://github.com/joshka/girt/issues/620)); configured checkout writes symlink placeholders ([#578](https://github.com/joshka/girt/issues/578)).</GirtStatus>

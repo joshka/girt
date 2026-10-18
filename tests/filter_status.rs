@@ -211,3 +211,49 @@ fn git_lfs_files_are_clean() {
     assert_eq!(expected, ["b.bin"]);
     assert_eq!(ours(root, Commands::Run).unwrap(), expected);
 }
+
+#[test]
+fn symlink_placeholders_apply_clean_filters() {
+    for format in [girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        git(
+            root,
+            &["init", "-q", &format!("--object-format={format}"), "."],
+            b"",
+        );
+        std::fs::write(
+            root.join(".gitattributes"),
+            b"link filter=reject text eol=crlf\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("target", root.join("link")).unwrap();
+        git(root, &["config", "filter.reject.required", "true"], b"");
+        git(root, &["config", "filter.reject.clean", "exit 1"], b"");
+        git(root, &["add", "."], b"");
+        git(
+            root,
+            &[
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "symlink fixture",
+            ],
+            b"",
+        );
+        git(root, &["config", "core.symlinks", "false"], b"");
+        std::fs::remove_file(root.join("link")).unwrap();
+        std::fs::write(root.join("link"), b"target").unwrap();
+
+        let refused = pack_git::git_output(root, &["status", "--porcelain=v1"], b"");
+        assert_eq!(refused.status.code(), Some(128));
+        assert!(ours(root, Commands::Refuse).is_err());
+        git(root, &["config", "filter.reject.clean", "cat"], b"");
+        assert!(git_unstaged(root).is_empty());
+        assert!(ours(root, Commands::Run).unwrap().is_empty());
+        std::fs::write(root.join("link"), b"edited target").unwrap();
+        assert_eq!(git_unstaged(root), ["link"]);
+        assert_eq!(ours(root, Commands::Run).unwrap(), ["link"]);
+    }
+}

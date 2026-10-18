@@ -135,7 +135,8 @@ impl Repository {
     /// Load `baseline_filters` with [`Self::filters`], which reads the `.gitattributes` files
     /// currently in the working tree, and `target_filters` with [`Self::filters_for_checkout`],
     /// which reads the target's own attributes as Git reads those of the index it checks out.
-    /// Publication verifies the converted bytes. Symlinks are never converted. All conversion
+    /// Publication verifies the converted bytes. `core.symlinks=false` writes symlink target
+    /// placeholders; native links and placeholders bypass filters. All conversion
     /// happens during preparation, before any working-tree change, so a failing required filter
     /// changes nothing; converted contents of the target are held in memory until publication.
     /// Paths written unconverted because a non-required driver failed are listed in
@@ -232,6 +233,91 @@ impl Repository {
                 cleanup: vec![],
             })
         }
+    }
+
+    /// Checks out a tree using the repository's configured symlink representation.
+    ///
+    /// With `core.symlinks=false`, symlink blobs are written as regular files containing the
+    /// target bytes, while index entries retain symlink mode. Existing placeholders and native
+    /// symlinks must match their baseline target bytes before any mutation. Index promises such
+    /// as assume-unchanged never bypass this verification. Other baseline, exclusion and recovery
+    /// requirements are those of [`Self::checkout_tree_with`]. Attributes and filters are not
+    /// applied. Use [`Self::checkout_tree_with`] for literal native-symlink materialization.
+    /// Configuration comes from this repository handle, including explicitly loaded layers.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failures of [`Self::checkout_tree_with`], including invalid `core.symlinks`
+    /// configuration. Preparation failures leave working-tree content unchanged.
+    pub fn checkout_tree_configured_with(
+        &self,
+        baseline: Option<ObjectId>,
+        target: Option<ObjectId>,
+        limits: Limits,
+        cancel: &AtomicBool,
+    ) -> Result<Report, Failure> {
+        let _lock_operation = crate::locks::operation();
+        for id in baseline.into_iter().chain(target) {
+            id.require_format(self.object_format())
+                .map_err(|error| Failure {
+                    cause: Box::new(error.into()),
+                    report: Report::default(),
+                    cleanup: vec![],
+                })?;
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        return super::worktree::run_configured(self, baseline, target, limits, cancel);
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        self.checkout_tree_with(baseline, target, limits, cancel)
+    }
+
+    /// Checks out a tree with configured symlinks, default limits and no cancellation.
+    ///
+    /// ```
+    /// use girt::config::{Config, ConfigInputs};
+    /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    ///
+    /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+    /// let directory = tempfile::tempdir()?;
+    /// let root = directory.path().join("repo");
+    /// Repository::init(ObjectFormat::Sha1, &root, InitKind::Worktree)?;
+    /// let inputs =
+    ///     ConfigInputs::default().with_command(Some(Config::parse(b"[core]\nsymlinks=false\n")?));
+    /// let repo = Repository::open_with_config(&root, &inputs)?;
+    /// let objects = repo.loose_objects();
+    /// let target = objects.write_blob(b"destination")?;
+    /// let tree = Tree::new(
+    ///     ObjectFormat::Sha1,
+    ///     vec![TreeEntry {
+    ///         name: b"link".to_vec(),
+    ///         mode: EntryMode::Symlink,
+    ///         id: target,
+    ///     }],
+    /// )?;
+    /// let tree = objects.write_tree(&tree)?;
+    ///
+    /// repo.checkout_tree_configured(None, Some(tree))?;
+    /// assert_eq!(std::fs::read(root.join("link"))?, b"destination");
+    /// assert!(!std::fs::symlink_metadata(root.join("link"))?.is_symlink());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// See [`Self::checkout_tree_configured_with`] for representation, exclusion and recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failures of [`Self::checkout_tree_configured_with`] except cancellation.
+    pub fn checkout_tree_configured(
+        &self,
+        baseline: Option<ObjectId>,
+        target: Option<ObjectId>,
+    ) -> Result<Report, Failure> {
+        self.checkout_tree_configured_with(
+            baseline,
+            target,
+            Limits::default(),
+            &AtomicBool::new(false),
+        )
     }
 
     /// Materializes a tree with [`Limits::default`] and no cancellation.

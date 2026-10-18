@@ -1151,3 +1151,255 @@ fn configured_file_mode_matches_git(
     );
     assert_eq!(configured_status(&repo).unstaged.len(), 1);
 }
+
+#[rstest]
+#[case(ObjectFormat::Sha1, false)]
+#[case(ObjectFormat::Sha256, false)]
+#[case(ObjectFormat::Sha1, true)]
+#[case(ObjectFormat::Sha256, true)]
+fn configured_symlink_representation_matches_git(
+    #[case] format: ObjectFormat,
+    #[case] native: bool,
+) {
+    let (_temp, repo) = fixture_in(format);
+    let root = repo.worktree().unwrap();
+    symlink("target", root.join("file")).unwrap();
+    git(root, &["add", "file"]);
+    git(root, &["commit", "-qm", "symlink representation"]);
+    let setting = if native { "true" } else { "false" };
+    git(root, &["config", "core.symlinks", setting]);
+    let repo = Repository::open(root).unwrap();
+    let override_setting = format!("core.symlinks={setting}");
+    assert!(
+        git(
+            root,
+            &["-c", &override_setting, "status", "--porcelain=v1", "-z"]
+        )
+        .is_empty()
+    );
+    assert!(configured_status(&repo).unstaged.is_empty());
+
+    fs::remove_file(root.join("file")).unwrap();
+    fs::write(root.join("file"), b"target").unwrap();
+    let expected = if native { b" T file\0".as_slice() } else { b"" };
+    assert_eq!(
+        git(
+            root,
+            &["-c", &override_setting, "status", "--porcelain=v1", "-z"]
+        ),
+        expected
+    );
+    assert_eq!(!configured_status(&repo).unstaged.is_empty(), native);
+    assert_eq!(status(&repo).unstaged.len(), 1);
+
+    fs::write(root.join("file"), b"changed target").unwrap();
+    let expected = if native {
+        b" T file\0".as_slice()
+    } else {
+        b" M file\0"
+    };
+    assert_eq!(
+        git(
+            root,
+            &["-c", &override_setting, "status", "--porcelain=v1", "-z"]
+        ),
+        expected
+    );
+    assert_eq!(configured_status(&repo).unstaged.len(), 1);
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn configured_policy_uses_layered_config_and_defaults(#[case] format: ObjectFormat) {
+    use std::os::unix::fs::PermissionsExt;
+
+    use girt::config::{Config, ConfigInputs};
+    let (_temp, repo) = fixture_in(format);
+    seed(&repo, Some(b"same"), Some(b"same"), Some(b"same"));
+    let root = repo.worktree().unwrap();
+    git(root, &["config", "--unset", "core.filemode"]);
+    fs::set_permissions(root.join("file"), fs::Permissions::from_mode(0o755)).unwrap();
+    let repo = Repository::open(root).unwrap();
+    assert_eq!(configured_status(&repo).unstaged.len(), 1);
+
+    let inputs = ConfigInputs::default().with_command(Some(
+        Config::parse(b"[core]\nfileMode=false\nsymlinks=false\n").unwrap(),
+    ));
+    let layered = Repository::open_with_config(root, &inputs).unwrap();
+    assert!(configured_status(&layered).unstaged.is_empty());
+    assert!(
+        git(
+            root,
+            &[
+                "-c",
+                "core.filemode=false",
+                "status",
+                "--porcelain=v1",
+                "-z"
+            ]
+        )
+        .is_empty()
+    );
+    assert_eq!(status(&layered).unstaged.len(), 1);
+
+    fs::remove_file(root.join("file")).unwrap();
+    symlink("same", root.join("file")).unwrap();
+    assert_eq!(configured_status(&layered).unstaged.len(), 1);
+    assert_eq!(
+        git(
+            root,
+            &[
+                "-c",
+                "core.filemode=false",
+                "status",
+                "--porcelain=v1",
+                "-z"
+            ]
+        ),
+        b" T file\0"
+    );
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn configured_promises_override_cached_and_racy_stats(#[case] format: ObjectFormat) {
+    let (_temp, repo) = fixture_in(format);
+    seed(&repo, Some(b"same"), Some(b"same"), Some(b"same"));
+    let root = repo.worktree().unwrap();
+    git(root, &["update-index", "--assume-unchanged", "file"]);
+    for racy in [false, true] {
+        if racy {
+            make_racy(&repo);
+        }
+        assert!(configured_status(&repo).unstaged.is_empty());
+        assert!(git(root, &["status", "--porcelain=v1", "-z"]).is_empty());
+        fs::write(root.join("file"), b"changed size and stat").unwrap();
+        assert!(configured_status(&repo).unstaged.is_empty());
+        assert!(git(root, &["status", "--porcelain=v1", "-z"]).is_empty());
+        assert_eq!(status(&repo).unstaged.len(), 1);
+    }
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn intent_to_add_on_tracked_file_keeps_staged_content(#[case] format: ObjectFormat) {
+    let (_temp, repo) = fixture_in(format);
+    seed(&repo, Some(b"head"), Some(b"staged"), Some(b"working"));
+    let root = repo.worktree().unwrap();
+    git(root, &["add", "-N", "file"]);
+
+    assert_eq!(git(root, &["status", "--porcelain=v1", "-z"]), b"MM file\0");
+    let report = configured_status(&repo);
+    assert_eq!(report.staged.len(), 1);
+    assert_eq!(
+        report.unstaged[0].status(),
+        Some(girt::ChangeStatus::Modified)
+    );
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1, "--assume-unchanged")]
+#[case(ObjectFormat::Sha256, "--assume-unchanged")]
+#[case(ObjectFormat::Sha1, "--skip-worktree")]
+#[case(ObjectFormat::Sha256, "--skip-worktree")]
+fn promised_file_replaced_by_directory_keeps_untracked_listing(
+    #[case] format: ObjectFormat,
+    #[case] flag: &str,
+) {
+    let (_temp, repo) = fixture_in(format);
+    seed(&repo, Some(b"base"), Some(b"base"), Some(b"base"));
+    let root = repo.worktree().unwrap();
+    git(root, &["update-index", flag, "file"]);
+    fs::remove_file(root.join("file")).unwrap();
+    fs::create_dir(root.join("file")).unwrap();
+    fs::write(root.join("file/child"), b"untracked").unwrap();
+
+    assert_eq!(
+        git(root, &["status", "--porcelain=v1", "-z", "-uall"]),
+        b"?? file/child\0"
+    );
+    let report = configured_status(&repo);
+    assert!(report.unstaged.is_empty());
+    assert_eq!(report.untracked[0].path, b"file/child");
+    let rules = repo
+        .ignore_rules(&girt::workflow::Environment::default())
+        .unwrap();
+    let collapsed = repo
+        .status(
+            Baseline::Head,
+            girt::status::UntrackedFiles::Collapsed,
+            &rules,
+        )
+        .unwrap();
+    assert!(collapsed.unstaged.is_empty());
+    assert!(collapsed.untracked.is_empty());
+    assert!(git(root, &["status", "--porcelain=v1", "-z"]).is_empty());
+}
+
+#[cfg(target_os = "macos")]
+#[rstest]
+#[case("--assume-unchanged")]
+#[case("--skip-worktree")]
+fn promised_alias_directory_matches_git_spelling(#[case] flag: &str) {
+    let (_temp, repo) = fixture_in(ObjectFormat::Sha1);
+    seed(&repo, Some(b"base"), Some(b"base"), Some(b"base"));
+    let root = repo.worktree().unwrap();
+    git(root, &["config", "core.ignoreCase", "true"]);
+    git(root, &["update-index", flag, "file"]);
+    fs::remove_file(root.join("file")).unwrap();
+    fs::create_dir(root.join("FILE")).unwrap();
+    fs::write(root.join("FILE/child"), b"untracked").unwrap();
+    if !root.join("file").exists() {
+        return;
+    }
+    let repo = Repository::open(root).unwrap();
+
+    assert_eq!(
+        git(root, &["status", "--porcelain=v1", "-z", "-uall"]),
+        b"?? FILE/child\0"
+    );
+    let report = configured_status(&repo);
+    assert!(report.unstaged.is_empty());
+    assert_eq!(report.untracked.len(), 1);
+    assert_eq!(report.untracked[0].path, b"FILE/child");
+    let rules = repo
+        .ignore_rules(&girt::workflow::Environment::default())
+        .unwrap();
+    for spec in [
+        "FILE",
+        "FILE/child",
+        "file",
+        "file/child",
+        ":(icase)file/child",
+    ] {
+        let paths =
+            girt::pathspec::Pathspec::parse([spec], &girt::pathspec::Context::new()).unwrap();
+        let report = repo
+            .status_with(
+                Baseline::Head,
+                girt::status::UntrackedFiles::All,
+                &rules,
+                &paths,
+                Limits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        let mut actual = Vec::new();
+        for entry in report.untracked {
+            actual.extend_from_slice(b"?? ");
+            actual.extend_from_slice(&entry.path);
+            actual.push(0);
+        }
+        assert_eq!(
+            actual,
+            git(
+                root,
+                &["status", "--porcelain=v1", "-z", "-uall", "--", spec]
+            ),
+            "{spec}"
+        );
+    }
+}

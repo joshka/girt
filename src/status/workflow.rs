@@ -153,6 +153,8 @@ impl Repository {
     /// Intent-to-add entries have no staged content; their working files are unstaged additions.
     /// Assume-unchanged and skip-worktree entries retain staged differences but suppress working
     /// differences. `core.fileMode=false` ignores executable-bit differences on regular files.
+    /// With `core.symlinks=false`, a regular file containing a symlink target represents the
+    /// indexed symlink; native symlinks still compare by their target bytes.
     /// Content bytes remain literal; use [`Self::raw_status_with`] to inspect modes and content
     /// without these policies. Configuration comes from this repository handle, including layers
     /// supplied to [`Self::open_with_config`].
@@ -286,7 +288,10 @@ impl Repository {
     ///
     /// Behaves as [`Self::status_with`], except that each tracked regular file that is read is
     /// first converted by `filters` (from [`Self::filters`]) as [`Pipeline::to_repository`] would
-    /// store it, and the result is hashed. `core.safecrlf` is not applied, as `git status` does
+    /// store it, and the result is hashed. Native symlinks bypass conversion; regular-file
+    /// placeholders under `core.symlinks=false` pass through clean/EOL conversion as Git reads
+    /// them. Index flags and mode policy still apply.
+    /// `core.safecrlf` is not applied, as `git status` does
     /// not apply it. A file whose stat words match its index entry is still trusted without
     /// reading. As in Git, a file whose size differs from the nonzero size cached in the index is
     /// reported as [`Change::Modified`](super::Change::Modified) even when its converted content

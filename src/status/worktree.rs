@@ -162,6 +162,12 @@ fn scan_with_hook(
             .boolean("core", None, "filemode")
             .map_err(|_| unsupported(b"", "invalid core.fileMode boolean"))?
             .unwrap_or(true);
+    let symlinks = !configured
+        || repo
+            .config()
+            .boolean("core", None, "symlinks")
+            .map_err(|_| unsupported(b"", "invalid core.symlinks boolean"))?
+            .unwrap_or(true);
     let root_fd = Arc::new(open_root(root)?);
     let mut metadata = Vec::new();
     for path in [repo.git_dir(), repo.common_dir(), repo.object_dir()] {
@@ -206,6 +212,7 @@ fn scan_with_hook(
         names,
         configured,
         file_mode,
+        symlinks,
         metadata,
         index_written,
         policy,
@@ -262,7 +269,9 @@ fn scan_with_hook(
         }
         let difference = if configured && entry.intent_to_add {
             match observed[position] {
-                Some(Observed::Leaf(actual)) => Some(super::Change::Added(actual)),
+                Some(Observed::Leaf(actual) | Observed::Resized(actual)) => {
+                    Some(super::Change::Added(actual))
+                }
                 _ => scan.tracked.difference(position, &observed, &directories),
             }
         } else {
@@ -352,6 +361,7 @@ struct Scan<'a> {
     format: crate::ObjectFormat,
     configured: bool,
     file_mode: bool,
+    symlinks: bool,
     tracked: Tracked<'a>,
     metadata: Vec<Stat>,
     /// Seconds word of the index file's mtime; `None` disables trusting cached stat words.
@@ -607,7 +617,14 @@ impl Scan<'_> {
                 for (name, child) in missing {
                     self.check()?;
                     let selected = self.paths.matches_unchecked(&child);
-                    if !selected && self.paths.directory(&child) == Prune::Skip {
+                    let promised = self.configured
+                        && self.policy == Policy::Ignoring(UntrackedFiles::All)
+                        && self
+                            .tracked
+                            .entry(&child)
+                            .is_some_and(|(_, entry)| entry.assume_valid || entry.skip_worktree);
+                    // A promised replacement directory may match by its listed spelling instead.
+                    if !selected && self.paths.directory(&child) == Prune::Skip && !promised {
                         continue;
                     }
                     if optional_stat(fd, &name, &child)?.is_none() {
@@ -627,7 +644,7 @@ impl Scan<'_> {
         let mut case_folded: Option<HashSet<Vec<u8>>> = None;
         for Child {
             name,
-            path: child,
+            path: mut child,
             tracked,
             directory,
             resolved,
@@ -654,7 +671,9 @@ impl Scan<'_> {
             }
             if tracked.is_some_and(|(_, entry)| {
                 entry.mode == index::Mode::Gitlink
-                    || (self.configured && (entry.assume_valid || entry.skip_worktree))
+                    || (self.configured
+                        && (entry.assume_valid || entry.skip_worktree)
+                        && self.policy != Policy::Ignoring(UntrackedFiles::All))
             }) {
                 continue;
             }
@@ -684,6 +703,39 @@ impl Scan<'_> {
                     rules.as_ref(),
                 )?;
                 continue;
+            }
+            // A promised leaf replaced by a directory is only traversed for untracked files.
+            // Git reports its listed spelling, even when we found it by the index name first.
+            if resolved
+                && self.configured
+                && self.policy == Policy::Ignoring(UntrackedFiles::All)
+                && tracked.is_some_and(|(_, entry)| entry.assume_valid || entry.skip_worktree)
+            {
+                let mut spelling = None;
+                for listed in names.iter() {
+                    self.check()?;
+                    let Some(actual) = optional_stat(fd, listed, &child)? else {
+                        continue;
+                    };
+                    if actual.st_dev == stat.st_dev && actual.st_ino == stat.st_ino {
+                        let logical = self
+                            .names
+                            .map_or(Cow::Borrowed(listed), |names| names.logical(listed));
+                        spelling = Some(join(path, &logical));
+                        break;
+                    }
+                }
+                if let Some(spelling) = spelling {
+                    if self.paths.matches_unchecked(&spelling)
+                        || self.paths.directory(&spelling) != Prune::Skip
+                    {
+                        child = spelling;
+                    } else if selected || self.paths.directory(&child) == Prune::Skip {
+                        continue;
+                    }
+                    // A descendant pathspec can explicitly traverse the index spelling even
+                    // where it doesn't match the directory's listed name, as Git does.
+                }
             }
             if tracked.is_some() && !needed && (!self.lists_untracked() || walk.excluded) {
                 found.observe(slot, Observed::Directory);
@@ -809,7 +861,15 @@ impl Scan<'_> {
             }
             return Ok(());
         };
+        // All-files listing still inspects the kind: a directory replacing a promised leaf can
+        // contain untracked files. Its tracked content remains unchecked.
+        if self.configured && (entry.assume_valid || entry.skip_worktree) {
+            return Ok(());
+        }
         let mode = match kind {
+            FileType::RegularFile if !self.symlinks && entry.mode == index::Mode::Symlink => {
+                EntryMode::Symlink
+            }
             FileType::RegularFile
                 if !self.file_mode
                     && matches!(entry.mode, index::Mode::Regular | index::Mode::Executable) =>
