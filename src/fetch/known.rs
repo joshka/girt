@@ -720,6 +720,15 @@ impl KnownHistory {
         .map(drop)
     }
 
+    pub(crate) fn bundle_prerequisite(&self, id: ObjectId) -> bool {
+        !self.shallow.contains(&id)
+            && (self.complete_roots.contains(&id)
+                || self
+                    .objects
+                    .get(&id)
+                    .is_some_and(|object| object.kind() == ObjectKind::Commit))
+    }
+
     /// Number of distinct verified local objects retained for connectivity checks.
     pub fn object_count(&self) -> usize {
         self.objects.len()
