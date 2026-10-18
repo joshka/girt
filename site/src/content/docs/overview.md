@@ -20,7 +20,8 @@ forges, build systems and other programs that would otherwise shell out to `git`
 is [jj](https://github.com/jj-vcs/jj). An experimental jj branch replaces gix and the Git subprocess
 with girt and passes jj's test suite. See [girt as jj's Git backend](/girt/jj/backend/).
 
-girt has no command-line interface, and it doesn't aim to reproduce `git`'s porcelain behaviour.
+The [girt CLI](/girt/cli/) exercises the library on real repositories for inspection, experiments
+and comparisons with Git. It does not aim to reproduce Git's full porcelain workflow.
 
 ## What it supports
 

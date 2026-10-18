@@ -94,7 +94,22 @@ export default defineConfig({
           items: [
             { label: 'Overview', slug: 'overview' },
             { label: 'Getting started', slug: 'getting-started' },
-            { label: 'Command-line tool', slug: 'command-line' },
+          ],
+        },
+        {
+          label: 'Command-line tool',
+          items: [
+            { label: 'Overview', slug: 'cli' },
+            { label: 'Comparing with Git', slug: 'cli/comparing-with-git' },
+            { label: 'Repository', slug: 'cli/repository' },
+            { label: 'Objects and trees', slug: 'cli/objects-and-trees' },
+            { label: 'References', slug: 'cli/references' },
+            { label: 'History and blame', slug: 'cli/history' },
+            { label: 'Diffs', slug: 'cli/diffs' },
+            { label: 'Index and working tree', slug: 'cli/index-and-working-tree' },
+            { label: 'Configuration and remotes', slug: 'cli/configuration-and-remotes' },
+            { label: 'Fetch, push and clone', slug: 'cli/fetch-push-clone' },
+            { label: 'Storage and maintenance', slug: 'cli/storage-and-maintenance' },
           ],
         },
         {
