@@ -300,3 +300,152 @@ fn changed_directory_notifications_compose_with_filters_and_pathspecs() {
         matches!(report.unstaged[0].change, girt::status::Change::Modified(value) if value.id == girt::ObjectId::for_blob(ObjectFormat::Sha1, b"new\n"))
     );
 }
+
+#[test]
+fn explicit_refresh_records_monitor_checkpoint_without_hiding_known_changes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        temporary.path().join("r"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    let root = repo.worktree().unwrap();
+    for key in ["core.ignoreCase", "core.precomposeUnicode"] {
+        oracle::git(root, &["config", key, "false"], b"");
+    }
+    std::fs::write(root.join("tracked"), b"old\n").unwrap();
+    oracle::git(root, &["add", "tracked"], b"");
+    let hook = temporary.path().join("monitor");
+    stand_in::shell(&hook, "printf 'fresh\\000'\n");
+    oracle::git(
+        root,
+        &["config", "core.fsmonitor", hook.to_str().unwrap()],
+        b"",
+    );
+    oracle::git(root, &["config", "core.fsmonitorHookVersion", "2"], b"");
+    let repo = Repository::open(root).unwrap();
+    let environment = Environment::default();
+    let rules = repo.ignore_rules(&environment).unwrap();
+    let monitor = repo
+        .fsmonitor(&environment, girt::fsmonitor::Commands::Run)
+        .unwrap()
+        .unwrap();
+    std::fs::write(root.join("tracked"), b"changed\n").unwrap();
+    let report = girt::status::Scan::new(&repo, Baseline::Head, UntrackedFiles::Omit, &rules)
+        .with_monitor(&monitor)
+        .refresh_caches()
+        .unwrap();
+    assert_eq!(report.unstaged.len(), 1);
+    let cache = repo
+        .read_index(Default::default())
+        .unwrap()
+        .unwrap()
+        .fsmonitor_cache(Default::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        cache.token(),
+        &girt::index::MonitorToken::Opaque(b"fresh".to_vec())
+    );
+    assert_eq!(cache.dirty(), &[0]);
+    let report = girt::status::Scan::new(&repo, Baseline::Head, UntrackedFiles::Omit, &rules)
+        .with_monitor(&monitor)
+        .run()
+        .unwrap();
+    assert_eq!(report.unstaged.len(), 1);
+}
+
+#[test]
+fn explicit_refresh_populates_reusable_untracked_directories() {
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        temporary.path().join("r"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    let root = repo.worktree().unwrap();
+    for (key, value) in [
+        ("core.ignoreCase", "false"),
+        ("core.precomposeUnicode", "false"),
+        ("core.untrackedCache", "true"),
+        ("core.excludesFile", "/girt-absent-excludes"),
+    ] {
+        oracle::git(root, &["config", key, value], b"");
+    }
+    std::fs::create_dir(root.join("dir")).unwrap();
+    std::fs::write(root.join("dir/tracked"), b"old\n").unwrap();
+    std::fs::write(root.join("dir/new"), b"new\n").unwrap();
+    oracle::git(root, &["add", "dir/tracked"], b"");
+    std::fs::create_dir_all(root.join("pure/nested")).unwrap();
+    std::fs::write(root.join("pure/nested/leaf"), b"leaf\n").unwrap();
+    std::fs::write(root.join(".gitignore"), b"*.hidden\n").unwrap();
+    std::fs::write(root.join("skip.hidden"), b"ignored\n").unwrap();
+    std::fs::create_dir_all(repo.git_dir().join("info")).unwrap();
+    std::fs::write(repo.git_dir().join("info/exclude"), b"base-ignored\n").unwrap();
+    std::fs::write(root.join("base-ignored"), b"ignored\n").unwrap();
+    let expected = oracle::git(
+        root,
+        &["-c", "core.untrackedCache=false", "status", "--porcelain"],
+        b"",
+    );
+    let repo = Repository::open(root).unwrap();
+    let rules = repo.ignore_rules(&Environment::default()).unwrap();
+    girt::status::Scan::new(&repo, Baseline::Head, UntrackedFiles::Collapsed, &rules)
+        .refresh_caches()
+        .unwrap();
+    let index = repo.read_index(Default::default()).unwrap().unwrap();
+    let cache = index.untracked_cache(Default::default()).unwrap().unwrap();
+    assert!(
+        cache
+            .directories()
+            .iter()
+            .any(|directory| directory.name() == b"dir"
+                && directory.untracked().iter().any(|name| name == b"new"))
+    );
+    assert_eq!(oracle::git(root, &["status", "--porcelain"], b""), expected);
+}
+
+#[test]
+fn cache_refresh_rejects_changed_base_rules_without_publication() {
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        temporary.path().join("r"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    let root = repo.worktree().unwrap();
+    for (key, value) in [
+        ("core.ignoreCase", "false"),
+        ("core.precomposeUnicode", "false"),
+        ("core.untrackedCache", "true"),
+    ] {
+        oracle::git(root, &["config", key, value], b"");
+    }
+    std::fs::write(root.join("tracked"), b"old\n").unwrap();
+    oracle::git(root, &["add", "tracked"], b"");
+    std::fs::create_dir_all(repo.git_dir().join("info")).unwrap();
+    std::fs::write(repo.git_dir().join("info/exclude"), b"old\n").unwrap();
+    let repo = Repository::open(root).unwrap();
+    let rules = repo.ignore_rules(&Environment::default()).unwrap();
+    let original = std::fs::read(repo.git_dir().join("index")).unwrap();
+    std::fs::write(repo.git_dir().join("info/exclude"), b"new\n").unwrap();
+    let result = girt::status::Scan::new(&repo, Baseline::Head, UntrackedFiles::Collapsed, &rules)
+        .refresh_caches();
+    assert!(matches!(result, Err(girt::status::Error::Changed(_))));
+    assert_eq!(
+        std::fs::read(repo.git_dir().join("index")).unwrap(),
+        original
+    );
+    assert!(!repo.git_dir().join("index.lock").exists());
+    let cancel = std::sync::atomic::AtomicBool::new(true);
+    let result = girt::status::Scan::new(&repo, Baseline::Head, UntrackedFiles::Collapsed, &rules)
+        .refresh_caches_with(Default::default(), &cancel);
+    assert!(matches!(result, Err(girt::status::Error::Cancelled)));
+    assert_eq!(
+        std::fs::read(repo.git_dir().join("index")).unwrap(),
+        original
+    );
+}

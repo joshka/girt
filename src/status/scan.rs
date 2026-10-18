@@ -5,6 +5,9 @@ use crate::ignore::WorktreeRules;
 use crate::pathspec::Pathspec;
 use crate::{Repository, filter, fsmonitor};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod refresh;
+
 /// A configured status observation with optional filters, path selection and monitor queries.
 ///
 /// This composes the same walk as [`Repository::status_with_filters`]. Existing status methods
@@ -39,6 +42,8 @@ pub struct Scan<'a> {
     paths: Option<&'a Pathspec>,
     filters: Option<&'a mut filter::Pipeline>,
     monitor: Option<&'a fsmonitor::Monitor>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) capture: Option<std::sync::Arc<super::untracked::Capture>>,
 }
 impl<'a> Scan<'a> {
     /// Selects a repository, staged baseline, untracked listing and caller-loaded ignore rules.
@@ -59,6 +64,8 @@ impl<'a> Scan<'a> {
             paths: None,
             filters: None,
             monitor: None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            capture: None,
         }
     }
     /// Limits inspection and reporting to this pathspec, as in [`Repository::status_with`].
@@ -83,6 +90,68 @@ impl<'a> Scan<'a> {
         self.monitor = Some(monitor);
         self
     }
+    /// Scans the whole working tree and explicitly records its monitor checkpoint.
+    ///
+    /// The index lock is held throughout the query and full tracked scan. Existing clean
+    /// promises are not used during refresh. Known changed entries remain dirty in the new
+    /// checkpoint. Valid directory listings are rebuilt when `core.untrackedCache` enables them
+    /// or a UNTR extension already exists; `false` removes that extension. Publication uses
+    /// [`crate::index::IndexEdit::commit`], like [`Repository::refresh_index`]. Directory
+    /// records modified in the refresh's second remain invalid, so a later scan rereads them.
+    /// Loaded base ignore files are reread and their identities checked before recording stat
+    /// hints. This operation writes cache extensions, leaving tracked stat refresh to
+    /// [`Repository::refresh_index`].
+    ///
+    ///
+    /// ```
+    /// use girt::status::{Baseline, Scan, UntrackedFiles};
+    /// use girt::workflow::Environment;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Worktree)?;
+    /// std::fs::write(repo.git_dir().join("config"),
+    ///     b"[core]\nrepositoryformatversion=0\nbare=false\nignoreCase=false\nprecomposeUnicode=false\nuntrackedCache=true\n")?;
+    /// let repo = Repository::open(repo.worktree().unwrap())?;
+    /// std::fs::write(repo.worktree().unwrap().join("notes.txt"), b"notes\n")?;
+    /// let rules = repo.ignore_rules(&Environment::default())?;
+    ///
+    /// let report = Scan::new(&repo, Baseline::Head, UntrackedFiles::Collapsed, &rules)
+    ///     .refresh_caches()?;
+    /// assert_eq!(report.untracked[0].path, b"notes.txt");
+    /// let index = repo.read_index(Default::default())?.unwrap();
+    /// assert!(index.untracked_cache(Default::default())?.is_some());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    /// # Errors
+    ///
+    /// Returns status and index-lock/publication errors. Path-limited and split-index refresh
+    /// are unsupported. Populating UNTR also requires collapsed listing and exact byte names.
+    /// Monitor failures return [`Error::Fsmonitor`] and write nothing.
+    pub fn refresh_caches(self) -> Result<Report, Error> {
+        self.refresh_caches_with(Limits::default(), &AtomicBool::new(false))
+    }
+
+    /// Refreshes checkpoints with caller-selected resource limits and cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::refresh_caches`]. Cancellation before publication leaves
+    /// the index unchanged. Unsupported platforms refuse before taking a lock or querying hooks.
+    pub fn refresh_caches_with(self, limits: Limits, cancel: &AtomicBool) -> Result<Report, Error> {
+        super::types::check(cancel)?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        return refresh::run(self, limits, cancel);
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (self, limits);
+            Err(Error::Unsupported {
+                path: Vec::new(),
+                reason: "status cache refresh requires macOS/Linux",
+            })
+        }
+    }
+
     /// Runs with default limits and a cancellation flag that is never set.
     ///
     /// # Errors
@@ -113,6 +182,7 @@ impl<'a> Scan<'a> {
                     names: super::workflow::supported::git_names(self.repo)?,
                     environment: Box::new(self.ignore.environment().clone()),
                     monitor: self.monitor.cloned().map(Box::new),
+                    capture: self.capture,
                     excludes: Some(self.ignore.untracked_excludes(self.repo.object_format())),
                 },
                 self.paths.unwrap_or(&all),

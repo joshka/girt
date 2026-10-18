@@ -19,7 +19,10 @@
 //! directories retain tree identities; explicit expansion reads their trees without materializing
 //! files. Unknown mandatory extensions are refused. Optional extensions round-trip unchanged.
 //! [`Index::untracked_cache`] and [`Index::fsmonitor_cache`] explicitly decode status-cache claims
-//! without trusting freshness. Editing discards derived caches, retains resolve-undo records and
+//! without trusting freshness. [`FsmonitorCache::new`] constructs caller-observed checkpoints.
+//! [`IndexEdit::set_untracked_cache_enabled`] enables or removes UNTR; explicit cache setters
+//! install caller-observed claims under the existing guard. Ordinary entry editing discards
+//! derived caches, retains resolve-undo records and
 //! refuses unknown optional extensions. See [`Index::replace_entries`]. Explicit
 //! [`IndexEdit::discard_optional_extensions`] permits caller-selected optional data loss, and
 //! [`IndexEdit::replace_index`] installs a complete standalone draft without releasing its guards.

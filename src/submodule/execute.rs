@@ -470,7 +470,6 @@ pub enum UpdateError {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-#[path = "../../tests/support/layout_git.rs"]
-mod oracle;
+use crate::layout_git as oracle;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests;

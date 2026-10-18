@@ -255,3 +255,118 @@ fn monitor_negotiates_and_bounds_untrusted_hook_output() {
         Err(Error::Cancelled)
     ));
 }
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn explicitly_enables_and_disables_untracked_cache(#[case] format: ObjectFormat) {
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, temporary.path().join("r"), InitKind::Worktree).unwrap();
+    let root = repo.worktree().unwrap();
+    std::fs::write(root.join("tracked"), b"tracked\n").unwrap();
+    oracle::git(root, &["add", "tracked"], b"");
+    let original = std::fs::read(repo.git_dir().join("index")).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.set_untracked_cache_enabled(true).unwrap();
+    assert!(
+        edit.index()
+            .untracked_cache(Limits::default())
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        std::fs::read(repo.git_dir().join("index")).unwrap(),
+        original
+    );
+    edit.commit().unwrap();
+    oracle::git(root, &["status", "--porcelain"], b"");
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.set_untracked_cache_enabled(false).unwrap();
+    edit.commit().unwrap();
+    assert!(
+        repo.read_index(Limits::default())
+            .unwrap()
+            .unwrap()
+            .untracked_cache(Limits::default())
+            .unwrap()
+            .is_none()
+    );
+    oracle::git(root, &["status", "--porcelain"], b"");
+}
+
+#[test]
+fn constructs_monitor_checkpoint_with_bounded_dirty_positions() {
+    use girt::index::{FsmonitorCache, MonitorToken};
+    for token in [
+        MonitorToken::Timestamp(123),
+        MonitorToken::Opaque(b"next".to_vec()),
+    ] {
+        let cache =
+            FsmonitorCache::new(token.clone(), vec![0, 63, 64, 129], 130, Limits::default())
+                .unwrap();
+        let encoded = cache.encode(Limits::default()).unwrap();
+        let decoded = FsmonitorCache::parse(&encoded, 130, Limits::default()).unwrap();
+        assert_eq!(decoded.token(), &token);
+        assert_eq!(decoded.dirty(), &[0, 63, 64, 129]);
+    }
+    assert!(
+        FsmonitorCache::new(MonitorToken::Timestamp(0), vec![1], 1, Limits::default()).is_err()
+    );
+    assert!(
+        FsmonitorCache::new(MonitorToken::Timestamp(0), vec![0, 0], 1, Limits::default()).is_err()
+    );
+    assert!(
+        FsmonitorCache::new(
+            MonitorToken::Opaque(b"bad\0token".to_vec()),
+            vec![],
+            0,
+            Limits::default()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn explicitly_installs_monitor_checkpoint_under_index_guard() {
+    use girt::index::{FsmonitorCache, MonitorToken};
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        temporary.path().join("r"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    let root = repo.worktree().unwrap();
+    std::fs::write(root.join("tracked"), b"tracked\n").unwrap();
+    oracle::git(root, &["add", "tracked"], b"");
+    let cache = FsmonitorCache::new(
+        MonitorToken::Opaque(b"next".to_vec()),
+        vec![0],
+        1,
+        Limits::default(),
+    )
+    .unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.set_fsmonitor_cache(Some(&cache)).unwrap();
+    edit.commit().unwrap();
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(
+        index
+            .fsmonitor_cache(Limits::default())
+            .unwrap()
+            .unwrap()
+            .token(),
+        cache.token()
+    );
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.set_fsmonitor_cache(None).unwrap();
+    edit.commit().unwrap();
+    assert!(
+        repo.read_index(Limits::default())
+            .unwrap()
+            .unwrap()
+            .fsmonitor_cache(Limits::default())
+            .unwrap()
+            .is_none()
+    );
+}

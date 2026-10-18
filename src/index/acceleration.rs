@@ -40,6 +40,93 @@ pub enum MonitorToken {
 }
 
 impl FsmonitorCache {
+    /// Builds a checkpoint for the stored ordering of `entries` index records.
+    ///
+    /// `dirty` must be sorted, unique and below `entries`. Only record a checkpoint after
+    /// observing every entry not marked dirty relative to this token. Construction does not
+    /// query a monitor or write the index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Malformed`] for invalid dirty positions or NUL-containing opaque tokens,
+    /// and [`Error::Limit`] when the encoded payload or entry count exceeds a ceiling.
+    pub fn new(
+        token: MonitorToken,
+        dirty: Vec<usize>,
+        entries: usize,
+        limits: Limits,
+    ) -> Result<Self, Error> {
+        if entries > limits.max_entries {
+            return Err(Error::Limit("fsmonitor entries"));
+        }
+        if !dirty.is_sorted_by(|a, b| a < b)
+            || dirty.last().is_some_and(|position| *position >= entries)
+        {
+            return Err(invalid("invalid fsmonitor dirty positions"));
+        }
+        let count = u32::try_from(entries).map_err(|_| Error::Limit("fsmonitor entries"))?;
+        let words = entries.div_ceil(64);
+        let bitmap_bytes = words
+            .checked_add(1)
+            .and_then(|words| words.checked_mul(8))
+            .and_then(|bytes| bytes.checked_add(12))
+            .ok_or(Error::Limit("bitmap bytes"))?;
+        let token_bytes = match &token {
+            MonitorToken::Timestamp(_) => 8,
+            MonitorToken::Opaque(bytes) => {
+                if bytes.contains(&0) {
+                    return Err(invalid("NUL in fsmonitor token"));
+                }
+                bytes
+                    .len()
+                    .checked_add(1)
+                    .ok_or(Error::Limit("fsmonitor token"))?
+            }
+        };
+        let length = bitmap_bytes
+            .checked_add(token_bytes)
+            .and_then(|bytes| bytes.checked_add(8))
+            .ok_or(Error::Limit("fsmonitor bytes"))?;
+        if length > limits.max_bytes {
+            return Err(Error::Limit("fsmonitor bytes"));
+        }
+        let mut bytes = Vec::with_capacity(length);
+        match &token {
+            MonitorToken::Timestamp(value) => {
+                bytes.extend_from_slice(&1u32.to_be_bytes());
+                bytes.extend_from_slice(&value.to_be_bytes());
+            }
+            MonitorToken::Opaque(value) => {
+                bytes.extend_from_slice(&2u32.to_be_bytes());
+                bytes.extend_from_slice(value);
+                bytes.push(0);
+            }
+        }
+        bytes.extend_from_slice(
+            &u32::try_from(bitmap_bytes)
+                .map_err(|_| Error::Limit("bitmap bytes"))?
+                .to_be_bytes(),
+        );
+        bytes.extend_from_slice(&count.to_be_bytes());
+        bytes.extend_from_slice(
+            &u32::try_from(words + 1)
+                .map_err(|_| Error::Limit("bitmap words"))?
+                .to_be_bytes(),
+        );
+        // One zero-length run followed by literal words. The final pointer names that run.
+        bytes.extend_from_slice(&((words as u64) << 33).to_be_bytes());
+        let mut positions = dirty.iter().copied().peekable();
+        for word in 0..words {
+            let mut value = 0u64;
+            while let Some(position) = positions.next_if(|position| *position / 64 == word) {
+                value |= 1u64 << (position % 64);
+            }
+            bytes.extend_from_slice(&value.to_be_bytes());
+        }
+        bytes.extend_from_slice(&0u32.to_be_bytes());
+        Self::parse(&bytes, entries, limits)
+    }
+
     /// Decodes an FSMN payload, bounding bitmap positions by `entries` and `limits.max_entries`.
     ///
     /// # Errors
@@ -465,5 +552,80 @@ impl<'a> Input<'a> {
         } else {
             Err(invalid("trailing status cache bytes"))
         }
+    }
+}
+
+impl Index {
+    pub(super) fn replace_status_cache(
+        &mut self,
+        signature: [u8; 4],
+        data: Option<Vec<u8>>,
+        limits: Limits,
+    ) -> Result<(), Error> {
+        if let Some(extension) = self.extensions.iter().find(|extension| {
+            !matches!(
+                &extension.signature,
+                b"TREE" | b"REUC" | b"sdir" | b"EOIE" | b"IEOT" | b"FSMN" | b"UNTR"
+            )
+        }) {
+            return Err(Error::ExtensionPreventsEdit(extension.signature));
+        }
+        let mut replacement = self.clone();
+        replacement.extensions.retain(|extension| {
+            extension.signature != signature && !matches!(&extension.signature, b"EOIE" | b"IEOT")
+        });
+        if let Some(data) = data {
+            replacement
+                .extensions
+                .push(super::Extension { signature, data });
+        }
+        replacement.original = None;
+        replacement.encoded_len(limits)?;
+        *self = replacement;
+        Ok(())
+    }
+
+    pub(super) fn set_untracked_cache_enabled(
+        &mut self,
+        enabled: bool,
+        limits: Limits,
+    ) -> Result<(), Error> {
+        if let Some(extension) = self.extensions.iter().find(|extension| {
+            !matches!(
+                &extension.signature,
+                b"TREE" | b"REUC" | b"sdir" | b"EOIE" | b"IEOT" | b"FSMN" | b"UNTR"
+            )
+        }) {
+            return Err(Error::ExtensionPreventsEdit(extension.signature));
+        }
+        let present = self
+            .extensions
+            .iter()
+            .any(|extension| extension.signature == *b"UNTR");
+        if present == enabled {
+            self.encoded_len(limits)?;
+            return Ok(());
+        }
+        let mut replacement = self.clone();
+        replacement
+            .extensions
+            .retain(|extension| !matches!(&extension.signature, b"UNTR" | b"EOIE" | b"IEOT"));
+        if enabled {
+            // Empty identity and no directory records request a fresh scan, as Git's
+            // update-index --untracked-cache does before status fills the cache.
+            let mut data = vec![0; 1 + 72];
+            data.extend_from_slice(&6u32.to_be_bytes());
+            data.resize(data.len() + 2 * self.format.digest_len(), 0);
+            data.extend_from_slice(b".gitignore\0\0\0");
+            UntrackedCache::parse(self.format, &data, limits)?;
+            replacement.extensions.push(super::Extension {
+                signature: *b"UNTR",
+                data,
+            });
+        }
+        replacement.original = None;
+        replacement.encoded_len(limits)?;
+        *self = replacement;
+        Ok(())
     }
 }

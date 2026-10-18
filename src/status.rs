@@ -37,8 +37,9 @@
 //! [`Report::untracked_cache`] records reused listings or a typed fallback reason. Other listing
 //! and name policies retain ordinary traversal. Neither cache makes the report an atomic snapshot.
 //!
-//! Status never writes back the stat words it could have learned, so a file whose stat went stale
-//! but whose content did not is read by every call.
+//! [`Scan::refresh_caches`] explicitly records observed UNTR/FSMN caches under the existing index
+//! guard. Ordinary status never writes back the stat words it could have learned, so a file whose
+//! stat went stale but whose content did not is read by every call.
 //! [`Repository::refresh_index`](crate::Repository::refresh_index) is the explicit write that
 //! records them, as `git update-index --refresh` does.
 //!

@@ -792,6 +792,60 @@ impl IndexEdit {
         self.index.replace_entries(entries, self.limits)
     }
 
+    /// Installs or removes a caller-observed filesystem-monitor checkpoint in the held draft.
+    ///
+    /// A clear dirty bit is a promise that the entry was clean relative to the checkpoint.
+    /// The caller must establish that promise using the same monitor that later status queries.
+    /// Dirty positions refer to this draft's complete entry ordering, including conflict stages.
+    /// This method never queries a monitor; [`Self::commit`] publishes through the existing lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Malformed`] for out-of-range dirty positions,
+    /// [`Error::ExtensionPreventsEdit`] for split indexes or unknown extensions, and resource
+    /// errors without changing the draft.
+    pub fn set_fsmonitor_cache(
+        &mut self,
+        cache: Option<&super::FsmonitorCache>,
+    ) -> Result<(), Error> {
+        let data = cache.map(|cache| cache.encode(self.limits)).transpose()?;
+        if let Some(data) = &data {
+            super::FsmonitorCache::parse(data, self.index.entries().len(), self.limits)?;
+        }
+        self.index.replace_status_cache(*b"FSMN", data, self.limits)
+    }
+
+    /// Installs caller-observed untracked-directory cache claims in the held draft.
+    ///
+    /// The caller owns filesystem freshness, environment and ignore-rule checks. Parsing the
+    /// supplied cache establishes structure only. Commit publishes with this guard's original
+    /// snapshot checks; this method performs no filesystem scan.
+    ///
+    /// # Errors
+    ///
+    /// Returns format, resource-limit or unsupported-extension errors without changing the draft.
+    pub fn set_untracked_cache(&mut self, cache: &super::UntrackedCache) -> Result<(), Error> {
+        let data = cache.encode(self.limits)?;
+        super::UntrackedCache::parse(self.index.object_format(), &data, self.limits)?;
+        self.index
+            .replace_status_cache(*b"UNTR", Some(data), self.limits)
+    }
+
+    /// Enables or removes the untracked directory cache in the held draft.
+    ///
+    /// Like `git update-index --untracked-cache`, enabling an absent cache installs an empty
+    /// cache that requires a fresh directory scan. An existing cache is preserved. Disabling
+    /// removes its UNTR extension. Only [`Self::commit`] writes the index; aborting leaves the
+    /// published bytes unchanged. This does not change `core.untrackedCache` configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ExtensionPreventsEdit`] for split indexes or unknown extensions whose
+    /// offsets cannot be preserved, and resource-limit errors without changing the draft.
+    pub fn set_untracked_cache_enabled(&mut self, enabled: bool) -> Result<(), Error> {
+        self.index.set_untracked_cache_enabled(enabled, self.limits)
+    }
+
     /// Replaces the complete draft with a caller-supplied standalone index.
     ///
     /// The held object format and limits are validated before mutation. Original primary/shared

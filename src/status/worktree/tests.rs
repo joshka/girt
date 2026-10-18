@@ -429,6 +429,7 @@ fn shared_pattern_budget_admits_exactly_the_limit(#[case] gitignore: &[u8], #[ca
             names: GitNames::default(),
             environment: Box::default(),
             monitor: None,
+            capture: None,
             excludes: None,
         },
         &Pathspec::all(),
