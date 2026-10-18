@@ -1279,10 +1279,7 @@ impl Objects {
                 return self
                     .read_stored(target, limits, cancelled)?
                     .map(Some)
-                    .ok_or(ObjectReadError::MissingReplacement {
-                        original: id,
-                        replacement: target,
-                    });
+                    .ok_or(ObjectReadError::MissingReplacement(target));
             }
         }
         self.read_stored(id, limits, cancelled)
@@ -1912,14 +1909,12 @@ pub enum ObjectReadError {
     /// Replacement links from this ID exceed four or form a cycle; see [`crate::replace`].
     #[error("replace depth too high for object {0}")]
     ReplaceDepth(ObjectId),
-    /// A replace reference names an object that is absent.
-    #[error("replacement {replacement} not found for {original}")]
-    MissingReplacement {
-        /// The ID that was looked up.
-        original: ObjectId,
-        /// The absent replacement it resolves to.
-        replacement: ObjectId,
-    },
+    /// The replacement a looked-up ID resolves to, through replace references, is absent.
+    ///
+    /// Holds the absent replacement; the caller knows the ID it looked up. Only one ID is kept
+    /// so the error stays small enough to return by value.
+    #[error("replacement {0} not found")]
+    MissingReplacement(ObjectId),
 }
 
 fn charge_copy_entry(entries: &mut usize, max: usize) -> Result<(), ObjectReadError> {
