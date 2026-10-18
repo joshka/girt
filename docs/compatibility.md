@@ -519,6 +519,14 @@ and a proxy URL with no user, where neither client asks anyone and both fail. Gi
 with `protocol=http`, `host=<proxy>:<port>` and the username in the URL, and stores accepted
 credentials. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
 
+`tests/custom_transport.rs` registers an application transport for `mem::<path>` URLs that runs
+`git upload-pack` through `ChildConnection`, passing `GIT_PROTOCOL` from the request. Listing the
+remote with `workflow::remote_refs` gives the same references and peeled tags as `git ls-remote` on
+the repository, under `protocol.version` 0 and 2, and reports the version the service spoke. Further
+cases cover an unregistered scheme, `protocol.mem.allow` still being required, a connection failure
+keeping the application's error as the source, and fetch over an application transport, which is not
+supported yet. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
+
 ## Git Capability Audit: Transfer
 
 The audit baseline is `2e67ff57` (the merged Git guide), with original fixtures observed using Git

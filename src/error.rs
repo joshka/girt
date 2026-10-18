@@ -264,6 +264,7 @@ from_domain_errors! {
     crate::rewrites::Error,
     crate::status::Error,
     crate::TagError,
+    crate::transport::ConnectError,
     #[cfg(feature = "http")]
     crate::transport::http::CertificateError,
     #[cfg(feature = "http")]

@@ -32,7 +32,10 @@
 //! connection sharing, and agents or askpass only when the application supplies them), for
 //! services that must not depend on a user's settings.
 //!
-//! `git://` and remote helpers (`<transport>::<address>`) are not supported.
+//! **Application transports** carry the protocol for any other scheme, such as `mem://` in tests
+//! or `vault::team/project`: implement [`Transport`] and return it from
+//! [`TransferCallbacks::transport`](crate::workflow::TransferCallbacks::transport). girt does not
+//! run `git-remote-<helper>` programs, and `git://` is not supported.
 //!
 //! # Async network, synchronous validation
 //!
@@ -271,7 +274,9 @@
 pub mod ssh;
 
 mod control;
+mod custom;
 mod protocol;
+pub use custom::{ChildConnection, ConnectError, ConnectRequest, Connection, Service, Transport};
 pub use protocol::RequestedProtocol;
 #[cfg(feature = "http")]
 pub mod http;

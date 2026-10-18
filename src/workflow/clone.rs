@@ -337,6 +337,10 @@ pub fn clone_with(
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let ready = match endpoint {
+        // Application transports list references only, for now.
+        Endpoint::Custom(_) => {
+            return Err(TransferError::UnsupportedTransport("origin".to_owned()).into());
+        }
         Endpoint::Local(path) => {
             let callbacks = std::cell::RefCell::new(&mut *callbacks);
             prepared.receive_local_with_progress(
