@@ -4255,5 +4255,8 @@ failure leaves original mail in a reported directory outside active Git state.
 Queued am progression compares continue/skip to Git stopped at the following mail across both object
 formats and ref backends. It checks all next-mail artifacts and numbered source messages, then lets
 Git resume and finish the series. Missing or malformed next mail, nondefault options, mail
-extraction limits, cancellation and stale snapshots preserve progress. Default extraction options
-are admitted; broader options and unborn sessions remain outside this increment.
+extraction limits, cancellation and stale snapshots preserve progress. Persisted subject retention,
+Message-ID, scissors and quiet are compared individually and together, including configured scissors
+and explicit overrides. Malformed persisted values and invalid config booleans refuse without
+advancing progress. Signoff, three-way/apply flags, quoted-CR policies, output encodings and unborn
+sessions remain unsupported.

@@ -832,3 +832,36 @@ fn malformed_persisted_extraction_option_keeps_progress(#[case] name: &str) {
         b"1\n"
     );
 }
+
+#[rstest]
+#[case(b"t\n")]
+#[case(b"f\n")]
+fn explicit_scissors_still_validates_config(#[case] persisted: &[u8]) {
+    let root = tempfile::tempdir().unwrap();
+    queued_stop(root.path(), "sha1", "files");
+    fs::write(root.path().join(".git/rebase-apply/scissors"), persisted).unwrap();
+    git(root.path(), &["config", "mailinfo.scissors", "bogus"], b"");
+    let repo = Repository::open(root.path()).unwrap();
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        state.prepare_next_am(
+            &repo,
+            Action::Skip,
+            head(root.path()),
+            girt::mailinfo::Limits::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::sequencer::Error::Unsupported(_))
+    ));
+    assert_eq!(
+        fs::read(repo.git_dir().join("rebase-apply/next")).unwrap(),
+        b"1\n"
+    );
+    assert!(
+        !git_output(root.path(), &["am", "--skip"], b"")
+            .status
+            .success()
+    );
+}
