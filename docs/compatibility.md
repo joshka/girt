@@ -3123,7 +3123,9 @@ Computation creates no objects, index, working files, state files or references.
 preserved for cherry-pick; caller identity supplies the new committer and both revert identities.
 Opaque source headers and signatures are omitted. Messages are byte-oriented; caller-supplied
 messages are not cleaned through Git configuration. Existing content/rename merge limitations apply.
-Git sequencer continuation, interactive rebase and stash publication are separate planned work in
+Source messages are retained without Git's configurable cleanup or encoding conversion;
+configuration-specific trailer tokens remain caller policy. Linear todo execution and explicit
+sequencer metadata publication are described below. Stash remains separate work in
 [the replay design](https://github.com/joshka/girt/issues/608).
 
 ### In-memory rebase
@@ -3143,3 +3145,30 @@ retains source authors, combines fixup/squash metadata and returns explicit upda
 Message editing and external execution require caller hooks. Merge/reset topology is refused before
 hooks; [generated-history merge lookup](https://github.com/joshka/girt/issues/616) tracks the
 missing ancestry boundary. Todo stops return progress; persistent continuation is caller-owned.
+
+`tests/replay_git.rs` compares interactive fixup and autosquash-amend identities with Git and covers
+provenance spacing beside trailer footers, custom content drivers and conditional ref planning.
+Explicit update-ref targets retain their instruction position even when a later fixup replaces that
+commit. `noop` is accepted. Parsing uses `#` comments; custom Git comment markers require an
+explicit caller policy and are tracked with
+[sequencer option snapshots](https://github.com/joshka/girt/issues/621).
+
+### Git sequencer metadata
+
+`sequencer::State` reads single-operation pseudo-refs, multi-commit cherry-pick/revert directories
+and merge-backend rebase metadata. Recovery plans separate object/checkout/ref publication from
+explicit state-file publication. Cherry-pick retains its current todo row while stopped; rebase has
+already moved that row to `done`. Continue/skip plans account for that distinction. Abort retains
+`ORIG_HEAD`; rebase finish exposes conditional branch/update-ref intents before metadata removal.
+
+Metadata publication requires caller-owned exclusive operation access. Changed snapshots and lock
+conflicts fail before replacement; later failures report paths already changed. Unknown files,
+symlinks, apply-backend state, sequencer option files and squash/fixup continuation state are
+explicit refusals. Source author scripts are preserved as bytes and never executed. Merge/reset
+topology is tracked in [the generated-history follow-up](https://github.com/joshka/girt/issues/616).
+
+`tests/sequencer_git.rs` exercises Git continuing girt-created stops/todos, girt resolving a Git
+rebase stop, explicit skip/abort, continuation reflogs, stale snapshots, lock conflicts,
+unknown-file preservation and symlink refusal. Complete state directories are retired by rename
+before teardown cleanup. Cleanup failure can leave inert metadata at the reported retired path,
+while Git sees no active operation; it cannot leave a partly deleted active directory.

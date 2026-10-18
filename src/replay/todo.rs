@@ -45,6 +45,8 @@ pub enum MessageMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Instruction {
+    /// Git's explicit empty-plan instruction.
+    Noop,
     /// Replay a commit.
     Pick(CommitToken),
     /// Invert a commit in Git cherry-pick/revert sequencer files.
@@ -167,6 +169,7 @@ impl Todo {
             let (command, args) = token(raw);
             let commit = || parse_commit(args).ok_or_else(|| invalid("expected commit token"));
             let instruction = match command {
+                b"noop" if trim(args).is_empty() => Instruction::Noop,
                 b"pick" | b"p" => Instruction::Pick(commit()?),
                 b"revert" => Instruction::Revert(commit()?),
                 b"reword" | b"r" => Instruction::Reword(commit()?),
@@ -307,6 +310,7 @@ mod tests {
     #[case::fixup(b"f -C abcd fix\n", Instruction::Fixup(CommitToken { id: b"abcd".to_vec(), subject: b"fix".to_vec() }, MessageMode::Replace))]
     #[case::exec(b"x printf '# hi'\n", Instruction::Exec(b"printf '# hi'".to_vec()))]
     #[case::break_(b"b\r\n", Instruction::Break)]
+    #[case::noop(b"noop\n", Instruction::Noop)]
     #[case::label(b"l branch\n", Instruction::Label(b"branch".to_vec()))]
     #[case::reset(b"t branch\n", Instruction::Reset(b"branch".to_vec()))]
     #[case::update_ref(b"u refs/heads/topic\n", Instruction::UpdateRef(b"refs/heads/topic".to_vec()))]

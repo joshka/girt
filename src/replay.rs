@@ -187,9 +187,10 @@ impl Objects {
     /// Computes the inverse of a commit, using the supplied identity as author and committer.
     ///
     /// Uses [`Self::cherry_pick`]'s computation and publication contract. The message uses Git's
-    /// `Revert "subject"` title and full source identity. For merge sources the explanation also
-    /// names the selected parent. The original commit is the merge base; its parent supplies the
-    /// inverse side. Root reverts select an empty inverse side.
+    /// `Revert "subject"` title (`Reapply` when reverting a revert) and full source identity. For
+    /// merge sources the explanation also names the selected parent. The original commit is the
+    /// merge base; its parent supplies the inverse side. Root reverts select an empty inverse
+    /// side.
     ///
     /// # Errors
     ///
@@ -409,8 +410,17 @@ fn replay_message(
     reverse: bool,
 ) -> Vec<u8> {
     if reverse {
-        let mut message = b"Revert \"".to_vec();
-        message.extend_from_slice(&original.subject());
+        let subject = original.subject();
+        let reverted = subject
+            .strip_prefix(b"Revert \"")
+            .and_then(|subject| subject.strip_suffix(b"\""));
+        let (prefix, subject): (&[u8], &[u8]) = if let Some(subject) = reverted {
+            (b"Reapply \"", subject)
+        } else {
+            (b"Revert \"", &subject)
+        };
+        let mut message = prefix.to_vec();
+        message.extend_from_slice(subject);
         message.extend_from_slice(b"\"\n\n");
         if original.parents().len() > 1 {
             message.extend_from_slice(
