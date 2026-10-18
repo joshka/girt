@@ -146,7 +146,7 @@ fn saved_commits_and_cleanup_match_git(
 }
 
 #[test]
-fn staged_cleanup_retains_overlap_without_publishing_saved_objects() {
+fn staged_cleanup_failure_retains_the_saved_entry_and_working_changes() {
     let fixture = SavedFixture::new("sha1", false);
     let path = fixture.fixture.root.path();
     std::fs::write(path.join("file"), b"overlap\ntwo\nthree\n").unwrap();
@@ -168,9 +168,16 @@ fn staged_cleanup_retains_overlap_without_publishing_saved_objects() {
         .unwrap()
         .unwrap();
     assert!(!save.cleanup.is_clean());
+    assert!(
+        repo.objects()
+            .unwrap()
+            .read_commit(save.snapshot.id())
+            .is_err()
+    );
     let output = support::git(path, &["stash", "push", "--staged"]);
     assert!(!output.status.success());
-    let snapshot = Snapshot::read(&repo.objects().unwrap(), save.snapshot.id()).unwrap();
+    assert_eq!(stash_id(path), save.snapshot.id());
+    let snapshot = Snapshot::read(&repo.objects().unwrap(), stash_id(path)).unwrap();
     assert_eq!(snapshot.id(), save.snapshot.id());
     assert_eq!(
         std::fs::read(path.join("file")).unwrap(),
@@ -483,4 +490,89 @@ fn ordinary_apply_displaces_index_parent_child_clashes(#[case] file_to_directory
     );
     success(path, &["add", "-A"]);
     assert_eq!(apply.working().tree.id(), tree_id(path));
+}
+
+#[rstest]
+#[case::detached(true, 7)]
+#[case::long_abbreviation(false, 12)]
+fn stash_message_context_matches_git(#[case] detached: bool, #[case] abbreviation: usize) {
+    let fixture = SavedFixture::new("sha1", false);
+    let path = fixture.fixture.root.path();
+    if detached {
+        success(path, &["checkout", "--detach"]);
+    }
+    success(path, &["config", "core.abbrev", &abbreviation.to_string()]);
+    let repo = Repository::open(path).unwrap();
+    let mut options = if detached {
+        SaveOptions::default()
+    } else {
+        fixture.options(SaveMode::All, false)
+    };
+    options.abbreviation = abbreviation;
+    let save = repo
+        .objects()
+        .unwrap()
+        .create_stash(
+            fixture.input,
+            author(),
+            writer(),
+            options,
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+        .unwrap();
+    success(path, &["stash", "push"]);
+    assert_eq!(save.snapshot.id(), stash_id(path));
+}
+
+#[rstest]
+#[case::zero_abbreviation(0, b"topic".as_slice())]
+#[case::wide_abbreviation(41, b"topic".as_slice())]
+#[case::line_in_branch(7, b"bad\nbranch".as_slice())]
+fn invalid_stash_message_context_is_refused(#[case] abbreviation: usize, #[case] branch: &[u8]) {
+    let fixture = SavedFixture::new("sha1", false);
+    let repo = Repository::open(fixture.fixture.root.path()).unwrap();
+    let mut options = SaveOptions::default();
+    options.abbreviation = abbreviation;
+    options.branch = branch.to_vec();
+    assert!(matches!(
+        repo.objects().unwrap().create_stash(
+            fixture.input,
+            author(),
+            writer(),
+            options,
+            &AtomicBool::new(false)
+        ),
+        Err(girt::stash::Error::Message)
+    ));
+}
+
+#[test]
+fn empty_untracked_capture_keeps_git_parent_shape_without_removal_paths() {
+    let fixture = SavedFixture::new("sha1", false);
+    let path = fixture.fixture.root.path();
+    let repo = Repository::open(path).unwrap();
+    let empty = repo
+        .loose_objects()
+        .write_tree(&Tree::new(repo.object_format(), vec![]).unwrap())
+        .unwrap();
+    let mut input = fixture.input;
+    input.untracked = Some(empty);
+    let save = repo
+        .objects()
+        .unwrap()
+        .create_stash(
+            input,
+            author(),
+            writer(),
+            fixture.options(SaveMode::All, false),
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(save.remove_untracked);
+    assert_eq!(save.snapshot.untracked.as_ref().unwrap().tree(), empty);
+    success(path, &["stash", "push", "-u"]);
+    assert_eq!(save.snapshot.id(), stash_id(path));
+    assert_eq!(save.snapshot.worktree.parents().len(), 3);
 }

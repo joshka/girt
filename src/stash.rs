@@ -188,7 +188,8 @@ pub struct Save {
     /// Stage-zero index tree after successful cleanup.
     pub index_after: ObjectId,
     /// Whether caller-selected untracked paths should be removed after durable stash publication.
-    /// This is not permission to delete paths that changed after capture.
+    /// True means an untracked capture was requested, even if its tree is empty. There may be
+    /// no paths to remove. This is not permission to delete paths that changed after capture.
     pub remove_untracked: bool,
 }
 
