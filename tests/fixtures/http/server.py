@@ -58,7 +58,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         if fault == "proxy-auth" and self.headers.get("Proxy-Authorization") != "Basic cHU6cHA=":
-            self.send_error(407)
+            self.send_response(407)
+            self.send_header("Proxy-Authenticate", "Basic realm=\"synthetic\"")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
         if fault == "same-origin-redirect" and self.path.startswith("/repo/"):
             self.send_response(302)

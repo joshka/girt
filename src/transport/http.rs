@@ -1126,6 +1126,7 @@ mod tests {
             host: b"example.test".to_vec(),
             path: Some(b"other".to_vec()),
             use_http_path: false,
+            username: None,
         };
         let cancel = AtomicBool::new(false);
         let mut prompt = |field| (field == Prompt::Password).then(|| b"secret".to_vec());

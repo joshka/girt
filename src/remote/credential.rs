@@ -43,6 +43,10 @@ pub struct CredentialContext {
     pub path: Option<Vec<u8>>,
     /// Whether helpers may distinguish repositories on the same HTTP host.
     pub use_http_path: bool,
+    /// A username the URL already names, such as `alice` in `http://alice@proxy:3128`.
+    ///
+    /// It takes precedence over `credential.username`, as in Git.
+    pub username: Option<Vec<u8>>,
 }
 
 impl CredentialContext {
@@ -53,7 +57,15 @@ impl CredentialContext {
             host,
             path: None,
             use_http_path: false,
+            username: None,
         }
+    }
+
+    /// Sets [`Self::username`].
+    #[must_use]
+    pub fn with_username(mut self, username: Option<Vec<u8>>) -> Self {
+        self.username = username;
+        self
     }
 
     /// Sets [`Self::protocol`].
@@ -567,7 +579,7 @@ impl CredentialSession {
             helpers.push(selected.backend.clone());
         }
         let mut credential = Credential {
-            username,
+            username: context.username.clone().or(username),
             password: None,
         };
         let mut helper_failures = Vec::new();
@@ -882,6 +894,7 @@ fn validate_context(context: &CredentialContext) -> Result<(), CredentialError> 
         &context.protocol[..],
         &context.host[..],
         context.path.as_deref().unwrap_or_default(),
+        context.username.as_deref().unwrap_or_default(),
     ] {
         if value.contains(&0) || value.contains(&b'\n') || value.contains(&b'\r') {
             return Err(CredentialError::Protocol("context"));
@@ -1168,6 +1181,7 @@ mod tests {
             host: b"example.invalid".to_vec(),
             path: Some(b"one/repo".to_vec()),
             use_http_path,
+            username: None,
         }
     }
 
@@ -1439,6 +1453,7 @@ mod tests {
             host: b"example.invalid".to_vec(),
             path: None,
             use_http_path: false,
+            username: None,
         };
         let session =
             CredentialSession::fill(&config, context, &[helper], None, &cancel, None).unwrap();

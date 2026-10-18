@@ -162,10 +162,18 @@ nearest settings are `http.sslVerify` and `http.pinnedPubkey`, which girt does n
 
 Proxy precedence is `remote.<name>.proxy`, URL-scoped/global `http.proxy`, then the proxy selected
 from environment by the caller. An empty configured proxy disables proxying. HTTP proxies support
-HTTPS CONNECT; HTTPS proxies, SOCKS and proxy URL userinfo are rejected. The caller supplies
-approved Basic credentials for the effective proxy and optional `no_proxy` exclusions (reqwest
-host/domain, IP/CIDR and `*` syntax). Empty exclusions mean no bypass. Girt disables automatic proxy
-discovery.
+HTTPS CONNECT; HTTPS proxies and SOCKS are rejected. The caller supplies approved Basic credentials
+for the effective proxy and optional `no_proxy` exclusions (reqwest host/domain, IP/CIDR and `*`
+syntax). A proxy URL may name a user, `http://alice[:secret]@proxy:3128`, as in Git: resolution
+removes the user and password from the URL, and `HttpSettings::proxy_credential_context` and
+`proxy_password` return them so the caller can fill credentials and pass them back with
+`HttpSettings::with_proxy_credentials`. `workflow` does this like Git: it asks the credential
+helpers (`protocol=http`, `host=<proxy>:<port>`, the username in the URL), then the askpass program,
+before the first request, and stores the credentials with the helpers once the proxy accepts them.
+Git asks for proxy credentials only when the URL names a user, does not erase them after a 407, and
+so neither does girt. Unlike Git, girt does not pass a password from the URL to the helpers for
+storage, and `TransferCallbacks::credential` is not asked for proxies. Empty exclusions mean no
+bypass. Girt disables automatic proxy discovery.
 
 For origin authentication, fill a `remote::CredentialSession` using application-approved helper
 programs, the native `remote::CredentialStore` or prompting, then call

@@ -325,6 +325,13 @@ pub fn clone_with(
                 control,
                 |message| callbacks.remote_message(message),
             ));
+            http.settle_proxy(match &download {
+                Ok(_) => Ok(()),
+                Err(crate::clone::CloneTransferError::Transfer(error)) => {
+                    Err(super::status_of(error))
+                }
+                Err(_) => Err(None),
+            });
             if matches!(
                 &download,
                 Err(crate::clone::CloneTransferError::Transfer(
