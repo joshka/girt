@@ -131,14 +131,24 @@ executable-bit differences under `core.fileMode=false`
 `core.symlinks=false` ([issue 578](https://github.com/joshka/girt/issues/578)); the checkout
 comparison also verifies Git writing a regular placeholder where girt writes a real symlink.
 
-`case_alias_status_requires_git_policy` records a clean Git result under `core.ignoreCase=true`
-where girt reports a deletion and untracked case alias on the same case-insensitive filesystem
-([issue 584](https://github.com/joshka/girt/issues/584)).
-`valid_posix_path_characters_match_git_status` compares clean and modified Git status for colon and
-backslash names, including a nested `dir:x/a\b`; girt matches
-([issue 583](https://github.com/joshka/girt/issues/583)). These comparisons distinguish the raw
-API's documented policy from a future Git-compatible workflow; they do not authorize changing its
-existing contract implicitly.
+`case_alias_status_requires_git_policy` records that raw status still compares exact bytes,
+reporting a deletion and an untracked case alias where Git with `core.ignoreCase=true` is clean.
+Ignore-aware status follows Git ([issue 584](https://github.com/joshka/girt/issues/584)):
+`renamed_spellings_match_git_under_name_settings` renames tracked files and directories to other
+case and normalization spellings, and `collision_shadows_match_git_under_name_settings` checks out
+colliding paths with Git. Both compare every combination of `core.ignoreCase` and
+`core.precomposeUnicode` (true, false, unset) with
+`git status --porcelain=v1 -z --untracked-files=all`. As in Git, an index path missing from its
+directory listing is looked up by its own name. Listed names are composed with precomposeUnicode,
+which Git and girt read only on macOS. With ignoreCase, an untracked name is hidden whenever an
+index path in its directory matches it ignoring ASCII case. Git does this by name, not by file
+identity: on a case-sensitive APFS disk image with `core.ignoreCase=true`, a new file `FILE` beside
+a deleted index path `file` is not listed. Girt matches, and the comparison tests ran on such an
+image as well as on the default volume. `valid_posix_path_characters_match_git_status` compares
+clean and modified Git status for colon and backslash names, including a nested `dir:x/a\b`; girt
+matches ([issue 583](https://github.com/joshka/girt/issues/583)). These comparisons distinguish the
+raw API's documented policy from a future Git-compatible workflow; they do not authorize changing
+its existing contract implicitly.
 
 Two additional comparisons use Git 2.56.0 on macOS.
 `existing_user_home_excludes_are_a_git_compatibility_gap` shows that Git expands a real named user's
