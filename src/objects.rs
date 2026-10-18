@@ -585,6 +585,7 @@ pub struct Objects {
     stores: Vec<Store>,
     directory: PathBuf,
     pub(crate) shallow: crate::ShallowRoots,
+    pub(crate) commit_graph: Option<Arc<crate::commit_graph::CommitGraph>>,
     /// Artifact-generation evidence survives refresh without retaining old handles/tables.
     damage_history: Arc<crate::pack::DamageHistory>,
     abbreviations: Arc<prefix::LooseAbbreviations>,
@@ -691,6 +692,7 @@ impl Objects {
                 abbreviations: Arc::default(),
                 directory,
                 shallow: crate::ShallowRoots::empty(format),
+                commit_graph: None,
             })
         };
         #[cfg(feature = "tracing")]

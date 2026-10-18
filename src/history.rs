@@ -79,6 +79,8 @@
 //! requires an explicit budget decision; a missing ancestor may mean incomplete storage. Declared
 //! shallow boundaries are the supported way to stop traversal, not a blanket permission to ignore
 //! missing parents. History parsing does not impose author/date construction rules.
+mod range;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -257,8 +259,9 @@ impl Objects {
     ///
     /// # Errors
     ///
-    /// Validates the complete ancestry of both endpoints before answering, even for identical
-    /// endpoints or an early match. Returns the same failures as [`Self::walk`].
+    /// Without an attached commit-graph, validates both complete ancestries before answering.
+    /// With explicitly trusted indexed metadata and checked generation order, stops at the target
+    /// generation or an early match. Returns the same failures as [`Self::walk`] for explored data.
     ///
     /// ```
     /// # use girt::{Commit, CommitFields, HistoryLimits, InitKind, ObjectFormat, PackLimits,
@@ -300,6 +303,9 @@ impl Objects {
         );
 
         let operation = || {
+            if let Some(answer) = self.indexed_ancestor(ancestor, descendant, limits) {
+                return answer;
+            }
             let graph = Graph::read(self, &[descendant, ancestor], limits)?;
             let marks = graph.reachable(0);
             Ok(marks[graph.positions[&ancestor]])
@@ -474,7 +480,13 @@ impl Graph {
         roots: &[ObjectId],
         limits: HistoryLimits,
     ) -> Result<Self, HistoryError> {
-        Self::read_with(objects, roots, limits, |_, _| Ok(None))
+        Self::read_with(objects, roots, limits, |id, _| {
+            Ok(objects
+                .commit_graph
+                .as_ref()
+                .and_then(|graph| graph.get(id))
+                .map(|commit| commit.parents.clone()))
+        })
     }
 
     fn read_with(

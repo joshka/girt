@@ -3,6 +3,7 @@
 //! [`CommitGraph::parse`] checks file structure and checksum, then resolves positional parents
 //! to object IDs. This does not establish that objects exist or agree with the index. Keep
 //! object verification separate when consuming repositories whose auxiliary metadata is untrusted.
+//! Use [`crate::Objects::with_commit_graph`] to opt into indexed history queries.
 //! Missing commits require an ordinary object lookup: a graph may cover only part of a repository.
 //!
 //! # Inspect a graph
@@ -22,6 +23,7 @@
 //! ignored. Bloom filters are not interpreted by this parser. Split files require their base
 //! layers through [`CommitGraph::parse_chain`].
 
+mod history;
 mod store;
 use std::collections::BTreeMap;
 
@@ -33,6 +35,7 @@ use crate::{ObjectFormat, ObjectId};
 #[derive(Clone, Debug)]
 pub struct CommitGraph {
     commits: Vec<GraphCommit>,
+    generation_order: history::GenerationOrder,
 }
 
 /// Metadata claimed by a commit-graph, without object-store verification.
@@ -119,7 +122,10 @@ impl CommitGraph {
         limits: GraphLimits,
     ) -> Result<Self, GraphError> {
         let commits = parse_layer(bytes, format, limits, &[], &[], &mut { limits.max_parents })?;
-        Ok(Self { commits })
+        Ok(Self {
+            commits,
+            generation_order: history::GenerationOrder::Unavailable,
+        })
     }
 
     /// Parses a split chain supplied in base-to-tip order with default bounds.
@@ -170,7 +176,10 @@ impl CommitGraph {
         if commits.windows(2).any(|pair| pair[0].id == pair[1].id) {
             return Err(bad("duplicate commit across layers"));
         }
-        Ok(Self { commits })
+        Ok(Self {
+            commits,
+            generation_order: history::GenerationOrder::Unavailable,
+        })
     }
 
     /// Returns records in ascending object-ID order.
