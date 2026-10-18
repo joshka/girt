@@ -27,18 +27,18 @@ successful girt samples; JSON records each tool separately.
 | `rebase` / 10                        | 🟢 1.11× (n=6)                                                   | 🟢 1.03× (n=6)                                                   | 🟠 1.64× (n=6) [#222](https://github.com/joshka/girt/issues/222) [#453](https://github.com/joshka/girt/issues/453) |
 | `undo` / default                     | 🟠 1.33× (n=6) [#66](https://github.com/joshka/girt/issues/66)   | 🟠 1.42× (n=6) [#453](https://github.com/joshka/girt/issues/453) | 🟠 1.63× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `new` / default                      | 🟢 1.05× (n=6)                                                   | 🟢 1.17× (n=6)                                                   | 🟠 1.61× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
-| `status` / untracked                 | 🟠 1.46× (n=6) [#215](https://github.com/joshka/girt/issues/215) | 🟠 1.50× (n=6) [#215](https://github.com/joshka/girt/issues/215) | 🟠 1.60× (n=3) [#66](https://github.com/joshka/girt/issues/66)                                                     |
+| `status` / untracked                 | 🟢 0.24× (n=6) (girt 0.13.0+642cbbba)                            | 🟢 0.31× (n=6) (girt 0.13.0+642cbbba)                            | 🟠 1.60× (n=3) [#66](https://github.com/joshka/girt/issues/66)                                                     |
 | `util gc` / garbage                  | 🟢 0.56× (n=6)                                                   | 🟠 1.59× (n=6) [#66](https://github.com/joshka/girt/issues/66)   | 🟠 1.54× (n=1) [#66](https://github.com/joshka/girt/issues/66)                                                     |
 | `restore` / default                  | 🟢 1.17× (n=6)                                                   | 🟢 1.13× (n=6)                                                   | 🟠 1.59× (n=3) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `rebase` / 1                         | 🟢 1.18× (n=6)                                                   | 🟢 1.10× (n=6)                                                   | 🟠 1.59× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `split` / default                    | 🟠 1.30× (n=6) [#66](https://github.com/joshka/girt/issues/66)   | 🟠 1.25× (n=6) [#453](https://github.com/joshka/girt/issues/453) | 🟠 1.58× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `squash` / default                   | 🟠 1.31× (n=6) [#66](https://github.com/joshka/girt/issues/66)   | 🟠 1.23× (n=6) [#453](https://github.com/joshka/girt/issues/453) | 🟠 1.57× (n=3) [#453](https://github.com/joshka/girt/issues/453)                                                   |
-| `status` / untracked-unique          | 🟢 1.03× (n=6)                                                   | 🟢 0.57× (n=6)                                                   | 🟠 1.55× (n=6) [#220](https://github.com/joshka/girt/issues/220)                                                   |
+| `status` / untracked-unique          | 🟢 0.57× (n=6) (girt 0.13.0+642cbbba)                            | 🟢 1.17× (n=6) (girt 0.13.0+642cbbba)                            | 🟠 1.55× (n=6) [#220](https://github.com/joshka/girt/issues/220)                                                   |
 | `rebase` / 100                       | 🟢 1.10× (n=6)                                                   | 🟠 1.24× (n=6) [#453](https://github.com/joshka/girt/issues/453) | 🟠 1.51× (n=6) [#222](https://github.com/joshka/girt/issues/222) [#453](https://github.com/joshka/girt/issues/453) |
 | `diff` / wc                          | 🟠 1.26× (n=6) [#66](https://github.com/joshka/girt/issues/66)   | 🟢 1.14× (n=6)                                                   | 🟠 1.50× (n=3) [#220](https://github.com/joshka/girt/issues/220)                                                   |
 | `git import` / 100-external-refs     | 🟢 1.12× (n=6)                                                   | 🟠 1.25× (n=6) [#66](https://github.com/joshka/girt/issues/66)   | 🟠 1.44× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `diff` / git                         | 🟢 1.16× (n=6)                                                   | 🟠 1.23× (n=6) [#66](https://github.com/joshka/girt/issues/66)   | 🟠 1.43× (n=3) [#220](https://github.com/joshka/girt/issues/220)                                                   |
-| `status` / many-edits                | 🟢 1.11× (n=6)                                                   | 🟢 0.43× (n=6)                                                   | 🟠 1.43× (n=6) [#220](https://github.com/joshka/girt/issues/220)                                                   |
+| `status` / many-edits                | 🟢 1.11× (n=6) (girt 0.13.0+642cbbba)                            | 🟢 0.70× (n=6) (girt 0.13.0+642cbbba)                            | 🟠 1.43× (n=6) [#220](https://github.com/joshka/girt/issues/220)                                                   |
 | `diff` / large                       | 🟢 1.09× (n=6)                                                   | 🟢 1.16× (n=6)                                                   | 🟠 1.43× (n=6) [#66](https://github.com/joshka/girt/issues/66)                                                     |
 | `bookmark` / delete                  | 🟢 1.05× (n=6)                                                   | 🟠 1.33× (n=6) [#66](https://github.com/joshka/girt/issues/66)   | 🟠 1.42× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `evolog` / default                   | 🟢 1.05× (n=6)                                                   | 🟠 1.40× (n=6) [#66](https://github.com/joshka/girt/issues/66)   | 🟢 0.94× (n=6)                                                                                                     |
@@ -46,16 +46,16 @@ successful girt samples; JSON records each tool separately.
 | `git clone` / local-full-checkout    | 🟢 1.06× (n=6)                                                   | 🟠 1.36× (n=6) [#218](https://github.com/joshka/girt/issues/218) | 🟢 1.10× (n=1)                                                                                                     |
 | `bookmark` / move                    | 🟢 1.01× (n=6)                                                   | 🟠 1.28× (n=6) [#195](https://github.com/joshka/girt/issues/195) | 🟠 1.35× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `log` / large                        | 🟢 1.16× (n=6)                                                   | 🟠 1.33× (n=6) [#222](https://github.com/joshka/girt/issues/222) | 🟠 1.34× (n=3) [#222](https://github.com/joshka/girt/issues/222)                                                   |
-| `status` / small-edit                | 🟢 1.13× (n=6)                                                   | 🟢 1.14× (n=6)                                                   | 🟠 1.33× (n=6) [#66](https://github.com/joshka/girt/issues/66)                                                     |
+| `status` / small-edit                | 🟢 1.12× (n=6) (girt 0.13.0+642cbbba)                            | 🟢 0.96× (n=6) (girt 0.13.0+642cbbba)                            | 🟠 1.33× (n=6) [#66](https://github.com/joshka/girt/issues/66)                                                     |
 | `rebase` / bookmark                  | 🟢 1.02× (n=6)                                                   | 🟠 1.26× (n=6) [#216](https://github.com/joshka/girt/issues/216) | 🟠 1.27× (n=6) [#216](https://github.com/joshka/girt/issues/216) [#453](https://github.com/joshka/girt/issues/453) |
 | `file annotate` / large-old-file     | 🟢 0.96× (n=6)                                                   | 🟢 0.86× (n=6)                                                   | 🟠 1.22× (n=1) [#66](https://github.com/joshka/girt/issues/66)                                                     |
 | `file show` / large-old-file         | 🟢 1.18× (n=6)                                                   | 🟢 1.06× (n=6)                                                   | 🟢 0.94× (n=6)                                                                                                     |
 | `log` / default                      | 🟢 1.11× (n=6)                                                   | 🟢 1.12× (n=6)                                                   | 🟢 0.97× (n=6)                                                                                                     |
+| `status` / clean                     | 🟢 0.88× (n=6) (girt 0.13.0+642cbbba)                            | 🟢 1.11× (n=6) (girt 0.13.0+642cbbba)                            | 🟢 1.08× (n=3)                                                                                                     |
 | `log` / no-graph                     | 🟢 1.06× (n=6)                                                   | 🟢 1.11× (n=6)                                                   | 🟢 0.98× (n=6)                                                                                                     |
 | `git fetch` / tags                   | 🟢 1.10× (n=6)                                                   | 🟢 0.75× (n=6)                                                   | 🟢 1.11× (n=6)                                                                                                     |
 | `show` / default                     | 🟢 1.04× (n=6)                                                   | 🟢 1.11× (n=6)                                                   | 🟢 1.01× (n=6)                                                                                                     |
 | `git fetch` / noop                   | 🟢 0.55× (n=6)                                                   | 🟢 0.83× (n=6)                                                   | 🟢 1.08× (n=6)                                                                                                     |
-| `status` / clean                     | 🟢 1.03× (n=6)                                                   | 🟢 0.95× (n=6)                                                   | 🟢 1.08× (n=3)                                                                                                     |
 | `git push` / delete                  | 🟢 1.04× (n=6)                                                   | 🟢 0.44× (n=6)                                                   | 🟢 1.08× (n=6)                                                                                                     |
 | `git push` / new                     | 🟢 0.29× (n=6)                                                   | 🟢 0.53× (n=6)                                                   | 🟢 1.07× (n=6)                                                                                                     |
 | `op log` / default                   | 🟢 1.05× (n=6)                                                   | 🟢 0.97× (n=6)                                                   | 🟢 0.98× (n=6)                                                                                                     |
@@ -64,6 +64,9 @@ successful girt samples; JSON records each tool separately.
 | `git push` / stale                   | 🟢 0.62× (n=6)                                                   | 🟢 0.91× (n=6)                                                   | 🟢 0.66× (n=6)                                                                                                     |
 | `git fetch` / 1                      | 🟢 0.76× (n=6)                                                   | 🟢 0.53× (n=6)                                                   | 🟢 0.86× (n=6)                                                                                                     |
 | `util gc` / clean                    | 🟢 0.18× (n=6)                                                   | 🟢 0.07× (n=6)                                                   | 🟢 0.01× (n=1)                                                                                                     |
+
+Cells marked `(girt X)` were measured on that release rather than girt 0.11.1; each row records its
+own `girt_commit` and `measured_on` date.
 
 ## Limits and interpretation
 
@@ -97,14 +100,14 @@ about 0.2 of a band boundary on sub-second cells as provisional.
 Note: The jj adapter commit predates 032e725a on the fork, which skips writing blobs the repository
 already has during colocated init (#217); the Linux colocated-init timeout was measured without it.
 
-Every cell was measured on girt 0.11.1. Each row records the girt release, girt commit, jj adapter
-commit, and date it was measured, so cells can be re-measured selectively after a change. Binary
-fingerprints are per row; [the JSON provenance block](benchmarks/jj-matrix.json) also holds
-per-repository object, ref, tag, worktree, and pack facts. The Git commit identifies release source;
-distribution packaging may add patches. Profiles and raw checkpoints are retained locally at the
-evidence paths; they are not bundled in this repository. The
-[original 53 small rows](jj-performance-original-small.json) from the first matrix are kept as a
-historical baseline.
+Most cells were measured on girt 0.11.1; marked cells name their own release. Each row records the
+girt release, girt commit, jj adapter commit, and date it was measured, so cells can be re-measured
+selectively after a change. Binary fingerprints are per row;
+[the JSON provenance block](benchmarks/jj-matrix.json) also holds per-repository object, ref, tag,
+worktree, and pack facts. The Git commit identifies release source; distribution packaging may add
+patches. Profiles and raw checkpoints are retained locally at the evidence paths; they are not
+bundled in this repository. The [original 53 small rows](jj-performance-original-small.json) from
+the first matrix are kept as a historical baseline.
 
 | Fixture | Packed / loose objects | Refs | Tags | Worktree files | Pack bytes | Loose / packed refs |
 | ------- | ---------------------- | ---- | ---- | -------------- | ---------- | ------------------- |
