@@ -532,6 +532,15 @@ unregistered scheme, `protocol.mem.allow` still being required, a connection fai
 application's error as the source, and a service that exits without a listing. Evidence: macOS
 arm64, Git 2.56.0, 2026-10-18.
 
+`tests/remote_helpers.rs` runs an approved `git-remote-mem` script, which records its arguments and
+commands and implements only `connect`, for a configured `mem://<path>` remote. For `ls-remote` and
+for `fetch` with a refspec, girt and Git pass the same arguments (the remote's name and its URL),
+set `GIT_DIR`, and send the same commands (`capabilities`, then `connect git-upload-pack`), and the
+fetched references match. Push sends `connect git-receive-pack` and publishes the branch. With the
+default `RemoteHelpers::Refuse` the helper never runs; a helper that offers only `fetch` fails as a
+transport error; a missing helper is a configuration error. Evidence: macOS arm64, Git 2.56.0,
+2026-10-18.
+
 ## Git Capability Audit: Transfer
 
 The audit baseline is `2e67ff57` (the merged Git guide), with original fixtures observed using Git

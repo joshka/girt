@@ -312,7 +312,10 @@ pub fn clone_with(
         &remote,
         "origin",
         Direction::Fetch,
-        &base,
+        super::LocalPaths {
+            base: &base,
+            git_dir: None,
+        },
         environment,
         &*callbacks,
     )?;
