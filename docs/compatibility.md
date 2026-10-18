@@ -4237,3 +4237,9 @@ cancellation and patch admission. A composition fault unit replaces the stored i
 publication and verifies that the failure preserves all working writes and the independent index.
 Existing working-file fault units cover per-leaf publication failures. No crash-durability or
 three-way-merge claim is made.
+
+`tests/am_commit.rs` compares complete proposed commit payloads and identities with Git am
+continuation in both object formats. Original fixtures cover ASCII/Unicode author names, apostrophe
+and exclamation escaping, and positive/negative numeric time zones. Refusal cases cover unquoted
+substitution syntax, trailing commands/assignments, missing metadata, unsupported dates, admission
+limits and cancellation. The API does not execute author scripts or install the proposed commit.

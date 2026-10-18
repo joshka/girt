@@ -337,3 +337,21 @@ unchanged; additive objects can remain after installation starts. Late failures 
 working-write report in `ApplyFailure`, including partial leaves or completed changes preceding an
 index failure. Inspect those files and the retained am metadata before recovery. A failed call does
 not authorize Git continuation, and no automatic rollback replaces independent work.
+
+## Prepare a mail commit
+
+`am::State::prepare_commit` constructs an unsigned `Commit` from the exact final-message bytes and
+Git's author-script metadata, plus a caller-selected tree, optional parent and explicit committer.
+Use a tree from the staged snapshot you intend to publish. The preparation does not check that the
+tree or parent exists or agrees with the current index/HEAD; it writes no objects or repository
+state and does not advance the mail range.
+
+The author script is parsed as three fixed single-quoted assignments. Git's apostrophe and
+exclamation escapes are decoded as literal bytes; no shell, substitutions or additional commands
+run. Only canonical numeric-zone mail dates are currently admitted. Other date forms, comments, leap
+seconds and years outside the admitted four-digit form are explicit refusals, tracked in
+[broader am date support](https://github.com/joshka/girt/issues/805). `CommitLimits` bounds combined
+mail metadata and committer identity bytes before copying. Cancellation returns no proposal.
+
+The caller owns empty-commit policy, signing, hooks, tree/object installation, reference publication
+and operation-state advancement. Preparing a commit does not authorize any of those mutations.
