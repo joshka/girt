@@ -56,7 +56,6 @@ fn rejects_malformed_input(#[case] bytes: &[u8]) {
 #[rstest]
 #[case::combined(b"diff --cc f\n", "combined diff")]
 #[case::binary(b"GIT binary patch\n", "binary patch")]
-#[case::rename(b"diff --git a/f b/g\nrename from f\n", "extended file operation")]
 fn refuses_unsupported_formats(#[case] bytes: &[u8], #[case] expected: &str) {
     assert!(
         matches!(Patch::parse(bytes), Err(Error::Unsupported { feature, .. }) if feature == expected)
@@ -153,6 +152,7 @@ fn enforces_structural_bounds(
 #[case::orphan_index(b"index abc..def 100644\n")]
 #[case::bad_id(b"diff --git a/f b/f\nindex zz..def 100644\n")]
 #[case::after_eof(b"--- a/f\n+++ b/f\n@@ -1 +1,2 @@\n-a\n+b\n\\ No newline at end of file\n+c\n")]
+#[case::incomplete_rename(b"diff --git a/f b/g\nrename from f\n")]
 fn rejects_invalid_framing(#[case] bytes: &[u8]) {
     assert!(matches!(Patch::parse(bytes), Err(Error::Malformed { .. })));
 }

@@ -165,6 +165,9 @@ not assert traits on the whole public type to hide a new field's unresolved inva
 
 - Use `thiserror` to derive library error implementations. Keep concrete error types and variants
   owned by their domain modules.
+- Register every new public error in `src/error.rs` so it converts into `girt::Error`. Run
+  `cargo test --lib error::tests` when adding an error; focused operation tests do not check the
+  complete public-error inventory.
 - Preserve underlying causes with `#[source]` or `#[from]` where appropriate so callers can inspect
   failures without parsing display text.
 - Either display a cause or return it from `source()`, never both. Callers such as jj render the

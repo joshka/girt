@@ -1,12 +1,12 @@
 //! Parse unified patches and apply their text hunks to byte content without filesystem access.
 //!
-//! [`Patch::parse`] validates the complete patch before returning file edits. Each [`FilePatch`]
+//! [`Patch::parse`] decodes the complete input before returning file edits. Each [`FilePatch`]
 //! applies to an immutable preimage and returns owned bytes only after every hunk succeeds.
 //! [`Patch::apply_tree`] computes a stored-tree replacement and returns an [`AppliedTree`] whose
 //! generated objects are installed explicitly. Callers retain control over references, the index
 //! and working files and must validate paths for their storage destination.
-//! Git text patches and traditional unified diffs are supported. Extended operations, binary and
-//! combined diffs are explicitly refused in this initial implementation.
+//! Git text patches, mode changes, additions/deletions, renames and copies are supported, along
+//! with traditional unified diffs and Git binary literal/delta patches. Combined diffs are refused.
 //!
 //! ```
 //! use girt::apply::Patch;
@@ -16,12 +16,14 @@
 //! assert_eq!(result.content, b"plum\n");
 //! # Ok::<(), girt::apply::Error>(())
 //! ```
+mod binary;
+pub use binary::BinaryKind;
 mod parse;
 mod text;
 mod tree;
 pub use tree::{AppliedFile, AppliedTree, TreeError, TreeLimits, TreeOptions};
 
-/// Validated text patch, retaining exact path and content bytes.
+/// Parsed file changes, retaining byte paths, metadata and bounded text/binary payloads.
 #[derive(Clone, Debug)]
 pub struct Patch {
     files: Vec<FilePatch>,
@@ -37,7 +39,7 @@ impl Patch {
         Self::parse_with(bytes, Limits::default())
     }
 
-    /// Parses under whole-patch byte, file and hunk bounds.
+    /// Parses under whole-patch byte, file, hunk and inflated-binary bounds.
     ///
     /// Paths retain prefixes (`a/` and `b/`) and are never interpreted as filesystem paths.
     /// Traditional paths may have tab-separated timestamps. Git quoted paths are decoded.
@@ -45,7 +47,7 @@ impl Patch {
     /// # Errors
     ///
     /// Returns [`Error`] without a partial patch for malformed syntax, count overflow, unsupported
-    /// extended operations or exhausted limits. Empty input is malformed.
+    /// operations or exhausted limits. Empty input is malformed.
     pub fn parse_with(bytes: &[u8], limits: Limits) -> Result<Self, Error> {
         parse::parse(bytes, limits)
     }
@@ -56,15 +58,68 @@ impl Patch {
     }
 }
 
-/// One file's paths and text hunks. `/dev/null` is represented by an absent side.
+/// One file's paths, declared metadata and owned text/binary data. `/dev/null` is represented by an
+/// absent side.
 #[derive(Clone, Debug)]
 pub struct FilePatch {
     old_path: Option<Vec<u8>>,
     new_path: Option<Vec<u8>>,
     hunks: Vec<Hunk>,
+    line: usize,
+    old_mode: Option<crate::EntryMode>,
+    new_mode: Option<crate::EntryMode>,
+    operation: FileOperation,
+    similarity: Option<u8>,
+    binary: Option<binary::BinaryPatch>,
+}
+
+/// How a file's source relates to its destination.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum FileOperation {
+    /// Modify, add or delete at one path.
+    #[default]
+    Edit,
+    /// Remove the source and create the destination.
+    Rename,
+    /// Retain the source and create the destination.
+    Copy,
 }
 
 impl FilePatch {
+    /// Forward binary encoding, absent for text or metadata-only changes.
+    pub fn binary_kind(&self) -> Option<BinaryKind> {
+        self.binary.as_ref().map(|patch| patch.forward.kind)
+    }
+
+    /// Reverse binary encoding when the patch supplied a second block. Reverse application is not
+    /// yet exposed.
+    pub fn reverse_binary_kind(&self) -> Option<BinaryKind> {
+        self.binary
+            .as_ref()
+            .and_then(|patch| patch.reverse.as_ref().map(|block| block.kind))
+    }
+
+    /// Requested file operation, independent of any content hunks.
+    pub fn operation(&self) -> FileOperation {
+        self.operation
+    }
+
+    /// Declared source mode, when present in Git metadata.
+    pub fn old_mode(&self) -> Option<crate::EntryMode> {
+        self.old_mode
+    }
+
+    /// Declared destination mode, when present in Git metadata.
+    pub fn new_mode(&self) -> Option<crate::EntryMode> {
+        self.new_mode
+    }
+
+    /// Declared rename/copy similarity percentage; it is not recomputed during application.
+    pub fn similarity(&self) -> Option<u8> {
+        self.similarity
+    }
+
     /// Preimage path, including any prefix, or `None` for a new file.
     pub fn old_path(&self) -> Option<&[u8]> {
         self.old_path.as_deref()
@@ -80,7 +135,7 @@ impl FilePatch {
         self.hunks.len()
     }
 
-    /// Applies all hunks at their declared positions using default bounds.
+    /// Applies text or binary content, preserving bytes for metadata-only edits.
     ///
     /// # Errors
     ///
@@ -90,20 +145,25 @@ impl FilePatch {
         self.apply_with(preimage, Limits::default())
     }
 
-    /// Applies exact-context hunks under input and output bounds.
+    /// Applies exact-context hunks or identity-checked binary data under input/output bounds.
     ///
     /// Zero-context hunks are accepted. No offset search, fuzz or whitespace normalization occurs.
     /// Unlike Git's default matching, reduced trailing context does not pin a hunk to EOF.
     /// A missing-final-newline marker does require the postimage to end at that line.
     /// New files require an empty preimage; deleted files must produce empty output. This content
     /// operation does not establish whether the source exists or the destination is absent.
+    /// Binary patches require full, same-format index identities and verify both preimage and
+    /// result hashes. Delta instructions are validated here against the supplied preimage.
     ///
     /// # Errors
     ///
     /// Returns [`Error`] for mismatched or overlapping hunks and exhausted bounds. Nothing is
     /// published, even if an earlier hunk succeeded.
     pub fn apply_with(&self, preimage: &[u8], limits: Limits) -> Result<Applied, Error> {
-        text::apply(self, preimage, limits)
+        match &self.binary {
+            Some(binary) => binary::apply(self, binary, preimage, limits),
+            None => text::apply(self, preimage, limits),
+        }
     }
 }
 
@@ -143,6 +203,9 @@ pub struct Limits {
     pub max_lines: usize,
     /// Maximum postimage bytes for one content application.
     pub max_output_bytes: usize,
+    /// Aggregate inflated literal and delta-program bytes across all binary blocks (default 16
+    /// MiB).
+    pub max_binary_bytes: usize,
 }
 
 impl Default for Limits {
@@ -153,6 +216,7 @@ impl Default for Limits {
             max_hunks: 100_000,
             max_lines: 100_000,
             max_output_bytes: 16 * 1024 * 1024,
+            max_binary_bytes: 16 * 1024 * 1024,
         }
     }
 }

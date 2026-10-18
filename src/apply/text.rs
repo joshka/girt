@@ -9,6 +9,9 @@ pub(super) fn apply(file: &FilePatch, preimage: &[u8], limits: Limits) -> Result
     if file.hunks.len() > limits.max_hunks {
         return Err(Error::Limit("hunks"));
     }
+    if file.old_path.is_none() && !preimage.is_empty() {
+        return Err(Error::Mismatch { line: file.line });
+    }
     let mut result = Applied {
         content: Vec::new(),
         hunks: Vec::new(),
@@ -63,13 +66,13 @@ pub(super) fn apply(file: &FilePatch, preimage: &[u8], limits: Limits) -> Result
     }
     if postimage_ended && !remaining.is_empty() {
         return Err(Error::Mismatch {
-            line: file.hunks.last().unwrap().line,
+            line: file.hunks.last().map_or(file.line, |hunk| hunk.line),
         });
     }
     append(&mut result.content, remaining, limits)?;
     if file.new_path.is_none() && !result.content.is_empty() {
         return Err(Error::Mismatch {
-            line: file.hunks.last().unwrap().line,
+            line: file.hunks.last().map_or(file.line, |hunk| hunk.line),
         });
     }
     Ok(result)

@@ -3422,9 +3422,9 @@ configuration and fixed identities/dates. SHA-1 and SHA-256 cases apply a Git-ge
 postimage. Focused cases cover insertion, deletion, exact context, CR/non-UTF-8 bytes, missing final
 LF, quoted paths, malformed/truncated counts, overflow, limits and late-hunk failure.
 
-This establishes exact-position text application only. Extended file operations, binary and combined
-diffs are explicitly refused. Offset/fuzz matching, whitespace policy, reverse/recount,
-index/worktree publication and mail workflows remain
+This establishes exact-position text application only. Combined diffs are explicitly refused.
+Extended metadata and binary-patch support are described below. Offset/fuzz matching, whitespace
+policy, reverse/recount, index/worktree publication and mail workflows remain
 [issue 506](https://github.com/joshka/girt/issues/506). The `apply` fuzz target exercises bounded
 parsing and application to independently framed preimages.
 
@@ -3439,6 +3439,19 @@ The tree layer rejects `.git` components case-insensitively, as Git's cached app
 currently refuses replacing a directory emptied by earlier edits in the same patch; an oracle test
 records Git accepting this transition. This remains part of issue 506. Metadata aliases that depend
 on a filesystem are checked by checkout rather than interpreted by this tree operation.
+
+`tests/apply_extended.rs` generates Git mode changes, empty additions/deletions, type changes,
+renames, copies and binary patches from original SHA-1/SHA-256 trees. Both girt application and
+`git apply --cached` produce the expected tree IDs. A hand-built rename cycle also checks Git and
+establishes that sources come from the original snapshot. Binary cases exercise literal and delta
+blocks, including incompressible literals, both block directions, identity failures, malformed
+base85/zlib input and separate aggregate decode/output bounds. The decoder reuses girt's checked
+pack-delta interpreter; no upstream implementation or test source is used.
+
+A bounded `apply` libFuzzer campaign on macOS completed 90,869 executions in 21 seconds without
+findings, seeded with original text and Git-generated binary patches framed with their preimages.
+The command used `-max_total_time=20 -timeout=10 -rss_limit_mb=2048 -max_len=1048576`; peak reported
+RSS was 288 MiB. This is short mutation evidence, not exhaustive parser validation.
 
 ### Configured index flags and file modes
 
