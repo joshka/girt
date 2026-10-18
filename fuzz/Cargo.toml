@@ -123,3 +123,10 @@ path = "fuzz_targets/reftable.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "apply"
+path = "fuzz_targets/apply.rs"
+test = false
+doc = false
+bench = false

@@ -3406,3 +3406,16 @@ locks. A fault-model test covers reference publication followed by log failure: 
 names the new tip and original log bytes survive. No object is deleted. Ref/log replacement is
 sequential and requires caller isolation; it promises no cross-file crash transaction.
 [Reftable stash history editing](https://github.com/joshka/girt/issues/638) is explicitly refused.
+
+## In-memory text patch application
+
+`tests/apply.rs` generates original text patches with Git 2.56.0 on macOS, under isolated
+configuration and fixed identities/dates. SHA-1 and SHA-256 cases apply a Git-generated patch with
+`git apply --cached`, then compare the resulting tree ID with a tree staged from girt's computed
+postimage. Focused cases cover insertion, deletion, exact context, CR/non-UTF-8 bytes, missing final
+LF, quoted paths, malformed/truncated counts, overflow, limits and late-hunk failure.
+
+This establishes exact-position text application only. Extended file operations, binary and
+combined diffs are explicitly refused. Offset/fuzz matching, whitespace policy, reverse/recount,
+publication and mail workflows remain [issue 506](https://github.com/joshka/girt/issues/506).
+The `apply` fuzz target exercises bounded parsing and application to independently framed preimages.
