@@ -12,6 +12,7 @@ use parallel::{Budget, Open, Queue, Task};
 use rustix::fd::OwnedFd;
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat, fstat, openat, statat};
 use tracked::{Slots, Tracked};
+mod untracked;
 use unicode_normalization::UnicodeNormalization as _;
 
 use super::types::{charge, check, value};
@@ -24,6 +25,7 @@ use crate::{EntryMode, ObjectId, Repository, TreeValue, index};
 
 pub(super) struct Observation {
     pub changes: Vec<WorktreeChange>,
+    pub cache_reused: usize,
     pub untracked: Vec<Vec<u8>>,
     pub listed: Vec<UntrackedPath>,
     pub boundaries: Vec<Vec<u8>>,
@@ -82,6 +84,8 @@ pub(super) enum Listing {
         files: UntrackedFiles,
         names: GitNames,
         environment: Box<crate::workflow::Environment>,
+        monitor: Option<Box<crate::fsmonitor::Monitor>>,
+        excludes: Option<[ObjectId; 2]>,
     },
 }
 
@@ -137,6 +141,8 @@ pub(super) fn scan(
     root: &Path,
     entries: &[index::Entry],
     index_written: Option<u32>,
+    monitor_clean: &[bool],
+    untracked_cache: Option<&super::untracked::Cache>,
     listing: Listing,
     paths: &Pathspec,
     filters: Option<Filters<'_>>,
@@ -148,6 +154,8 @@ pub(super) fn scan(
         root,
         entries,
         index_written,
+        monitor_clean,
+        untracked_cache,
         listing,
         paths,
         filters,
@@ -164,6 +172,8 @@ fn scan_with_hook(
     root: &Path,
     entries: &[index::Entry],
     index_written: Option<u32>,
+    monitor_clean: &[bool],
+    untracked_cache: Option<&super::untracked::Cache>,
     listing: Listing,
     paths: &Pathspec,
     filters: Option<Filters<'_>>,
@@ -241,6 +251,8 @@ fn scan_with_hook(
         tracked: Tracked::new(entries, directories, names.is_some()),
         names,
         configured,
+        monitor_clean,
+        untracked_cache,
         ignored_gitlinks,
         file_mode,
         symlinks,
@@ -342,6 +354,7 @@ fn scan_with_hook(
             verified.push((position, *first));
         }
     }
+    let cache_reused = found.cache_reused;
     let Found {
         mut untracked,
         mut listed,
@@ -354,6 +367,7 @@ fn scan_with_hook(
     check(cancel)?;
     Ok(Observation {
         changes,
+        cache_reused,
         untracked,
         listed,
         boundaries,
@@ -366,6 +380,7 @@ fn scan_with_hook(
 struct Walk {
     /// An ancestor is ignored, so every untracked descendant is too.
     excluded: bool,
+    cache_invalid: bool,
     /// Inside a collapsed untracked directory: the `listed` length when it was entered.
     collapse: Option<usize>,
 }
@@ -393,6 +408,7 @@ enum Observed {
 /// What one worker observed; merged after every worker finishes.
 #[derive(Default)]
 struct Found {
+    cache_reused: usize,
     /// Observations of tracked paths and their directories, by [`Tracked::slots`].
     observations: Vec<(usize, Observed)>,
     untracked: Vec<Vec<u8>>,
@@ -410,6 +426,7 @@ impl Found {
     }
 
     fn extend(&mut self, other: Self) {
+        self.cache_reused += other.cache_reused;
         self.observations.extend(other.observations);
         self.untracked.extend(other.untracked);
         self.listed.extend(other.listed);
@@ -421,6 +438,8 @@ impl Found {
 struct Scan<'a> {
     format: crate::ObjectFormat,
     configured: bool,
+    monitor_clean: &'a [bool],
+    untracked_cache: Option<&'a super::untracked::Cache>,
     ignored_gitlinks: HashSet<Vec<u8>>,
     file_mode: bool,
     symlinks: bool,
@@ -509,22 +528,31 @@ impl Scan<'_> {
         fd: &OwnedFd,
         path: &[u8],
         rules: Arc<Ignore>,
+        names: &Names,
     ) -> Result<Arc<Ignore>, Error> {
         let mut file = path.to_vec();
         if !file.is_empty() {
             file.push(b'/');
         }
         file.extend_from_slice(b".gitignore");
-        let Some(stat) = optional_stat(fd, b".gitignore", &file)? else {
-            return Ok(rules);
+        let content = if names.ignore_observed {
+            let Some(content) = &names.ignore_content else {
+                return Ok(rules);
+            };
+            Cow::Borrowed(content.as_slice())
+        } else {
+            let Some(stat) = optional_stat(fd, b".gitignore", &file)? else {
+                return Ok(rules);
+            };
+            if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+                return Ok(rules);
+            }
+            let max = self.max_file_bytes.min(self.worktree_bytes.remaining());
+            let content = self.read_file(fd, b".gitignore", &file, &stat, max)?;
+            self.worktree_bytes
+                .charge(content.len(), "worktree bytes")?;
+            Cow::Owned(content)
         };
-        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
-            return Ok(rules);
-        }
-        let max = self.max_file_bytes.min(self.worktree_bytes.remaining());
-        let content = self.read_file(fd, b".gitignore", &file, &stat, max)?;
-        self.worktree_bytes
-            .charge(content.len(), "worktree bytes")?;
         let limit = |label| Error::Ignore {
             path: file.clone(),
             source: ignore::Error::Limit(label),
@@ -601,7 +629,7 @@ impl Scan<'_> {
         before: &Stat,
         path: &[u8],
         depth: usize,
-        walk: Walk,
+        mut walk: Walk,
         rules: Option<Arc<Ignore>>,
     ) -> Result<Visited, Error> {
         self.check()?;
@@ -614,7 +642,19 @@ impl Scan<'_> {
             found.observe(self.tracked.slots(path), Observed::Blocked);
             return Ok(Visited::Metadata);
         }
-        let names = self.read_names(fd, path)?;
+        let (cached, invalidate) = if walk.cache_invalid || walk.excluded {
+            (None, true)
+        } else {
+            self.cached_names(fd, before, path)?
+        };
+        walk.cache_invalid |= invalidate;
+        let names = match cached {
+            Some(names) => {
+                found.cache_reused += usize::from(names.cached);
+                names
+            }
+            None => self.read_names(fd, path)?,
+        };
         // Detect nested repositories before entering any of their children. Merely lstat the
         // marker; never open it. The root marker is expected and ignored below.
         if !path.is_empty() && names.repository_marker(fd, path)? {
@@ -629,7 +669,7 @@ impl Scan<'_> {
             Some(rules)
                 if !walk.excluded && self.lists_untracked() && names.may_name(b".gitignore") =>
             {
-                Some(self.load_gitignore(fd, path, rules)?)
+                Some(self.load_gitignore(fd, path, rules, &names)?)
             }
             rules => rules,
         };
@@ -745,6 +785,20 @@ impl Scan<'_> {
                 entry: tracked.map(|(slot, _)| slot),
                 directory: directory.map(|directory| self.tracked.entries.len() + directory),
             };
+            if selected
+                && directory.is_none()
+                && let Some((position, entry)) = tracked
+                && entry.stage == index::Stage::Normal
+                && !entry.intent_to_add
+                && matches!(
+                    entry.mode,
+                    index::Mode::Regular | index::Mode::Executable | index::Mode::Symlink
+                )
+                && self.monitor_clean.get(position) == Some(&true)
+            {
+                found.observe(slot, Observed::Leaf(value(entry)));
+                continue;
+            }
             let stat = statat(&**fd, OsStr::from_bytes(name), AtFlags::SYMLINK_NOFOLLOW)
                 .map_err(|source| io(&child, source))?;
             let kind = FileType::from_raw_mode(stat.st_mode);
@@ -1186,6 +1240,11 @@ fn index_stat(stat: &Stat) -> index::Stat {
 /// Every name in one directory except `.` and `..`, packed into one buffer.
 #[derive(Default)]
 struct Names {
+    cached: bool,
+    // Reuse exactly the ignore bytes whose hash admitted this listing, avoiding a second read
+    // that could pair changed rules with an older cached listing.
+    ignore_observed: bool,
+    ignore_content: Option<Vec<u8>>,
     bytes: Vec<u8>,
     ends: Vec<usize>,
 }
@@ -1232,8 +1291,10 @@ impl Names {
     /// Whether `lstat` of the ASCII name `target` could succeed here. A case-insensitive
     /// filesystem resolves any ASCII case variant, and non-ASCII names are not ruled out.
     fn may_name(&self, target: &[u8]) -> bool {
-        self.iter()
-            .any(|name| !name.is_ascii() || name.eq_ignore_ascii_case(target))
+        self.cached
+            || self
+                .iter()
+                .any(|name| !name.is_ascii() || name.eq_ignore_ascii_case(target))
     }
 
     /// [`repository_marker`], skipping each `lstat` that no listed name could satisfy.

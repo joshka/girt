@@ -274,6 +274,8 @@ impl Repository {
                 files: untracked,
                 names: supported::git_names(self)?,
                 environment: Box::new(ignore.environment().clone()),
+                monitor: None,
+                excludes: Some(ignore.untracked_excludes(self.object_format())),
             },
             paths,
             limits,
@@ -339,6 +341,8 @@ impl Repository {
                 files: untracked,
                 names: supported::git_names(self)?,
                 environment: Box::new(ignore.environment().clone()),
+                monitor: None,
+                excludes: Some(ignore.untracked_excludes(self.object_format())),
             },
             paths,
             Some(filters),
@@ -429,7 +433,7 @@ pub(super) mod supported {
     }
 
     #[expect(clippy::too_many_arguments, reason = "one status run's inputs")]
-    pub(super) fn run_with_checkpoint(
+    pub(in crate::status) fn run_with_checkpoint(
         repo: &Repository,
         baseline: Baseline,
         listing: Listing,
@@ -606,18 +610,39 @@ pub(super) mod supported {
             pipeline: std::sync::Mutex::new(pipeline),
             objects: &objects,
         });
+        let monitor_clean = match &listing {
+            Listing::Ignoring {
+                monitor: Some(monitor),
+                ..
+            } => super::super::scan::monitor_clean(
+                repo,
+                index.as_ref(),
+                monitor,
+                limits.index,
+                cancel,
+            )?,
+            _ => Vec::new(),
+        };
+        let (untracked_cache, mut cache_use) =
+            super::super::untracked::load(repo, index.as_ref(), &listing, paths, limits, cancel);
         let observed = super::super::worktree::scan(
             repo,
             root,
             entries,
             index_written,
+            &monitor_clean,
+            untracked_cache.as_ref(),
             listing,
             paths,
             shared.as_ref().map(|shared| shared as _),
             limits,
             cancel,
         )?;
+        if let super::super::UntrackedCacheUse::Reused { directories } = &mut cache_use {
+            *directories = observed.cache_reused;
+        }
         let mut report = Report {
+            untracked_cache: cache_use,
             comparison,
             baseline_tree: tree,
             index_missing: index.is_none(),
@@ -800,6 +825,8 @@ pub(crate) fn nested_status(
             files: untracked,
             names: supported::git_names(repo)?,
             environment: Box::new(environment.clone()),
+            monitor: None,
+            excludes: Some(rules.untracked_excludes(repo.object_format())),
         },
         &Pathspec::all(),
         Some(filters),

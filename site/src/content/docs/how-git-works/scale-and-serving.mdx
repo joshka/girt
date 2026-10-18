@@ -69,7 +69,7 @@ only checks those. The **untracked cache** (`core.untrackedCache`), an index ext
 directory listings so finding new files doesn't rescan unchanged directories. Together they make
 status take milliseconds.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/519">Bounded UNTR/FSMN readers and explicit opt-in hook queries (protocols 1 and 2); status cache reuse and refresh remain. Built-in daemon IPC is explicitly refused.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/519">Configured status reuses valid UNTR listings under exact byte name policy. Explicit opt-in hook queries (protocols 1 and 2) can skip tracked stat calls using FSMN checkpoints. Cache refresh remains; built-in daemon IPC is explicitly refused.</GirtStatus>
 
 ## Serving
 

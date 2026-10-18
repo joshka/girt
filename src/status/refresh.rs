@@ -235,12 +235,16 @@ mod supported {
             files: UntrackedFiles::Omit,
             names,
             environment: Box::new(environment),
+            monitor: None,
+            excludes: None,
         };
         let observed = worktree::scan(
             repo,
             root,
             entries,
             Some(index_written),
+            &[],
+            None,
             listing,
             &Pathspec::all(),
             shared.as_ref().map(|shared| shared as _),

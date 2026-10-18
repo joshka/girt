@@ -19,6 +19,9 @@ struct Args {
     /// Lift the default status limits, for a large repository you trust.
     #[arg(long)]
     trusted: bool,
+    /// Authorize querying the hook configured by core.fsmonitor before status.
+    #[arg(long)]
+    fsmonitor: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -67,14 +70,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let rules = repository.ignore_rules(&environment)?;
-    let report = repository.status_with(
-        Baseline::Head,
-        untracked,
-        &rules,
-        &girt::pathspec::Pathspec::all(),
-        limits,
-        &AtomicBool::new(false),
-    )?;
+    let monitor = if args.fsmonitor {
+        repository.fsmonitor(&environment, girt::fsmonitor::Commands::Run)?
+    } else {
+        None
+    };
+    let mut scan = girt::status::Scan::new(&repository, Baseline::Head, untracked, &rules);
+    if let Some(monitor) = &monitor {
+        scan = scan.with_monitor(monitor);
+    }
+    let report = scan.run_with(limits, &AtomicBool::new(false))?;
 
     println!("Tracked content is compared as literal bytes and POSIX modes.");
 

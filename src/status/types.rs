@@ -413,6 +413,8 @@ pub enum Comparison {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Report {
+    /// Directory-cache admission and number of reused listings.
+    pub untracked_cache: UntrackedCacheUse,
     /// Always explicit so raw comparison cannot be confused with normalized Git status.
     pub comparison: Comparison,
     /// Resolved baseline tree, or empty for unborn/explicit empty input.
@@ -449,6 +451,41 @@ pub struct Report {
     /// The ordinary root `.git` marker is always excluded and omitted from this list. Ignore-aware
     /// status does not visit ignored directories, so their nested repositories are not listed.
     pub boundaries: Vec<Vec<u8>>,
+}
+
+/// Whether directory listings were obtained from UNTR, or why the ordinary walk was used.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum UntrackedCacheUse {
+    /// No UNTR extension was present.
+    NotPresent,
+    /// Cache use was disabled by configuration or raw status policy.
+    Disabled,
+    /// The cache could not establish the required validity conditions.
+    Fallback(UntrackedCacheFallback),
+    /// Admitted cache; `directories` counts listings actually reused. Stale directories are
+    /// scanned.
+    Reused {
+        /// Directory listings obtained without readdir.
+        directories: usize,
+    },
+}
+/// A condition requiring ordinary directory traversal instead of trusting UNTR.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum UntrackedCacheFallback {
+    /// Only collapsed, whole-worktree listing is supported for cached directory names.
+    ListingPolicy,
+    /// Ignore-case or Unicode-precomposition policy requires ordinary name observations.
+    NamePolicy,
+    /// Location/system identity does not match this working tree.
+    Environment,
+    /// The caller's base ignore inputs differ from the cache.
+    IgnoreRules,
+    /// Invalid or resource-exceeding cache records cannot authorize skipped work.
+    Malformed,
+    /// Split-index directory-cache reuse is not implemented.
+    SplitIndex,
 }
 
 /// An index leaf whose observed worktree value differs or could not be inspected as a leaf.
@@ -616,6 +653,9 @@ pub enum Change {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// Explicit monitor execution was refused or its repository binding is invalid.
+    #[error("querying the filesystem monitor")]
+    Fsmonitor(#[source] Box<crate::fsmonitor::Error>),
     /// Reading or inspecting a nested repository failed; no partial report is returned.
     #[error("inspecting submodules")]
     Submodules(#[source] Box<crate::submodule::StatusError>),

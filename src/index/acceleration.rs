@@ -143,8 +143,9 @@ impl UntrackedDirectory {
     }
     /// Cached per-directory exclude-file identity, if present.
     ///
-    /// Git hashes the ignore buffer with an additional newline, including when the original file
-    /// already ends in one; this can differ from the blob identity of the literal file bytes.
+    /// Git can reuse an unchanged tracked ignore file's index blob identity. For a nonempty
+    /// filesystem-loaded ignore file, it hashes the buffer with an additional newline, even
+    /// when the file already ends in one. An empty buffer hashes the empty blob.
     pub fn exclude(&self) -> Option<ObjectId> {
         self.exclude
     }

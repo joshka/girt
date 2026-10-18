@@ -1,6 +1,9 @@
 //! Original fixtures built with Git's public CLI, with normalization and rename detection disabled.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
+#[path = "status/cache.rs"]
+mod cache;
+
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;

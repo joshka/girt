@@ -156,5 +156,14 @@ fn stat_cached(c: &mut Criterion) {
     }
     group.finish();
 }
-criterion_group!(benches, benchmark, stat_cached);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "status/caches.rs"]
+mod caches;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn cached_status(c: &mut Criterion) {
+    caches::benchmark(c);
+}
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn cached_status(_: &mut Criterion) {}
+criterion_group!(benches, benchmark, stat_cached, cached_status);
 criterion_main!(benches);

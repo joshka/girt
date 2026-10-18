@@ -219,6 +219,26 @@ pub struct WorktreeRules {
 
 impl WorktreeRules {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn untracked_excludes(&self, format: crate::ObjectFormat) -> [crate::ObjectId; 2] {
+        let mut ids = [crate::ObjectId::null(format); 2];
+        for source in &self.sources {
+            let [info, global] = &mut ids;
+            let target = match source.kind {
+                SourceKind::Info => info,
+                SourceKind::Global => global,
+                SourceKind::Directory(_) => continue,
+            };
+            // Keep the on-disk cache hash convention separate from literal stored blobs.
+            let mut content = source.content.clone();
+            if !content.is_empty() {
+                content.push(b'\n');
+            }
+            *target = crate::ObjectId::for_blob(format, &content);
+        }
+        ids
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn environment(&self) -> &Environment {
         &self.environment
     }
