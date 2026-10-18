@@ -255,6 +255,21 @@ obstructions, late directory-content changes and retained refusal of general git
 All child paths still participate in path protection, namespace checks and directory identity/budget
 checks. Nonempty child directories and volume-name collisions involving gitlinks are refused.
 
+`tests/submodule_recursive.rs` compares two-level recursive clone with Git in both hashes, including
+relative child URLs, nested absorbed storage, detached commits, each child's attributes/EOL and
+clean Git status. None skips checkout/descent as Git does. Library tests cover explicit active=false
+and activation pathspecs, depth/count exhaustion, retained superproject/child effects and a nested
+protocol refusal without network access. Recursion is opt-in and bounded (hard depth ceiling 64).
+Bare/no-checkout clone recursion is refused before transport; unborn remote HEAD has no traversal.
+
+Known activation difference: Git clone --recurse-submodules writes local `submodule.active=.`. The
+library preserves explicit caller activation policy and does not make that hidden write. A future
+girt CLI recursive-clone flag must apply Git's setting in the CLI layer, tracked by
+[issue 487](https://github.com/joshka/girt/issues/487). General checkout/switch gitlink transitions
+and `submodule.recurse` integration remain explicitly unsupported, tracked in
+[issue 743](https://github.com/joshka/girt/issues/743). Recursive population inherits the typed
+transport/layout limitations above, and no aggregate rollback or implicit custom command is added.
+
 ## Mailmap
 
 `tests/mailmap_git.rs` compares original temporary maps with the installed Git executable's

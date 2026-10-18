@@ -40,6 +40,13 @@ pub struct CloneOptions {
     /// system configuration, chosen per path by the cloned repository's `.gitattributes`, such
     /// as Git LFS. Use `Some(Commands::Refuse)` to convert line endings without running programs.
     pub filter_commands: Option<crate::filter::Commands>,
+
+    /// Explicit bounded child population after the superproject checkout. Default is no recursion.
+    /// Child identity/environment/filter permission come from this policy, independently of the
+    /// superproject options. Requires a working-tree clone with checkout enabled. Caller
+    /// activation policy is honored; unlike Git's CLI, this never appends
+    /// `submodule.active=.`.
+    pub submodules: Option<crate::submodule::RecursionOptions>,
 }
 
 impl Default for CloneOptions {
@@ -52,6 +59,7 @@ impl Default for CloneOptions {
             update_limits: FetchUpdateLimits::default(),
             checkout_limits: crate::checkout::Limits::default(),
             filter_commands: Some(crate::filter::Commands::Run),
+            submodules: None,
         }
     }
 }
@@ -78,6 +86,16 @@ impl CloneOptions {
         filter_commands: Option<crate::filter::Commands>,
     ) -> Self {
         self.filter_commands = filter_commands;
+        self
+    }
+
+    /// Selects explicit bounded submodule population after checkout, or disables recursion.
+    #[must_use]
+    pub fn with_submodules(
+        mut self,
+        submodules: Option<crate::submodule::RecursionOptions>,
+    ) -> Self {
+        self.submodules = submodules;
         self
     }
 
@@ -119,12 +137,27 @@ pub struct CloneOutcome {
 
     /// Completed checkout; absent for bare, no-checkout or unborn remote HEAD.
     pub checkout: Option<crate::checkout::Report>,
+
+    /// Completed recursive child population when explicitly requested.
+    pub submodules: Option<crate::submodule::RecursiveReport>,
 }
 
 /// Clone failure, preserving core publication and checkout effects for recovery.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CloneError {
+    /// Recursive population requires a checked-out worktree; nothing was created.
+    #[error("recursive clone requires a working tree with checkout enabled")]
+    SubmoduleLayout,
+    /// The superproject clone/checkout completed; recursive children may have partial effects.
+    #[error("superproject clone completed but submodule population failed")]
+    Submodules {
+        /// Completed superproject clone and checkout.
+        report: Box<CloneOutcome>,
+        /// Completed children and nested failure effects.
+        #[source]
+        source: Box<crate::submodule::RecursiveError>,
+    },
     /// Checkout was requested on a platform outside Linux/macOS; nothing was created.
     #[error("clone checkout requires Linux/macOS; select no-checkout or bare mode")]
     UnsupportedCheckout,
@@ -231,10 +264,10 @@ pub fn clone(url: &str, destination: impl AsRef<Path>) -> Result<CloneOutcome, C
 /// platforms refuse before transfer when checkout is requested; use [`CloneOptions::with_checkout`]
 /// with `false`, or bare mode. Unborn or unavailable HEAD skips checkout; a detached remote HEAD
 /// stays detached. A symbolic HEAD naming a missing branch in a nonempty remote is refused by the
-/// core planner. No origin/HEAD alias, shallow clone, recursive submodule checkout, hardlinks or
-/// automatic rollback is provided. HTTP/SSH runtime constraints match [`fetch`]. Like fetch, this
-/// synchronous workflow has no cancellation or deadline; use the core APIs for caller-controlled
-/// cancellation.
+/// core planner. No origin/HEAD alias, shallow clone, hardlinks or automatic rollback is provided.
+/// HTTP/SSH runtime constraints match [`fetch`]. Like fetch, this synchronous workflow has no
+/// cancellation or deadline; use the core APIs for caller-controlled cancellation.
+/// Recursive child population is opt-in through [`CloneOptions::with_submodules`].
 ///
 /// # Errors
 ///
@@ -251,6 +284,10 @@ pub fn clone_with(
     environment: &Environment,
     callbacks: &mut dyn TransferCallbacks,
 ) -> Result<CloneOutcome, CloneError> {
+    if options.submodules.is_some() && (!options.checkout || matches!(options.kind, InitKind::Bare))
+    {
+        return Err(CloneError::SubmoduleLayout);
+    }
     if options.checkout
         && matches!(options.kind, InitKind::Worktree)
         && !cfg!(any(target_os = "linux", target_os = "macos"))
@@ -382,10 +419,38 @@ pub fn clone_with(
     }
     let checkout = checkout(&report, options, environment, &cancel, callbacks);
     match checkout {
-        Ok(checkout) => Ok(CloneOutcome {
-            clone: report,
-            checkout,
-        }),
+        Ok(checkout) => {
+            let mut outcome = CloneOutcome {
+                clone: report,
+                checkout,
+                submodules: None,
+            };
+            if let Some(policy) = &options.submodules {
+                // An unborn remote has no checked-out index or submodules to traverse.
+                if outcome.checkout.is_some() {
+                    let repository = outcome
+                        .clone
+                        .repository
+                        .as_ref()
+                        .ok_or(CloneError::SubmoduleLayout)?;
+                    match crate::submodule::populate_recursive(
+                        repository,
+                        &stored_url,
+                        policy,
+                        callbacks,
+                    ) {
+                        Ok(report) => outcome.submodules = Some(report),
+                        Err(source) => {
+                            return Err(CloneError::Submodules {
+                                report: Box::new(outcome),
+                                source: Box::new(source),
+                            });
+                        }
+                    }
+                }
+            }
+            Ok(outcome)
+        }
         Err(CheckoutError::Read(source)) => Err(CloneError::Read {
             report: Box::new(report),
             source,
