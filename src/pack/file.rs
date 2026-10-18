@@ -44,6 +44,34 @@ struct Artifact {
     bytes_read: std::sync::atomic::AtomicUsize,
 }
 
+/// Opens a published artifact, retrying briefly while Windows reports a replacement in progress.
+///
+/// Opening a name that a rename is replacing can fail on Windows with access denied, a sharing
+/// violation or a pending delete, even though the old and new files are each complete. The retry
+/// is bounded, so a genuinely inaccessible file still fails after roughly a tenth of a second.
+fn open_published(options: &std::fs::OpenOptions, path: &Path) -> io::Result<File> {
+    #[cfg(windows)]
+    {
+        // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_DELETE_PENDING.
+        const TRANSIENT: [i32; 3] = [5, 32, 303];
+        let mut delay = std::time::Duration::from_millis(1);
+        for _ in 0..7 {
+            match options.open(path) {
+                Err(error)
+                    if error
+                        .raw_os_error()
+                        .is_some_and(|code| TRANSIENT.contains(&code)) =>
+                {
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                }
+                result => return result,
+            }
+        }
+    }
+    options.open(path)
+}
+
 impl Artifact {
     fn open(path: &Path) -> Result<Self, Error> {
         let mut options = std::fs::OpenOptions::new();
@@ -56,9 +84,7 @@ impl Artifact {
             use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_READ};
             options.share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE);
         }
-        let file = options
-            .open(path)
-            .map_err(|source| path_error(path, source))?;
+        let file = open_published(&options, path).map_err(|source| path_error(path, source))?;
         let stamp = Stamp::read(&file).map_err(|source| path_error(path, source))?;
         let len = stamp.len;
         let len = usize::try_from(len).map_err(|_| Error::Limit("artifact address space"))?;
