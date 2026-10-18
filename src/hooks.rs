@@ -263,6 +263,42 @@ impl Hooks {
     }
 }
 
+impl Hooks {
+    /// Runs a hook whose failure stops the operation, such as `pre-commit` or `pre-push`.
+    ///
+    /// Like [`Self::run`], but a hook that ran and exited unsuccessfully is an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Rejected`] with the hook's exit code and output when it fails, and the
+    /// errors of [`Self::run`].
+    pub fn run_blocking(
+        &self,
+        name: &str,
+        invocation: &Invocation,
+        policy: Policy,
+        control: TransportControl<'_>,
+    ) -> Result<Outcome, Error> {
+        match self.run(name, invocation, policy, control)? {
+            Outcome::Ran(ran) if !ran.success() => Err(Error::Rejected {
+                hook: name.to_owned(),
+                code: ran.code(),
+                output: ran.output,
+            }),
+            outcome => Ok(outcome),
+        }
+    }
+
+    /// Returns `path` as Git passes repository paths to hooks: relative to the directory hooks
+    /// run in when it lies inside it, absolute otherwise.
+    pub(crate) fn argument_path(&self, path: &Path) -> OsString {
+        path.strip_prefix(&self.working_directory)
+            .unwrap_or(path)
+            .as_os_str()
+            .to_owned()
+    }
+}
+
 /// What [`Hooks::find`] found.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Found {
@@ -402,6 +438,29 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    /// A hook whose failure stops the operation exited unsuccessfully; see
+    /// [`Hooks::run_blocking`].
+    #[error("hook {hook} failed{}", code.map(|code| format!(" with exit code {code}")).unwrap_or_default())]
+    Rejected {
+        /// The hook name.
+        hook: String,
+        /// The exit code, or `None` when a signal ended the hook.
+        code: Option<i32>,
+        /// Standard output followed by standard error, truncated to the output limit.
+        output: Vec<u8>,
+    },
+}
+
+/// Converts configuration bytes to a hook argument; non-Unix platforms lose invalid UTF-8.
+#[cfg(unix)]
+pub(crate) fn os_string(bytes: &[u8]) -> OsString {
+    use std::os::unix::ffi::OsStrExt as _;
+    std::ffi::OsStr::from_bytes(bytes).to_owned()
+}
+
+#[cfg(not(unix))]
+pub(crate) fn os_string(bytes: &[u8]) -> OsString {
+    String::from_utf8_lossy(bytes).into_owned().into()
 }
 
 #[cfg(unix)]

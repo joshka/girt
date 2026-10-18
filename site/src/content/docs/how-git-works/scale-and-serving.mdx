@@ -155,7 +155,7 @@ Git.
 directory in `core.hooksPath`, and a non-zero exit from a `pre-` hook stops the operation. Tools
 that commit or push on a user's behalf may need to run a repository's hooks the way Git does.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/530">Hooks are found and run only when a caller opts in, on Linux and macOS. Commit, switch and push don't invoke client hooks yet; a native local push runs the receiving repository's hooks.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/530">Hooks run only when a caller opts in, on Linux and macOS. Commit runs its four hooks, switch runs `post-checkout` and push runs `pre-push`; a native local push runs the receiving repository's hooks. Other hooks, such as `reference-transaction`, `post-merge` and `post-rewrite`, are not run.</GirtStatus>
 
 ## Automatic maintenance
 

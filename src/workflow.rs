@@ -1241,9 +1241,30 @@ pub struct PushOptions {
     push_options: Vec<Vec<u8>>,
     identity: Option<crate::Signature>,
     compression: Option<crate::PackCompression>,
+    hooks: crate::hooks::Policy,
 }
 
 impl PushOptions {
+    /// Chooses whether the push runs the repository's `pre-push` hook, as `git push` does.
+    ///
+    /// The default, [`Policy::Ignore`](crate::hooks::Policy::Ignore), runs nothing. With
+    /// [`Policy::Run`](crate::hooks::Policy::Run), `pre-push` runs once the receiver's
+    /// references are known and before any pack is prepared or sent. Its arguments are the
+    /// remote name and its resolved URL (after `url.<base>.insteadOf` and `pushInsteadOf`), and
+    /// its standard input holds one `<local> <new> <remote ref> <old>` line per command that
+    /// would change the receiver, where `<old>` is the receiver's current value. Commands whose
+    /// expected value already differs from the receiver, or that would leave it unchanged, are
+    /// left out, as Git leaves out rejected and up-to-date references. Because girt pushes object
+    /// IDs rather than local references, `<local>` is the new ID (`(delete)` for a deletion), as
+    /// when running `git push origin <id>:<ref>`. A failing hook stops the push before anything
+    /// is sent, with [`TransferError::Hook`] holding
+    /// [`hooks::Error::Rejected`](crate::hooks::Error::Rejected).
+    #[must_use]
+    pub fn with_hooks(mut self, policy: crate::hooks::Policy) -> Self {
+        self.hooks = policy;
+        self
+    }
+
     /// Selects compression for a configured push, replacing the default bounded delta policy.
     ///
     /// Both policies can reuse eligible stored compressed entries and internal deltas. Ordinary
@@ -1376,6 +1397,9 @@ pub enum TransferError {
     /// Reading this repository's objects or references failed before the transfer began.
     #[error(transparent)]
     Local(Box<dyn std::error::Error + Send + Sync>),
+    /// A hook could not run or rejected the operation before anything was sent.
+    #[error(transparent)]
+    Hook(Box<crate::hooks::Error>),
 }
 
 impl TransferError {
@@ -2526,8 +2550,24 @@ impl Repository {
         callbacks: &mut dyn TransferCallbacks,
         before_prepare: &dyn Fn(),
     ) -> Result<PushReport, TransferError> {
-        let (endpoint, _) =
+        let (endpoint, destination) =
             self.endpoint(remote_name, Direction::Push, environment, &*callbacks)?;
+        let hooks = match options.hooks {
+            crate::hooks::Policy::Ignore => None,
+            _ => Some(
+                crate::hooks::Hooks::new(self, environment)
+                    .map_err(|error| TransferError::Hook(Box::new(error)))?,
+            ),
+        };
+        let pre_push = PrePush {
+            hooks: hooks.as_ref(),
+            policy: options.hooks,
+            remote: remote_name,
+            url: destination.bytes(),
+            commands: &commands,
+            ran: std::cell::Cell::new(false),
+            failure: std::cell::RefCell::new(None),
+        };
         let objects = self
             .objects_with(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;
@@ -2556,7 +2596,10 @@ impl Repository {
             }
             Ok(())
         };
-        let prepare = |roots: &[ObjectId]| -> Result<PreparedPush, PushFailure> {
+        let prepare = |roots: &[ObjectId],
+                       current: Vec<Option<ObjectId>>|
+         -> Result<PreparedPush, PushFailure> {
+            pre_push.run(&current, format)?;
             before_prepare();
             // Every transport prepares at most once per send, and each retry refills first.
             let objects = source
@@ -2591,7 +2634,11 @@ impl Repository {
                     &cancel,
                     |advertisement| {
                         record_targets(advertisement, &names, &advertised);
-                        prepare(&advertisement.receiver_roots())
+                        let current = names
+                            .iter()
+                            .map(|name| advertisement.target(name))
+                            .collect();
+                        prepare(&advertisement.receiver_roots(), current)
                     },
                 );
                 // The service's failure explains an exchange that broke before anything was sent;
@@ -2621,7 +2668,13 @@ impl Repository {
                             config_inputs: &crate::config::ConfigInputs::default(),
                             identity: options.identity.as_ref(),
                         },
-                        |advertisement| prepare(&advertisement.receiver_roots()?),
+                        |advertisement| {
+                            let current = names
+                                .iter()
+                                .map(|name| advertisement.target(name))
+                                .collect::<Result<_, _>>()?;
+                            prepare(&advertisement.receiver_roots()?, current)
+                        },
                         |event| callbacks.borrow_mut().validation_progress(event),
                     )
                 };
@@ -2653,7 +2706,9 @@ impl Repository {
                         control,
                         |advertisement| {
                             record_targets(advertisement, &names, &advertised);
-                            prepare(&advertisement.receiver_roots())
+                            let current =
+                                names.iter().map(|name| advertisement.target(name)).collect();
+                            prepare(&advertisement.receiver_roots(), current)
                         },
                         |message| callbacks.borrow_mut().remote_message(message),
                     ));
@@ -2690,7 +2745,11 @@ impl Repository {
                     control,
                     |advertisement| {
                         record_targets(advertisement, &names, &advertised);
-                        prepare(&advertisement.receiver_roots())
+                        let current = names
+                            .iter()
+                            .map(|name| advertisement.target(name))
+                            .collect();
+                        prepare(&advertisement.receiver_roots(), current)
                     },
                     |message| callbacks.borrow_mut().transport_message(message),
                     |message| callbacks.borrow_mut().remote_message(message),
@@ -2701,6 +2760,9 @@ impl Repository {
                 })
             }
         };
+        if let Some(error) = pre_push.failure.into_inner() {
+            return Err(TransferError::Hook(Box::new(error)));
+        }
         let report = result.map_err(|error| TransferError::Push(Box::new(error)))?;
         self.update_tracking_refs(remote_name, &report, options.identity.as_ref());
         Ok(report)
@@ -2786,6 +2848,73 @@ fn tracking_ref(refspecs: &[crate::remote::ConfiguredRefspec], name: &[u8]) -> O
 }
 
 /// Records the advertised values of the pushed references.
+/// The `pre-push` hook of one push, run once after the receiver's references are known.
+struct PrePush<'a> {
+    hooks: Option<&'a crate::hooks::Hooks>,
+    policy: crate::hooks::Policy,
+    remote: &'a str,
+    url: &'a [u8],
+    commands: &'a [PushCommand],
+    ran: std::cell::Cell<bool>,
+    failure: std::cell::RefCell<Option<crate::hooks::Error>>,
+}
+
+impl PrePush<'_> {
+    /// Runs the hook the first time a transport reports the receiver's `current` values, one per
+    /// command. Commands whose expectation already differs from the receiver, or that would not
+    /// change it, are left out, as Git leaves out rejected and up-to-date references.
+    fn run(
+        &self,
+        current: &[Option<ObjectId>],
+        format: crate::ObjectFormat,
+    ) -> Result<(), PushFailure> {
+        let Some(hooks) = self.hooks else {
+            return Ok(());
+        };
+        if self.ran.replace(true) {
+            return Ok(());
+        }
+        let null = ObjectId::null(format);
+        let mut stdin = Vec::new();
+        for (command, current) in self.commands.iter().zip(current) {
+            if command.expected != *current || *current == Some(command.new) {
+                continue;
+            }
+            let deletes = command.new == null;
+            if deletes && current.is_none() {
+                continue;
+            }
+            let local = if deletes {
+                "(delete)".to_owned()
+            } else {
+                command.new.to_string()
+            };
+            stdin.extend_from_slice(format!("{local} {} ", command.new).as_bytes());
+            stdin.extend_from_slice(command.name.as_bytes());
+            stdin.extend_from_slice(format!(" {}\n", current.unwrap_or(null)).as_bytes());
+        }
+        let invocation = crate::hooks::Invocation::new()
+            .with_argument(self.remote)
+            .with_argument(crate::hooks::os_string(self.url))
+            .with_stdin(stdin);
+        let cancel = AtomicBool::new(false);
+        match hooks.run_blocking(
+            "pre-push",
+            &invocation,
+            self.policy,
+            TransportControl::new(&cancel),
+        ) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                *self.failure.borrow_mut() = Some(error);
+                Err(PushFailure::Unsupported(
+                    "push stopped by the pre-push hook",
+                ))
+            }
+        }
+    }
+}
+
 fn record_targets(
     advertisement: &crate::push::PushAdvertisement,
     names: &[RefName],
