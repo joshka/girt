@@ -136,6 +136,13 @@ samples remaining commits evenly in sorted ID order, up to `max_commits` (64 by 
 selections are deduplicated and must fit that cap. This policy is deterministic; it does not copy
 Git's commit-selection heuristic.
 
+Repack bitmap graph reads use up to `RetentionPolicy::max_threads` workers, each with a private
+share of a 96 MiB delta-base cache allowance and at most one decoded payload awaiting consumption.
+Results are consumed in pack-offset order; parsing, aggregate input/edge limits and kind checks
+remain serial. Every payload retains its identity, CRC, zlib and per-read limit checks. Standalone
+pack and MIDX bitmap writers remain serial. Early graph failure closes the result channels and joins
+all workers before returning; final retirement survivor verification remains separate.
+
 Selected traversals may reuse complete closures already computed from the same verified graph and
 bit order. Targets already present in the current closure are not queued again; every inspected edge
 still consumes the shared work budget, as does each cached word union. Retained closure words have a

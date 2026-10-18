@@ -147,6 +147,17 @@ impl Objects {
         limits: WriteLimits,
         cancel: &AtomicBool,
     ) -> Result<Written, WriteError> {
+        self.encode_pack_bitmap_parallel(pack, options, limits, 1, cancel)
+    }
+
+    pub(crate) fn encode_pack_bitmap_parallel(
+        &self,
+        pack: ObjectId,
+        options: WriteOptions,
+        limits: WriteLimits,
+        max_threads: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Written, WriteError> {
         check(cancel)?;
         if !self.shallow_roots().is_empty() {
             return Err(WriteError::Shallow);
@@ -164,14 +175,13 @@ impl Objects {
             .map(|position| pack.identity_at(position))
             .collect();
         let order: Vec<_> = pack.positions_by_offset()?.collect();
-        let graph = graph::Graph::read(
-            self.object_format(),
-            &ids,
-            &order,
-            limits,
-            cancel,
-            |position| pack.read(position, limits.read, cancel),
-        )?;
+        let graph = pack.with_ordered_reads(&order, limits.read, max_threads, cancel, |reads| {
+            graph::Graph::read(self.object_format(), &ids, &order, limits, cancel, |_| {
+                reads.next().unwrap_or(Err(crate::ObjectReadError::Corrupt(
+                    "ordered read exhausted",
+                )))
+            })
+        })?;
         let written = encode::artifacts(
             pack.checksum(),
             &order,

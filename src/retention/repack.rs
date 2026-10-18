@@ -464,6 +464,7 @@ impl Repository {
                     self,
                     written.checksum,
                     limits.bitmap,
+                    policy.max_threads,
                     cancel,
                 ) {
                     Ok(bitmap) => BitmapOutcome::Written(bitmap),

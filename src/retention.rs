@@ -373,9 +373,9 @@ pub struct RetentionPolicy {
     pub packs: PackLimits,
     /// Per-object read bounds.
     pub read: ReadLimits,
-    /// Worker threads that read objects for the closure walk and decode survivors before old
-    /// packs are retired (default 8). Zero or one reads on the calling thread alone. Fewer are
-    /// used when the host has fewer.
+    /// Worker threads that read objects for the closure walk, construct repack bitmap graphs,
+    /// and decode survivors before old packs are retired (default 8). Zero or one reads on the
+    /// calling thread alone. Fewer are used when the host has fewer.
     pub max_threads: usize,
 }
 

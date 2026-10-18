@@ -157,6 +157,7 @@ impl Repository {
 
 enum Target {
     Pack(ObjectId),
+    Repack(ObjectId, usize),
     Multi(crate::multi_pack_index::WriteOptions),
 }
 fn install<I: MaintenanceIsolation>(
@@ -189,11 +190,12 @@ pub(crate) fn write_repack_bitmap(
     repository: &Repository,
     pack: ObjectId,
     limits: WriteLimits,
+    max_threads: usize,
     cancel: &AtomicBool,
 ) -> Result<Published, InstallError> {
     install_held(
         repository,
-        Target::Pack(pack),
+        Target::Repack(pack, max_threads),
         WriteOptions::default(),
         limits,
         cancel,
@@ -214,7 +216,7 @@ fn install_held(
         let _operation = crate::locks::operation();
         let directory = repository.object_dir().join("pack");
         let lock_path = directory.join(match target {
-            Target::Pack(id) => format!("pack-{id}.bitmap.lock"),
+            Target::Pack(id) | Target::Repack(id, _) => format!("pack-{id}.bitmap.lock"),
             Target::Multi(_) => "multi-pack-index.lock".to_owned(),
         });
         operation = "acquire writer lock";
@@ -226,6 +228,16 @@ fn install_held(
         let (index, written, packs, basename) = match target {
             Target::Pack(id) => {
                 let written = objects.encode_pack_bitmap(id, options, limits, cancel)?;
+                (None, written, 1, directory.join(format!("pack-{id}")))
+            }
+            Target::Repack(id, max_threads) => {
+                let written = objects.encode_pack_bitmap_parallel(
+                    id,
+                    options,
+                    limits,
+                    max_threads,
+                    cancel,
+                )?;
                 (None, written, 1, directory.join(format!("pack-{id}")))
             }
             Target::Multi(midx) => {

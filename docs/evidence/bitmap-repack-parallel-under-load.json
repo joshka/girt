@@ -1,0 +1,280 @@
+{
+  "measured_under_load": true,
+  "load_gate": 24,
+  "baseline": "cbf8f372",
+  "per_run_cap_seconds": 180,
+  "rows": [
+    {
+      "block": 0,
+      "build": "git",
+      "bitmaps": false,
+      "load_before": [
+        20.79296875,
+        19.271484375,
+        20.392578125
+      ],
+      "wall_seconds": 7.984480332990643,
+      "exit": 0,
+      "load_after": [
+        20.3212890625,
+        19.2138671875,
+        20.3583984375
+      ],
+      "stdout": "",
+      "stderr": "        7.97 real         7.14 user         0.64 sys\n           965672960  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               41834  page reclaims\n               21517  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  50  voluntary context switches\n               57393  involuntary context switches\n           257282342  instructions retired\n           110668191  cycles elapsed\n             3768752  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 409970\npacks: 1\nsize-pack: 310613\nprune-packable: 0\ngarbage: 0\nsize-garbage: 0\n"
+    },
+    {
+      "block": 1,
+      "build": "git",
+      "bitmaps": true,
+      "load_before": [
+        20.3212890625,
+        19.2138671875,
+        20.3583984375
+      ],
+      "wall_seconds": 10.446148208997329,
+      "exit": 0,
+      "load_after": [
+        20.1591796875,
+        19.22119140625,
+        20.34765625
+      ],
+      "stdout": "",
+      "stderr": "       10.44 real         9.77 user         0.81 sys\n          1001619456  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               45035  page reclaims\n               22056  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  36  voluntary context switches\n               73512  involuntary context switches\n           257507066  instructions retired\n           113634984  cycles elapsed\n             3883464  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 409970\npacks: 1\nsize-pack: 310613\nprune-packable: 0\ngarbage: 0\nsize-garbage: 0\n"
+    },
+    {
+      "block": 2,
+      "build": "baseline",
+      "bitmaps": false,
+      "load_before": [
+        20.1591796875,
+        19.22119140625,
+        20.34765625
+      ],
+      "wall_seconds": 12.521970166999381,
+      "exit": 0,
+      "load_after": [
+        19.94580078125,
+        19.2373046875,
+        20.33447265625
+      ],
+      "stdout": "{\"bitmaps\":false,\"elapsed_ns\":12124933000,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":0}\n",
+      "stderr": "       12.51 real        18.86 user         2.67 sys\n           542900224  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               39673  page reclaims\n                 738  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n               11796  voluntary context switches\n              149272  involuntary context switches\n        143445301244  instructions retired\n         67278055305  cycles elapsed\n           463717096  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 841768\npacks: 5\nsize-pack: 727332\nprune-packable: 28\ngarbage: 0\nsize-garbage: 0\n",
+      "elapsed_ns": 12124933000,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 0
+    },
+    {
+      "block": 3,
+      "build": "baseline",
+      "bitmaps": true,
+      "load_before": [
+        19.94580078125,
+        19.2373046875,
+        20.33447265625
+      ],
+      "wall_seconds": 29.343352541996865,
+      "exit": 0,
+      "load_after": [
+        18.23876953125,
+        18.88134765625,
+        20.17333984375
+      ],
+      "stdout": "{\"bitmaps\":true,\"elapsed_ns\":29313609542,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":2036560}\n",
+      "stderr": "       29.33 real        36.50 user         3.44 sys\n          1460043776  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              102008  page reclaims\n                 738  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n               11814  voluntary context switches\n              153493  involuntary context switches\n        330269889813  instructions retired\n        127031241657  cycles elapsed\n          1051952592  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 841768\npacks: 5\nsize-pack: 727332\nprune-packable: 28\ngarbage: 0\nsize-garbage: 0\n",
+      "elapsed_ns": 29313609542,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 2036560
+    },
+    {
+      "block": 4,
+      "build": "candidate",
+      "bitmaps": false,
+      "load_before": [
+        18.23876953125,
+        18.88134765625,
+        20.17333984375
+      ],
+      "wall_seconds": 10.716162500000792,
+      "exit": 0,
+      "load_after": [
+        17.3740234375,
+        18.658203125,
+        20.0703125
+      ],
+      "stdout": "{\"bitmaps\":false,\"elapsed_ns\":10676675375,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":0}\n",
+      "stderr": "       10.71 real        19.05 user         2.87 sys\n           535085056  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               39347  page reclaims\n                 738  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n               11869  voluntary context switches\n              145663  involuntary context switches\n        144052212215  instructions retired\n         68474150146  cycles elapsed\n           451625680  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 841768\npacks: 5\nsize-pack: 727332\nprune-packable: 28\ngarbage: 0\nsize-garbage: 0\n",
+      "elapsed_ns": 10676675375,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 0
+    },
+    {
+      "block": 5,
+      "build": "candidate",
+      "bitmaps": true,
+      "load_before": [
+        17.3740234375,
+        18.658203125,
+        20.0703125
+      ],
+      "wall_seconds": 28.16103479199228,
+      "exit": 0,
+      "load_after": [
+        16.94482421875,
+        18.484375,
+        19.9677734375
+      ],
+      "stdout": "{\"bitmaps\":true,\"elapsed_ns\":28136105833,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":2036560}\n",
+      "stderr": "       28.15 real        49.89 user         7.89 sys\n          1696743424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              119029  page reclaims\n                 738  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n               11800  voluntary context switches\n              669711  involuntary context switches\n        416512266864  instructions retired\n        180335132311  cycles elapsed\n          1290077816  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 841768\npacks: 5\nsize-pack: 727332\nprune-packable: 28\ngarbage: 0\nsize-garbage: 0\n",
+      "elapsed_ns": 28136105833,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 2036560
+    },
+    {
+      "block": 6,
+      "build": "candidate",
+      "bitmaps": true,
+      "load_before": [
+        16.94482421875,
+        18.484375,
+        19.9677734375
+      ],
+      "wall_seconds": 25.59822304098634,
+      "exit": 0,
+      "load_after": [
+        17.5498046875,
+        18.53271484375,
+        19.94287109375
+      ],
+      "stdout": "{\"bitmaps\":true,\"elapsed_ns\":25578376500,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":2036560}\n",
+      "stderr": "       25.59 real        49.35 user         7.72 sys\n          1674428416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              118267  page reclaims\n                 738  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n               11823  voluntary context switches\n              671828  involuntary context switches\n        415794750875  instructions retired\n        178404549950  cycles elapsed\n          1286473336  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 841768\npacks: 5\nsize-pack: 727332\nprune-packable: 28\ngarbage: 0\nsize-garbage: 0\n",
+      "elapsed_ns": 25578376500,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 2036560
+    },
+    {
+      "block": 7,
+      "build": "candidate",
+      "bitmaps": false,
+      "load_before": [
+        17.5498046875,
+        18.53271484375,
+        19.94287109375
+      ],
+      "wall_seconds": 9.34706445899792,
+      "exit": 0,
+      "load_after": [
+        17.58642578125,
+        18.51318359375,
+        19.91943359375
+      ],
+      "stdout": "{\"bitmaps\":false,\"elapsed_ns\":9335137459,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":0}\n",
+      "stderr": "        9.34 real        18.94 user         3.57 sys\n           533610496  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               39444  page reclaims\n                 738  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n               11823  voluntary context switches\n              140667  involuntary context switches\n        145318601842  instructions retired\n         70551190355  cycles elapsed\n           430113512  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 841768\npacks: 5\nsize-pack: 727332\nprune-packable: 28\ngarbage: 0\nsize-garbage: 0\n",
+      "elapsed_ns": 9335137459,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 0
+    },
+    {
+      "block": 8,
+      "build": "baseline",
+      "bitmaps": true,
+      "load_before": [
+        17.58642578125,
+        18.51318359375,
+        19.91943359375
+      ],
+      "wall_seconds": 29.0736513340089,
+      "exit": 0,
+      "load_after": [
+        18.7646484375,
+        18.68994140625,
+        19.9326171875
+      ],
+      "stdout": "{\"bitmaps\":true,\"elapsed_ns\":29043676041,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":2036560}\n",
+      "stderr": "       29.07 real        36.37 user         3.50 sys\n          1454080000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              101665  page reclaims\n                 738  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n               11781  voluntary context switches\n              149033  involuntary context switches\n        330195099944  instructions retired\n        126700736547  cycles elapsed\n          1030899128  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 841768\npacks: 5\nsize-pack: 727332\nprune-packable: 28\ngarbage: 0\nsize-garbage: 0\n",
+      "elapsed_ns": 29043676041,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 2036560
+    },
+    {
+      "block": 9,
+      "build": "baseline",
+      "bitmaps": false,
+      "load_before": [
+        18.7646484375,
+        18.68994140625,
+        19.9326171875
+      ],
+      "wall_seconds": 9.375088375003543,
+      "exit": 0,
+      "load_after": [
+        19.16845703125,
+        18.78125,
+        19.9501953125
+      ],
+      "stdout": "{\"bitmaps\":false,\"elapsed_ns\":9362657041,\"objects\":410316,\"pack_bytes\":374336640,\"sidecar_bytes\":0}\n",
+      "stderr": "        9.37 real        18.94 user         3.54 sys\n           545095680  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               40027  page reclaims\n                 738  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n               11797  voluntary context switches\n              121897  involuntary context switches\n        145094639586  instructions retired\n         70153768605  cycles elapsed\n           444433128  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 841768\npacks: 5\nsize-pack: 727332\nprune-packable: 28\ngarbage: 0\nsize-garbage: 0\n",
+      "elapsed_ns": 9362657041,
+      "objects": 410316,
+      "pack_bytes": 374336640,
+      "sidecar_bytes": 0
+    },
+    {
+      "block": 10,
+      "build": "git",
+      "bitmaps": true,
+      "load_before": [
+        19.16845703125,
+        18.78125,
+        19.9501953125
+      ],
+      "wall_seconds": 9.105487833992811,
+      "exit": 0,
+      "load_after": [
+        17.82568359375,
+        18.5078125,
+        19.83935546875
+      ],
+      "stdout": "",
+      "stderr": "        9.10 real         9.28 user         0.59 sys\n          1008074752  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               45432  page reclaims\n               22056  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  40  voluntary context switches\n               53615  involuntary context switches\n           254832454  instructions retired\n           106508516  cycles elapsed\n             3834288  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 409970\npacks: 1\nsize-pack: 310613\nprune-packable: 0\ngarbage: 0\nsize-garbage: 0\n"
+    },
+    {
+      "block": 11,
+      "build": "git",
+      "bitmaps": false,
+      "load_before": [
+        17.82568359375,
+        18.5078125,
+        19.83935546875
+      ],
+      "wall_seconds": 6.363505082990741,
+      "exit": 0,
+      "load_after": [
+        16.95849609375,
+        18.31640625,
+        19.763671875
+      ],
+      "stdout": "",
+      "stderr": "        6.35 real         6.56 user         0.62 sys\n           957005824  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               41319  page reclaims\n               21517  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  35  voluntary context switches\n               56414  involuntary context switches\n           253718656  instructions retired\n           105032191  cycles elapsed\n             3834288  peak memory footprint\n",
+      "inventory": "count: 28\nsize: 388\nin-pack: 409970\npacks: 1\nsize-pack: 310613\nprune-packable: 0\ngarbage: 0\nsize-garbage: 0\n"
+    }
+  ]
+}

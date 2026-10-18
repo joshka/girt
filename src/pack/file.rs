@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
+mod ahead;
 mod mapped;
 mod window;
 use mapped::IndexBytes;
@@ -1338,13 +1339,11 @@ impl FilePack {
 }
 
 /// A pinned pack read through a private delta base cache, for one verification worker.
-#[cfg(any(unix, test))]
 struct PrivateCache<'a> {
     pack: &'a FilePack,
     cache: super::reader::BaseCache,
 }
 
-#[cfg(any(unix, test))]
 impl Source for PrivateCache<'_> {
     fn format(&self) -> ObjectFormat {
         self.pack.format
@@ -1689,25 +1688,40 @@ mod read_each_tests {
         let (path, positions) = many(root.path(), format);
         let pack = open(&path, format);
         let cancel = AtomicBool::new(false);
-        let expected: Vec<_> = positions.iter()
+        let expected: Vec<_> = positions
+            .iter()
             .map(|&position| pack.read(position, ReadLimits::default(), &cancel).unwrap())
             .collect();
 
-        let actual = pack.with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel,
-            |reads| reads.collect::<Result<Vec<_>, _>>()).unwrap();
+        let actual = pack
+            .with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel, |reads| {
+                reads.collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap();
         assert_eq!(actual, expected);
 
-        let limits = ReadLimits { max_object_bytes: 1, ..ReadLimits::default() };
-        let error = pack.with_ordered_reads(&positions, limits, 4, &cancel,
-            |reads| reads.next().unwrap()).unwrap_err();
+        let limits = ReadLimits {
+            max_object_bytes: 1,
+            ..ReadLimits::default()
+        };
+        let error = pack
+            .with_ordered_reads(&positions, limits, 4, &cancel, |reads| {
+                reads.next().unwrap()
+            })
+            .unwrap_err();
         assert!(matches!(error, Error::Limit("object bytes")));
 
         // Dropping the consumer while workers are sending must let every worker join.
-        pack.with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel,
-            |reads| reads.next().unwrap()).unwrap();
+        pack.with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel, |reads| {
+            reads.next().unwrap()
+        })
+        .unwrap();
         cancel.store(true, Ordering::Relaxed);
-        let error = pack.with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel,
-            |reads| reads.next().unwrap()).unwrap_err();
+        let error = pack
+            .with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel, |reads| {
+                reads.next().unwrap()
+            })
+            .unwrap_err();
         assert!(matches!(error, Error::Cancelled));
     }
 
@@ -1736,6 +1750,30 @@ mod read_each_tests {
             pack.read_each(damaged, ReadLimits::default(), 4, &cancel)
                 .is_err()
         );
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn ordered_read_ahead_rejects_identity_damage(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let (path, positions) = many(root.path(), format);
+        crate::pack::damage::swap_last_entries(&path, format);
+        let pack = open(&path, format);
+        let cancel = AtomicBool::new(false);
+        pack.verify(&cancel).unwrap();
+
+        let serial = pack
+            .with_ordered_reads(&positions, ReadLimits::default(), 1, &cancel, |reads| {
+                reads.collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap_err();
+        let parallel = pack
+            .with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel, |reads| {
+                reads.collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap_err();
+        assert_eq!(format!("{parallel:?}"), format!("{serial:?}"));
     }
 
     #[test]
