@@ -203,6 +203,7 @@ pub mod ignore;
 pub mod index;
 pub mod locks;
 pub mod loose;
+pub mod mailbox;
 pub mod mailmap;
 pub mod merge;
 pub mod message;

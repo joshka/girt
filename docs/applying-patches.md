@@ -251,3 +251,19 @@ selection, mail configuration, file naming and publication remain caller-owned. 
 before retaining each commit, and returned mail plus separators share an aggregate byte bound.
 Comparison and message bounds remain independent. Any late failure drops the entire unpublished
 series, including messages already computed.
+
+## Split a patch mailbox
+
+`mailbox::split(&bytes)` returns complete message byte vectors, including their Unix `From`
+envelopes. Initial spaces, tabs, CR and LF are discarded and CRLF line endings become LF; escaped
+`>From` body lines stay escaped. Missing final newlines stay missing. A date-shaped envelope in the
+body starts the next message, so senders must escape such body lines before building a mailbox.
+
+`split_with` accepts explicit `Options`, `Limits` and cancellation. `with_keep_cr(true)` retains
+CRLF, and `with_allow_bare(true)` also accepts a message without an initial envelope. Such bare
+input stays one message even when its body contains envelope-shaped lines. Input bytes, message
+count, individual normalized messages and total output each have independent bounds. Errors return
+no partial message list and perform no filesystem operations.
+
+This layer does not decode headers, MIME or transfer encodings, remove signatures, or extract a
+standalone patch. Maildir traversal, numbered output files and publication stay caller-owned.
