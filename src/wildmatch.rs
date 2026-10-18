@@ -1,6 +1,9 @@
-//! Byte glob matching for include conditions; bounded dynamic programming avoids backtracking.
+//! Byte glob matching shared by config include conditions, retention patterns and pathspecs.
+//!
+//! Bounded dynamic programming avoids backtracking. With `pathname` set, `*` and `?` stop at `/`
+//! and `**` matches whole components; without it every wildcard crosses `/`.
 
-pub(super) fn matches(pattern: &[u8], text: &[u8], fold: bool, cells: usize) -> Option<bool> {
+pub(crate) fn matches(pattern: &[u8], text: &[u8], fold: bool, cells: usize) -> Option<bool> {
     matches_with_pathname(pattern, text, fold, cells, true)
 }
 
@@ -13,7 +16,7 @@ pub(crate) fn matches_without_pathname(pattern: &[u8], text: &[u8], cells: usize
     reason = "rows have text.len() + 1 cells indexed by 0..=text.len(); pattern positions stay \
               below pattern.len(), and class_end returns an in-bounds `]`"
 )]
-fn matches_with_pathname(
+pub(crate) fn matches_with_pathname(
     pattern: &[u8],
     text: &[u8],
     fold: bool,
@@ -74,18 +77,9 @@ fn matches_with_pathname(
                 for i in 1..=text.len() {
                     if previous[i - 1] && (!pathname || text[i - 1] != b'/') {
                         // Git rejects the whole pattern when a class names an unknown set.
-                        let byte = text[i - 1];
-                        let Some(mut matched) = class(members, byte) else {
+                        let Some(matched) = class(members, text[i - 1], fold) else {
                             return Some(false);
                         };
-                        if fold && !matched {
-                            let other = if byte.is_ascii_lowercase() {
-                                byte.to_ascii_uppercase()
-                            } else {
-                                byte.to_ascii_lowercase()
-                            };
-                            matched = class(members, other).unwrap_or(false);
-                        }
                         next[i] = matched;
                     }
                 }
@@ -155,7 +149,15 @@ fn named_class(pattern: &[u8]) -> Option<(&[u8], &[u8])> {
 }
 
 /// Tests `byte` against class members, or returns `None` for an unknown named class.
-fn class(mut pattern: &[u8], byte: u8) -> Option<bool> {
+///
+/// Folding follows Git: the text byte is lowered before comparison with a single member, so an
+/// uppercase member such as `[B]` never matches, while ranges and named classes accept either case.
+fn class(mut pattern: &[u8], byte: u8, fold: bool) -> Option<bool> {
+    let (lower, upper) = if fold {
+        (byte.to_ascii_lowercase(), byte.to_ascii_uppercase())
+    } else {
+        (byte, byte)
+    };
     let negative = matches!(pattern.first(), Some(b'!' | b'^'));
     if negative {
         pattern = pattern.get(1..).unwrap_or_default();
@@ -163,21 +165,7 @@ fn class(mut pattern: &[u8], byte: u8) -> Option<bool> {
     let mut found = false;
     while !pattern.is_empty() {
         if let Some((name, after)) = named_class(pattern) {
-            found |= match name {
-                b"alnum" => byte.is_ascii_alphanumeric(),
-                b"alpha" => byte.is_ascii_alphabetic(),
-                b"blank" => matches!(byte, b' ' | b'\t'),
-                b"cntrl" => byte.is_ascii_control(),
-                b"digit" => byte.is_ascii_digit(),
-                b"graph" => byte.is_ascii_graphic(),
-                b"lower" => byte.is_ascii_lowercase(),
-                b"print" => byte.is_ascii_graphic() || byte == b' ',
-                b"punct" => byte.is_ascii_punctuation(),
-                b"space" => byte.is_ascii_whitespace(),
-                b"upper" => byte.is_ascii_uppercase(),
-                b"xdigit" => byte.is_ascii_hexdigit(),
-                _ => return None,
-            };
+            found |= named(name, lower)? || named(name, upper)?;
             pattern = after;
             continue;
         }
@@ -189,13 +177,32 @@ fn class(mut pattern: &[u8], byte: u8) -> Option<bool> {
             && let Some(range) = pattern.strip_prefix(b"-")
             && let Some((last, rest)) = class_byte(range)
         {
-            found |= first <= byte && byte <= last;
+            found |= (first..=last).contains(&lower) || (first..=last).contains(&upper);
             pattern = rest;
         } else {
-            found |= first == byte;
+            found |= first == lower;
         }
     }
     Some(found != negative)
+}
+
+/// Tests `byte` against a named class such as `alpha`, or returns `None` for an unknown name.
+fn named(name: &[u8], byte: u8) -> Option<bool> {
+    Some(match name {
+        b"alnum" => byte.is_ascii_alphanumeric(),
+        b"alpha" => byte.is_ascii_alphabetic(),
+        b"blank" => matches!(byte, b' ' | b'\t'),
+        b"cntrl" => byte.is_ascii_control(),
+        b"digit" => byte.is_ascii_digit(),
+        b"graph" => byte.is_ascii_graphic(),
+        b"lower" => byte.is_ascii_lowercase(),
+        b"print" => byte.is_ascii_graphic() || byte == b' ',
+        b"punct" => byte.is_ascii_punctuation(),
+        b"space" => byte.is_ascii_whitespace(),
+        b"upper" => byte.is_ascii_uppercase(),
+        b"xdigit" => byte.is_ascii_hexdigit(),
+        _ => return None,
+    })
 }
 
 /// Splits one class member, unescaping a backslash that has a following byte.
@@ -243,5 +250,18 @@ mod tests {
     #[case::escaped_close_leaves_class_open(b"[a-\\]", b"a", false)]
     fn glob(#[case] pattern: &[u8], #[case] text: &[u8], #[case] expected: bool) {
         assert_eq!(matches(pattern, text, false, 10000), Some(expected));
+    }
+
+    // Observed with `git ls-files -- ':(icase)<pattern>'` over index paths `ab`, `aB`, `Ab`, `AB`.
+    #[rstest]
+    #[case::lower_member(b"a[b]", b"AB", true)]
+    #[case::upper_member_never_matches(b"a[B]", b"aB", false)]
+    #[case::upper_range(b"a[A-Z]", b"ab", true)]
+    #[case::lower_range(b"a[a-z]", b"AB", true)]
+    #[case::upper_class(b"[[:upper:]]b", b"ab", true)]
+    #[case::lower_class(b"a[[:lower:]]", b"AB", true)]
+    #[case::literal(b"Ab", b"aB", true)]
+    fn folded(#[case] pattern: &[u8], #[case] text: &[u8], #[case] expected: bool) {
+        assert_eq!(matches(pattern, text, true, 10000), Some(expected));
     }
 }

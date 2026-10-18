@@ -197,6 +197,7 @@ pub mod objects;
 pub mod pack;
 mod packet;
 pub mod patch;
+pub mod pathspec;
 mod peel;
 pub mod push;
 pub mod refs;
@@ -214,6 +215,7 @@ pub mod tag;
 pub mod transport;
 pub mod tree;
 mod tree_compare;
+mod wildmatch;
 pub mod workflow;
 
 pub mod tree_diff;

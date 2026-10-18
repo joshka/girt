@@ -152,7 +152,11 @@ A **pathspec** is the mini-language commands use to choose paths: `src/*.rs`, `'
 add and checkout all take pathspecs, so they need one shared implementation that matches identically
 everywhere.
 
-<GirtStatus status="not-yet" href="https://github.com/joshka/girt/issues/495" />
+A spec without wildcards names a path and everything under it on component boundaries, so `src`
+selects `src/a.rs` but `sr` selects nothing. Without `:(glob)` magic, `*` matches `/` too: `*.rs`
+selects `src/sub/b.rs`. With it, `*` stops at `/` and `**` spans directories.
+
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/495">Parsing and matching for top, exclude, icase, literal and glob are in `girt::pathspec`; no `attr:` magic, and status, diff and log do not take pathspecs yet.</GirtStatus>
 
 ## Commit message cleanup and trailers
 
