@@ -56,6 +56,8 @@ pub(super) struct Finisher {
     in_flight: usize,
     /// Batches sent but not yet merged.
     pending: usize,
+    /// Worker threads, when objects are finished in parallel.
+    threads: Option<usize>,
 }
 
 /// Runs `body` with a finisher whose workers live until `body` returns.
@@ -78,6 +80,7 @@ pub(super) fn with_finisher<R>(
             batch_bytes: 0,
             in_flight: 0,
             pending: 0,
+            threads: None,
         });
     }
     let (jobs, queue) = std::sync::mpsc::sync_channel::<Job>(threads * 4);
@@ -116,6 +119,7 @@ pub(super) fn with_finisher<R>(
             batch_bytes: 0,
             in_flight: 0,
             pending: 0,
+            threads: Some(threads),
         };
         let result = body(&mut finisher);
         // Closing the queue stops idle workers; the scope joins them.
@@ -126,6 +130,11 @@ pub(super) fn with_finisher<R>(
 }
 
 impl Finisher {
+    /// The worker threads this import may use, or `None` when it runs on one thread.
+    pub fn threads(&self) -> Option<usize> {
+        self.threads
+    }
+
     /// Hashes and describes `object`, decoded at `position`, now or on a worker.
     ///
     /// Deferred objects keep a placeholder identity until merged; they must already be marked

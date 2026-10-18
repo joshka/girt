@@ -1,5 +1,6 @@
 //! Index received packs on disk, retaining metadata and a bounded decoded delta-base cache.
 mod finish;
+mod resolve;
 
 use std::collections::VecDeque;
 use std::fs::File;
@@ -408,6 +409,15 @@ impl IndexedObjects {
                 Base::Id(id) => waiting.entry(id).or_default().push(p),
             }
         }
+        // Without REF_DELTA entries every base is in this pack and found by position, so whole
+        // delta trees can be resolved independently.
+        if waiting.is_empty()
+            && let Some(threads) = finisher.threads()
+        {
+            finisher.finish(self)?;
+            self.resolve_parallel(&children, ready.into(), remaining, observer, threads)?;
+            return Ok(false);
+        }
         // A REF_DELTA names its base by identity, so bases need theirs before they are popped.
         // OFS_DELTA bases are found by position, so their identities can arrive later.
         if !waiting.is_empty() {
@@ -698,25 +708,12 @@ impl IndexedObjects {
     }
 
     fn inflate_entry(&self, entry: &ReceivedEntry, cancel: &AtomicBool) -> Result<Vec<u8>, Error> {
-        // One positioned read covers the header and stream; the CRC spans both.
-        let raw = self.bytes(entry.offset, entry.end)?;
-        let (header, mut stream) = raw.split_at(entry.start - entry.offset);
-        let mut crc = crc32fast::Hasher::new();
-        crc.update(header);
-        let (data, consumed) = inflate_stream(
-            &mut stream,
-            entry.length,
-            &mut crc,
-            cancel,
+        inflate_at(
+            &self.file,
             self.pack.path().expect("indexed packs are file backed"),
-        )?;
-        if consumed != entry.end - entry.start {
-            return Err(Error::Corrupt("packed entry length or trailing data"));
-        }
-        if crc.finalize() != entry.crc {
-            return Err(Error::Corrupt("entry CRC"));
-        }
-        Ok(data)
+            entry,
+            cancel,
+        )
     }
 
     fn io(&self, source: std::io::Error) -> Error {
@@ -736,6 +733,34 @@ impl IndexedObjects {
             .map_err(|source| self.io(source))?;
         Ok(bytes)
     }
+}
+
+/// Inflates one received entry from `file`, checking its exact stream length and CRC.
+fn inflate_at(
+    file: &File,
+    path: &std::path::Path,
+    entry: &ReceivedEntry,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, Error> {
+    // One positioned read covers the header and stream; the CRC spans both.
+    let mut raw = vec![0; entry.end - entry.offset];
+    crate::pack::read_exact_at(file, entry.offset as u64, &mut raw).map_err(|source| {
+        Error::Path {
+            path: path.to_owned(),
+            source,
+        }
+    })?;
+    let (header, mut stream) = raw.split_at(entry.start - entry.offset);
+    let mut crc = crc32fast::Hasher::new();
+    crc.update(header);
+    let (data, consumed) = inflate_stream(&mut stream, entry.length, &mut crc, cancel, path)?;
+    if consumed != entry.end - entry.start {
+        return Err(Error::Corrupt("packed entry length or trailing data"));
+    }
+    if crc.finalize() != entry.crc {
+        return Err(Error::Corrupt("entry CRC"));
+    }
+    Ok(data)
 }
 
 fn fetch_read_error(error: Error) -> FetchError {
@@ -1764,5 +1789,130 @@ mod git_format_tests {
             std::fs::read(repo.git_dir().join("independent.idx")).unwrap(),
             imported.index
         );
+    }
+
+    /// A Git pack of `families` delta chains, each `variants` blobs long, with offset deltas.
+    fn chained_pack(repo: &Repository, families: usize, variants: usize) -> Vec<u8> {
+        let loose = repo.loose_objects();
+        let mut names = Vec::new();
+        for family in 0..families {
+            let mut state = 0x9e37_79b9_7f4a_7c15_u64 ^ family as u64;
+            let mut bytes: Vec<u8> = (0..4096 + family * 1000)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    state as u8
+                })
+                .collect();
+            for variant in 0..variants {
+                let at = (variant * 37) % bytes.len();
+                bytes[at] ^= 0x5a;
+                bytes.extend_from_slice(format!("{family}/{variant}\n").as_bytes());
+                let id = loose.write_blob(&bytes).unwrap();
+                names.extend_from_slice(format!("{id}\n").as_bytes());
+            }
+        }
+        git(
+            repo.git_dir(),
+            &[
+                "pack-objects",
+                "--stdout",
+                "--no-reuse-object",
+                "--delta-base-offset",
+                "--window=12",
+                "--depth=40",
+            ],
+            &names,
+        )
+    }
+
+    fn import(format: ObjectFormat, pack: &[u8], limits: FetchLimits) -> Result<Imported, FetchError> {
+        let cancel = AtomicBool::new(false);
+        Imported::read_observed(
+            format,
+            pack,
+            &IdMap::default(),
+            limits,
+            &mut ValidationObserver::new(&cancel, &mut |_| {}),
+        )
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn parallel_delta_resolution_matches_sequential(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
+        let pack = chained_pack(&repo, 40, 30);
+        let sequential = FetchLimits::default().with_max_threads(1);
+        let parallel = FetchLimits::default().with_max_threads(4);
+        let one = import(format, &pack, sequential).unwrap();
+        let many = import(format, &pack, parallel).unwrap();
+        let resolved = |imported: &Imported| -> Vec<_> {
+            imported
+                .objects
+                .entries
+                .iter()
+                .map(|entry| entry.resolved)
+                .collect()
+        };
+        assert!(
+            one.objects
+                .entries
+                .iter()
+                .any(|entry| entry.resolved.unwrap().1 > 1),
+            "the fixture must contain delta chains"
+        );
+        assert_eq!(resolved(&many), resolved(&one));
+        assert_eq!(many.index, one.index);
+        assert_eq!(many.checksum, one.checksum);
+        let cancel = AtomicBool::new(false);
+        for entry in &one.objects.entries {
+            let id = entry.resolved.unwrap().0;
+            assert_eq!(
+                many.objects.get(&id, &cancel).unwrap().unwrap().data(),
+                one.objects.get(&id, &cancel).unwrap().unwrap().data()
+            );
+        }
+
+        // Limits fail both ways alike.
+        let deltas = one
+            .objects
+            .entries
+            .iter()
+            .filter(|entry| !matches!(entry.base, Base::Kind(_)))
+            .count();
+        let steps = one.objects.entries.len() + deltas;
+        for limits in [sequential, parallel] {
+            assert!(import(format, &pack, limits.with_max_resolution_steps(steps)).is_ok());
+            assert!(matches!(
+                import(format, &pack, limits.with_max_resolution_steps(steps - 1)),
+                Err(FetchError::Limit("delta resolution steps"))
+            ));
+            assert!(matches!(
+                import(format, &pack, limits.with_max_delta_depth(1)),
+                Err(FetchError::Limit("delta depth"))
+            ));
+        }
+
+        // Damage inside a delta entry's stream fails both ways.
+        let deepest = one
+            .objects
+            .entries
+            .iter()
+            .max_by_key(|entry| entry.resolved.unwrap().1)
+            .unwrap();
+        let mut damaged = pack.clone();
+        damaged[deepest.end - 2] ^= 0xff;
+        let trailer = damaged.len() - format.digest_len();
+        let checksum = format.checksum(&damaged[..trailer]);
+        damaged[trailer..].copy_from_slice(checksum.as_bytes());
+        for limits in [sequential, parallel] {
+            assert!(matches!(
+                import(format, &damaged, limits),
+                Err(FetchError::Pack(_))
+            ));
+        }
     }
 }
