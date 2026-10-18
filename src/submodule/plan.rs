@@ -69,9 +69,9 @@ pub enum UpdateMethod {
 /// The URL comes from initialized effective configuration. Checkout detaches HEAD; rebase and
 /// merge preserve the child's branch; none leaves it unchanged. The plan does not establish that
 /// objects are present, content is clean, paths are unaliased, or a write is safe. Fetch/clone,
-/// checkout filters and reference publication belong to explicit [`Self::apply`]. Fetch/clone and
-/// recursive execution are not yet available.
-/// Derived `Debug` includes the unredacted URL and command text.
+/// checkout filters and reference publication belong to explicit [`Self::apply`].
+/// [`Self::populate`] additionally authorizes missing-child clone/fetch; neither operation
+/// recurses. Derived `Debug` includes the unredacted URL and command text.
 #[derive(Clone, Debug)]
 pub struct UpdatePlan {
     name: Vec<u8>,
@@ -80,7 +80,8 @@ pub struct UpdatePlan {
     url: Vec<u8>,
     method: UpdateMethod,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(super) expected: [Values; 2],
+    pub(super) expected: [Values; 3],
+    shallow: bool,
 }
 
 impl UpdatePlan {
@@ -102,6 +103,13 @@ impl UpdatePlan {
     /// Initialized effective URL, preserved verbatim; this can contain credentials.
     pub fn url(&self) -> &[u8] {
         &self.url
+    }
+
+    /// Effective shallow-clone recommendation, after user configuration overrides metadata.
+    ///
+    /// Population explicitly refuses a new clone when true until shallow clone is supported.
+    pub fn shallow(&self) -> bool {
+        self.shallow
     }
 
     /// Update behavior after effective configuration overrides `.gitmodules`.
@@ -244,6 +252,10 @@ impl Definition {
             method,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             expected: update_values(config, self.name()),
+            shallow: config
+                .boolean("submodule", Some(self.name()), "shallow")
+                .map_err(|_| PlanError::InvalidSetting("shallow"))?
+                .unwrap_or(self.shallow() == Some(true)),
         })
     }
 }
@@ -327,9 +339,10 @@ pub(super) fn init_values(config: &Config, name: &[u8]) -> [Values; 4] {
     ]
 }
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(super) fn update_values(config: &Config, name: &[u8]) -> [Values; 2] {
+pub(super) fn update_values(config: &Config, name: &[u8]) -> [Values; 3] {
     [
         values(config, Some(name), "url"),
         values(config, Some(name), "update"),
+        values(config, Some(name), "shallow"),
     ]
 }

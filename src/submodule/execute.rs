@@ -250,6 +250,18 @@ impl UpdatePlan {
         cancel: &AtomicBool,
         after_checkout: impl FnOnce(),
     ) -> Result<UpdateReport, UpdateError> {
+        self.checkout_initial(parent, options, cancel, false, after_checkout)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn checkout_initial(
+        &self,
+        parent: &Repository,
+        options: &UpdateOptions,
+        cancel: &AtomicBool,
+        initial: bool,
+        after_checkout: impl FnOnce(),
+    ) -> Result<UpdateReport, UpdateError> {
         use crate::refs::{Dereference, Expected, RefEdit, RefName, Reflog, Target};
         let fresh = parent.reopen().map_err(prepare)?;
         if !same_layout(parent, &fresh) {
@@ -284,7 +296,7 @@ impl UpdatePlan {
         let refs = child.references().map_err(prepare)?;
         let stored = refs.read(&RefName::HEAD).map_err(prepare)?;
         let head = refs.resolve(&RefName::HEAD).map_err(prepare)?;
-        if head.id == Some(self.recorded()) {
+        if !initial && head.id == Some(self.recorded()) {
             return Ok(UpdateReport::default());
         }
         if !child
@@ -334,6 +346,7 @@ impl UpdatePlan {
         );
         let baseline = head
             .id
+            .filter(|_| !initial)
             .map(|id| objects.read_commit_with(id, read))
             .transpose()
             .map_err(prepare)?
@@ -382,7 +395,7 @@ impl UpdatePlan {
     }
 }
 
-fn same_layout(original: &Repository, fresh: &Repository) -> bool {
+pub(super) fn same_layout(original: &Repository, fresh: &Repository) -> bool {
     original.git_dir() == fresh.git_dir()
         && original.common_dir() == fresh.common_dir()
         && original.worktree() == fresh.worktree()

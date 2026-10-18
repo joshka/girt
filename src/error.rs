@@ -123,6 +123,8 @@ from_domain_errors! {
     crate::submodule::PlanError,
     crate::submodule::InitError,
     crate::submodule::UpdateError,
+    crate::submodule::PopulateError,
+    crate::submodule::PopulateFailure,
     crate::apply::Error,
     crate::apply::IndexError,
     crate::mailmap::Error,
