@@ -47,6 +47,15 @@ compare worktree/blob/file precedence and the bare `HEAD:.mailmap` default. Orac
 inherited Git environment variables and isolate system/global configuration. See the
 [mailmap guide](mailmap.md) for presentation policy and configured-path limitations.
 
+## Notes
+
+`tests/notes_git.rs` creates original SHA-1 and SHA-256 repositories with isolated Git configuration
+and fixed identities/dates. Add, append, copy and remove compare complete notes commit IDs and tree
+IDs, including operation messages and parent links. Nested notes trees generated through girt are
+read by both `Notes::read` and `git notes show`, at zero, one, two, three and maximal two-digit
+fanout depths. Imported fanout preparation is explicitly refused. See the [notes guide](notes.md)
+for literal-byte input policy, bounds and remaining merge/rewrite/layout work.
+
 ## Git Capability Audit: Storage
 
 The storage audit uses Git 2.56.0 on macOS and original temporary fixtures. Git oracle helpers clear

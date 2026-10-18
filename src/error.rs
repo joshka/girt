@@ -106,6 +106,7 @@ impl<E: StdError + Send + Sync + 'static> From<crate::commit::SignError<E>> for 
 from_domain_errors! {
     crate::apply::Error,
     crate::mailmap::Error,
+    crate::notes::Error,
     crate::replay::Error,
     crate::replay::RebaseError,
     crate::replay::AutosquashError,
