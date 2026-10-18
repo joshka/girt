@@ -8,18 +8,26 @@ edit local configuration. `remote list`, `add` and `show` manage endpoint config
 `remote heads` queries advertised references without fetching. Run `girt help config` and
 `girt help remote` for flags.
 
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
+
 ## Read an effective value
 
-Use the repository from [Comparing with Git](/girt/cli/comparing-with-git/).
+Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
 ```text
 $ girt config get core.bare
 false
-$ git config --get core.bare
-false
 ```
 
-Both report a working-tree repository. The corresponding Git commands are `git config --list`,
+`false` means the repository is not bare. `config get` returns the last effective value after
+configuration sources have been combined; use `config list --show-origin` to see where entries came
+from.
+
+The corresponding Git commands are `git config --get`, `git config --list`,
 `git config --local <key> <value>`, `git config --local --unset-all <key>`, `git remote -v`,
 `git remote add` and `git ls-remote`. `remote show` prints configured URLs and refspecs; it does not
 perform all the queries of `git remote show`.

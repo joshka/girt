@@ -8,21 +8,23 @@ description: Resolve revisions and inspect stored Git objects.
 objects and `count` summarizes storage. `tree list` lists entries, optionally recursively. Run
 `girt help object` and `girt help tree list` for flags.
 
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
+
 ## Inspect a committed file
 
-Use the repository from [Comparing with Git](/girt/cli/comparing-with-git/).
+Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
 <!-- markdownlint-disable MD010 -->
 
 ```text
 $ girt tree list HEAD
 100644 blob 4cb29ea38f70d7c61b2a3a25b02e3bdf44905402	notes.txt
-$ git ls-tree HEAD
-100644 blob 4cb29ea38f70d7c61b2a3a25b02e3bdf44905402	notes.txt
 $ girt object info HEAD:notes.txt
 4cb29ea38f70d7c61b2a3a25b02e3bdf44905402 blob 14
-$ git cat-file -s HEAD:notes.txt
-14
 ```
 
 <!-- markdownlint-enable MD010 -->

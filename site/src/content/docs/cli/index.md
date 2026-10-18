@@ -3,10 +3,19 @@ title: CLI overview
 description: Use the girt CLI to exercise the library on real repositories.
 ---
 
-`girt` is a command-line front end to the library. Use it to look inside a repository, try an
-operation before writing code, or compare girt with Git on real data. Running the two tools side by
-side gives you a direct check of the library's behavior and a starting point for a Rust program. It
-is not a replacement for Git: each command exposes what the library supports today.
+`girt` is the command-line front end to the girt library. Use it to inspect repositories, try
+Git-like operations without writing Rust, and see how the library APIs fit together.
+
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
+
+The library reimagines Git operations through its own API. The CLI follows those concepts, with
+names such as `object`, `tree` and `ref`, rather than copying every Git command name or parameter.
+There is no stability goal for the CLI's names or arguments: they can evolve as the library
+develops.
 
 ## Install
 
@@ -18,9 +27,9 @@ The binary is called `girt`. It includes the HTTP and SSH transports and the `tr
 
 ## Explore the commands
 
-Start with [Comparing with Git](/girt/cli/comparing-with-git/) to create a small repository and
-compare observable results. The command pages use that repository and connect each operation to its
-library API:
+Start with [Getting started with the CLI](/girt/cli/getting-started/) to create a small repository
+and read its committed files. The command pages use that repository and connect each operation to
+its library API:
 
 - [Repository](/girt/cli/repository/): inspect layout and initialize storage.
 - [Objects and trees](/girt/cli/objects-and-trees/): resolve, hash and read stored data.
@@ -34,7 +43,7 @@ library API:
 
 Run `girt help <command>` for arguments, effects and limits. Global `-C <path>` runs in another
 directory, `--color auto|always|never` controls color, `--git` selects the available Git-compatible
-output, and `-q` suppresses progress. Default output uses full IDs and stable record fields; there
+output, and `-q` suppresses progress. Default output uses full IDs and line-oriented records; there
 is no global JSON output mode. See the output and logging sections below for the remaining flags.
 
 ## Shell completion
@@ -70,16 +79,14 @@ man girt-diff
 
 ## Output and `--git`
 
-Default output is line-oriented: full object IDs, one record per line and a stable field order, so
-it works in pipelines. `--git` selects Git-compatible output where the command supports it:
+Default output uses full object IDs and line-oriented records suitable for inspection and pipelines.
+The command pages explain the fields and show real output. `--git` selects Git-compatible output
+where a command supports it, for testing the library against Git. It does not change command names
+or make Git's full parameter syntax available.
 
-```sh
-diff <(girt --git tree list --recursive HEAD) <(git ls-tree -r HEAD)
-hyperfine 'girt object batch --check < ids' 'git cat-file --batch-check < ids'
-```
-
-The [CLI README](https://github.com/joshka/girt/blob/main/girt-cli/README.md) maps every command to
-its Git equivalent, and a parity test checks those pairs against `git` on every change.
+The [CLI README](https://github.com/joshka/girt/blob/main/girt-cli/README.md) has a command map.
+[Comparing with Git](/girt/cli/comparing-with-git/) describes optional byte comparisons and
+performance experiments.
 
 ## Color
 

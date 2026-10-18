@@ -7,24 +7,27 @@ description: Compare trees, detect renames and copies and print patches.
 renames, `--copies` also considers copies from modified files, and `--patch` writes a unified diff.
 Run `girt help diff` for the supported combinations.
 
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
+
 ## Find changed paths
 
-Use the repository from [Comparing with Git](/girt/cli/comparing-with-git/).
-
-<!-- markdownlint-disable MD010 -->
+Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
 ```text
-$ girt --git diff HEAD~1 HEAD
-M	notes.txt
-$ git diff-tree --no-commit-id -r --name-status HEAD~1 HEAD
-M	notes.txt
+$ girt diff HEAD~1 HEAD
+M notes.txt
 ```
 
-<!-- markdownlint-enable MD010 -->
+`M` identifies a modified file. The old revision is the parent of HEAD; the new revision is HEAD.
+Add `--patch` to see the changed lines, or `--renames` to distinguish renamed paths from separate
+additions and deletions.
 
-`M` identifies the modified file. Use `git diff-tree -M` for the rename comparison and
-`git diff HEAD~1 HEAD` for the patch equivalent. Default girt names output separates fields with
-spaces; `--git` uses Git's tab-separated form.
+The corresponding Git operations are `git diff-tree --no-commit-id -r --name-status HEAD~1 HEAD` for
+names, its `-M` option for rename detection, and `git diff HEAD~1 HEAD` for patches.
 
 ## Library API and limits
 

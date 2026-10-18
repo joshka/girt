@@ -9,6 +9,10 @@ runs on it. Performance and fidelity to Git are the priorities.
 - Preserve Git's formats and semantics exactly for supported features. Reproducing Git's CLI
   behavior or another library's API is not the goal.
 - Report unsupported cases explicitly with an error; never approximate them silently.
+- CLI documentation teaches girt's commands, output and library APIs. Keep Git equivalents as
+  supporting references rather than making output parity the learning path. The CLI is an
+  experimental surface for exercising operations and comparing performance and bytes with Git; its
+  names and parameters have no stability goal because the library is the core deliverable.
 - Data loss, corruption, unsafe mutation and failures of core required interoperability are
   blockers. Other edge-case differences may ship as explicit refusals or documented limitations when
   fixing them would materially delay the task; open an issue for each one.

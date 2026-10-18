@@ -7,32 +7,40 @@ description: Inspect repository layout and initialize Git storage.
 `init` creates a new directory containing a bare or working-tree repository; it refuses an existing
 destination and does not read Git templates. Use `girt help init` for format and backend choices.
 
+:::caution[Experimental CLI]
+The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
+testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
+may change; the library is the core deliverable.
+:::
+
 ## Inspect the layout
 
-Use the repository from [Comparing with Git](/girt/cli/comparing-with-git/).
+Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
-These commands query the same layout. The absolute top-level path below is shown as
-`/path/to/cli-example`; the other fields are the Git directory, common directory, bare flag and
-object format.
+`repo info` labels the repository's format, storage paths and current state. Absolute paths below
+are shortened to `/path/to/cli-example`.
 
 ```text
-$ girt --git repo info
-.git
-.git
-/path/to/cli-example
-false
-sha1
-$ git rev-parse --git-dir --git-common-dir --show-toplevel --is-bare-repository --show-object-format
-.git
-.git
-/path/to/cli-example
-false
-sha1
+$ girt repo info
+object-format: sha1
+ref-backend: files
+bare: false
+git-dir: /path/to/cli-example/.git
+common-dir: /path/to/cli-example/.git
+object-dir: /path/to/cli-example/.git/objects
+worktree: /path/to/cli-example
+shallow: false
+operation: none
 ```
 
-Without `--git`, `repo info` labels each field and includes more state. Git's `rev-parse` has no
-single equivalent for all of those fields. The initialization equivalent is `git init`, with
-matching `--bare`, `--object-format` and `--initial-branch` options.
+`bare: false` means this repository has a working tree. `shallow: false` means no shallow boundary
+is recorded, and `operation: none` means no in-progress operation was found. The common directory
+owns shared storage; a linked worktree can have a separate Git directory.
+
+Git's
+`rev-parse --git-dir --git-common-dir --show-toplevel --is-bare-repository --show-object-format`
+queries corresponding layout fields. Initialization corresponds to `git init`; girt exposes its own
+options for the object format, reference backend and initial branch.
 
 ## Library API
 

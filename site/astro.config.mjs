@@ -100,7 +100,7 @@ export default defineConfig({
           label: 'Command-line tool',
           items: [
             { label: 'Overview', slug: 'cli' },
-            { label: 'Comparing with Git', slug: 'cli/comparing-with-git' },
+            { label: 'Getting started', slug: 'cli/getting-started' },
             { label: 'Repository', slug: 'cli/repository' },
             { label: 'Objects and trees', slug: 'cli/objects-and-trees' },
             { label: 'References', slug: 'cli/references' },
