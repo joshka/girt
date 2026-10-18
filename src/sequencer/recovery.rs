@@ -74,10 +74,18 @@ impl Recovery {
     /// Returns [`Error`] for stale state, unexpected HEAD/location, lock conflicts, I/O or partial
     /// publication. Earlier caller-owned checkout/reference effects remain on any metadata failure.
     pub fn publish_metadata(&self, repository: &crate::Repository) -> Result<(), Error> {
+        self.publish_metadata_at(repository, Some(self.destination))
+    }
+
+    pub(super) fn publish_metadata_at(
+        &self,
+        repository: &crate::Repository,
+        destination: Option<ObjectId>,
+    ) -> Result<(), Error> {
         use std::io::Write;
         if repository.git_dir() != self.state.git_dir
             || repository.object_format() != self.state.format
-            || repository.head()?.id != Some(self.destination)
+            || repository.head()?.id != destination
         {
             return Err(Error::Changed);
         }

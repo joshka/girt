@@ -13,6 +13,8 @@
 //! Repository-aware observation includes `ORIG_HEAD` from files
 //! or the private reftable stack, and metadata publication rechecks that identity. Callers still
 //! own checkout, object installation, conditional refs/reflogs and exclusive operation access.
+//! Final mail on a still-unborn branch uses [`State::prepare_unborn_am`] and
+//! [`UnbornAmRecovery`], whose optional destination explicitly preserves an unborn branch.
 //!
 //! ```no_run
 //! use girt::refs::{Dereference, RefEdit, RefName, Reflog};
@@ -66,6 +68,7 @@ use std::path::PathBuf;
 use crate::replay::todo::{Todo, TodoLimits};
 
 mod am;
+pub use am::UnbornAmRecovery;
 mod recovery;
 mod state;
 use crate::{ObjectFormat, ObjectId};

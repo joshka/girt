@@ -389,3 +389,17 @@ no missing-header or current-time fallback runs. Publish caller-owned checkout/H
 metadata, then stage the next patch explicitly. Git can finish with `am --continue` after staging.
 The publisher replaces `next` after the derived artifacts; failures still require rereading the
 reported partial state.
+
+### Recover final mail on an unborn branch
+
+Use `sequencer::State::prepare_unborn_am` when the stopped operation still has no HEAD commit. It
+requires absent original HEAD, an exactly empty abort-safety checkpoint and a symbolic unborn
+branch. `UnbornAmRecovery::destination` returns `Some(root_commit)` for continue or `None` for
+skip/abort. Prepare the root commit with `am::State::prepare_commit` and no parent, install it, and
+conditionally create the branch through a dereferencing HEAD transaction. Skip/abort keep the branch
+unborn; restore any caller-owned index/worktree state explicitly before publication.
+
+`UnbornAmRecovery::publish_metadata` checks the captured symbolic branch as well as destination,
+original-HEAD absence and exact metadata before the existing retirement path runs. Concurrent branch
+creation or retargeting is refused. Queued unborn progression and abort after earlier commits remain
+unsupported. The same exclusive-ownership and partial-publication rules apply.
