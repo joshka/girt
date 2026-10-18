@@ -38,6 +38,18 @@ historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec 
 [R06 evidence](evidence/r06.md) records the native Linux/macOS/Windows refresh for these increments,
 including the selected Windows scope and exact tested revision.
 
+## Reachability bitmap files
+
+`girt::bitmap` reads bitmap v1 and reverse-index v1 files for SHA-1 and SHA-256 packs and
+multi-pack indexes. Git CLI fixtures compare decoded type maps and selected-commit closures with
+`git rev-list --use-bitmap-index --objects`; `.rev` mappings translate bitmap order into ordinary
+index order. Git-written optional name-hash caches and lookup tables are accepted. XOR dependencies
+are decoded under an expansion budget. Unsupported pseudo-merge extensions are refused explicitly.
+
+Checksums and structure establish association with an inventory, not the truth of graph
+reachability claims. Repository queries and bitmap writing remain tracked in
+[the bitmap issue](https://github.com/joshka/girt/issues/518). See [the reader guide](bitmaps.md).
+
 ## Multi-pack indexes
 
 The MIDX fixtures in `tests/multi_pack_index.rs` use isolated Git configuration and original pack
