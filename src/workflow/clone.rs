@@ -31,6 +31,15 @@ pub struct CloneOptions {
 
     /// Working tree and index bounds.
     pub checkout_limits: crate::checkout::Limits,
+
+    /// Whether checkout converts files through the cloned repository's filters, and whether
+    /// those may run filter programs. `None` writes raw blob bytes.
+    ///
+    /// The default, `Some(Commands::Run)`, converts as `git clone` does and runs the
+    /// `filter.<name>.clean`, `smudge` and `process` commands configured in local, global or
+    /// system configuration, chosen per path by the cloned repository's `.gitattributes`, such
+    /// as Git LFS. Use `Some(Commands::Refuse)` to convert line endings without running programs.
+    pub filter_commands: Option<crate::filter::Commands>,
 }
 
 impl Default for CloneOptions {
@@ -42,6 +51,7 @@ impl Default for CloneOptions {
             fetch_limits: FetchLimits::default(),
             update_limits: FetchUpdateLimits::default(),
             checkout_limits: crate::checkout::Limits::default(),
+            filter_commands: Some(crate::filter::Commands::Run),
         }
     }
 }
@@ -58,6 +68,16 @@ impl CloneOptions {
     #[must_use]
     pub fn with_checkout(mut self, checkout: bool) -> Self {
         self.checkout = checkout;
+        self
+    }
+
+    /// Sets [`Self::filter_commands`].
+    #[must_use]
+    pub fn with_filter_commands(
+        mut self,
+        filter_commands: Option<crate::filter::Commands>,
+    ) -> Self {
+        self.filter_commands = filter_commands;
         self
     }
 
@@ -154,7 +174,8 @@ pub enum CloneError {
 /// and [`NoCallbacks`]. Local relative sources and destinations resolve against the current
 /// directory. Local path arguments become absolute without resolving symlinks; file URLs and
 /// rewritten aliases retain their spelling for subsequent fetches. URL rewrites, protocol policy,
-/// credentials and proxies follow [`fetch`].
+/// credentials and proxies follow [`fetch`]. Checkout runs configured filter programs as
+/// `git clone` does; use [`clone_with`] and [`CloneOptions::with_filter_commands`] to refuse them.
 ///
 /// # Errors
 ///
@@ -200,14 +221,19 @@ pub fn clone(url: &str, destination: impl AsRef<Path>) -> Result<CloneOutcome, C
 /// origin and branch tracking config, then HEAD are published by the core clone; checkout then
 /// writes files and publishes the index. These phases are not one atomic transaction.
 ///
-/// Checkout inherits [`crate::checkout`]'s Linux/macOS scope, literal bytes, native modes and
-/// refusals. Other platforms refuse before transfer when checkout is requested; use
-/// [`CloneOptions::with_checkout`] with `false`, or bare mode. Unborn or unavailable HEAD skips
-/// checkout; a detached remote HEAD stays detached. A symbolic HEAD naming a missing branch in a
-/// nonempty remote is refused by the core planner. No origin/HEAD alias, shallow clone, filters,
-/// submodules, hardlinks or automatic rollback is provided. HTTP/SSH runtime constraints match
-/// [`fetch`]. Like fetch, this synchronous workflow has no cancellation or deadline; use the core
-/// APIs for caller-controlled cancellation.
+/// Checkout inherits [`crate::checkout`]'s Linux/macOS scope, native modes and refusals. With
+/// default options it converts files as `git clone` does, which includes **running filter
+/// programs**: the `filter.<name>.clean`, `smudge` and `process` commands in local, global or
+/// system configuration, chosen for each path by the cloned repository's `.gitattributes` (Git
+/// LFS installs one). When cloning content you do not trust, pass
+/// [`CloneOptions::with_filter_commands`] with `Some(Commands::Refuse)` to convert without running
+/// programs, or `None` to write literal blob bytes; see [`CloneOptions::filter_commands`]. Other
+/// platforms refuse before transfer when checkout is requested; use [`CloneOptions::with_checkout`]
+/// with `false`, or bare mode. Unborn or unavailable HEAD skips checkout; a detached remote HEAD
+/// stays detached. A symbolic HEAD naming a missing branch in a nonempty remote is refused by the
+/// core planner. No origin/HEAD alias, shallow clone, submodules, hardlinks or automatic rollback
+/// is provided. HTTP/SSH runtime constraints match [`fetch`]. Like fetch, this synchronous workflow
+/// has no cancellation or deadline; use the core APIs for caller-controlled cancellation.
 ///
 /// # Errors
 ///
@@ -352,7 +378,7 @@ pub fn clone_with(
             });
         }
     }
-    let checkout = checkout(&report, options, &cancel, callbacks);
+    let checkout = checkout(&report, options, environment, &cancel, callbacks);
     match checkout {
         Ok(checkout) => Ok(CloneOutcome {
             clone: report,
@@ -377,6 +403,7 @@ enum CheckoutError {
 fn checkout(
     report: &CloneReport,
     options: &CloneOptions,
+    environment: &Environment,
     cancel: &AtomicBool,
     callbacks: &mut dyn TransferCallbacks,
 ) -> Result<Option<crate::checkout::Report>, CheckoutError> {
@@ -396,13 +423,34 @@ fn checkout(
         Ok((repository, tree))
     })()
     .map_err(CheckoutError::Read)?;
-    tree.0
-        .checkout_tree_with_progress(
+    let (repository, tree) = tree;
+    let Some(commands) = options.filter_commands else {
+        return repository
+            .checkout_tree_with_progress(
+                None,
+                Some(tree),
+                options.checkout_limits,
+                cancel,
+                |done, total| callbacks.checkout_progress(done, total),
+            )
+            .map(Some)
+            .map_err(CheckoutError::Checkout);
+    };
+    let pipelines = (|| -> crate::Result<_> {
+        let baseline = repository.filters(environment, commands)?;
+        let target = repository.filters_for_checkout(environment, tree, commands)?;
+        Ok((baseline, target))
+    })();
+    let (mut baseline, mut target) = pipelines.map_err(CheckoutError::Read)?;
+    repository
+        .checkout_filtered_with_progress(
             None,
-            Some(tree.1),
+            Some(tree),
+            &mut baseline,
+            &mut target,
             options.checkout_limits,
             cancel,
-            |done, total| callbacks.checkout_progress(done, total),
+            &mut |done, total| callbacks.checkout_progress(done, total),
         )
         .map(Some)
         .map_err(CheckoutError::Checkout)

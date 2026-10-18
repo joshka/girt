@@ -133,13 +133,12 @@ impl Repository {
     /// [`Pipeline::to_worktree`]: line endings, `ident` and filter drivers such as Git LFS. Each
     /// baseline file must equal what `baseline_filters` converts its blob to, to count as clean.
     /// Load `baseline_filters` with [`Self::filters`], which reads the `.gitattributes` files
-    /// currently in the working tree, and `target_filters` with [`Self::filters_with_source`] and
-    /// [`DirectorySource::Tree`](crate::attributes::DirectorySource::Tree) of the target, as Git
-    /// reads the attributes of the index it checks out. Publication verifies the converted
-    /// bytes. Symlinks are never converted. All conversion happens during
-    /// preparation, before any working-tree change, so a failing required filter changes nothing;
-    /// converted contents of the target are held in memory until publication. Paths written
-    /// unconverted because a non-required driver failed are listed in
+    /// currently in the working tree, and `target_filters` with [`Self::filters_for_checkout`],
+    /// which reads the target's own attributes as Git reads those of the index it checks out.
+    /// Publication verifies the converted bytes. Symlinks are never converted. All conversion
+    /// happens during preparation, before any working-tree change, so a failing required filter
+    /// changes nothing; converted contents of the target are held in memory until publication.
+    /// Paths written unconverted because a non-required driver failed are listed in
     /// [`Report::unfiltered`](super::Report::unfiltered).
     ///
     /// Index entries keep zero cached stat words, so a later status reads and converts each file.
@@ -159,6 +158,33 @@ impl Repository {
         target_filters: &mut crate::filter::Pipeline,
         limits: Limits,
         cancel: &AtomicBool,
+    ) -> Result<Report, Failure> {
+        self.checkout_filtered_with_progress(
+            baseline,
+            target,
+            baseline_filters,
+            target_filters,
+            limits,
+            cancel,
+            &mut |_, _| {},
+        )
+    }
+
+    /// [`Self::checkout_tree_with_filters`], reporting progress as
+    /// [`Self::checkout_tree_with_progress`] does.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the public call's inputs plus progress"
+    )]
+    pub(crate) fn checkout_filtered_with_progress(
+        &self,
+        baseline: Option<ObjectId>,
+        target: Option<ObjectId>,
+        baseline_filters: &mut crate::filter::Pipeline,
+        target_filters: &mut crate::filter::Pipeline,
+        limits: Limits,
+        cancel: &AtomicBool,
+        progress: &mut dyn FnMut(u64, u64),
     ) -> Result<Report, Failure> {
         let _lock_operation = crate::locks::operation();
         for id in baseline.into_iter().chain(target) {
@@ -182,12 +208,19 @@ impl Repository {
                 limits,
                 cancel,
                 &mut |_, _| Ok(()),
-                &mut |_, _| {},
+                &mut |done, total| progress(done, total),
             )
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let _ = (baseline, target, baseline_filters, target_filters, limits);
+            let _ = (
+                baseline,
+                target,
+                baseline_filters,
+                target_filters,
+                limits,
+                progress,
+            );
             let cause = if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 super::Error::Cancelled
             } else {

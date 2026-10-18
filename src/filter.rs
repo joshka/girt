@@ -870,6 +870,31 @@ impl Repository {
         self.filters_with_source(environment, source, commands)
     }
 
+    /// Loads the conversions for writing `target` during a checkout, as Git chooses them.
+    ///
+    /// `GIT_ATTR_SOURCE` or `attr.tree` wins when set, as in [`Self::filters`]. Otherwise
+    /// attributes come from `target` itself rather than the working tree, because Git reads them
+    /// from the index it is checking out and the target's `.gitattributes` files are not written
+    /// yet. Pass the result as `target_filters` to [`Self::checkout_tree_with_filters`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::filters`].
+    pub fn filters_for_checkout(
+        &self,
+        environment: &Environment,
+        target: ObjectId,
+        commands: Commands,
+    ) -> Result<Pipeline, LoadError> {
+        let source = match self.attribute_source(environment)? {
+            crate::attributes::DirectorySource::Worktree => {
+                crate::attributes::DirectorySource::Tree(target)
+            }
+            chosen => chosen,
+        };
+        self.filters_with_source(environment, source, commands)
+    }
+
     /// Loads conversions as [`Self::filters`] does, reading per-directory `.gitattributes` from
     /// `source`.
     ///

@@ -399,11 +399,7 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
                 .filters(&context.environment, commands)
                 .wrap_err("loading attributes")?;
             let mut next = repository
-                .filters_with_source(
-                    &context.environment,
-                    girt::attributes::DirectorySource::Tree(target),
-                    commands,
-                )
+                .filters_for_checkout(&context.environment, target, commands)
                 .wrap_err("loading attributes")?;
             repository.checkout_tree_with_filters(
                 baseline,

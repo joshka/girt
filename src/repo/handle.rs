@@ -19,11 +19,13 @@ use crate::{Commit, LooseObjects, ObjectId, ObjectKind, Repository, Signature};
 ///
 /// # Filter programs
 ///
-/// [`Self::status`] and [`Self::switch`] convert files as `git` does, and that includes running
-/// filter programs: the `filter.<name>.clean`, `smudge` and `process` commands configured in
-/// local, global or system configuration, chosen for each path by the repository's
+/// [`Self::clone`], [`Self::status`] and [`Self::switch`] convert files as `git` does, and that
+/// includes running filter programs: the `filter.<name>.clean`, `smudge` and `process` commands
+/// configured in local, global or system configuration, chosen for each path by the repository's
 /// `.gitattributes`. Git LFS installs one of these. To convert line endings and `ident` without
-/// running any program, opt out; a path that needs a program then fails with an error:
+/// running any program, opt out; a path that needs a program then fails with an error. For a
+/// clone, pass [`CloneOptions::with_filter_commands`](workflow::CloneOptions::with_filter_commands)
+/// to [`workflow::clone_with`] instead:
 ///
 /// ```no_run
 /// use girt::Repo;
@@ -144,8 +146,10 @@ impl Repo {
 
     /// Clones a URL and checks out its default branch with [`workflow::clone()`].
     ///
-    /// Uses Git-default configuration and the process environment. For explicit options or
-    /// callbacks use [`workflow::clone_with`], then construct a handle with [`Self::new`].
+    /// Uses Git-default configuration and the process environment. Checkout converts files and
+    /// runs filter programs as `git clone` does; see [Filter programs](Self#filter-programs).
+    /// For explicit options or callbacks use [`workflow::clone_with`], then construct a handle
+    /// with [`Self::new`].
     ///
     /// # Errors
     ///
@@ -505,9 +509,9 @@ impl Repo {
         // The baseline is checked with the attributes now in the working tree, and the target is
         // written with its own, as Git reads them from the index it checks out.
         let mut current = repository.filters(&self.environment, self.filter_commands)?;
-        let mut next = repository.filters_with_source(
+        let mut next = repository.filters_for_checkout(
             &self.environment,
-            crate::attributes::DirectorySource::Tree(target_tree),
+            target_tree,
             self.filter_commands,
         )?;
         let checkout = repository.checkout_tree_with_filters(

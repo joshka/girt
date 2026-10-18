@@ -2586,6 +2586,12 @@ is refused with `filter::Error::Encoding`, as `git add` exits 128. A blob that i
 written unencoded and flagged in `Converted::unencoded`, as Git reports an error and writes it.
 Other encodings are refused ([issue 593](https://github.com/joshka/girt/issues/593)).
 
+`workflow::clone` and `Repo::clone` check out through the cloned repository's filters, reading the
+target tree's `.gitattributes` (or the tree `attr.tree` or `GIT_ATTR_SOURCE` names) and the
+configuration the clone was opened with, as `git clone` does. `Repository::filters_for_checkout`
+makes the same choice for `Repo::switch` and the CLI. `CloneOptions::filter_commands` defaults to
+running filter programs; `None` writes raw blob bytes.
+
 ### Content Filters Evidence
 
 `tests/filter_eol.rs` compares `Pipeline::to_repository` with the blobs `git add` stores and its
@@ -2618,7 +2624,9 @@ the trees, refusal of a locally changed converted file, that refused commands le
 empty, and a Git LFS checkout. `tests/filter_encoding.rs` writes blobs with `git checkout-index` and
 stores them back with `git add` for seven encodings alone and combined with `text eol=crlf`,
 including non-BMP text and an empty file, and checks Git's refusals and the unencoded write of an
-invalid blob.
+invalid blob. `tests/filter_clone.rs` compares a `workflow::clone_with` checkout byte for byte with
+`git clone` under a global configuration with `core.autocrlf=true` and a smudge filter, and checks
+the raw and refusing options and an `attr.tree` override.
 
 ## Working-Tree Index
 

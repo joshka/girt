@@ -15,14 +15,15 @@ explicitly; the `Repo` convenience handle builds one for you.
 
 ## Repo runs filter programs
 
-`Repo::status` and `Repo::switch` convert files as `git` does, and that includes
+`Repo::clone`, `Repo::status` and `Repo::switch` convert files as `git` does, and that includes
 **running filter programs**: the `filter.<name>.clean`, `smudge` and `process` commands configured
 in local, global or system configuration, chosen for each path by the repository's `.gitattributes`.
 Configuration is never copied by a clone, but the attributes are part of the repository you check
 out, so a repository can pick which of your configured filters run on its files.
 
 To convert line endings, `ident` and encodings without running any program, opt out. A path whose
-filter would run a program then fails with an error instead:
+filter would run a program then fails with an error instead. A clone through `workflow::clone_with`
+takes the same choice in `CloneOptions::with_filter_commands`, where `None` writes raw bytes:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -106,8 +107,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `Repository::checkout_tree_with_filters` takes two pipelines. The baseline's files are checked
 against the attributes now in the working tree (`Repository::filters`), and the target is written
-with its own (`Repository::filters_with_source` with `DirectorySource::Tree(target)`), because the
-target's `.gitattributes` files are not on disk yet.
+with its own (`Repository::filters_for_checkout`), because the target's `.gitattributes` files are
+not on disk yet. As in Git, `attr.tree` or `GIT_ATTR_SOURCE` overrides both.
 
 ## What matches Git, and what doesn't
 
