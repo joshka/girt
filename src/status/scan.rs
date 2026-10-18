@@ -83,6 +83,131 @@ impl<'a> Scan<'a> {
         self.monitor = Some(monitor);
         self
     }
+    /// Scans the whole working tree and explicitly records its monitor checkpoint.
+    ///
+    /// The index lock is held throughout the query and full tracked scan. Existing clean
+    /// promises are not used during refresh. Known changed entries remain dirty in the new
+    /// checkpoint. Publication uses [`crate::index::IndexEdit::commit`], like
+    /// [`Repository::refresh_index`]. With no monitor supplied, this currently only observes
+    /// status and releases the lock without writing. Untracked-cache population is not yet
+    /// implemented by this operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns status and index-lock/publication errors. Path-limited and split-index refresh
+    /// are unsupported. Monitor failures return [`Error::Fsmonitor`] and write nothing.
+    pub fn refresh_caches(self) -> Result<Report, Error> {
+        self.refresh_caches_with(Limits::default(), &AtomicBool::new(false))
+    }
+
+    /// Refreshes checkpoints with caller-selected resource limits and cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::refresh_caches`]. Cancellation before publication leaves
+    /// the index unchanged. Unsupported platforms refuse before taking a lock or querying hooks.
+    pub fn refresh_caches_with(
+        mut self,
+        limits: Limits,
+        cancel: &AtomicBool,
+    ) -> Result<Report, Error> {
+        super::types::check(cancel)?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            if self.paths.is_some_and(|paths| !paths.is_all()) {
+                return Err(Error::Unsupported {
+                    path: Vec::new(),
+                    reason: "path-limited status cache refresh",
+                });
+            }
+            let repo = self.repo;
+            let mut edit = repo.edit_index(limits.index)?;
+            if edit
+                .index()
+                .extensions()
+                .iter()
+                .any(|extension| extension.signature() == *b"link")
+            {
+                return Err(Error::Unsupported {
+                    path: Vec::new(),
+                    reason: "split-index status cache refresh",
+                });
+            }
+            let checkpoint = if let Some(monitor) = self.monitor.take() {
+                if self.repo.worktree() != Some(monitor.worktree()) {
+                    return Err(Error::Fsmonitor(Box::new(fsmonitor::Error::Unsupported(
+                        "monitor belongs to another working tree",
+                    ))));
+                }
+                let old = edit.index().fsmonitor_cache(limits.index).ok().flatten();
+                let changes = monitor
+                    .query_with(
+                        old.as_ref().map(crate::index::FsmonitorCache::token),
+                        Default::default(),
+                        cancel,
+                    )
+                    .map_err(|error| {
+                        if matches!(error, fsmonitor::Error::Cancelled) {
+                            Error::Cancelled
+                        } else {
+                            Error::Fsmonitor(Box::new(error))
+                        }
+                    })?;
+                Some(changes.token().clone())
+            } else {
+                None
+            };
+            let report = self.run_with(limits, cancel)?;
+            super::types::check(cancel)?;
+            if let Some(token) = checkpoint {
+                let changed: std::collections::HashSet<_> = report
+                    .unstaged
+                    .iter()
+                    .map(|change| change.path.as_slice())
+                    .collect();
+                let dirty = edit
+                    .index()
+                    .entries()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(position, entry)| {
+                        (entry.stage != crate::index::Stage::Normal
+                            || entry.intent_to_add
+                            || entry.mode == crate::index::Mode::Gitlink
+                            || changed.contains(entry.path.as_slice()))
+                        .then_some(position)
+                    })
+                    .collect();
+                let cache = crate::index::FsmonitorCache::new(
+                    token,
+                    dirty,
+                    edit.index().entries().len(),
+                    limits.index,
+                )
+                .map_err(|source| crate::index::StorageError::Format {
+                    path: repo.git_dir().join("index"),
+                    source,
+                })?;
+                edit.set_fsmonitor_cache(Some(&cache)).map_err(|source| {
+                    crate::index::StorageError::Format {
+                        path: repo.git_dir().join("index"),
+                        source,
+                    }
+                })?;
+                super::types::check(cancel)?;
+                edit.commit()?;
+            } else {
+                edit.abort()?;
+            }
+            Ok(report)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = &mut self;
+            self.run_with(limits, cancel)
+        }
+    }
+
     /// Runs with default limits and a cancellation flag that is never set.
     ///
     /// # Errors

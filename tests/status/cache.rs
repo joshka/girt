@@ -304,7 +304,12 @@ fn changed_directory_notifications_compose_with_filters_and_pathspecs() {
 #[test]
 fn explicit_refresh_records_monitor_checkpoint_without_hiding_known_changes() {
     let temporary = tempfile::tempdir().unwrap();
-    let repo = Repository::init(ObjectFormat::Sha1, temporary.path().join("r"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        temporary.path().join("r"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     let root = repo.worktree().unwrap();
     for key in ["core.ignoreCase", "core.precomposeUnicode"] {
         oracle::git(root, &["config", key, "false"], b"");
@@ -313,20 +318,40 @@ fn explicit_refresh_records_monitor_checkpoint_without_hiding_known_changes() {
     oracle::git(root, &["add", "tracked"], b"");
     let hook = temporary.path().join("monitor");
     stand_in::shell(&hook, "printf 'fresh\\000'\n");
-    oracle::git(root, &["config", "core.fsmonitor", hook.to_str().unwrap()], b"");
+    oracle::git(
+        root,
+        &["config", "core.fsmonitor", hook.to_str().unwrap()],
+        b"",
+    );
     oracle::git(root, &["config", "core.fsmonitorHookVersion", "2"], b"");
     let repo = Repository::open(root).unwrap();
     let environment = Environment::default();
     let rules = repo.ignore_rules(&environment).unwrap();
-    let monitor = repo.fsmonitor(&environment, girt::fsmonitor::Commands::Run).unwrap().unwrap();
+    let monitor = repo
+        .fsmonitor(&environment, girt::fsmonitor::Commands::Run)
+        .unwrap()
+        .unwrap();
     std::fs::write(root.join("tracked"), b"changed\n").unwrap();
     let report = girt::status::Scan::new(&repo, Baseline::Head, UntrackedFiles::Omit, &rules)
-        .with_monitor(&monitor).refresh_caches().unwrap();
+        .with_monitor(&monitor)
+        .refresh_caches()
+        .unwrap();
     assert_eq!(report.unstaged.len(), 1);
-    let cache = repo.read_index(Default::default()).unwrap().unwrap().fsmonitor_cache(Default::default()).unwrap().unwrap();
-    assert_eq!(cache.token(), &girt::index::MonitorToken::Opaque(b"fresh".to_vec()));
+    let cache = repo
+        .read_index(Default::default())
+        .unwrap()
+        .unwrap()
+        .fsmonitor_cache(Default::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        cache.token(),
+        &girt::index::MonitorToken::Opaque(b"fresh".to_vec())
+    );
     assert_eq!(cache.dirty(), &[0]);
     let report = girt::status::Scan::new(&repo, Baseline::Head, UntrackedFiles::Omit, &rules)
-        .with_monitor(&monitor).run().unwrap();
+        .with_monitor(&monitor)
+        .run()
+        .unwrap();
     assert_eq!(report.unstaged.len(), 1);
 }
