@@ -218,13 +218,36 @@ Live checks retain the budget in case an excluded concurrent writer changes the 
 ## Frame a patch as mail
 
 `format_patch::Message::new(&commit, &diffstat, &patch_bytes)` borrows a commit and prepared diff
-artifacts. `render` returns complete format-patch mbox bytes before the caller writes or sends them;
-`render_with` selects a signature, subject prefix, optional series position and explicit base ID.
-Author dates come from the commit. The library reads no clock, environment or mail configuration.
+artifacts; `with_change_summary` supplies mode/rename/copy summary lines. `render` returns complete
+format-patch mbox bytes before the caller writes or sends them; `render_with` selects a signature,
+subject prefix, optional series position and explicit base ID. Author dates come from the commit.
+The library reads no clock, environment or mail configuration.
 
 This formatter supports UTF-8 metadata, including RFC 2047 author names and subjects, and retains
 body and patch bytes. Other declared commit encodings, invalid metadata and header injection are
-explicit refusals. It does not verify that the supplied summary and patch match the commit, select
-commits, generate cover letters or update references. Those operations belong to the storage and
-series composition layer. Metadata and total returned mail bytes have independent bounds, and a
-failure returns no artifact. The supplied diffstat retains its own rendering limits.
+explicit refusals. It does not verify that the supplied summary and patch match the commit or update
+references. Use the storage composition below when the commit should supply its own artifacts.
+Metadata and total returned mail bytes have independent bounds, and a failure returns no artifact.
+The supplied diffstat retains its own rendering limits.
+
+## Generate a stored commit series
+
+`Objects::format_patch(&oldest_first_ids)` reads an explicit linear selection and composes encoded
+patches and matching diffstat from the same content comparison. The returned `Series` owns separate
+messages; `into_mbox` joins them using Git's stdout separators. Explicitly selected empty commits
+are retained. Root commits compare against an empty tree. No objects, references, index or working
+files are written.
+
+`format_patch_with` takes `SeriesOptions`, independent `SeriesLimits` and an optional mutable
+`DiffAttributes` context reused for every comparison. Numbering can be automatic, always or never. A
+`CoverLetter` supplies its own author/date and subject/body; composition adds the author shortlog
+and an aggregate baseline-to-final diffstat when a baseline commit exists. Root-starting covers omit
+aggregate statistics, matching Git. A base trailer appears once, in the cover when present or
+otherwise in the first patch. Signatures and subject prefixes come from the mail options.
+
+The selection must be contiguous and oldest-first, with no merge commits. A distant base requiring
+prerequisite patch IDs is explicitly refused; the first patch's direct parent is supported. Revision
+selection, mail configuration, file naming and publication remain caller-owned. Metadata is admitted
+before retaining each commit, and returned mail plus separators share an aggregate byte bound.
+Comparison and message bounds remain independent. Any late failure drops the entire unpublished
+series, including messages already computed.

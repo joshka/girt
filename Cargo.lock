@@ -731,6 +731,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",
+ "unicode-width",
  "windows-sys 0.61.2",
 ]
 

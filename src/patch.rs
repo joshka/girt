@@ -272,6 +272,12 @@ pub enum Error {
     /// The writer failed.
     #[error("writing patch")]
     Write(#[from] io::Error),
+    /// A caller-selected owned patch output bound was exceeded.
+    #[error("patch output exceeds byte limit")]
+    OutputLimit,
+    /// Summary input or output exceeded its independent bounds.
+    #[error("collecting patch statistics")]
+    Stat(#[from] crate::diffstat::Error),
     /// A blob side could not be loaded; trees and other unsupported modes are reported here.
     #[error("reading content of {}", quote_path(.path))]
     Read {
@@ -397,6 +403,7 @@ impl Objects {
             out: &mut out,
             options,
             attributes,
+            stats: None,
             limits,
             abbrev_len: options.abbrev_len.unwrap_or_else(|| self.auto_abbrev_len()),
             cancel,
@@ -422,6 +429,7 @@ struct Renderer<'a, W> {
     out: &'a mut W,
     options: Options,
     attributes: Option<&'a mut DiffAttributes>,
+    stats: Option<Vec<crate::diffstat::FileStat>>,
     limits: Limits,
     abbrev_len: usize,
     cancel: &'a AtomicBool,
@@ -429,15 +437,19 @@ struct Renderer<'a, W> {
 
 impl<W: io::Write> Renderer<'_, W> {
     fn entry(&mut self, entry: &Entry) -> Result<(), Error> {
-        match entry {
-            Entry::Change(change) => match (change.old, change.new) {
-                (Some(old), Some(new)) if change.status() == ChangeStatus::TypeChanged => {
-                    let path = &change.path;
-                    self.file((path, path), Some(old), None, None)?;
-                    self.file((path, path), None, Some(new), None)
-                }
-                (old, new) => self.file((&change.path, &change.path), old, new, None),
-            },
+        let (path, source, summary) = match entry {
+            Entry::Change(change) => {
+                let summary = match (change.old, change.new) {
+                    (Some(old), Some(new)) if change.status() == ChangeStatus::TypeChanged => {
+                        let path = &change.path;
+                        let removed = self.file((path, path), Some(old), None, None)?;
+                        let added = self.file((path, path), None, Some(new), None)?;
+                        removed.combine(added)?
+                    }
+                    (old, new) => self.file((&change.path, &change.path), old, new, None)?,
+                };
+                (&change.path, None, summary)
+            }
             Entry::Rewrite {
                 kind,
                 similarity,
@@ -445,16 +457,27 @@ impl<W: io::Write> Renderer<'_, W> {
                 target,
                 old,
                 new,
-            } => self.file(
-                (source, target),
-                Some(*old),
-                Some(*new),
-                Some(Rewrite {
-                    kind: *kind,
-                    similarity: *similarity,
-                }),
-            ),
+            } => {
+                let summary = self.file(
+                    (source, target),
+                    Some(*old),
+                    Some(*new),
+                    Some(Rewrite {
+                        kind: *kind,
+                        similarity: *similarity,
+                    }),
+                )?;
+                (target, Some(source), summary)
+            }
+        };
+        if let Some(stats) = &mut self.stats {
+            stats.push(crate::diffstat::FileStat {
+                path: path.clone(),
+                source_path: source.cloned(),
+                counts: summary.counts(),
+            });
         }
+        Ok(())
     }
 
     fn file(
@@ -463,7 +486,7 @@ impl<W: io::Write> Renderer<'_, W> {
         old: Option<TreeValue>,
         new: Option<TreeValue>,
         rewrite: Option<Rewrite>,
-    ) -> Result<(), Error> {
+    ) -> Result<FileSummary, Error> {
         let old_driver = self.driver(old_path, old)?;
         let new_driver = self.driver(new_path, new)?;
         if self.options.external == External::Refuse
@@ -503,7 +526,7 @@ impl<W: io::Write> Renderer<'_, W> {
         }
         let (old_id, new_id) = (old.map(|value| value.id), new.map(|value| value.id));
         if old_id == new_id {
-            return Ok(());
+            return Ok(FileSummary::default());
         }
         let content = self.read(new_path, old, new)?;
         let binary = match (self.options.binary, old_driver.content, new_driver.content) {
@@ -540,6 +563,7 @@ impl<W: io::Write> Renderer<'_, W> {
                 source,
             },
         })?;
+        let summary = FileSummary::new(&content_diff, content.old.len(), content.new.len());
         let full = self.options.binary_patch && matches!(content_diff, ContentDiff::Binary { .. });
         let old_abbrev = self.abbreviate(old_id, full)?;
         let new_abbrev = self.abbreviate(new_id, full)?;
@@ -596,7 +620,7 @@ impl<W: io::Write> Renderer<'_, W> {
                 )?;
             }
         }
-        Ok(())
+        Ok(summary)
     }
 
     /// The driver of one side; absent sides, gitlinks and renders without attributes have none.
@@ -676,3 +700,257 @@ impl<W: io::Write> Renderer<'_, W> {
 
 #[cfg(test)]
 mod tests;
+
+/// Counts retain both sizes even for text, so a type change can combine its two rendered records.
+#[derive(Default)]
+struct FileSummary {
+    added: u64,
+    removed: u64,
+    old_bytes: u64,
+    new_bytes: u64,
+    binary: bool,
+}
+
+impl FileSummary {
+    fn new(diff: &ContentDiff<'_>, old: usize, new: usize) -> Self {
+        let mut summary = Self {
+            old_bytes: old as u64,
+            new_bytes: new as u64,
+            ..Self::default()
+        };
+        match diff {
+            ContentDiff::Binary { .. } => summary.binary = true,
+            ContentDiff::Text(text) => {
+                // Edits partition admitted input lines, whose combined count fits usize.
+                summary.added = text
+                    .edits()
+                    .iter()
+                    .map(|edit| edit.new_lines.len() as u64)
+                    .sum();
+                summary.removed = text
+                    .edits()
+                    .iter()
+                    .map(|edit| edit.old_lines.len() as u64)
+                    .sum();
+            }
+            ContentDiff::Unchanged => {}
+        }
+        summary
+    }
+
+    fn combine(self, other: Self) -> Result<Self, Error> {
+        let sum = |a: u64, b: u64| {
+            a.checked_add(b)
+                .ok_or(Error::Stat(crate::diffstat::Error::Limit("counts")))
+        };
+        Ok(Self {
+            added: sum(self.added, other.added)?,
+            removed: sum(self.removed, other.removed)?,
+            old_bytes: sum(self.old_bytes, other.old_bytes)?,
+            new_bytes: sum(self.new_bytes, other.new_bytes)?,
+            binary: self.binary || other.binary,
+        })
+    }
+
+    fn counts(self) -> crate::diffstat::Counts {
+        if self.binary {
+            crate::diffstat::Counts::Binary {
+                old_bytes: self.old_bytes,
+                new_bytes: self.new_bytes,
+            }
+        } else {
+            crate::diffstat::Counts::Text {
+                added: self.added,
+                removed: self.removed,
+            }
+        }
+    }
+}
+
+pub(crate) struct MailBounds {
+    pub patch: Limits,
+    pub stat: crate::diffstat::Limits,
+    pub output: Option<usize>,
+}
+
+pub(crate) struct MailPatch {
+    pub patch: Vec<u8>,
+    pub stat: crate::diffstat::Diffstat,
+    pub summary: Vec<u8>,
+}
+
+/// Collects an owned patch and its counts from the same attributed comparison.
+pub(crate) fn mail_patch(
+    objects: &Objects,
+    entries: &[Entry],
+    options: Options,
+    attributes: Option<&mut DiffAttributes>,
+    bounds: MailBounds,
+    cancel: &AtomicBool,
+) -> Result<MailPatch, Error> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::Cancelled);
+    }
+    if entries.len() > bounds.stat.max_files {
+        return Err(crate::diffstat::Error::Limit("files").into());
+    }
+    let mut path_bytes = 0usize;
+    for entry in entries {
+        let paths = match entry {
+            Entry::Change(change) => (change.path.as_slice(), &[][..]),
+            Entry::Rewrite { source, target, .. } => (source.as_slice(), target.as_slice()),
+        };
+        path_bytes = path_bytes
+            .checked_add(paths.0.len())
+            .and_then(|n| n.checked_add(paths.1.len()))
+            .ok_or(crate::diffstat::Error::Limit("path bytes"))?;
+        if path_bytes > bounds.stat.max_path_bytes {
+            return Err(crate::diffstat::Error::Limit("path bytes").into());
+        }
+    }
+    let mut output = BoundedOutput {
+        bytes: Vec::new(),
+        limit: bounds.output,
+        exceeded: false,
+    };
+    let result = {
+        let mut renderer = Renderer {
+            objects,
+            out: &mut output,
+            options,
+            attributes,
+            stats: Some(Vec::new()),
+            limits: bounds.patch,
+            abbrev_len: options
+                .abbrev_len
+                .unwrap_or_else(|| objects.auto_abbrev_len()),
+            cancel,
+        };
+        let result = entries.iter().try_for_each(|entry| {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::Cancelled);
+            }
+            renderer.entry(entry)
+        });
+        result.map(|()| renderer.stats.take().unwrap_or_default())
+    };
+    if output.exceeded {
+        return Err(Error::OutputLimit);
+    }
+    let records = result?;
+    let summary_limit = bounds
+        .output
+        .map(|limit| limit.saturating_sub(output.bytes.len()));
+    let summary = change_summary(entries, &records, summary_limit)?;
+    let stat = crate::diffstat::Diffstat::new(records, bounds.stat)?;
+    Ok(MailPatch {
+        patch: output.bytes,
+        stat,
+        summary,
+    })
+}
+
+struct BoundedOutput {
+    bytes: Vec<u8>,
+    limit: Option<usize>,
+    exceeded: bool,
+}
+impl io::Write for BoundedOutput {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let Some(limit) = self.limit else {
+            return Ok(bytes.len());
+        };
+        if self
+            .bytes
+            .len()
+            .checked_add(bytes.len())
+            .is_none_or(|size| size > limit)
+        {
+            self.exceeded = true;
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                "patch output bound",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn change_summary(
+    entries: &[Entry],
+    records: &[crate::diffstat::FileStat],
+    limit: Option<usize>,
+) -> Result<Vec<u8>, Error> {
+    use io::Write as _;
+    let Some(limit) = limit else {
+        return Ok(Vec::new());
+    };
+    let mut out = BoundedOutput {
+        bytes: Vec::new(),
+        limit: Some(limit),
+        exceeded: false,
+    };
+    let result = (|| -> io::Result<()> {
+        for (entry, record) in entries.iter().zip(records) {
+            match entry {
+                Entry::Change(change) => match (change.old, change.new) {
+                    (None, Some(new)) => writeln!(
+                        out,
+                        " create mode {} {}",
+                        new.mode.octal(),
+                        quote_path(&change.path)
+                    )?,
+                    (Some(old), None) => writeln!(
+                        out,
+                        " delete mode {} {}",
+                        old.mode.octal(),
+                        quote_path(&change.path)
+                    )?,
+                    (Some(old), Some(new)) if old.mode != new.mode => writeln!(
+                        out,
+                        " mode change {} => {} {}",
+                        old.mode.octal(),
+                        new.mode.octal(),
+                        quote_path(&change.path)
+                    )?,
+                    _ => {}
+                },
+                Entry::Rewrite {
+                    kind,
+                    similarity,
+                    old,
+                    new,
+                    ..
+                } => {
+                    let verb = match kind {
+                        Kind::Rename => "rename",
+                        Kind::Copy => "copy",
+                    };
+                    writeln!(
+                        out,
+                        " {verb} {} ({similarity}%)",
+                        crate::diffstat::text_path(record)
+                    )?;
+                    if old.mode != new.mode {
+                        writeln!(
+                            out,
+                            " mode change {} => {}",
+                            old.mode.octal(),
+                            new.mode.octal()
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    })();
+    if out.exceeded {
+        return Err(Error::OutputLimit);
+    }
+    result?;
+    Ok(out.bytes)
+}

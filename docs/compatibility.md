@@ -4193,3 +4193,13 @@ folding, signatures, numbering, prefixes, explicit bases and positive/negative t
 The formatter takes caller-prepared patch and diffstat artifacts; commit selection, cover letters
 and storage composition are separate operations. Unit tests check metadata/output admission, header
 injection, invalid positions and cancellation without returning a partial artifact.
+
+### Stored patch series and cover letters
+
+`tests/format_patch_series.rs` compares complete stdout mbox bytes with isolated Git for one, two
+and ten patches in both object formats, automatic/always/never numbering, root selections, covers,
+multiple authors, signatures and base placement. Binary attributes exercise shared classification
+for both patch blocks and statistics at a fixed compression level. Refusal cases cover nonlinear and
+merge selections, distant bases, aggregate bounds, cancellation and late invalid metadata with no
+installed objects or returned partial series. Existing patch, binary and framing suites remain part
+of the focused regression run.

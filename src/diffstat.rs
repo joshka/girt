@@ -459,7 +459,7 @@ impl Output {
 
 // Git keeps separately quoted rename sides instead of compacting an escaped path. Quoting
 // expands each byte at most fourfold, so the path budget also bounds these temporary strings.
-fn text_path(file: &FileStat) -> String {
+pub(crate) fn text_path(file: &FileStat) -> String {
     let new = crate::display::quote_path(&file.path).to_string();
     let Some(source) = &file.source_path else {
         return new;
