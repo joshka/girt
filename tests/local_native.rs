@@ -1426,7 +1426,7 @@ fn workflow_fetch_reflogs_follow_core_log_all_ref_updates_like_git(
     let source = repository(&root, "source", ObjectFormat::Sha1, Backend::Files);
     commit(&source);
     git_in(source.git_dir(), &["tag", "v1", "main"]);
-    let url = source.git_dir().to_str().unwrap();
+    let url = plain_local_path(source.git_dir());
     let refspecs = [
         "+refs/heads/*:refs/remotes/origin/*",
         "+refs/tags/*:refs/tags/*",
@@ -1435,7 +1435,7 @@ fn workflow_fetch_reflogs_follow_core_log_all_ref_updates_like_git(
     let prepare = |name: &str| {
         let path = root.path().join(name);
         git_in(root.path(), &["init", "-q", name]);
-        git_in(&path, &["remote", "add", "origin", url]);
+        git_in(&path, &["remote", "add", "origin", &url]);
         if let Some(setting) = setting {
             git_in(&path, &["config", "core.logAllRefUpdates", setting]);
         }
