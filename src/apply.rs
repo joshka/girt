@@ -1,8 +1,10 @@
 //! Parse unified patches and apply their text hunks to byte content without filesystem access.
 //!
 //! [`Patch::parse`] validates the complete patch before returning file edits. Each [`FilePatch`]
-//! applies to an immutable preimage and returns owned bytes only after every hunk succeeds. Callers
-//! retain control over publication and must validate paths for their storage destination.
+//! applies to an immutable preimage and returns owned bytes only after every hunk succeeds.
+//! [`Patch::apply_tree`] computes a stored-tree replacement and returns an [`AppliedTree`] whose
+//! generated objects are installed explicitly. Callers retain control over references, the index
+//! and working files and must validate paths for their storage destination.
 //! Git text patches and traditional unified diffs are supported. Extended operations, binary and
 //! combined diffs are explicitly refused in this initial implementation.
 //!
@@ -16,6 +18,8 @@
 //! ```
 mod parse;
 mod text;
+mod tree;
+pub use tree::{AppliedFile, AppliedTree, TreeError, TreeLimits, TreeOptions};
 
 /// Validated text patch, retaining exact path and content bytes.
 #[derive(Clone, Debug)]

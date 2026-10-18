@@ -1,5 +1,7 @@
 use super::{Applied, Error, FilePatch, HunkResult, Limits};
 
+pub(super) const OUTPUT_BYTES: &str = "output bytes";
+
 pub(super) fn apply(file: &FilePatch, preimage: &[u8], limits: Limits) -> Result<Applied, Error> {
     if preimage.len() > limits.max_input_bytes {
         return Err(Error::Limit("input bytes"));
@@ -88,7 +90,7 @@ fn take_line<'a>(remaining: &mut &'a [u8]) -> Option<&'a [u8]> {
 
 fn append(output: &mut Vec<u8>, bytes: &[u8], limits: Limits) -> Result<(), Error> {
     if bytes.len() > limits.max_output_bytes.saturating_sub(output.len()) {
-        return Err(Error::Limit("output bytes"));
+        return Err(Error::Limit(OUTPUT_BYTES));
     }
     output.extend_from_slice(bytes);
     Ok(())
