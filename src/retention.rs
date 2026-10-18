@@ -229,6 +229,7 @@ pub use repack::{BitmapOutcome, RepackError, RepackLimits, RepackPublished};
 mod prune;
 pub use prune::{MaintenanceIsolation, PruneCause, PruneFailure, PruneReport};
 mod config;
+pub(crate) use config::parse_expiry_date;
 pub use config::{ReflogCutoffs, ReflogExpiry, ReflogExpiryError};
 mod expire;
 pub use expire::{ExpireCause, ExpireFailure, ExpireReport};
