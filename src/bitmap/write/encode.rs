@@ -1,6 +1,7 @@
 use std::sync::atomic::AtomicBool;
 
 use super::graph::Graph;
+use super::reachable::Closures;
 use super::{WriteError, WriteLimits, WriteOptions, Written, check};
 use crate::{ObjectId, ObjectKind};
 
@@ -43,13 +44,13 @@ pub(super) fn artifacts(
         ewah(&mut output, &words, cancel)?;
     }
     let mut offsets = Vec::with_capacity(selected.len());
-    let mut work = limits.max_visits;
+    let mut closures = Closures::new(graph, &inverse, limits);
     for &position in &selected {
         check(cancel)?;
         offsets.push(output.data.len());
         output.word(position as u32)?;
         output.bytes(&[0, 0])?; // Independent record, no reuse flag or XOR dependency.
-        let words = graph.reachable(position, &inverse, &mut work, cancel)?;
+        let words = closures.reachable(position, cancel)?;
         ewah(&mut output, &words, cancel)?;
     }
     for (&position, offset) in selected.iter().zip(offsets) {

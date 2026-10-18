@@ -6,6 +6,7 @@ use crate::{ObjectId, Objects, ReadLimits};
 mod encode;
 mod graph;
 mod midx;
+mod reachable;
 
 /// Commit selection for a new bitmap index.
 #[derive(Clone, Debug)]
@@ -38,9 +39,10 @@ pub struct WriteLimits {
     pub max_edges: usize,
     /// Maximum total decoded payload bytes used to build the graph (1 GiB).
     pub max_input_bytes: u64,
-    /// Maximum node/edge visits across all selected commit traversals (100 million).
+    /// Maximum node/edge visits and cached word unions across selected traversals (100 million).
     pub max_visits: usize,
     /// Maximum combined returned artifact bytes (64 MiB).
+    /// Separately caps retained selected-closure words; a full cache falls back to walking.
     pub max_bytes: usize,
     /// Bounds each verified object read.
     pub read: ReadLimits,
