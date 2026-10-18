@@ -3,8 +3,9 @@
 //! [`Patch::parse`] decodes the complete input before returning file edits. Each [`FilePatch`]
 //! applies to an immutable preimage and returns owned bytes only after every hunk succeeds.
 //! [`Patch::apply_tree`] computes a stored-tree replacement and returns an [`AppliedTree`] whose
-//! generated objects are installed explicitly. Callers retain control over references, the index
-//! and working files and must validate paths for their storage destination.
+//! generated objects are installed explicitly. [`Patch::apply_index`] similarly computes an index
+//! draft for publication through the existing index lock API. Callers retain control over
+//! references and working files and must validate paths for their storage destination.
 //! Git text patches, mode changes, additions/deletions, renames and copies are supported, along
 //! with traditional unified diffs and Git binary literal/delta patches. Combined diffs are refused.
 //!
@@ -18,6 +19,8 @@
 //! ```
 mod binary;
 pub use binary::BinaryKind;
+mod index;
+pub use index::{AppliedIndex, IndexError, IndexLimits};
 mod parse;
 mod text;
 mod tree;

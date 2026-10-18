@@ -552,7 +552,7 @@ impl Index {
         Ok(())
     }
 
-    pub(super) fn make_standalone(&mut self, limits: Limits) -> Result<(), Error> {
+    pub(crate) fn make_standalone(&mut self, limits: Limits) -> Result<(), Error> {
         if let Some(extension) = self.extensions.iter().find(|extension| {
             !matches!(
                 &extension.signature,
@@ -872,7 +872,7 @@ impl Index {
         Ok(out)
     }
 
-    pub(super) fn encoded_len(&self, limits: Limits) -> Result<usize, Error> {
+    pub(crate) fn encoded_len(&self, limits: Limits) -> Result<usize, Error> {
         check_count(
             self.entries.len(),
             limits.max_entries.min(u32::MAX as usize),

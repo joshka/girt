@@ -39,8 +39,7 @@ without asserting preimage identity; declared modes are checked during tree appl
 object IDs are checked against content. File paths come from `---` and `+++`. Combined diffs and
 submodule modes return explicit unsupported errors. Git mode changes, new/deleted files and
 rename/copy metadata (including declared similarity) are retained and applied. Offset/fuzz matching,
-whitespace options, recount, index/worktree publication, format-patch and mailbox/am remain tracked
-in
+whitespace options, recount, working-file publication, format-patch and mailbox/am remain tracked in
 [issue 506](https://github.com/joshka/girt/issues/506).
 
 The parser requires a standalone patch: mail headers, prose and signatures must be removed first.
@@ -110,3 +109,33 @@ exchanged source is retained. Reversing a copy therefore usually fails while the
 still exists. This operation does not automatically remove the copied file. Tree application still
 refuses directory-to-file transitions, including when reversing a supported file-to-directory
 transition.
+
+## Apply to the index without a working tree
+
+Use `patch.apply_index(&objects, &index)` to compute an index-only change, corresponding to cached
+patch application. Successful computation also provides a check without writing anything. The
+returned `AppliedIndex` contains a complete draft, root tree and per-file/hunk results. Reverse the
+patch first when applying in the other direction; `TreeOptions` supplies component stripping and a
+directory prefix in the explicit `apply_index_with` form.
+
+For publication, hold `repository.edit_index(...)`, compute against `edit.index()`, install
+generated objects with `applied.install_objects(...)`, then call
+`edit.replace_index(applied.into_index())` and `edit.commit()`. The existing guard owns index
+locking and snapshot checks. A computation failure changes no objects or stored index; installation
+can leave additive objects if a later step fails. Working files and references are never written by
+this workflow.
+
+The initial index form requires an expanded, stage-zero index with no intent-to-add placeholders. It
+refuses these unsupported states even on unrelated paths; resolve conflicts, expand sparse
+directories or complete placeholder entries first. Unaffected gitlinks are retained but cannot be
+patched. Unaffected entries retain flags and cached stat data; touched entries get fresh metadata,
+including cleared skip-worktree and assume-valid flags, as with Git cached application. Resolved
+split indexes produce standalone drafts. Index extension invalidation follows the existing
+`Index::replace_entries` policy.
+
+`IndexLimits` bounds the input/draft index and the shared tree planner. All index entries and paths
+are visited, and all generated directories count against the tree budget; only affected blob
+contents are read. The default 16 MiB aggregate path budget can be reached before the independent
+one-million-entry index limit; raise it explicitly for large repositories. Existing tree-application
+restrictions also apply. Publishing in another object store requires retaining the unchanged source
+objects, just as for a computed tree.

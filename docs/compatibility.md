@@ -3658,6 +3658,15 @@ a revoked key, a signed tag, and an X.509 certificate from `gpgsm`. Expired keys
 made with `--faked-system-time` through a POSIX shell wrapper; those cases and all tests skip when
 `gpg` or `gpgsm` is absent.
 
+### Index-only patch preparation
+
+`tests/apply_index.rs` computes without a working tree, checks that no postimage object or index
+write occurs before explicit installation/publication, and verifies Git reads the published tree. It
+preserves unrelated flags/stat data and checks late hunk failure, cancellation and resource limits.
+Unsupported conflict stages, intent-to-add and sparse entries return explicit errors.
+`tests/apply_extended.rs` also computes index drafts alongside the existing isolated Git cached
+application oracles for SHA-1/SHA-256 metadata, text, binary and reverse patches.
+
 ### Reverse patch application
 
 `tests/apply_extended.rs` compares `Patch::reversed` tree IDs with isolated `git apply --cached -R`
