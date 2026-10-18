@@ -49,8 +49,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ewah::{Ewah, long, word};
-pub(crate) use install::write_repack_bitmap;
 pub use install::{InstallError, Published};
+pub(crate) use install::{write_repack_bitmap, write_repack_bitmap_from_verified_graph};
 pub use query::{QueryLimits, Reachability};
 pub use reverse::ReverseIndex;
 pub use write::{MultiPackWritten, WriteError, WriteLimits, WriteOptions, Written};

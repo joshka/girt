@@ -8,10 +8,93 @@ pub(super) struct Graph<'a> {
     pub ids: &'a [ObjectId],
     pub kinds: Vec<ObjectKind>,
     edges: Vec<Range<usize>>,
-    targets: Vec<usize>,
+    targets: Vec<u32>,
     parents: Vec<bool>,
 }
 impl<'a> Graph<'a> {
+    pub fn from_verified(
+        ids: &'a [ObjectId],
+        order: &[usize],
+        verified: &crate::retention::VerifiedGraph,
+        limits: WriteLimits,
+        cancel: &AtomicBool,
+        mut read: impl FnMut(usize) -> Result<Object, ObjectReadError>,
+    ) -> Result<Self, WriteError> {
+        if ids.len() > limits.max_objects || order.len() != ids.len() {
+            return Err(WriteError::Limit("objects"));
+        }
+        let verified_positions: crate::PeerIdMap<_> = verified
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(position, node)| (node.id, position))
+            .collect();
+        let mut output_to_verified = Vec::with_capacity(ids.len());
+        let mut verified_to_output = vec![None; verified.nodes.len()];
+        for (position, &id) in ids.iter().enumerate() {
+            check(cancel)?;
+            let verified_position = verified_positions
+                .get(&id)
+                .copied()
+                .ok_or(WriteError::Closure(id))?;
+            output_to_verified.push(verified_position);
+            verified_to_output[verified_position] =
+                Some(u32::try_from(position).map_err(|_| WriteError::Limit("objects"))?);
+        }
+        let mut graph = Self {
+            ids,
+            kinds: vec![ObjectKind::Blob; ids.len()],
+            edges: vec![0..0; ids.len()],
+            targets: Vec::new(),
+            parents: vec![false; ids.len()],
+        };
+        let mut input_bytes = 0_u64;
+        for &position in order {
+            check(cancel)?;
+            let id = ids[position];
+            let object = read(position).map_err(|error| match error {
+                ObjectReadError::Cancelled => WriteError::Cancelled,
+                error => WriteError::Read(error),
+            })?;
+            input_bytes = input_bytes
+                .checked_add(object.data().len() as u64)
+                .filter(|&bytes| bytes <= limits.max_input_bytes)
+                .ok_or(WriteError::Limit("graph input bytes"))?;
+            let verified_position = output_to_verified[position];
+            let node = &verified.nodes[verified_position];
+            if object.kind() != node.kind {
+                return Err(super::super::Error::Kind(id).into());
+            }
+            graph.kinds[position] = object.kind();
+            let first = graph.targets.len();
+            let targets = verified
+                .targets
+                .get(node.edges.clone())
+                .ok_or(WriteError::Limit("verified graph edge"))?;
+            for &target in targets {
+                check(cancel)?;
+                if graph.targets.len() >= limits.max_edges {
+                    return Err(WriteError::Limit("graph edges"));
+                }
+                let target_node = verified
+                    .nodes
+                    .get(target as usize)
+                    .ok_or(WriteError::Limit("verified graph edge"))?;
+                let target_position = verified_to_output
+                    .get(target as usize)
+                    .copied()
+                    .flatten()
+                    .ok_or(WriteError::Closure(target_node.id))?;
+                if object.kind() == ObjectKind::Commit && target_node.kind == ObjectKind::Commit {
+                    graph.parents[target_position as usize] = true;
+                }
+                graph.targets.push(target_position);
+            }
+            graph.edges[position] = first..graph.targets.len();
+        }
+        Ok(graph)
+    }
+
     pub fn read(
         format: ObjectFormat,
         ids: &'a [ObjectId],
@@ -62,8 +145,10 @@ impl<'a> Graph<'a> {
                     .get(&target)
                     .copied()
                     .ok_or(WriteError::Closure(target))?;
+                let target_position =
+                    u32::try_from(target_position).map_err(|_| WriteError::Limit("objects"))?;
                 if object.kind() == ObjectKind::Commit && kind == ObjectKind::Commit {
-                    graph.parents[target_position] = true;
+                    graph.parents[target_position as usize] = true;
                 }
                 graph.targets.push(target_position);
                 expected.push(kind);
@@ -97,8 +182,8 @@ impl<'a> Graph<'a> {
         }
         for (&target, &kind) in graph.targets.iter().zip(&expected) {
             check(cancel)?;
-            if graph.kinds[target] != kind {
-                return Err(super::super::Error::Kind(ids[target]).into());
+            if graph.kinds[target as usize] != kind {
+                return Err(super::super::Error::Kind(ids[target as usize]).into());
             }
         }
         Ok(graph)
@@ -152,7 +237,7 @@ impl<'a> Graph<'a> {
         Ok(selected)
     }
 
-    pub fn targets(&self, position: usize) -> &[usize] {
+    pub fn targets(&self, position: usize) -> &[u32] {
         &self.targets[self.edges[position].clone()]
     }
 }

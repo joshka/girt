@@ -54,7 +54,7 @@ impl<'graph, 'ids> Closures<'graph, 'ids> {
             for &target in self.graph.targets(index) {
                 check(cancel)?;
                 charge(&mut self.remaining)?;
-                stack.push(target);
+                stack.push(target as usize);
             }
         }
         // A future hit already pays for its root pop. Do not retain a closure whose word union

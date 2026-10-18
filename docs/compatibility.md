@@ -136,6 +136,13 @@ ratio was 3.33; load differs, so this does not establish a controlled absolute-t
 stays explicit-only and the 1.5 target is not met. See
 [closure-reuse evidence](evidence/bitmap-repack-closure-under-load.json).
 
+Bitmap-enabled repacks can reuse the bounded typed edges collected by their identity-checked
+retention walk, avoiding a second parse and edge-position build. The replacement pack is still
+decoded and identity-checked before bitmap publication, and each decoded kind must agree with the
+retained graph. An unavailable or over-budget snapshot falls back to the verified bitmap reader.
+Pack retirement retains its separate survivor verification at the deletion boundary; no source
+generation, cancellation or publication check is relaxed. The new timing comparison is pending.
+
 ## Multi-pack indexes
 
 The MIDX fixtures in `tests/multi_pack_index.rs` use isolated Git configuration and original pack

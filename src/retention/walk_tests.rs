@@ -158,6 +158,46 @@ fn retention_walk_reads_each_entry_once() {
     );
 }
 
+#[test]
+fn retained_bitmap_graph_is_optional_bounded_and_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    deltified_history(dir.path());
+    let repository = Repository::open(dir.path()).unwrap();
+    let policy = RetentionPolicy {
+        max_threads: 1,
+        ..RetentionPolicy::trusted()
+    };
+    let plan = repository.plan_retention_folding(
+        &policy,
+        false,
+        Some(64 * 1024 * 1024),
+        &AtomicBool::new(false),
+    );
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    let graph = plan.bitmap_graph.as_ref().expect("bounded graph captured");
+    assert_eq!(graph.nodes.len(), plan.required.len());
+    let positions: std::collections::BTreeMap<_, _> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (node.id, position))
+        .collect();
+    for node in &graph.nodes {
+        assert!(plan.required.contains(&node.id));
+        for &target in &graph.targets[node.edges.clone()] {
+            assert!(positions.contains_key(&graph.nodes[target as usize].id));
+        }
+    }
+
+    let without_capture = repository.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(
+        without_capture.is_complete(),
+        "{:?}",
+        without_capture.outcome
+    );
+    assert!(without_capture.bitmap_graph.is_none());
+}
+
 /// Read-ahead workers share the delta base cache, so the walk reads bases in another order on
 /// several threads. Per-read limits charge cached bases, so the outcome doesn't change.
 #[test]

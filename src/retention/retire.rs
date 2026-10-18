@@ -351,18 +351,22 @@ impl Repository {
         }
         let mut owned = if session.is_none() {
             Some(
-                super::inputs::Session::new(&current, &keep_all_logs, cancel).map_err(
-                    |reason| {
-                        failed(
-                            if cancel.load(Ordering::Relaxed) {
-                                RetireCause::Cancelled
-                            } else {
-                                RetireCause::Incomplete(reason)
-                            },
-                            report.clone(),
-                        )
-                    },
-                )?,
+                super::inputs::Session::new_with_bitmap_graph(
+                    &current,
+                    &keep_all_logs,
+                    super::repack::bitmap_graph_bytes(&current, limits),
+                    cancel,
+                )
+                .map_err(|reason| {
+                    failed(
+                        if cancel.load(Ordering::Relaxed) {
+                            RetireCause::Cancelled
+                        } else {
+                            RetireCause::Incomplete(reason)
+                        },
+                        report.clone(),
+                    )
+                })?,
             )
         } else {
             None

@@ -237,8 +237,11 @@ pub use retire::{RetireCause, RetireFailure, RetireReport};
 mod compose;
 mod consolidate;
 pub use consolidate::PackConsolidation;
+mod bitmap_graph;
 mod inputs;
 mod walk_reads;
+
+pub(crate) use bitmap_graph::VerifiedGraph;
 #[cfg(test)]
 mod walk_tests;
 pub use compose::{MaintenanceCause, MaintenanceFailure, MaintenanceReport};
@@ -607,6 +610,8 @@ pub struct RetentionPlan {
     store: Option<crate::Objects>,
     // Kinds and logical sizes from decoded graph objects and located blob headers.
     object_info: BTreeMap<ObjectId, ObjectInfo>,
+    // Bounded, identity-checked graph edges for bitmap reuse during repack.
+    pub(crate) bitmap_graph: Option<VerifiedGraph>,
     // Separate closure protects dependencies of surviving packs without affecting reflog liveness.
     protected_objects: BTreeSet<ObjectId>,
     // Recent packs that consolidation retires: their objects join the protected closure instead.
@@ -708,6 +713,7 @@ impl Repository {
             observed_logs: Vec::new(),
             store: None,
             object_info: BTreeMap::new(),
+            bitmap_graph: None,
             protected_objects: BTreeSet::new(),
             folded_packs: BTreeSet::new(),
             fold_recent_packs,
@@ -790,7 +796,7 @@ impl Repository {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn plan_retention(&self, policy: &RetentionPolicy, cancel: &AtomicBool) -> RetentionPlan {
-        self.plan_retention_folding(policy, false, cancel)
+        self.plan_retention_folding(policy, false, None, cancel)
     }
 
     // Folding treats recent packs, other than `.keep` and promisor packs, as retirable storage
@@ -799,6 +805,7 @@ impl Repository {
         &self,
         policy: &RetentionPolicy,
         fold_recent_packs: bool,
+        bitmap_graph_bytes: Option<usize>,
         cancel: &AtomicBool,
     ) -> RetentionPlan {
         let _headers = crate::pack::HeaderScope::new();
@@ -830,13 +837,24 @@ impl Repository {
             .collect();
         let roots = plan.roots.clone();
         let strong_roots = plan.strong_roots.clone();
-        match walk(self, &store, policy, cancel, &roots, &mut plan.object_info) {
-            Ok(reachable) => plan.reachable = reachable,
+        let capture_bitmap_graph = bitmap_graph_bytes
+            .filter(|_| matches!(policy.reflog_expiry, ReflogExpiryPolicy::KeepAll));
+        let (reachable, reachable_graph) = match walk(
+            self,
+            &store,
+            policy,
+            cancel,
+            &roots,
+            &mut plan.object_info,
+            capture_bitmap_graph,
+        ) {
+            Ok(reachable) => reachable,
             Err(reason) => {
                 plan.fail(reason);
                 return plan;
             }
-        }
+        };
+        plan.reachable = reachable;
         // Equal root sets share the same located and validated closure.
         let live = if strong_roots == roots {
             plan.reachable.clone()
@@ -848,8 +866,9 @@ impl Repository {
                 cancel,
                 &strong_roots,
                 &mut plan.object_info,
+                None,
             ) {
-                Ok(reachable) => reachable,
+                Ok((reachable, _)) => reachable,
                 Err(reason) => {
                     plan.fail(reason);
                     return plan;
@@ -916,10 +935,14 @@ impl Repository {
                 cancel,
                 &required_roots,
                 &mut plan.object_info,
+                None,
             ) {
-                Ok(required) => plan.required = required,
+                Ok((required, _)) => plan.required = required,
                 Err(reason) => plan.fail(reason),
             }
+        }
+        if required_roots == roots {
+            plan.bitmap_graph = reachable_graph;
         }
         // Surviving packs can refer to objects held only in deletable storage. Their closure
         // protects those dependencies separately from the roots that classify reflog liveness.
@@ -1020,8 +1043,9 @@ impl Repository {
                 cancel,
                 &protected_roots,
                 &mut plan.object_info,
+                None,
             ) {
-                Ok(objects) => plan.protected_objects.extend(objects),
+                Ok((objects, _)) => plan.protected_objects.extend(objects),
                 Err(reason) => plan.fail(reason),
             }
         }
@@ -1392,6 +1416,13 @@ struct Node {
     expected: Option<ObjectKind>,
     /// Kind of the copy the walk read; `None` until it is read.
     actual: Option<ObjectKind>,
+    graph_position: Option<u32>,
+}
+
+struct WalkResult {
+    nodes: IdMap<Node>,
+    blobs: Vec<ObjectId>,
+    bitmap_graph: Option<bitmap_graph::Builder>,
 }
 
 fn walk(
@@ -1401,10 +1432,16 @@ fn walk(
     cancel: &AtomicBool,
     roots: &BTreeSet<ObjectId>,
     object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
-) -> Result<BTreeSet<ObjectId>, RetentionError> {
+    bitmap_graph_bytes: Option<usize>,
+) -> Result<(BTreeSet<ObjectId>, Option<VerifiedGraph>), RetentionError> {
     let visit = |id| visit(repo, store, policy, cancel, id);
-    let (nodes, blobs) = walk_reads::with_reader(policy.max_threads, &visit, |reader| {
-        walk_with(policy, cancel, roots, object_info, reader)
+    let builder = bitmap_graph_bytes.map(bitmap_graph::Builder::new);
+    let WalkResult {
+        nodes,
+        blobs,
+        bitmap_graph: mut builder,
+    } = walk_reads::with_reader(policy.max_threads, &visit, |reader| {
+        walk_with(policy, cancel, roots, object_info, builder, reader)
     })?;
     // Only blobs are located, after the graph walk and in pack order: they add no edges, and
     // locating them in graph order would read headers scattered across the pack.
@@ -1417,8 +1454,19 @@ fn walk(
             return Err(RetentionError::WrongObjectKind(id));
         }
         object_info.insert(id, ObjectInfo { kind, size });
+        let graph_position = nodes.get(&id).and_then(|node| node.graph_position);
+        if let Some(graph) = builder.as_mut() {
+            if let Some(position) = graph_position {
+                graph.set_kind(position, kind);
+            } else {
+                builder = None;
+            }
+        }
     }
-    Ok(nodes.into_keys().collect())
+    Ok((
+        nodes.into_keys().collect(),
+        builder.and_then(bitmap_graph::Builder::finish),
+    ))
 }
 
 /// Walks the graph in breadth-first order on the calling thread, which alone applies every
@@ -1429,18 +1477,24 @@ fn walk_with(
     cancel: &AtomicBool,
     roots: &BTreeSet<ObjectId>,
     object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
+    mut builder: Option<bitmap_graph::Builder>,
     reader: &mut walk_reads::Reader<'_>,
-) -> Result<(IdMap<Node>, Vec<ObjectId>), RetentionError> {
+) -> Result<WalkResult, RetentionError> {
     // Each identity is queued once, when it is first named, and keeps one entry for its asserted
     // and read kinds. Trees name most identities many times over (tens of millions of edges on a
     // large history), so an edge to a queued identity costs one hashed probe and no queue entry.
     let mut nodes = IdMap::default();
     for &root in roots {
+        let graph_position = builder.as_mut().and_then(|graph| graph.add_node(root));
+        if builder.is_some() && graph_position.is_none() {
+            builder = None;
+        }
         nodes.insert(
             root,
             Node {
                 expected: None,
                 actual: None,
+                graph_position,
             },
         );
         // An untyped root has no verified parent's kind assertion, so its identity-checked read
@@ -1478,6 +1532,11 @@ fn walk_with(
             node.actual = Some(kind);
         }
         object_info.insert(id, ObjectInfo { kind, size });
+        let source_position = nodes.get(&id).and_then(|node| node.graph_position);
+        let first_edge = builder.as_ref().map(bitmap_graph::Builder::begin_edges);
+        if let (Some(builder), Some(position)) = (&mut builder, source_position) {
+            builder.set_kind(position, kind);
+        }
         if kind == ObjectKind::Blob {
             continue;
         }
@@ -1495,7 +1554,7 @@ fn walk_with(
             if target.is_null() {
                 return Err(RetentionError::NullEdge(id));
             }
-            match nodes.entry(target) {
+            let target_position = match nodes.entry(target) {
                 Entry::Occupied(mut entry) => {
                     let node = entry.get_mut();
                     if node.actual.is_some_and(|actual| actual != kind) {
@@ -1508,22 +1567,45 @@ fn walk_with(
                         Some(_) => {}
                         None => node.expected = Some(kind),
                     }
+                    node.graph_position
                 }
                 Entry::Vacant(entry) => {
+                    let graph_position = builder.as_mut().and_then(|graph| graph.add_node(target));
+                    if builder.is_some() && graph_position.is_none() {
+                        builder = None;
+                    }
                     entry.insert(Node {
                         expected: Some(kind),
                         actual: None,
+                        graph_position,
                     });
                     // A blob edge's kind is fixed once queued: only roots are queued untyped.
                     reader.push(target, kind != ObjectKind::Blob || roots.contains(&target));
+                    graph_position
                 }
+            };
+            let captured = match (&mut builder, target_position) {
+                (Some(builder), Some(target_position)) => builder.push_edge(target_position),
+                (None, _) | (_, None) => false,
+            };
+            if builder.is_some() && !captured {
+                builder = None;
             }
+        }
+        if let (Some(builder), Some(position), Some(first)) =
+            (&mut builder, source_position, first_edge)
+        {
+            builder.finish_edges(position, first);
         }
         if let Some(error) = malformed {
             return Err(error);
         }
     }
-    Ok((nodes, blobs))
+    Ok(WalkResult {
+        nodes,
+        blobs,
+        bitmap_graph: builder,
+    })
 }
 
 /// One object's kind, payload size and the typed edges it names, in the order it names them.
