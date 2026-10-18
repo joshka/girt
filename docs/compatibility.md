@@ -2546,8 +2546,17 @@ shell-quoted path and `%%` by `%`. `filter::Commands::Refuse`, the default, retu
 is reported in `Converted::skipped`, as Git prints an error and continues; with
 `filter.<name>.required` a failure, or a missing command, is `filter::Error::Driver`, as Git exits
 128. A driver name with no configuration leaves content unchanged. Output above
-`filter::Limits::max_output_bytes` stops the command. Paths with `working-tree-encoding` are refused
-with `filter::Error::Unsupported`.
+`filter::Limits::max_output_bytes` stops the command.
+
+`filter.<name>.process` takes precedence over `clean` and `smudge`. The process starts on first use
+and stays running for the `Pipeline`; girt sends Git's `git-filter-client` and `version=2`
+handshake, offers `capability=clean` and `capability=smudge` (never `delay`), then for each file
+sends `command=`, `pathname=` and, when writing, `blob=<id>`, followed by the content in pkt-lines
+of at most 65,516 bytes. `status=error` (before or after the content) fails that file;
+`status=abort` fails it and stops further requests in that direction. A process without the
+capability for a direction leaves content unchanged, or fails a required driver. A broken stream
+discards the process; the next request starts a new one. Paths with `working-tree-encoding` are
+refused with `filter::Error::Unsupported`.
 
 ### Content Filters Evidence
 
@@ -2563,7 +2572,12 @@ staged-CR rule and `--renormalize`, and `core.safecrlf=true` refusals by exit st
 `git add` from a subdirectory and `git checkout-index`, including a path with a quote and space, a
 failing driver, a driver combined with `text eol=crlf`, an unconfigured driver and a command that
 reads only part of its input; it checks required failures against Git's exit status, refusal, and
-the output limit.
+the output limit. `tests/filter_process.rs` runs an original Perl process filter
+(`tests/fixtures/filter-process.pl`) under `git add` and `git checkout-index` and compares both the
+results and the request headers it logged, including content over one pkt-line, an empty file and
+`status=error` before and after content; it checks `status=abort` against Git's exit status, and a
+Git LFS round trip (pointer and content) against `git add` when `git-lfs` is installed (3.8.0 on the
+development machine).
 
 ## Working-Tree Index
 

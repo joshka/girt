@@ -77,7 +77,7 @@ Git LFS works this way: the repository stores a small pointer file, and the smud
 it with the real file on checkout. Without filters, checkout writes the pointer instead of the file,
 and [status](/girt/how-git-works/working-tree/#status) reports converted files as changed.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">Line endings, `ident` and clean/smudge commands in `girt::filter`, which runs commands only when the caller allows it; no long-running filter process (so no Git LFS) or `working-tree-encoding`, and checkout and status don't apply filters yet.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">Line endings, `ident`, clean/smudge commands and the long-running filter process (Git LFS works) in `girt::filter`, which runs commands only when the caller allows it; no `delay` capability or `working-tree-encoding`, and checkout and status don't apply filters yet.</GirtStatus>
 
 ## Applying patches
 

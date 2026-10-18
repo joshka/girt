@@ -17,10 +17,12 @@
 //!   storing.
 //!
 //! - **Drivers.** `filter=<name>` runs `filter.<name>.clean` when storing and `smudge` when
-//!   writing. Running commands is a trust decision the caller makes with [`Commands`]: the default,
-//!   [`Commands::Refuse`], returns [`Error::Refused`] instead of running one. A failing driver
-//!   leaves content unchanged and is reported in [`Converted::skipped`], unless
-//!   `filter.<name>.required` makes it an [`Error::Driver`].
+//!   writing, or sends the file to the long-running `filter.<name>.process` (protocol version 2,
+//!   without the `delay` capability), which Git LFS installs. Running commands is a trust decision
+//!   the caller makes with [`Commands`]: the default, [`Commands::Refuse`], returns
+//!   [`Error::Refused`] instead of running one. A failing driver leaves content unchanged and is
+//!   reported in [`Converted::skipped`], unless `filter.<name>.required` makes it an
+//!   [`Error::Driver`].
 //!
 //! `working-tree-encoding` is not applied yet: a path with it is refused with
 //! [`Error::Unsupported`] rather than converted partially.
@@ -50,6 +52,7 @@
 //! ```
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use crate::attributes::{Attributes, LoadError, Lookup, State};
 use crate::config::{Config, InvalidValue};
@@ -59,6 +62,7 @@ use crate::{ObjectId, Objects, ReadBlobError, Repository};
 mod driver;
 mod eol;
 mod ident;
+mod process;
 
 pub use driver::{Commands, Direction, DriverError, Drivers, Limits};
 use eol::Stats;
@@ -473,6 +477,8 @@ fn source_direction(error: &DriverError) -> Direction {
         DriverError::Io { direction, .. }
         | DriverError::Failed { direction, .. }
         | DriverError::TooLarge { direction, .. }
+        | DriverError::Rejected { direction, .. }
+        | DriverError::Aborted { direction, .. }
         | DriverError::Missing { direction, .. } => *direction,
     }
 }
@@ -484,6 +490,8 @@ pub struct Pipeline {
     rules: Rules,
     settings: Settings,
     drivers: Drivers,
+    /// Started filter processes by driver name; `None` after a process failed to start.
+    processes: HashMap<Vec<u8>, process::Process>,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -503,6 +511,7 @@ impl Pipeline {
             rules: Rules::Lookup(lookup),
             settings,
             drivers,
+            processes: HashMap::new(),
         }
     }
 
@@ -512,6 +521,7 @@ impl Pipeline {
             rules: Rules::Attributes(attributes),
             settings,
             drivers,
+            processes: HashMap::new(),
         }
     }
 
@@ -596,7 +606,7 @@ impl Pipeline {
     ) -> Result<Converted<'a>, Error> {
         let plan = self.plan(path)?;
         let bytes = plan.builtin_to_worktree(Cow::Borrowed(blob), id);
-        let (bytes, skipped) = self.drive(&plan, path, Direction::Smudge, bytes)?;
+        let (bytes, skipped) = self.drive(&plan, path, Direction::Smudge, Some(id), bytes)?;
         Ok(Converted {
             bytes,
             warning: None,
@@ -622,7 +632,8 @@ impl Pipeline {
         staged: Staged<'_>,
     ) -> Result<Converted<'a>, Error> {
         let plan = self.plan(path)?;
-        let (bytes, skipped) = self.drive(&plan, path, Direction::Clean, Cow::Borrowed(file))?;
+        let (bytes, skipped) =
+            self.drive(&plan, path, Direction::Clean, None, Cow::Borrowed(file))?;
         let (bytes, warning) = plan.builtin_to_repository(path, bytes, staged)?;
         Ok(Converted {
             bytes,
@@ -637,6 +648,7 @@ impl Pipeline {
         plan: &Plan,
         path: &[u8],
         direction: Direction,
+        blob: Option<ObjectId>,
         bytes: Cow<'a, [u8]>,
     ) -> Result<(Cow<'a, [u8]>, Option<DriverError>), Error> {
         let Some(name) = plan.driver() else {
@@ -645,19 +657,22 @@ impl Pipeline {
         let Some(driver) = self.drivers.get(name) else {
             return Ok((bytes, None));
         };
+        let required = driver.required;
         let failure = |source| Error::Driver {
             path: path.to_vec(),
             source,
         };
-        let Some(command) = driver.command(direction) else {
-            if driver.required {
+        let process = driver.process.clone();
+        let command = driver.command(direction).map(<[u8]>::to_vec);
+        if process.is_none() && command.is_none() {
+            if required {
                 return Err(failure(DriverError::Missing {
                     driver: name.to_vec(),
                     direction,
                 }));
             }
             return Ok((bytes, None));
-        };
+        }
         if self.drivers.commands == Commands::Refuse {
             return Err(Error::Refused {
                 path: path.to_vec(),
@@ -665,10 +680,70 @@ impl Pipeline {
                 direction,
             });
         }
-        match driver::run(name, direction, command, path, &bytes, &self.drivers) {
-            Ok(output) => Ok((Cow::Owned(output), None)),
-            Err(error) if driver.required => Err(failure(error)),
+        let result = match (process, command) {
+            (Some(process), _) => self.request(name, &process, direction, path, blob, &bytes),
+            (None, Some(command)) => {
+                driver::run(name, direction, &command, path, &bytes, &self.drivers).map(Some)
+            }
+            (None, None) => Ok(None),
+        };
+        match result {
+            Ok(Some(output)) => Ok((Cow::Owned(output), None)),
+            Ok(None) if required => Err(failure(DriverError::Missing {
+                driver: name.to_vec(),
+                direction,
+            })),
+            Ok(None) => Ok((bytes, None)),
+            Err(error) if required => Err(failure(error)),
             Err(error) => Ok((bytes, Some(error))),
+        }
+    }
+
+    /// Sends one file to the driver's long-running process, starting it on first use. `None`
+    /// means the process lacks the capability.
+    fn request(
+        &mut self,
+        name: &[u8],
+        command: &[u8],
+        direction: Direction,
+        path: &[u8],
+        blob: Option<ObjectId>,
+        content: &[u8],
+    ) -> Result<Option<Vec<u8>>, DriverError> {
+        let io = |source| DriverError::Io {
+            driver: name.to_vec(),
+            direction,
+            source,
+        };
+        if !self.processes.contains_key(name) {
+            let process = process::Process::start(command, &self.drivers).map_err(io)?;
+            self.processes.insert(name.to_vec(), process);
+        }
+        let Some(process) = self.processes.get_mut(name) else {
+            return Err(io(std::io::Error::other("filter process missing")));
+        };
+        if !process.supports(direction) {
+            return Ok(None);
+        }
+        let limit = self.drivers.limits.max_output_bytes();
+        match process.request(direction, path, blob, content, limit) {
+            Ok(process::Reply::Converted(output)) => Ok(Some(output)),
+            Ok(process::Reply::Error) => Err(DriverError::Rejected {
+                driver: name.to_vec(),
+                direction,
+            }),
+            Ok(process::Reply::Abort) => {
+                process.disable(direction);
+                Err(DriverError::Aborted {
+                    driver: name.to_vec(),
+                    direction,
+                })
+            }
+            Err(error) => {
+                // The stream is out of step; a later request starts a new process.
+                self.processes.remove(name);
+                Err(error.into_driver_error(name, direction))
+            }
         }
     }
 }
