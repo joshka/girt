@@ -786,6 +786,25 @@ impl Repository {
         commands: Commands,
     ) -> Result<Pipeline, LoadError> {
         let source = self.attribute_source(environment)?;
+        self.filters_with_source(environment, source, commands)
+    }
+
+    /// Loads conversions as [`Self::filters`] does, reading per-directory `.gitattributes` from
+    /// `source`.
+    ///
+    /// Use [`DirectorySource::Tree`](crate::attributes::DirectorySource::Tree) with the target
+    /// tree for a checkout into an empty working tree, where the target's `.gitattributes` files
+    /// are not written yet; Git reads them from the index it is checking out.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::filters`].
+    pub fn filters_with_source(
+        &self,
+        environment: &Environment,
+        source: crate::attributes::DirectorySource,
+        commands: Commands,
+    ) -> Result<Pipeline, LoadError> {
         let lookup = self.attributes(environment, source)?;
         let mut drivers = Drivers::from_config(self.config())?.with_commands(commands);
         if let Some(worktree) = self.worktree() {

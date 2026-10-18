@@ -1020,6 +1020,7 @@ fn projection_checks_intermediate_states_not_only_the_final_tree() {
         old,
         Some(target),
         &mut edit,
+        None,
         Limits::default(),
         &cancel,
     )

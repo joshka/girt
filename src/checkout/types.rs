@@ -330,6 +330,9 @@ pub struct Report {
     /// True only after successful index publication. On failure the prior index remains, apart
     /// from independent writers; completed working-tree changes are not rolled back.
     pub index_published: bool,
+    /// Paths written unconverted because a filter driver that is not `filter.<name>.required`
+    /// failed, as Git writes them; only filtered checkouts fill this.
+    pub unfiltered: Vec<Vec<u8>>,
 }
 
 /// Checkout failure with exact completed operations and independently reported cleanup failures.
@@ -464,6 +467,15 @@ pub enum Error {
     /// Object storage failed verification or could not be opened.
     #[error(transparent)]
     Object(#[from] crate::ObjectReadError),
+    /// Converting a blob for the working tree failed during preparation.
+    #[error("converting {path:?} for the working tree")]
+    Filter {
+        /// Relative path.
+        path: Vec<u8>,
+        /// The conversion failure, boxed to keep this error small.
+        #[source]
+        source: Box<crate::filter::Error>,
+    },
     /// A tree leaf did not identify an available blob.
     #[error("missing or non-blob checkout object {0}")]
     InvalidBlob(ObjectId),
