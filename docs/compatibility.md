@@ -3493,3 +3493,28 @@ checks. Configured checkout has the same platform, exclusion and recovery contra
 Its executable-bit baseline verification remains literal under `core.fileMode=false`;
 [configured checkout file-mode policy](https://github.com/joshka/girt/issues/652) tracks that
 conservative refusal separately.
+
+## Signed payloads
+
+`girt::signing` splits a commit or tag into its signature and the exact bytes the signature covers.
+Nothing is verified and no program runs; signing and verification are tracked in
+[the signatures issue](https://github.com/joshka/girt/issues/510).
+
+`Commit::signed_payload` reads the signature header for the commit's own format (`gpgsig` for SHA-1,
+`gpgsig-sha256` for SHA-256), unfolds it, and joins repeated headers. The payload drops every
+`gpgsig` and `gpgsig-sha256` header. A commit with only the other format's header is unsigned.
+
+`Tag::signed_payload` starts the signature at the last line, anywhere in the tag, that begins with
+`-----BEGIN PGP SIGNATURE-----`, `-----BEGIN PGP MESSAGE-----`, `-----BEGIN SIGNED MESSAGE-----` or
+`-----BEGIN SSH SIGNATURE-----`; text after the marker on that line is allowed. The payload removes
+`gpgsig` and `gpgsig-sha256` headers in both hash formats, but Git removes only the last header of
+each run of adjacent signature headers, and girt does the same. Signature-like lines in the message
+are kept. `Commit::merge_tags` parses `mergetag` headers into tags whose IDs match the merged tag
+objects.
+
+`tests/signing.rs` replaces Git's `gpg.program`, `gpg.ssh.program` and `gpg.x509.program` with a
+recorder and compares the payload and signature Git hands them during `verify-commit` and
+`verify-tag` with girt's split, for SHA-1 and SHA-256 and for repeated, mixed, folded and misplaced
+signatures. A second test signs commits, a tag and a merge of that tag through Git with a throwaway
+ed25519 key and checks each split with `ssh-keygen -Y verify`. The recorder test needs a POSIX
+shell; the ssh test skips when `ssh-keygen` is absent.

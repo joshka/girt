@@ -85,6 +85,7 @@
 //! | Combine content, trees or commits and publish conflicts | [`merge`] |
 //! | Cherry-pick, revert or rebase explicit commits in memory | [`replay`] |
 //! | Read Git operation state and prepare explicit recovery | [`sequencer`] |
+//! | Split signed commits and tags into signature and signed payload | [`signing`] |
 //! | Save/apply stash snapshots and edit their history explicitly | [`stash`] |
 //! | Resolve names, conditionally update refs, inspect reflogs | [`refs`] |
 //! | Parse, resolve, interpret, or edit configuration | [`config`] |
@@ -213,6 +214,7 @@ pub mod retention;
 pub mod revision;
 pub mod rewrites;
 pub mod sequencer;
+pub mod signing;
 mod source_files;
 pub mod stash;
 pub mod status;
