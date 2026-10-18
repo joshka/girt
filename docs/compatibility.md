@@ -3172,3 +3172,26 @@ rebase stop, explicit skip/abort, continuation reflogs, stale snapshots, lock co
 unknown-file preservation and symlink refusal. Complete state directories are retired by rename
 before teardown cleanup. Cleanup failure can leave inert metadata at the reported retired path,
 while Git sees no active operation; it cannot leave a partly deleted active directory.
+
+## Pathspecs
+
+[`girt::pathspec`](../src/pathspec.rs) parses and matches Git pathspecs: plain paths with
+component-boundary directory matching, `fnmatch` wildcards where `*` crosses `/`, and the `top`
+(`:/`), `exclude` (`:!`, `:^`), `icase`, `literal` and `glob` magic in long and short forms. The
+`GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`, `GIT_ICASE_PATHSPECS` and `GIT_LITERAL_PATHSPECS`
+defaults, prefix-relative specs from a subdirectory and the implicit include of the current
+directory for exclude-only lists follow Git.
+
+`tests/pathspec.rs` builds an index through `git update-index --cacheinfo` (so case-only differences
+survive case-insensitive filesystems) and compares girt's selection with `git ls-files --full-name`
+for each spec in its corpus, from the root and from a subdirectory, with and without each
+environment default. Specs Git rejects must be rejected by girt. The same test checks that
+`Pathspec::directory` never skips a selected path or takes an unselected one.
+
+Under `icase`, Git lowers the path byte before comparing it with a single bracket member, so
+`:(icase)a[B]` matches nothing while `a[A-Z]` and `[[:upper:]]` accept either case. The shared
+wildmatch engine follows that rule, which also applies to case-insensitive config include
+conditions.
+
+Limitations: `attr:` magic is rejected as unsupported, and absolute paths are rejected even when
+they name a path inside the worktree.

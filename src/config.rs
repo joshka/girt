@@ -95,8 +95,7 @@ mod placement;
 pub use placement::IncludePlacement;
 mod resolution;
 mod sources;
-mod values;
-mod wildmatch;
+pub(crate) mod values;
 pub use parse::{Config, ConfigError, ConfigSection, Entry, InvalidValue};
 pub use resolution::{ResolveError, ResolveFailure};
 pub(crate) use sources::system_file;
@@ -104,7 +103,6 @@ pub use sources::{
     ConfigFile, ConfigInputs, ConfigScope, IncludeContext, Origin, ResolveLimits, SourceLocation,
 };
 pub(crate) use values::{boolean, integer};
-pub(crate) use wildmatch::matches_without_pathname;
 
 #[cfg(test)]
 mod options_tests;

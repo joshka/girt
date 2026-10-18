@@ -1,7 +1,8 @@
 //! Explicit, owned interpretation of Git reflog expiry configuration.
 use crate::Config;
-use crate::config::{InvalidValue, matches_without_pathname};
+use crate::config::InvalidValue;
 use crate::refs::RefName;
+use crate::wildmatch::matches_without_pathname;
 
 /// Resolved timestamp cutoffs for Git's two independent expiry rules.
 ///

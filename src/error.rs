@@ -162,6 +162,7 @@ from_domain_errors! {
     crate::loose::Error,
     crate::patch::Error,
     crate::patch::PatternError,
+    crate::pathspec::ParseError,
     crate::ObjectFormatError,
     crate::ParseObjectIdError,
     crate::ParseObjectIdPrefixError,

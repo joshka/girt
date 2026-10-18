@@ -6,7 +6,7 @@ use super::parse::{SectionName, SectionOccurrence};
 use super::placement::{IncludePlacement, SectionPlacement};
 use super::{
     Config, ConfigError, ConfigInputs, ConfigScope, Entry, IncludeConditionVisibility,
-    IncludeDirectiveCase, Origin, ResolveOptions, SourceLocation, UnresolvedIncludePath, wildmatch,
+    IncludeDirectiveCase, Origin, ResolveOptions, SourceLocation, UnresolvedIncludePath,
 };
 
 /// Contextual resolution failure. Source locations may contain private paths; tracing omits them.
@@ -866,7 +866,7 @@ impl<'a> Resolver<'a> {
         fold: bool,
         location: &SourceLocation,
     ) -> Result<bool, ResolveError> {
-        wildmatch::matches(pattern, text, fold, self.inputs.limits.match_cells)
+        crate::wildmatch::matches(pattern, text, fold, self.inputs.limits.match_cells)
             .ok_or_else(|| self.error(location, ResolveFailure::Limit("wildcard work")))
     }
 
