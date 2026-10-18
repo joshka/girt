@@ -246,7 +246,6 @@ pub mod tree;
 mod tree_compare;
 mod wildmatch;
 pub mod workflow;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod worktree_names;
 
 pub mod tree_diff;
