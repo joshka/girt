@@ -4215,4 +4215,6 @@ fixtures and generated UTF-8 format-patch messages. Tests compare decoded metada
 patch bytes for RFC 2047 Q/B words, folding, Latin-1 headers, subject policies, Message-ID trailers,
 in-body metadata, standard scissors and base64/quoted-printable bodies. The structured API exposes
 one unfolded subject value rather than the Git CLI's repeated empty Subject line for an in-body
-subject under `-k`. Multipart MIME and broader scissors forms are explicit refusals in this layer.
+subject under `-k`. Generated scissors shapes additionally cover prefix/interior/suffix text,
+whitespace and all four marker forms, including lines retained in the body. Multipart MIME remains
+an explicit refusal.
