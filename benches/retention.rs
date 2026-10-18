@@ -56,6 +56,11 @@ fn retention(c: &mut Criterion) {
             )
         })
     });
+    c.bench_function("repack/bitmap-packed-linear-256", |bench| {
+        let mut limits = RepackLimits::default();
+        limits.write_bitmaps = Some(true);
+        bench.iter(|| repository.repack_retained(black_box(&policy), limits, black_box(&cancel)))
+    });
     c.bench_function("prune/idempotent-packed-linear-256", |bench| {
         bench.iter(|| {
             repository.prune_unreachable_loose(

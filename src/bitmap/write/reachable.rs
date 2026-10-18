@@ -54,7 +54,10 @@ impl<'graph, 'ids> Closures<'graph, 'ids> {
             for &target in self.graph.targets(index) {
                 check(cancel)?;
                 charge(&mut self.remaining)?;
-                stack.push(target);
+                let bit = self.inverse[target];
+                if bitmap[bit / 64] & (1 << (bit % 64)) == 0 {
+                    stack.push(target);
+                }
             }
         }
         // A future hit already pays for its root pop. Do not retain a closure whose word union
