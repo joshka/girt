@@ -104,3 +104,25 @@ approximation for those layouts. Normalized trees remain in memory with the othe
 and must be installed before publishing the candidate root. The path-based `merge_tree_entries`
 primitive remains available to consumers that already own path alignment and want to preserve stored
 empty subdirectories.
+
+## Commit Tips and Virtual Bases
+
+`Objects::merge_commits` finds every best common ancestor before merging the two tip trees. Multiple
+bases are recursively merged in object-ID order through the same in-memory tree engine. Generated
+base blobs are available to later content comparison and rename scoring without being installed. The
+result identifies the original parents, best common ancestors and selected or synthesized base tree.
+
+An unresolved virtual base returns `CommitError::ConflictedBase` with the structured intermediate
+result. It does not select one provisional side as the ancestor. Final conflicts, by contrast,
+remain an ordinary `CommitMerge::result` for the caller to resolve. Unrelated histories are rejected
+by default; `CommitOptions::allow_unrelated_histories` explicitly chooses an empty base. Composition
+has depth, base-set, virtual-merge and ancestry-query limits in addition to each operation's history
+and tree bounds.
+
+To create a merge commit, require a clean result, install all generated blobs and trees, then use
+`Commit::builder(result.result.tree.id(), author, message).parents(result.parents)`. Set an explicit
+committer on the builder when it differs from the author. `LooseObjects::write_commit` stores the
+new object; updating a reference is a separate caller-owned transaction. The
+[`Objects::merge_commits` example](https://github.com/joshka/girt/issues/545) describes this
+boundary; the operation's Rustdoc contains a runnable object-installation and ordered-parent
+example.

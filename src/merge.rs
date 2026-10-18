@@ -6,7 +6,7 @@
 //! sides instead of interpreting markers. Paths, attributes and configuration are caller policy.
 //!
 //! ```
-//! use girt::merge::{ContentOptions, MarkerOptions, content};
+//! use girt::merge::{MarkerOptions, content};
 //! let merged = content(b"a\nb\nc\n", b"A\nb\nc\n", b"a\nb\nC\n")?;
 //! assert!(merged.is_clean());
 //! assert_eq!(merged.render(&MarkerOptions::default()), b"A\nb\nC\n");
@@ -24,17 +24,22 @@
 //! with the same in-memory result, explicitly refusing ambiguous normalization layouts.
 //! [`Driver`] selects built-in or caller-owned custom drivers from an attribute state.
 //! [`MarkerOptions::from_config`] applies an explicit conflict-style configuration snapshot.
+//! [`crate::Objects::merge_commits`] discovers ancestors and recursively synthesizes clean
+//! virtual bases, retaining all generated objects without publication. Conflicted virtual bases
+//! return an explicit error with the intermediate result.
+mod commits;
 mod content;
 mod driver;
 mod memory;
 mod renames;
-pub use driver::{Driver, DriverError};
-pub use renames::{RenameError, TreeMergeOptions};
 mod render;
 mod tree;
 mod types;
 
+pub use commits::{CommitError, CommitMerge, CommitOptions};
 pub use content::{content, content_with};
+pub use driver::{Driver, DriverError};
+pub use renames::{RenameError, TreeMergeOptions};
 pub use tree::{ConflictKind, TreeConflict, TreeError, TreeMerge, TreeOptions};
 pub use types::{
     ConflictStyle, ContentHunk, ContentMerge, ContentOptions, Error, Favor, MarkerOptions,

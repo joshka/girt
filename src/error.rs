@@ -108,6 +108,7 @@ from_domain_errors! {
     crate::merge::TreeError,
     crate::merge::DriverError,
     crate::merge::RenameError,
+    crate::merge::CommitError,
     crate::attributes::Error,
     crate::attributes::LoadError,
     crate::blame::Error,
