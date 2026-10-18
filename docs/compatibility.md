@@ -1956,6 +1956,20 @@ SSH, credential discovery, proxy use, redirects, protocol v2, shallow/partial re
 remote/refspec policy remain outside this change. The HTTP fixture is test infrastructure, not a
 supported server.
 
+### Request Headers and User Agent
+
+`tests/http_headers.rs` sends the same configuration through `git ls-remote` and girt discovery to
+one loopback listener and compares the recorded `X-*`, `Authorization` and `User-Agent` fields. It
+covers several `http.extraHeader` values, an empty value clearing earlier ones, a value without a
+colon, leading whitespace, `Authorization`, `http.userAgent`, `GIT_HTTP_USER_AGENT` taking
+precedence over `http.userAgent`, and an extra `User-Agent` field replacing the agent. Scoped cases
+cover a global entry before and after a scoped one, a less specific scope before a more specific
+one, and an empty scoped value. The default agents differ by design (`git/<version>` and
+`girt/<version>`) and are not compared. Git sends `Host`, `Git-Protocol` and framing fields from
+`http.extraHeader` unchanged; girt refuses them before any request. Git runs with isolated
+configuration and empty `credential.helper` and `core.askPass`. Evidence: macOS arm64, Git 2.56.0,
+2026-10-18.
+
 ## SSH Transport
 
 The optional `ssh` feature adds one OpenSSH process per v0 upload-pack/receive-pack exchange on
