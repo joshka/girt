@@ -108,6 +108,8 @@ enum Command {
     Ignore(worktree::IgnoreCommand),
     /// Replace the index and working tree with a tree (HEAD does not move).
     Checkout(worktree::CheckoutArgs),
+    /// Move the current branch, or unstage paths (like `git reset`).
+    Reset(worktree::ResetArgs),
     /// Manage linked worktrees.
     #[command(subcommand)]
     Worktree(worktree::WorktreeCommand),
@@ -279,6 +281,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Status(args) => worktree::status(args, context),
         Command::Ignore(command) => worktree::ignore(command, context),
         Command::Checkout(args) => worktree::checkout(args, context),
+        Command::Reset(args) => worktree::reset(args, context),
         Command::Worktree(command) => worktree::worktree(command, context),
         Command::Config(command) => config::run(command, context),
         Command::Remote(command) => config::remote(command, context),

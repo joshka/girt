@@ -1306,6 +1306,35 @@ Git 2.56 changed one rule: earlier versions read a `key://…` line, such as a U
 2.56. A unit test pins that behaviour, and the live comparison skips the URL case when the Git under
 test is older, as on CI runners with Git 2.55.
 
+## Reset
+
+`tests/reset_git.rs` builds one original repository (three commits, a side branch, staged, unstaged,
+added and untracked changes), copies it, runs `git reset` (Git 2.56.0, isolated configuration) in
+one copy and `Repository::reset` or `reset_paths` in the other, then compares HEAD, the branch HEAD
+names, `git ls-files --stage`, `git status --porcelain`, the last two entries of HEAD's and the
+branch's reflogs, `ORIG_HEAD` and the operation files in the Git directory. Cases: soft and mixed
+resets, a reset to the current commit (Git logs it in HEAD's reflog only), a detached HEAD, commit
+resets removing `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `MERGE_HEAD`, `MERGE_MODE`, `MERGE_MSG`,
+`SQUASH_MSG` and `AUTO_MERGE`, a refused soft reset during a merge, path resets from HEAD and from
+another commit, `git restore --staged --source` with a glob pathspec, a path reset that resolves
+conflict stages, a path reset where a file becomes a directory (Git removes the file's entry even
+though the pathspec does not select it), path resets in a repository without commits, and
+assume-unchanged flags, compared with `git ls-files -v` (kept on unchanged entries, cleared where
+the content changes). A soft reset with conflict stages in the index and no `MERGE_HEAD` is refused,
+as Git refuses it. A mixed reset keeps the cached stat data of unchanged entries.
+
+Deliberate differences: girt locks HEAD's branch before writing anything, so a locked branch fails
+with nothing written, where Git has already published `ORIG_HEAD` and the index; and a failure to
+write `ORIG_HEAD` stops the reset before anything else changes, where Git warns and continues.
+Commit resets refuse reftable repositories for now, because Git keeps `ORIG_HEAD` and `AUTO_MERGE`
+in the reference table there.
+
+Observed with the Git CLI and matched: every commit reset, including one to the current commit,
+writes `ORIG_HEAD` and a `reset: moving to <revision>` reflog entry; path resets write neither and
+leave operation files alone; rebase and sequencer directories are not touched. girt refuses indexes
+with skip-worktree entries or sparse directories instead of resetting them partially; hard, keep and
+merge resets are not implemented yet.
+
 ## Commit History
 
 `tests/support/history_git.rs` generates original commit payloads and stores them through Git

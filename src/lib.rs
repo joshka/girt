@@ -215,6 +215,7 @@ pub mod remote;
 pub mod replay;
 pub mod repo;
 pub mod repository;
+pub mod reset;
 pub mod retention;
 pub mod revision;
 pub mod rewrites;

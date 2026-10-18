@@ -133,6 +133,7 @@ from_domain_errors! {
     crate::merge::RenameError,
     crate::merge::CommitError,
     crate::merge::PublicationError,
+    crate::reset::ResetError,
     crate::message::TrailerCommandError,
     crate::attributes::Error,
     crate::attributes::LoadError,
