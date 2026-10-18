@@ -30,6 +30,13 @@ fn root(content: &[u8]) -> Ignore {
 #[case::backslash_is_one_byte(b"a?\n", b"a\\", false, Some(true))]
 #[case::literal_backslash(b"a\\\\\n", b"a\\", false, Some(true))]
 #[case::range(b"[a-c][[:digit:]]\n", b"b7", false, Some(true))]
+#[case::star_suffix(b"*.log\n", b"a/b.log", false, Some(true))]
+#[case::star_suffix_whole_name(b"*.log\n", b".log", false, Some(true))]
+#[case::star_suffix_shorter_name(b"*.log\n", b"log", false, None)]
+#[case::star_suffix_mismatch(b"*.log\n", b"a.lg", false, None)]
+#[case::anchored_star_suffix_no_slash(b"/*.log\n", b"a/b.log", false, None)]
+#[case::anchored_star_suffix(b"d/*.log\n", b"d/b.log", false, Some(true))]
+#[case::anchored_star_suffix_deeper(b"d/*.log\n", b"d/e/b.log", false, None)]
 fn semantics(
     #[case] content: &[u8],
     #[case] path: &[u8],

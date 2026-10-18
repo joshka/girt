@@ -2090,9 +2090,9 @@ addition; raise the explicit rewrite bounds to retry. Missing objects are errors
 shallow boundaries and a NUL-containing or nonregular requested file are refused. Older
 NUL-containing versions are compared as raw lines; historical type transitions start a new file
 history. Empty files need no history attribution. Copy/move detection within or across files,
-ignore-revs, attributes/textconv and incremental output are unsupported. Repeated lines can have
-different shortest-edit alignment from Git. The shared content diff applies boundary compaction and
-indent-aware placement, with the limitations described below.
+ignore-revs, textconv and incremental output are unsupported; `Repo::blame` refuses a textconv
+driver. Repeated lines can have different shortest-edit alignment from Git. The shared content diff
+applies boundary compaction and indent-aware placement, with the limitations described below.
 
 Original disposable histories in `tests/blame.rs` compare commit, original line and original path
 against Git 2.56.0 `blame --line-porcelain` on macOS arm64. They cover edited renames, merges with
@@ -2113,10 +2113,11 @@ patch hunks. Boundary compaction moves equivalent changes without adding context
 with `patch::write_hunks`. The content-diff example escapes bytes solely for display.
 
 Auto mode classifies changed payloads as binary if either contains NUL anywhere. This is an explicit
-whole-input policy, not Git's sampling or attributes policy. Forced text and forced binary override
-it; equal bytes always return unchanged. Binary results retain both slices without encoding a binary
-patch. No path, attributes, textconv, external driver, whitespace-ignore, rename/copy,
-patch-application, merge, index or worktree policy is applied.
+whole-input policy, not Git's sampling policy. Forced text and forced binary override it; equal
+bytes always return unchanged. Binary results retain both slices without encoding a binary patch. No
+path, attributes, textconv, external driver, whitespace-ignore, rename/copy, patch-application,
+merge, index or worktree policy is applied; patches apply attributes per path (see
+[Diff Attributes](#diff-attributes)).
 
 `BlobContent::read` separately loads a tree change's regular, executable and symlink sides from
 verified loose/packed storage. Absent sides become empty buffers; the original tree change retains
@@ -2200,6 +2201,57 @@ confirms packed reads. Tests use only portable files and Git-managed fixture ref
 girt's reference backend works on Windows. The suite is included explicitly in the Windows job.
 Local execution uses macOS arm64, Git 2.55.0 and Rust 1.98.1. New native Linux/Windows runtime
 results are uncollected; platform support has not expanded.
+
+## Diff Attributes
+
+`attributes::Attributes` compiles `.gitattributes`-format files supplied with a `Source`; `get`
+returns one attribute's set, unset, value or unspecified state for a file path.
+`Repository::attributes` reads the files Git reads: the system file (unless `GIT_ATTR_NOSYSTEM`),
+`core.attributesFile` or its XDG default, per-directory `.gitattributes` and `info/attributes`.
+Per-directory files come from the worktree, from a tree named by `GIT_ATTR_SOURCE` or `attr.tree`,
+or from nowhere in a bare repository (`Repository::attribute_source`). Git reads neither the index
+nor the compared trees when comparing two trees, so neither does girt. Worktree files are read on
+demand without following symlinks; a symlinked `.gitattributes` is skipped, as Git skips it.
+
+Lines follow Git: later lines and later assignments win, a pattern matches as in `.gitignore`
+relative to its directory, a pattern ending in `/` matches no file, negative patterns and lines with
+an invalid attribute name are ignored, and quoted patterns use C-style escapes (an unquotable quote
+stays literal). Macros are honoured in every source except a `.gitattributes` below the root;
+`binary` expands to `-diff -merge -text`, and an unset or unspecified macro does not expand.
+`core.ignoreCase` folds ASCII case in patterns and directory prefixes.
+
+`patch::DiffAttributes` applies the `diff` attribute per side: set forces text, unset (including
+`binary`) forces `Binary files … differ`, and `diff=<driver>` reads `diff.<driver>.binary`,
+`xfuncname`, `funcname`, `textconv` and `command`. `text` and `-text` do not change patches. A file
+is binary when either side is. Hunk-header function lines use the old side's pattern, else the new
+side's, else Git's default rule. Patterns are POSIX expressions translated to `regex-automata`
+syntax and matched leftmost-longest as in a UTF-8 locale; the first matching expression decides and
+`!` rejects. `write_patch` refuses a driver with textconv or an external command
+(`patch::External::Refuse`); `External::Ignore` matches `--no-textconv --no-ext-diff`. `Repo::blame`
+refuses a textconv driver; `binary` and `-diff` do not affect `git blame`.
+
+Git defines built-in drivers whose patterns are part of its source, which girt does not use. girt
+has an original `rust` pattern written from the Rust grammar and checked against `git diff` output;
+other built-in driver names (such as `python` or `cpp`) use Git's default rule unless configured
+([issue 460](https://github.com/joshka/girt/issues/460)).
+Known pattern differences: back-references, collating elements and equivalence classes are refused,
+non-UTF-8 patterns are refused, named classes are ASCII, and a capture group inside an ambiguous
+match follows preference order rather than POSIX subexpression rules. A C-locale Git matches invalid
+UTF-8 bytes with `.`; girt follows UTF-8-locale Git.
+
+### Diff Attributes Evidence
+
+`src/attributes/tests.rs` covers each parsing and precedence rule with cases checked against
+`git check-attr`. `tests/patch_attributes.rs` compares `Repo::write_patch` byte for byte with Git
+2.56.0 `git diff` for forced text and binary, driver `binary`, `xfuncname` with groups and negation,
+`funcname`, the last-configured pattern, the built-in `rust` pattern and its configuration override,
+nested files, `info/attributes`, renames across drivers, committed-only attributes, `attr.tree`, a
+bare repository and a symlinked `.gitattributes`. It also checks textconv refusal,
+`External::Ignore` against `--no-textconv`, blame's textconv refusal and a tree source against
+`git check-attr --source`. On rust-lang/rust 1.87.0..1.88.0, girt's patch matches `git diff -M` in
+7,478 of 7,702 file sections (5,634 before attributes); no remaining difference is in function
+context, and all remaining differences also occur with Git's attributes disabled. The built-in
+`rust` pattern was derived from CLI observation only.
 
 ## Working-Tree Index
 

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::Config;
 
@@ -653,17 +653,21 @@ impl ConfigInputs {
 
 /// The installation configuration file Git's usual builds for this platform read.
 fn default_system_file() -> Option<PathBuf> {
+    system_file("gitconfig")
+}
+
+/// The system-wide Git file `name`, such as `gitconfig` or `gitattributes`.
+///
+/// Git compiles its system directory in; on macOS the first existing file among the usual
+/// installation prefixes is chosen, elsewhere on Unix `/etc` is used.
+pub(crate) fn system_file(name: &str) -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
-        [
-            "/opt/homebrew/etc/gitconfig",
-            "/usr/local/etc/gitconfig",
-            "/etc/gitconfig",
-        ]
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|path| path.exists())
+        ["/opt/homebrew/etc", "/usr/local/etc", "/etc"]
+            .into_iter()
+            .map(|directory| Path::new(directory).join(name))
+            .find(|path| path.exists())
     } else if cfg!(unix) {
-        Some(PathBuf::from("/etc/gitconfig"))
+        Some(Path::new("/etc").join(name))
     } else {
         None
     }

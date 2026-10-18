@@ -17,8 +17,9 @@
 //! Mutations require exclusive ownership of the working tree and repository state across the call.
 //! Commit and switch do not run hooks, filters or signing programs. Status loads repository ignore
 //! rules and collapses untracked directories. Tracked comparisons and checkout use raw bytes
-//! without normalization policy. Patches detect renames but read no diff configuration. Blame
-//! follows file renames with bounded history traversal.
+//! without normalization policy. Patches detect renames and apply diff attributes and drivers;
+//! drivers that would run textconv or external commands are refused. Blame follows file renames
+//! with bounded history traversal and refuses textconv drivers.
 //!
 //! ```
 //! use girt::{InitKind, ObjectFormat, Repo, Repository};

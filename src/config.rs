@@ -99,6 +99,7 @@ mod values;
 mod wildmatch;
 pub use parse::{Config, ConfigError, ConfigSection, Entry, InvalidValue};
 pub use resolution::{ResolveError, ResolveFailure};
+pub(crate) use sources::system_file;
 pub use sources::{
     ConfigFile, ConfigInputs, ConfigScope, IncludeContext, Origin, ResolveLimits, SourceLocation,
 };

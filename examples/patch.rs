@@ -105,12 +105,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rewrite_limits,
         &cancel,
     )?;
+    // Apply `.gitattributes` and `diff.<driver>` settings as `git diff` does.
+    let mut attributes = repo.diff_attributes(&environment)?;
     objects.write_patch_with(
         &mut out,
         &comparison.entries,
         Options::default()
             .with_context_lines(args.unified)
             .with_indent_heuristic(!args.no_indent_heuristic),
+        Some(&mut attributes),
         limits,
         &cancel,
     )?;

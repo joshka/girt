@@ -127,6 +127,7 @@ fn patches(
             &mut ours,
             &entries,
             options,
+            None,
             Limits::default(),
             &AtomicBool::new(false),
         )

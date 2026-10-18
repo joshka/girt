@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Read `.gitattributes` with `attributes::Attributes` and `Repository::attributes`, and apply
+  `binary`, `-diff`, `diff=<driver>`, `diff.<driver>.binary` and function-name patterns to patches
+  with `patch::DiffAttributes`. `Repo::write_patch` applies them by default; `Repo::blame` refuses
+  textconv drivers.
+
+### Changed
+
+- `Objects::write_patch_with` takes an optional `&mut DiffAttributes` after its options.
+
 ## [0.13.1](https://github.com/joshka/girt/compare/girt-v0.13.0...girt-v0.13.1) - 2026-10-18
 
 ### Other

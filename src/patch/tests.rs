@@ -105,6 +105,7 @@ fn cancellation_writes_nothing() {
             &mut out,
             &entries,
             Options::default(),
+            None,
             Limits::default(),
             &AtomicBool::new(true),
         )
@@ -127,6 +128,7 @@ fn limit_failure_names_the_path_after_headers() {
             &mut out,
             &entries,
             Options::default(),
+            None,
             limits,
             &AtomicBool::new(false),
         )

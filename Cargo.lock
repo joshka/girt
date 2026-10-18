@@ -716,6 +716,7 @@ dependencies = [
  "futures-util",
  "jiff",
  "libc",
+ "regex-automata",
  "reqwest",
  "rstest",
  "rustix",

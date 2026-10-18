@@ -1,15 +1,17 @@
 use std::io;
 use std::ops::Range;
 
+use super::function::{FunctionLines, Matcher};
 use crate::content_diff::TextDiff;
 
-/// Writes the unified hunks of one text comparison, starting at the first `@@` line.
+/// Writes the unified hunks of one text comparison with Git's default function context.
 ///
-/// Each hunk shows `context_lines` unchanged lines around its changes, as `--unified=<n>` does;
-/// changes separated by at most twice that many unchanged lines share a hunk. Ranges follow Git:
-/// a count of one is omitted and an empty side starts at the line before it. The header ends
-/// with Git's default function context: the nearest original line before the hunk that starts
-/// with an ASCII letter, `_` or `$`, cut to 80 bytes and stripped of trailing whitespace.
+/// Wraps [`write_hunks_with`] with [`FunctionLines::default`]. Each hunk shows `context_lines`
+/// unchanged lines around its changes, as `--unified=<n>` does; changes separated by at most twice
+/// that many unchanged lines share a hunk. Ranges follow Git: a count of one is omitted and an
+/// empty side starts at the line before it. The header ends with Git's default function context:
+/// the nearest original line before the hunk that starts with an ASCII letter, `_` or `$`, cut to
+/// 80 bytes and stripped of trailing whitespace.
 ///
 /// Lines are written with their exact bytes after a ` `, `-` or `+` marker. A line without a
 /// final LF is followed by `\ No newline at end of file`. No file header is written; see
@@ -47,12 +49,57 @@ use crate::content_diff::TextDiff;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn write_hunks(
-    mut out: impl io::Write,
+    out: impl io::Write,
     text: &TextDiff<'_>,
     context_lines: usize,
 ) -> io::Result<()> {
+    write_hunks_with(out, text, context_lines, &FunctionLines::default())
+}
+
+/// Writes the unified hunks of one text comparison, finding function context with `function`.
+///
+/// See [`write_hunks`] for the format. `function` chooses which original line before each hunk
+/// names its function, as a diff driver's `xfuncname` does; see [`FunctionLines`].
+///
+/// # Errors
+///
+/// Returns the writer's error; earlier lines remain written.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+/// use girt::patch::{FunctionLines, write_hunks_with};
+///
+/// let old = b"impl Tool {\n    fn run() {\n        one();\n    }\n}\n";
+/// let new = b"impl Tool {\n    fn run() {\n        two();\n    }\n}\n";
+/// let ContentDiff::Text(text) = diff(
+///     old,
+///     new,
+///     BinaryMode::Auto,
+///     DiffLimits::default(),
+///     &AtomicBool::new(false),
+/// )?
+/// else {
+///     panic!("expected text");
+/// };
+/// let rust = FunctionLines::builtin(b"rust").unwrap();
+/// let mut hunks = Vec::new();
+/// write_hunks_with(&mut hunks, &text, 0, &rust)?;
+/// assert_eq!(
+///     hunks,
+///     b"@@ -3 +3 @@ fn run() {\n-        one();\n+        two();\n"
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn write_hunks_with(
+    mut out: impl io::Write,
+    text: &TextDiff<'_>,
+    context_lines: usize,
+    function: &FunctionLines,
+) -> io::Result<()> {
     let (old, new, edits) = (text.old_bytes(), text.new_bytes(), text.edits());
-    let mut function = FunctionContext::default();
+    let mut function = FunctionContext::new(function.matcher());
     let mut index = 0;
     while index < edits.len() {
         let mut end = index;
@@ -141,32 +188,40 @@ fn lines_after(bytes: &[u8], start: usize, count: usize) -> (usize, usize) {
     (end, lines)
 }
 
-/// Finds hunk-header function names, scanning each original byte at most once across hunks.
-#[derive(Default)]
-struct FunctionContext {
+/// Finds hunk-header function names, scanning each original line at most once across hunks.
+struct FunctionContext<'a> {
+    matcher: Matcher<'a>,
     /// Lines before this offset have been searched.
     searched: usize,
-    /// The nearest match before `searched`.
+    /// The header range of the nearest match before `searched`.
     found: Option<Range<usize>>,
 }
 
-impl FunctionContext {
-    /// The nearest function line before line boundary `start`, which never decreases.
-    fn before<'a>(&mut self, bytes: &'a [u8], start: usize) -> Option<&'a [u8]> {
+impl<'a> FunctionContext<'a> {
+    fn new(matcher: Matcher<'a>) -> Self {
+        Self {
+            matcher,
+            searched: 0,
+            found: None,
+        }
+    }
+
+    /// The nearest function name before line boundary `start`, which never decreases.
+    fn before<'b>(&mut self, bytes: &'b [u8], start: usize) -> Option<&'b [u8]> {
         let mut end = start;
         while end > self.searched {
             let line_start = bytes[..end - 1]
                 .iter()
                 .rposition(|byte| *byte == b'\n')
                 .map_or(0, |lf| lf + 1);
-            if matches!(bytes[line_start], b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$') {
-                self.found = Some(line_start..end);
+            let line = &bytes[line_start..end - 1];
+            if let Some(name) = self.matcher.name(line) {
+                self.found = Some(line_start + name.start..line_start + name.end);
                 break;
             }
             end = line_start;
         }
         self.searched = start;
-        let line = &bytes[self.found.clone()?];
-        Some(line[..line.len().min(80)].trim_ascii_end())
+        Some(&bytes[self.found.clone()?])
     }
 }
