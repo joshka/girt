@@ -94,3 +94,112 @@ fn caller_bounds_are_enforced(
         Err(GraphError::Limit("bytes"))
     ));
 }
+
+#[rstest]
+fn split_layers_resolve_base_parents(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![], vec![0], vec![1]], false, format);
+    write_layer(&h, h.ids[0]);
+    write_layer(&h, h.ids[1]);
+    write_layer(&h, h.ids[2]);
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+    let graph = CommitGraph::open(h.root.path().join("objects").as_path(), format)
+        .unwrap()
+        .unwrap();
+    assert_eq!(graph.commits().len(), 3);
+    assert_eq!(graph.get(h.ids[2]).unwrap().parents, vec![h.ids[1]]);
+    graph.verify(&h.objects()).unwrap();
+    let repo = girt::Repository::open(h.root.path()).unwrap();
+    assert_eq!(repo.commit_graph().unwrap().unwrap().commits().len(), 3);
+}
+
+fn write_layer(h: &History, tip: girt::ObjectId) {
+    git(
+        h.root.path(),
+        &[
+            "commit-graph",
+            "write",
+            "--stdin-commits",
+            "--split=no-merge",
+        ],
+        format!("{tip}\n").as_bytes(),
+    );
+}
+
+#[rstest]
+fn disabled_graph_is_not_opened(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![]], false, format);
+    graph(&h, "2");
+    std::fs::remove_file(h.root.path().join("objects/info/commit-graph")).unwrap();
+    std::fs::write(h.root.path().join("objects/info/commit-graph"), b"damaged").unwrap();
+    git(h.root.path(), &["config", "core.commitGraph", "false"], b"");
+    let repo = girt::Repository::open(h.root.path()).unwrap();
+    assert!(repo.commit_graph().unwrap().is_none());
+    assert_eq!(repo.objects().unwrap().walk(&h.ids).unwrap(), h.ids);
+}
+
+#[rstest]
+fn missing_chain_layer_is_reported(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![], vec![0]], false, format);
+    write_layer(&h, h.ids[0]);
+    write_layer(&h, h.ids[1]);
+    let directory = h.root.path().join("objects/info/commit-graphs");
+    let chain = std::fs::read_to_string(directory.join("commit-graph-chain")).unwrap();
+    let base = chain.lines().next().unwrap();
+    std::fs::remove_file(directory.join(format!("graph-{base}.graph"))).unwrap();
+    assert!(CommitGraph::open(&h.root.path().join("objects"), format).is_err());
+    assert_eq!(
+        h.objects().walk(&[h.ids[1]]).unwrap(),
+        vec![h.ids[1], h.ids[0]]
+    );
+}
+
+#[rstest]
+fn corrected_date_overflow_matches_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![]], false, format);
+    let tree = h.objects().read_commit(h.ids[0]).unwrap().tree();
+    let parent = dated_commit(&h, tree, &[], 5_000_000_000);
+    let child = dated_commit(&h, tree, &[parent], 1);
+    git(
+        h.root.path(),
+        &["update-ref", "refs/heads/overflow", &child.to_string()],
+        b"",
+    );
+    let graph = CommitGraph::parse(&graph(&h, "2"), format).unwrap();
+    assert_eq!(graph.get(parent).unwrap().commit_time, 5_000_000_000);
+    assert_eq!(
+        graph.get(child).unwrap().corrected_commit_date,
+        Some(5_000_000_001)
+    );
+    graph.verify(&h.objects()).unwrap();
+}
+
+fn dated_commit(
+    h: &History,
+    tree: girt::ObjectId,
+    parents: &[girt::ObjectId],
+    time: u64,
+) -> girt::ObjectId {
+    let mut payload = format!("tree {tree}\n");
+    for parent in parents {
+        payload.push_str(&format!("parent {parent}\n"));
+    }
+    payload.push_str(&format!("author A <a@example.com> {time} +0000\ncommitter A <a@example.com> {time} +0000\n\ndate fixture\n"));
+    let output = git(
+        h.root.path(),
+        &["hash-object", "-w", "-t", "commit", "--stdin"],
+        payload.as_bytes(),
+    );
+    std::str::from_utf8(&output)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
