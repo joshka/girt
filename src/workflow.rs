@@ -107,8 +107,9 @@
 //! 3. **Authenticate if asked.** An HTTP server that answers `401 Unauthorized` gets one retry with
 //!    a credential. Configured `credential.helper` programs are asked first; Git's `store` helper
 //!    is answered natively by [`crate::remote::CredentialStore`]. If no helper supplies a value,
-//!    [`TransferCallbacks::credential`] is asked for the username and password. A credential the
-//!    server accepts is reported to the helpers for storage; a rejected one is reported for
+//!    the askpass program from `GIT_ASKPASS`, `core.askPass` or `SSH_ASKPASS` is asked, as Git
+//!    does, and then [`TransferCallbacks::credential`] for the username and password. A credential
+//!    the server accepts is reported to the helpers for storage; a rejected one is reported for
 //!    removal. SSH authentication is left to OpenSSH and the user's SSH configuration, agent and
 //!    `SSH_ASKPASS` program, all taken from the [`Environment`].
 //!
@@ -839,7 +840,8 @@ pub trait TransferCallbacks {
     /// explains why. Chunks are not aligned to lines.
     fn transport_message(&mut self, _message: &[u8]) {}
 
-    /// Asks the user for part of a credential, after configured helpers didn't supply one.
+    /// Asks the user for part of a credential, after configured helpers and the askpass program
+    /// (`GIT_ASKPASS`, `core.askPass` or `SSH_ASKPASS`) didn't supply one.
     ///
     /// Called only for HTTP(S) remotes that answer `401 Unauthorized`. `url` identifies the
     /// remote for the prompt; it never contains a username or password. Return the bytes the user
@@ -1318,6 +1320,8 @@ struct Http {
     environment: crate::transport::http::HttpEnvironment,
     protocol: crate::transport::RequestedProtocol,
     helpers: Vec<crate::remote::CredentialHelper>,
+    /// `GIT_ASKPASS`, `core.askPass` or `SSH_ASKPASS`, asked before the callbacks.
+    askpass: Option<crate::remote::CredentialProgram>,
     /// URL for prompts, without userinfo.
     display_url: String,
 }
@@ -1359,14 +1363,23 @@ impl Http {
             use_http_path: false,
         };
         let display_url = self.display_url.clone();
-        let mut prompt = |prompt: crate::remote::Prompt| {
-            let prompt = match prompt {
-                crate::remote::Prompt::Username => CredentialPrompt::Username,
+        let cancel = AtomicBool::new(false);
+        let mut prompt = |request: &crate::remote::PromptRequest<'_>| {
+            // Like Git, an askpass program answers first, and an empty answer is an empty value.
+            // A program that fails leaves the question to the application's own prompt.
+            if let Some(program) = &self.askpass
+                && let Ok(answer) =
+                    crate::remote::askpass(program, &request.question(), &cancel, None)
+            {
+                return Some(answer.unwrap_or_default());
+            }
+            let prompt = match request.field() {
                 crate::remote::Prompt::Password => CredentialPrompt::Password,
+                _ => CredentialPrompt::Username,
             };
             callbacks.credential(&display_url, prompt)
         };
-        crate::remote::CredentialSession::fill(
+        crate::remote::CredentialSession::fill_prompting(
             &self.settings_config,
             context,
             &self.helpers,
@@ -1508,6 +1521,47 @@ fn credential_helpers(
             })
         })
         .collect()
+}
+
+/// Selects the askpass program as Git does: `GIT_ASKPASS`, then `core.askPass`, then
+/// `SSH_ASKPASS`. An empty `GIT_ASKPASS` or `core.askPass` turns askpass off; the program is run
+/// directly with the question as its only argument, not through a shell.
+#[cfg(feature = "http")]
+fn askpass_program(
+    config: &crate::Config,
+    environment: &Environment,
+) -> Option<crate::remote::CredentialProgram> {
+    let configured = || {
+        config
+            .entries()
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.section.eq_ignore_ascii_case(b"core")
+                    && entry.subsection.is_none()
+                    && entry.name.eq_ignore_ascii_case(b"askpass")
+            })
+            .map(|entry| {
+                OsString::from(
+                    String::from_utf8_lossy(entry.value.as_deref().unwrap_or_default())
+                        .into_owned(),
+                )
+            })
+    };
+    let program = match environment.get("GIT_ASKPASS") {
+        Some(program) => program.to_owned(),
+        None => configured().or_else(|| environment.get("SSH_ASKPASS").map(ToOwned::to_owned))?,
+    };
+    if program.is_empty() {
+        return None;
+    }
+    let mut program = crate::remote::CredentialProgram::new(PathBuf::from(program));
+    program.environment = environment
+        .vars
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    Some(program)
 }
 
 /// Recognizes `store`, `store --file <path>` and `store --file=<path>`, which girt answers itself.
@@ -1749,6 +1803,7 @@ fn configured_endpoint(
             environment: http_environment(config, &destination, environment)?,
             protocol: requested_protocol(config)?,
             helpers: credential_helpers(config, environment),
+            askpass: askpass_program(config, environment),
             display_url: redacted_url(destination.bytes()),
             settings_config: config.clone(),
             remote_name: remote_name.as_bytes().to_vec(),

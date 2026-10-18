@@ -471,9 +471,59 @@ impl CredentialSession {
     /// supplied.
     pub fn fill(
         config: &Config,
+        context: CredentialContext,
+        programs: &[CredentialHelper],
+        prompt: Option<&mut dyn FnMut(Prompt) -> Option<Vec<u8>>>,
+        cancel: &AtomicBool,
+        deadline: Option<Instant>,
+    ) -> Result<Self, CredentialError> {
+        match prompt {
+            Some(prompt) => Self::fill_prompting(
+                config,
+                context,
+                programs,
+                Some(&mut |request: &PromptRequest<'_>| prompt(request.field())),
+                cancel,
+                deadline,
+            ),
+            None => Self::fill_prompting(config, context, programs, None, cancel, deadline),
+        }
+    }
+
+    /// Like [`Self::fill`], but the prompt sees the whole [`PromptRequest`].
+    ///
+    /// Use it to show Git's question text, or to pass it to an askpass program, which needs the
+    /// username already chosen when asking for a password.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors from [`Self::fill`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::Config;
+    /// use girt::remote::{CredentialContext, CredentialSession, Prompt, PromptRequest};
+    ///
+    /// let config = Config::parse(b"[credential]\nusername = alice\n")?;
+    /// let context = CredentialContext::new(b"https".to_vec(), b"example.com".to_vec());
+    /// let mut questions = Vec::new();
+    /// let mut prompt = |request: &PromptRequest<'_>| {
+    ///     questions.push(request.question());
+    ///     (request.field() == Prompt::Password).then(|| b"token".to_vec())
+    /// };
+    /// let cancel = AtomicBool::new(false);
+    /// CredentialSession::fill_prompting(&config, context, &[], Some(&mut prompt), &cancel, None)?;
+    /// assert_eq!(questions, ["Password for 'https://alice@example.com': "]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn fill_prompting(
+        config: &Config,
         mut context: CredentialContext,
         programs: &[CredentialHelper],
-        mut prompt: Option<&mut dyn FnMut(Prompt) -> Option<Vec<u8>>>,
+        mut prompt: Option<&mut AskFor<'_>>,
         cancel: &AtomicBool,
         deadline: Option<Instant>,
     ) -> Result<Self, CredentialError> {
@@ -552,13 +602,21 @@ impl CredentialSession {
         {
             if credential.username.is_none() {
                 check(cancel, deadline)?;
-                credential.username =
-                    Some(prompt(Prompt::Username).ok_or(CredentialError::Cancelled)?);
+                let request = PromptRequest {
+                    field: Prompt::Username,
+                    context: &context,
+                    username: None,
+                };
+                credential.username = Some(prompt(&request).ok_or(CredentialError::Cancelled)?);
             }
             if credential.password.is_none() {
                 check(cancel, deadline)?;
-                credential.password =
-                    Some(prompt(Prompt::Password).ok_or(CredentialError::Cancelled)?);
+                let request = PromptRequest {
+                    field: Prompt::Password,
+                    context: &context,
+                    username: credential.username.as_deref(),
+                };
+                credential.password = Some(prompt(&request).ok_or(CredentialError::Cancelled)?);
             }
         }
         check(cancel, deadline)?;
@@ -703,6 +761,63 @@ pub enum Prompt {
     Username,
     /// The secret for the endpoint and previously chosen username.
     Password,
+}
+
+// The prompt of `CredentialSession::fill_prompting`.
+type AskFor<'a> = dyn FnMut(&PromptRequest<'_>) -> Option<Vec<u8>> + 'a;
+
+/// One prompt for a missing credential field, see [`CredentialSession::fill_prompting`].
+#[derive(Debug, Clone, Copy)]
+pub struct PromptRequest<'a> {
+    field: Prompt,
+    context: &'a CredentialContext,
+    username: Option<&'a [u8]>,
+}
+
+impl PromptRequest<'_> {
+    /// The field being asked for.
+    pub fn field(&self) -> Prompt {
+        self.field
+    }
+
+    /// The endpoint the credential is for.
+    pub fn context(&self) -> &CredentialContext {
+        self.context
+    }
+
+    /// The username already chosen, when asking for a password.
+    pub fn username(&self) -> Option<&[u8]> {
+        self.username
+    }
+
+    /// The question Git asks, such as `Password for 'https://alice@example.com': `.
+    ///
+    /// With [`CredentialContext::use_http_path`], the repository path follows the host.
+    ///
+    /// Non-UTF-8 bytes are replaced. The text never contains a password.
+    pub fn question(&self) -> String {
+        let field = match self.field {
+            Prompt::Username => "Username",
+            Prompt::Password => "Password",
+        };
+        let user = self
+            .username
+            .filter(|user| !user.is_empty())
+            .map(|user| format!("{}@", String::from_utf8_lossy(user)))
+            .unwrap_or_default();
+        // With `useHttpPath`, Git names the repository too.
+        let path = match &self.context.path {
+            Some(path) if self.context.use_http_path => {
+                format!("/{}", String::from_utf8_lossy(path))
+            }
+            _ => String::new(),
+        };
+        format!(
+            "{field} for '{}://{user}{}{path}': ",
+            String::from_utf8_lossy(&self.context.protocol),
+            String::from_utf8_lossy(&self.context.host),
+        )
+    }
 }
 
 /// Run an explicitly approved askpass executable for one prompt; `None` means user cancellation.

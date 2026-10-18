@@ -335,6 +335,16 @@ askpass program with Git's `GIT_ASKPASS` fallback. Credentials remain Supported 
 and askpass; applications own interactive terminal prompts. These observations use Git 2.56.0 and
 disposable original fixtures.
 
+`tests/http_askpass.rs` runs `git ls-remote` and `workflow::remote_head` against a loopback smart
+HTTP server that requires Basic authentication, with recording askpass scripts, and compares the
+outcome and every question asked. Cases: `GIT_ASKPASS` before `core.askPass` and `SSH_ASKPASS`,
+`core.askPass` before `SSH_ASKPASS`, `SSH_ASKPASS` alone, an empty `GIT_ASKPASS` or `core.askPass`
+turning askpass off, an empty answer, a failing program, a configured `credential.username`, and
+`credential.useHttpPath`, which adds the repository path to the question. Both ask
+`Username for '<scheme>://<host>':` and then `Password for '<scheme>://<user>@<host>': `, dropping
+`<user>@` for an empty username. A failing program leaves the question to the next prompt: Git's
+terminal, girt's `TransferCallbacks::credential`. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
+
 ## Git Capability Audit: Transfer
 
 The audit baseline is `2e67ff57` (the merged Git guide), with original fixtures observed using Git

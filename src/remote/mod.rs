@@ -254,7 +254,7 @@ pub use configured_url::{
 };
 pub use credential::{
     Credential, CredentialBackend, CredentialContext, CredentialError, CredentialHelper,
-    CredentialProgram, CredentialSession, Prompt, askpass,
+    CredentialProgram, CredentialSession, Prompt, PromptRequest, askpass,
 };
 pub use credential_store::CredentialStore;
 pub use endpoint::{Destination, EndpointError, Protocol, ProtocolEnvironment, ProtocolOrigin};
