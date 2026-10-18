@@ -167,7 +167,41 @@ pipeline's driver bounds and deterministic builtin expansion; output budgets are
 conversion, rather than acting as a process-wide allocation quota. Cancellation is checked between
 entries and I/O chunks; individual syscalls and conversions cannot be interrupted.
 
+`core.fileMode=false` is an explicit refusal until an index/file-mode policy is supplied. Executable
+mode follows the owner execute bit, matching checkout and status.
+
 The caller must exclude other working-tree writers, root/ancestor renames and repository metadata or
 mount replacement throughout use. Snapshot checks detect observed changes, but do not exclude a
 writer racing a final check; hardlink/mount attacks and ABA replacements remain outside the
 contract.
+
+## Publish working-file edits
+
+Call `plan.publish()` only while holding the caller-owned exclusion described above. Publication
+preflights every original snapshot and admits a conservative bound for all publication directory
+scans before the first mutation, then rechecks each affected leaf immediately before its mutation.
+Missing directories and final regular-file names are created exclusively; paths are reopened through
+no-follow directory descriptors. The index, references and object storage remain unchanged.
+Regular-file permissions become 0644/0755; ownership, ACLs and other metadata are not preserved.
+Empty directories left by deletion are retained.
+
+Preparation is atomic with respect to files: any hunk, path or filter failure produces no edits.
+Filesystem publication has an explicit partial-failure contract. It does not promise batch
+atomicity, automatic rollback or crash durability when an I/O error, cancellation or snapshot change
+interrupts mutation. `WorktreeFailure.report.writes` lists every confirmed removal, directory
+creation and leaf creation in execution order. Replacements produce separate removal and creation
+entries. A created file is listed before writing starts, with `complete == false` until its bytes
+and executable mode are installed. An interrupted leaf remains, possibly empty or partial, for
+inspection; it is never silently omitted from the report.
+
+An initial snapshot-preflight failure has an empty report. On a later failure, inspect the listed
+paths and actual working tree before recovery or retrying. Do not treat the patch as wholly applied
+or wholly unapplied. Optional filter fallbacks and CRLF warnings are available on the prepared file
+results before publication. Successful publication performs final identity/content checks of all
+installed leaves.
+
+Publication scan admission counts every planned source/destination check, creation and final check,
+using original directory sizes plus all planned insertions as an upper bound. A known scan-limit
+failure therefore has an empty mutation report. Large patches in wide directories can require a
+higher `max_directory_entries`; the limit covers repeated scans rather than only distinct names.
+Live checks retain the budget in case an excluded concurrent writer changes the directory sizes.

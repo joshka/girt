@@ -24,7 +24,10 @@ pub use index::{AppliedIndex, IndexError, IndexLimits};
 mod parse;
 mod text;
 mod worktree;
-pub use worktree::{PreparedWorktree, WorktreeError, WorktreeFile, WorktreeLimits};
+pub use worktree::{
+    PreparedWorktree, WorktreeAction, WorktreeError, WorktreeFailure, WorktreeFile, WorktreeLimits,
+    WorktreeReport, WorktreeWrite,
+};
 mod tree;
 pub use tree::{AppliedFile, AppliedTree, TreeError, TreeLimits, TreeOptions};
 
