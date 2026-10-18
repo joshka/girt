@@ -113,6 +113,7 @@ from_domain_errors! {
     crate::hooks::Error,
     crate::replace::LoadError,
     crate::replace::SettingsError,
+    crate::replace::WriteError,
     crate::bitmap::Error,
     crate::bitmap::WriteError,
     crate::bitmap::InstallError,

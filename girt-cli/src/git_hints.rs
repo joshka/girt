@@ -70,7 +70,8 @@ const ENTRIES: &[Entry] = &[
     // Top-level Git commands: every name in `git_commands.txt` appears exactly once.
     commands(&[
         "blame", "checkout", "clone", "config", "diff", "fetch", "help", "history", "init", "log",
-        "maintenance", "multi-pack-index", "push", "remote", "repo", "reset", "status", "worktree",
+        "maintenance", "multi-pack-index", "push", "remote", "replace", "repo", "reset", "status",
+        "worktree",
     ], Hint::Same),
     commands(&["annotate"], use_(&[("annotate", "blame")])),
     commands(&["cat-file"], use_(&[
@@ -121,8 +122,7 @@ const ENTRIES: &[Entry] = &[
     ], STAGING),
     commands(&["update-index"], use_(&[("update-index --refresh", "index refresh")])),
     commands(&[
-        "branch", "check-ref-format", "name-rev", "notes", "pack-refs", "replace",
-        "symbolic-ref", "tag",
+        "branch", "check-ref-format", "name-rev", "notes", "pack-refs", "symbolic-ref", "tag",
     ], REFS),
     commands(&[
         "check-attr", "check-mailmap", "cherry", "diff-pairs", "format-rev", "grep",
@@ -184,6 +184,9 @@ const ENTRIES: &[Entry] = &[
     under("init", &["--object-format"], use_(&[("init --object-format=sha256", "init --sha256")])),
     under("init", &["--ref-format"], use_(&[("init --ref-format=reftable", "init --reftable")])),
     under("init", &["--template", "--shared", "--separate-git-dir"], SETUP),
+    under("replace", &["--graft"], use_(&[("replace --graft", "replace graft")])),
+    under("replace", &["-d", "--delete"], use_(&[("replace -d", "replace delete")])),
+    under("replace", &["-l", "--list"], use_(&[("replace -l", "replace list")])),
     under("log", &["--max-count"], use_(&[("log --max-count", "log --limit")])),
     under("log", &[
         "--graph", "-p", "--patch", "--stat", "--format", "--pretty", "--author", "--grep",
