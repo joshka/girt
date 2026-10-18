@@ -26,7 +26,7 @@
 //! ```
 //!
 //! Trailers are the `Key: value` lines at the end of a message, such as `Signed-off-by:`.
-//! [`trailers`] lists them as `git interpret-trailers --parse` does and [`add_trailers`] adds new
+//! [`trailers()`] lists them as `git interpret-trailers --parse` does and [`add_trailers`] adds new
 //! ones following the `trailer.*` rules that [`TrailerConfig`] reads.
 //!
 //! An empty [`cleanup`] result means the message had no content; Git aborts the commit in that
