@@ -228,6 +228,25 @@ environment, tracked separately in [issue 714](https://github.com/joshka/girt/is
 deterministic lock test confirms stored-HEAD updates with append logging hold the old symbolic
 branch lock through checkout.
 
+`tests/submodule_populate.rs` compares populated worktrees with Git update --init in both hashes:
+recorded detached HEAD, name-based modules storage, readable gitfile/worktree config and clean
+parent status. Missing commits fetch advertised origin heads/tags without moving local branches. New
+checkout applies target attributes; tests cover preserved layout/fetch effects after budget or
+dirty-content refusal, symlink paths, destination collisions, no-op methods and shallow refusal. Git
+accepts the absolute gitfile and core.worktree paths written here; Git's CLI normally writes
+relative paths. Existing absorbed metadata without a populated worktree is an explicit Occupied
+refusal. Linux/macOS population is supported; Windows returns a typed refusal except for none. No
+external update commands, hooks or recursive checkout run.
+
+Known transport differences: unadvertised recorded commits are explicitly refused after fetching
+advertised heads/tags ([issue 726](https://github.com/joshka/girt/issues/726)); new
+shallow-recommended clones are explicitly refused
+([issue 727](https://github.com/joshka/girt/issues/727)). Workflow fetch currently uses trusted
+limits and has no caller cancellation, tracked for all fetch callers in
+[issue 725](https://github.com/joshka/girt/issues/725). Transport is an explicit populate call with
+captured environment and automatic protocol origin; file transport requires caller authorization.
+Metadata is never moved, replaced or automatically removed. Population is not an atomic transaction.
+
 ## Mailmap
 
 `tests/mailmap_git.rs` compares original temporary maps with the installed Git executable's

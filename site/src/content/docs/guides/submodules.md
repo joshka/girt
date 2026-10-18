@@ -214,5 +214,27 @@ Inspect `UpdateError::Checkout` for partial file/index effects with HEAD unchang
 reference transaction effects. No rollback is attempted: observe the residual state under exclusion
 before deciding how to recover. Successful reports do not authorize later writes.
 
-Missing-child clone/fetch, absorbed-layout creation and recursion remain tracked in
-[the submodules issue](https://github.com/joshka/girt/issues/507).
+## Populate a missing child
+
+Call `plan.populate(&parent, &options, &mut callbacks)` when transport is authorized. It clones
+missing child metadata into `.git/modules/<name>`, publishes `core.worktree` and the child's `.git`
+file, then checks out the recorded commit with detached HEAD and the child's own attributes and
+filters. An existing populated child fetches origin heads/tags only if its recorded commit is
+missing. Local branches are preserved. `apply` remains the offline choice.
+
+`PopulateReport` records completed clone, fetch, layout and checkout phases. On failure,
+`PopulateError` retains that report and a typed source, including nested transfer or checkout
+partial effects. Directories or a completed clone can remain after failure. Inspect them under
+exclusive ownership before recovery; no rollback or deletion is performed.
+
+The captured environment selects automatic protocol policy. File URLs need explicit authorization,
+for example a selected user config with `protocol.file.allow=always`. Empty or absent child paths
+are accepted; nonempty paths, symlinks and existing metadata awaiting reconnection are refused.
+Absolute gitfiles and worktree config are readable by Git. Population runs on macOS/Linux.
+
+New shallow clones are explicitly refused until
+[shallow clone support](https://github.com/joshka/girt/issues/727) lands. Commits absent from
+advertised heads/tags require [direct object-ID fetch](https://github.com/joshka/girt/issues/726).
+Workflow fetch currently has trusted limits and no caller cancellation;
+[fetch controls](https://github.com/joshka/girt/issues/725) track that gap. Clone recursion remains
+tracked in [the submodules issue](https://github.com/joshka/girt/issues/507).

@@ -14,7 +14,8 @@
 //! [`Definition::plan_init`] proposes local config assignments; [`Definition::plan_update`] selects
 //! a recorded commit and update method. [`InitPlan::apply`] publishes config after checking inputs;
 //! [`UpdatePlan::apply`] performs filtered checkout/none updates in existing children. Fetch, clone
-//! and recursion remain explicit future operations. External
+//! are available through explicit [`UpdatePlan::populate`], including absorbed metadata layout.
+//! Recursion remains a separate operation. External
 //! update commands are always refused in `.gitmodules`; user configuration additionally requires
 //! resolved provenance and separate [`Commands`] permission.
 //!
@@ -33,6 +34,8 @@
 mod execute;
 mod load;
 mod plan;
+mod populate;
+pub use populate::{PopulateError, PopulateFailure, PopulateReport};
 mod status;
 mod url;
 pub use execute::{InitError, UpdateError, UpdateOptions, UpdateReport};
