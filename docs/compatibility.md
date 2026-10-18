@@ -38,6 +38,15 @@ historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec 
 [R06 evidence](evidence/r06.md) records the native Linux/macOS/Windows refresh for these increments,
 including the selected Windows scope and exact tested revision.
 
+## Numeric diff summaries
+
+`girt::diffstat` renders caller-supplied text counts and binary lengths as Git numstat records.
+`tests/diffstat.rs` compares bytes with isolated `git diff --cached --numstat`, including NUL
+termination, empty additions, binary files, quoted paths, and renamed paths with shared directory
+components. Escaped rename paths retain separately quoted source and destination names. File count,
+aggregate path bytes, and output bytes have independent limits. Counts and ordering remain the
+caller's responsibility; repository collection and human-readable graph layout are not yet provided.
+
 ## Reachability bitmap files
 
 `girt::bitmap` reads bitmap v1 and reverse-index v1 files for SHA-1 and SHA-256 packs and multi-pack
