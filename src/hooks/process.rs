@@ -2,7 +2,7 @@
 use std::io::{self, Read, Write};
 use std::os::fd::AsFd;
 use std::os::unix::process::CommandExt;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::Duration;
 
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
@@ -15,12 +15,14 @@ struct Process {
     reaped: bool,
 }
 
-pub(super) fn run(
+/// Runs `command` in its own process group, writing `input` and capturing stdout then stderr up
+/// to `limit` bytes, until the leader exits and every pipe closes.
+pub(crate) fn run(
     command: &mut Command,
     input: &[u8],
     control: TransportControl<'_>,
     limit: usize,
-) -> io::Result<(bool, Vec<u8>)> {
+) -> io::Result<(ExitStatus, Vec<u8>)> {
     control.check()?;
     command
         .process_group(0)
@@ -49,7 +51,7 @@ pub(super) fn run(
             let status = process.child.wait()?;
             process.reaped = true;
             stdout.extend_from_slice(&stderr);
-            return Ok((status.success(), stdout));
+            return Ok((status, stdout));
         }
         control.check()?;
         let before = (
@@ -201,7 +203,7 @@ mod tests {
             deadline: Some(std::time::Instant::now() + Duration::from_secs(10)),
         };
         let output = run(&mut command, &vec![b'x'; 131072], control, 262144).unwrap();
-        assert!(output.0);
+        assert!(output.0.success());
         assert_eq!(output.1, vec![0; 262144]);
     }
 
@@ -215,7 +217,7 @@ mod tests {
             deadline: Some(std::time::Instant::now() + Duration::from_secs(3)),
         };
         let output = run(&mut command, b"", control, 1024).unwrap();
-        assert!(output.0);
+        assert!(output.0.success());
         assert_eq!(output.1, b"descendant");
     }
     #[test]
