@@ -136,6 +136,7 @@ from_domain_errors! {
     crate::format_patch::Error,
     crate::format_patch::SeriesError,
     crate::apply::IndexError,
+    crate::mailbox::Error,
     crate::mailmap::Error,
     crate::notes::Error,
     crate::replay::Error,

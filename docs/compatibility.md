@@ -4203,3 +4203,9 @@ for both patch blocks and statistics at a fixed compression level. Refusal cases
 merge selections, distant bases, aggregate bounds, cancellation and late invalid metadata with no
 installed objects or returned partial series. Existing patch, binary and framing suites remain part
 of the focused regression run.
+
+Patch mailbox splitting is compared with the isolated Git `mailsplit` executable using original
+in-memory fixtures. Coverage includes envelope-shaped boundaries, bare input, initial whitespace,
+escaped body lines, CRLF preservation/normalization, binary bytes and missing final newlines. The
+API returns bytes without filesystem traversal or MIME decoding; malformed input, cancellation and
+independent admission limits return no partial message list.
