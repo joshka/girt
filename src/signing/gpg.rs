@@ -235,7 +235,8 @@ impl GpgVerifier {
     /// Checks an OpenPGP or X.509 signature.
     ///
     /// A signature that does not verify is a [`Status::Bad`] verification and a missing key is
-    /// [`Status::CannotCheck`], not errors.
+    /// [`Status::CannotCheck`] when the verifier emits `ERRSIG`. Without a verdict (for
+    /// example, gpgsm reporting only `NO_PUBKEY`), the status is [`Status::NoSignature`].
     ///
     /// # Errors
     ///
@@ -281,7 +282,7 @@ fn interpret(status: &[u8], succeeded: bool, min_trust: Trust, output: Vec<u8>) 
         .filter_map(|line| line.strip_prefix("[GNUPG:] "))
         .collect();
     let mut verification = Verification {
-        status: Status::CannotCheck,
+        status: Status::NoSignature,
         signer: None,
         key: None,
         fingerprint: None,
@@ -331,6 +332,7 @@ fn interpret(status: &[u8], succeeded: bool, min_trust: Trust, output: Vec<u8>) 
     };
     if signatures > 1 {
         // Git checks exactly one signature; several, even all good, cannot be checked.
+        verification.status = Status::CannotCheck;
         verification.signer = None;
         verification.key = None;
         verification.fingerprint = None;

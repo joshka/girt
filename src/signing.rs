@@ -503,6 +503,9 @@ impl Verification {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum Status {
+    /// `N`: the verifier reported no signature verdict, including an X.509 certificate it
+    /// could not find. This does not imply that the signed payload lacks signature bytes.
+    NoSignature,
     /// `G`: a good signature from a trusted key.
     Good,
     /// `B`: the signature does not match the payload, or the key is not allowed to make it.
@@ -516,7 +519,8 @@ pub enum Status {
     ExpiredKey,
     /// `R`: a good signature from a revoked key.
     RevokedKey,
-    /// `E`: the signature cannot be checked, for example because the key is missing.
+    /// `E`: the verifier explicitly reports that the signature cannot be checked, or reports
+    /// several signatures. OpenPGP reports a missing key this way.
     CannotCheck,
 }
 
@@ -530,6 +534,7 @@ impl Status {
     /// ```
     pub fn letter(self) -> char {
         match self {
+            Self::NoSignature => 'N',
             Self::Good => 'G',
             Self::Bad => 'B',
             Self::UnknownValidity => 'U',

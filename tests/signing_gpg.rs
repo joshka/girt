@@ -555,8 +555,18 @@ fn openpgp_signed_tags_verify_like_git() {
     assert_eq!(verification.is_good(), accepted);
 }
 
-#[test]
-fn x509_signatures_match_git() {
+// macOS CI can report no verdict even for the signer's certificate store. Keep the
+// successful-verification requirement on other platforms while comparing Git on all of them.
+const X509_SIGNER_STATUSES: &[Status] = if cfg!(target_os = "macos") {
+    &[Status::Good, Status::NoSignature]
+} else {
+    &[Status::Good]
+};
+
+#[rstest]
+#[case::signer("signer", X509_SIGNER_STATUSES)]
+#[case::missing_certificate("empty", &[Status::NoSignature])]
+fn x509_signatures_match_git(#[case] verifier_home: &str, #[case] expected: &[Status]) {
     if !has_program("gpgsm") {
         eprintln!("skipping: gpgsm not installed");
         return;
@@ -564,12 +574,29 @@ fn x509_signatures_match_git() {
     let fixture = Fixture::new();
     fixture.home("signer");
     std::fs::create_dir(fixture.path("repo")).unwrap();
+    // gpgsm 2.4 ignores %no-protection. Supply an empty passphrase through loopback
+    // instead, keeping the key parameters in a separate file so stdin carries only it.
+    let parameters = fixture.path("x509-parameters");
+    std::fs::write(
+        &parameters,
+        b"Key-Type: RSA\nKey-Length: 2048\nKey-Usage: sign, cert\nSerial: random\n\
+Name-DN: CN=Test,O=girt\nName-Email: a@example.com\n",
+    )
+    .unwrap();
     let certificate = fixture.ok(
         "signer",
         "gpgsm",
-        &["--batch", "--armor", "--gen-key"],
-        b"Key-Type: RSA\nKey-Length: 2048\nKey-Usage: sign, cert\nSerial: random\n\
-Name-DN: CN=Test,O=girt\nName-Email: a@example.com\n%no-protection\n",
+        &[
+            "--batch",
+            "--armor",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase-fd",
+            "0",
+            "--gen-key",
+            parameters.to_str().unwrap(),
+        ],
+        b"\n",
     );
     fixture.ok("signer", "gpgsm", &["--batch", "--import"], &certificate);
     let fingerprint =
@@ -599,7 +626,7 @@ Name-DN: CN=Test,O=girt\nName-Email: a@example.com\n%no-protection\n",
         b"",
     );
 
-    let environment = fixture.environment("signer");
+    let environment = fixture.environment(verifier_home);
     let config = girt::Config::parse(
         format!("[user]\nsigningKey = {fingerprint}\n[gpg]\nformat = x509\n").as_bytes(),
     )
@@ -620,10 +647,82 @@ Name-DN: CN=Test,O=girt\nName-Email: a@example.com\n%no-protection\n",
         .unwrap()
         .with_environment(environment);
     let verification = verifier.verify(&signed).unwrap();
-    let (git, accepted) = fixture.git_verdict("signer", &[], "HEAD");
+    let (git, accepted) = fixture.git_verdict(verifier_home, &[], "HEAD");
     assert_eq!(verdict(&verification), git);
     assert_eq!(verification.is_good(), accepted);
-    assert_eq!(verification.status, Status::Good);
+    assert!(expected.contains(&verification.status));
+
+    // Keep comparing verdicts when the runner's gpgsm cannot verify its own fixture.
+    // Its raw status explains whether this is a certificate-store or tool failure.
+    if !accepted {
+        let raw = fixture.run(
+            verifier_home,
+            "git",
+            &["verify-commit", "--raw", "HEAD"],
+            b"",
+        );
+        eprintln!(
+            "X.509 fixture rejected by Git: {}\ngirt verifier: {}",
+            String::from_utf8_lossy(&raw.stderr),
+            String::from_utf8_lossy(&verification.output)
+        );
+    }
+}
+
+/// Git distinguishes an explicit ERRSIG verdict from a verifier that reports no verdict.
+#[rstest]
+#[case::no_status("", Status::NoSignature)]
+#[case::missing_certificate(
+    "[GNUPG:] NEWSIG\n[GNUPG:] NO_PUBKEY #01/CN=Test,O=girt\n[GNUPG:] ERROR verify.findkey 50331657\n",
+    Status::NoSignature
+)]
+#[case::explicit_error("[GNUPG:] ERRSIG ABC 1 10 00 0 9\n", Status::CannotCheck)]
+fn x509_verifier_failures_match_git(#[case] status: &str, #[case] expected: Status) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new();
+    std::fs::create_dir(fixture.path("repo")).unwrap();
+    fixture.ok("signer", "git", &["init", "-q", "."], b"");
+    let tree = fixture.git_line(&["mktree"], b"");
+    let bytes = format!(
+        "tree {tree}\nauthor A <a@example.com> 1700000000 +0000\n\
+committer A <a@example.com> 1700000000 +0000\n\
+gpgsig -----BEGIN SIGNED MESSAGE-----\n fixture\n -----END SIGNED MESSAGE-----\n\nx509\n"
+    );
+    let id = fixture.git_line(
+        &["hash-object", "-t", "commit", "-w", "--stdin"],
+        bytes.as_bytes(),
+    );
+    // This original fixture controls only the external verifier's status protocol.
+    let program = fixture.path("x509-verifier.sh");
+    std::fs::write(
+        &program,
+        format!("#!/bin/sh\ncat >/dev/null\ncat <<'STATUS'\n{status}STATUS\nexit 1\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let config = girt::Config::parse(
+        format!("[gpg \"x509\"]\nprogram = {}\n", program.display()).as_bytes(),
+    )
+    .unwrap();
+    let verifier = GpgVerifier::from_config(&config, Programs::Run)
+        .unwrap()
+        .with_environment(fixture.environment("signer"));
+    let verification = verifier
+        .verify(
+            &fixture
+                .commit(ObjectFormat::Sha1, &id)
+                .signed_payload()
+                .unwrap(),
+        )
+        .unwrap();
+    let setting = format!("gpg.x509.program={}", program.display());
+    let (git, accepted) = fixture.git_verdict("signer", &[&setting], &id);
+
+    assert_eq!(verdict(&verification), git);
+    assert_eq!(verification.is_good(), accepted);
+    assert_eq!(verification.status, expected);
+    assert!(!accepted);
 }
 
 #[cfg(unix)]
