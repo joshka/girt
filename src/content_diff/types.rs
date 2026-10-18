@@ -65,9 +65,11 @@ impl Default for Options {
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+///
 /// let cancel = AtomicBool::new(false);
 /// let old = b"key\0old\n";
 /// let new = b"key\0new\n";
+///
 /// assert!(matches!(
 ///     diff(old, new, BinaryMode::Auto, DiffLimits::default(), &cancel)?,
 ///     ContentDiff::Binary { .. }
@@ -141,6 +143,7 @@ pub enum ContentDiff<'a> {
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+///
 /// let ContentDiff::Text(text) = diff(
 ///     b"one\ntwo\nthree\n",
 ///     b"ONE\ntwo\nTHREE",
@@ -151,6 +154,7 @@ pub enum ContentDiff<'a> {
 /// else {
 ///     panic!("expected text edits");
 /// };
+///
 /// let mut result = Vec::new();
 /// let mut cursor = 0;
 /// for edit in text.edits() {
@@ -159,6 +163,7 @@ pub enum ContentDiff<'a> {
 ///     cursor = edit.old_bytes.end;
 /// }
 /// result.extend_from_slice(&text.old_bytes()[cursor..]);
+///
 /// assert_eq!(result, text.new_bytes());
 /// # Ok::<(), girt::content_diff::DiffError>(())
 /// ```
@@ -172,6 +177,7 @@ pub enum ContentDiff<'a> {
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+///
 /// let old = b"keep\r\nold\xff";
 /// let new = b"keep\r\nnew\xff";
 /// let ContentDiff::Text(text) = diff(
@@ -184,6 +190,7 @@ pub enum ContentDiff<'a> {
 /// else {
 ///     panic!("requested text");
 /// };
+///
 /// let mut rebuilt = Vec::new();
 /// let mut cursor = 0;
 /// for edit in text.edits() {
@@ -192,6 +199,7 @@ pub enum ContentDiff<'a> {
 ///     cursor = edit.old_bytes.end;
 /// }
 /// rebuilt.extend_from_slice(&old[cursor..]);
+///
 /// assert_eq!(rebuilt, new);
 /// # Ok::<(), girt::content_diff::DiffError>(())
 /// ```
@@ -229,6 +237,7 @@ impl<'a> TextDiff<'a> {
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+///
 /// let ContentDiff::Text(text) = diff(
 ///     b"keep\n",
 ///     b"keep\ninserted",
@@ -239,6 +248,7 @@ impl<'a> TextDiff<'a> {
 /// else {
 ///     panic!("expected text");
 /// };
+///
 /// let edit = &text.edits()[0];
 /// assert!(edit.old_bytes.is_empty());
 /// assert_eq!(edit.old_lines, 1..1);

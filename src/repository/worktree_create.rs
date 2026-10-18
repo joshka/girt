@@ -377,6 +377,7 @@ impl Repository {
     /// ```no_run
     /// use girt::refs::RefName;
     /// use girt::{OrphanWorktreeOptions, Repository, SharedPermissions, WorktreeDurability};
+    ///
     /// let repository = Repository::open("main")?;
     /// let options = OrphanWorktreeOptions::default()
     ///     .with_shared_permissions(SharedPermissions::Group)
@@ -385,6 +386,7 @@ impl Repository {
     ///             .with_index(true)
     ///             .with_references(true),
     ///     );
+    ///
     /// let branch = RefName::new(b"refs/heads/new-work")?;
     /// let linked = repository.create_orphan_worktree_with_options("linked", &branch, 128, options)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())

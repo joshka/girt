@@ -19,6 +19,7 @@
 //!         id: ObjectId::for_blob(format, b"# Project\n"),
 //!     }],
 //! )?;
+//!
 //! assert_eq!(tree.entries()[0].name, b"README.md");
 //! assert_eq!(Tree::parse(format, &tree.encode())?.id(), tree.id());
 //! # Ok::<(), girt::TreeError>(())
@@ -149,6 +150,7 @@ impl Tree {
     ///         id: ObjectId::for_blob(format, b"notes\n"),
     ///     }],
     /// )?;
+    ///
     /// assert_eq!(tree.entries()[0].name, b"notes.txt");
     /// # Ok::<(), girt::TreeError>(())
     /// ```
@@ -209,6 +211,7 @@ impl Tree {
     ///         id: ObjectId::for_blob(format, b"notes\n"),
     ///     }],
     /// )?;
+    ///
     /// let bytes = tree.encode();
     /// let parsed = Tree::parse(format, &bytes)?;
     /// assert_eq!(parsed.encode(), bytes);
@@ -369,6 +372,7 @@ impl<'a> Iterator for RawEntries<'a> {
 ///         id: ObjectId::for_blob(format, b"notes\n"),
 ///     }],
 /// )?;
+///
 /// assert_eq!(tree.entries()[0].mode, EntryMode::Blob);
 /// # Ok::<(), girt::TreeError>(())
 /// ```
@@ -422,8 +426,10 @@ impl TreeEntry {
 ///         }],
 ///     )
 /// };
+///
 /// let regular = snapshot(EntryMode::Blob)?;
 /// let executable = snapshot(EntryMode::Executable)?;
+///
 /// assert_ne!(regular.id(), executable.id()); // Mode changes alter the tree, not the blob.
 /// assert_eq!(regular.entries()[0].id, executable.entries()[0].id);
 /// # Ok::<(), girt::TreeError>(())

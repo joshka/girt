@@ -20,11 +20,13 @@ use crate::Config;
 ///       pushurl = ssh://git@example.com/project.git\n\
 ///       fetch = +refs/heads/*:refs/remotes/origin/*\n",
 /// )?;
+///
 /// let origin = Remote::find(&config, b"origin")?.expect("configured");
 /// assert_eq!(
 ///     origin.fetch_url(),
 ///     Some(&b"https://example.com/project.git"[..])
 /// );
+///
 /// // An explicit `pushurl` replaces `url` for pushes.
 /// assert_eq!(
 ///     origin.push_urls(),

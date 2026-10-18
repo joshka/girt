@@ -301,6 +301,7 @@ pub use clone::{CloneError, CloneOptions, CloneOutcome, clone, clone_with};
 ///     // An empty remote, a detached HEAD or an ambiguous answer has no default branch.
 ///     _ => None,
 /// };
+///
 /// assert_eq!(
 ///     default_branch,
 ///     Some(girt::refs::RefName::new("refs/heads/main")?)
@@ -374,6 +375,7 @@ pub fn remote_head(
 ///     &Environment::default(),
 ///     &mut NoCallbacks,
 /// )?;
+///
 /// for update in &outcome.updated {
 ///     // Reference names are bytes, like Git's; they need not be UTF-8.
 ///     let name = String::from_utf8_lossy(update.name.as_bytes());
@@ -471,6 +473,7 @@ pub fn fetch(
 ///     &environment,
 ///     &mut NoCallbacks,
 /// )?;
+///
 /// assert!(report.all_succeeded(), "rejected: {report:?}");
 /// assert_eq!(
 ///     upstream.references()?.read(&topic)?,
@@ -509,6 +512,7 @@ pub fn fetch(
 ///     &environment,
 ///     &mut NoCallbacks,
 /// )?;
+///
 /// assert!(!report.all_succeeded());
 /// assert!(matches!(report.refs[0].status, Some(Status::Rejected(_))));
 /// assert_eq!(
@@ -770,14 +774,17 @@ pub enum CredentialPrompt {
 ///     token: Some("secret".into()),
 ///     ..Display::default()
 /// };
+///
 /// display.remote_message(b"Counting objects:  50% (1/2)\rCounting obj");
 /// assert_eq!(
 ///     display.progress.as_deref(),
 ///     Some("Counting objects:  50% (1/2)")
 /// );
+///
 /// display.remote_message(b"ects: 100% (2/2), done.\n");
 /// assert_eq!(display.lines, ["Counting objects: 100% (2/2), done."]);
 /// assert_eq!(display.progress, None);
+///
 /// assert_eq!(
 ///     display.credential("https://example.com/repo.git", CredentialPrompt::Password),
 ///     Some(b"secret".to_vec()),
@@ -1084,6 +1091,7 @@ pub struct FetchedRef {
 ///     &Environment::default(),
 ///     &mut NoCallbacks,
 /// )?;
+///
 /// for change in &outcome.updated {
 ///     let name = String::from_utf8_lossy(change.name.as_bytes());
 ///     match (change.old, change.new) {
@@ -1092,12 +1100,14 @@ pub struct FetchedRef {
 ///         _ => println!("   [updated] {name}"),
 ///     }
 /// }
+///
 /// for source in &outcome.missing_sources {
 ///     println!(
 ///         "couldn't find remote ref {}",
 ///         String::from_utf8_lossy(source)
 ///     );
 /// }
+///
 /// assert_eq!(outcome.missing_sources, [b"refs/heads/gone".to_vec()]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

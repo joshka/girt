@@ -93,6 +93,7 @@ pub async fn send_http(
 ///         _ => Err(format!("{name} does not point directly at a commit").into()),
 ///     }
 /// };
+///
 /// // Where `main` was at the last fetch, and the local commit to publish.
 /// let last_seen = commit("refs/remotes/origin/main")?;
 /// let new = commit("refs/heads/main")?;
@@ -100,6 +101,7 @@ pub async fn send_http(
 ///
 /// let objects = repo.objects_with(PackLimits::default())?;
 /// let cancel = AtomicBool::new(false);
+///
 /// let command = PushCommand::new(main.clone(), Some(last_seen), new);
 /// let prepared = PreparedPush::new(
 ///     &objects,
@@ -125,6 +127,7 @@ pub async fn send_http(
 ///     .await?;
 ///     Ok::<_, Box<dyn std::error::Error>>(outcome)
 /// })?;
+///
 /// match outcome {
 ///     HttpPushOutcome::Sent(report) => println!("all succeeded: {}", report.all_succeeded()),
 ///     // No update command was sent: fetch, reconcile, and try again.

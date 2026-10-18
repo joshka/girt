@@ -31,9 +31,11 @@ fn submit(
     let (send, receive) = oneshot::channel();
     let queued = counts.queued.fetch_add(1, SeqCst) + 1;
     counts.peak_queued.fetch_max(queued, SeqCst);
+
     let owner = tokio::spawn(async move {
         let permit = slots.acquire_owned().await.unwrap();
         counts.queued.fetch_sub(1, SeqCst);
+
         let result = if cancel.load(SeqCst) {
             drop(permit);
             "cancelled-before-dispatch"
@@ -43,6 +45,7 @@ fn submit(
                 let _permit = permit;
                 let running = counts.running.fetch_add(1, SeqCst) + 1;
                 counts.peak_running.fetch_max(running, SeqCst);
+
                 // Once started, this read-only operation has no cooperative cancellation API.
                 let started = Instant::now();
                 fixture.operation(gate);
@@ -57,6 +60,7 @@ fn submit(
             .await
             .unwrap()
         };
+
         let _ = send.send(result);
         result
     });
@@ -72,6 +76,7 @@ async fn batch(fixture: Arc<Fixture>, workers: bool, concurrency: usize, label: 
         let mut samples = Vec::new();
         let period = Duration::from_millis(1);
         let mut next = tokio::time::Instant::now() + period;
+
         loop {
             tokio::time::sleep_until(next).await;
             let now = tokio::time::Instant::now();
@@ -84,6 +89,7 @@ async fn batch(fixture: Arc<Fixture>, workers: bool, concurrency: usize, label: 
         }
         samples
     });
+
     tokio::task::yield_now().await;
     let start = Instant::now();
     let mut requests = JoinSet::new();
@@ -98,6 +104,7 @@ async fn batch(fixture: Arc<Fixture>, workers: bool, concurrency: usize, label: 
                 Arc::new(AtomicBool::new(false)),
                 None,
             );
+
             owners.push(owner);
             requests.spawn(async move {
                 assert_eq!(result.await.unwrap(), "completed");
@@ -107,15 +114,18 @@ async fn batch(fixture: Arc<Fixture>, workers: bool, concurrency: usize, label: 
             let fixture = fixture.clone();
             let slots = slots.clone();
             let counts = counts.clone();
+
             counts.queued.fetch_add(1, SeqCst);
             counts
                 .peak_queued
                 .fetch_max(counts.queued.load(SeqCst), SeqCst);
+
             requests.spawn(async move {
                 let _permit = slots.acquire_owned().await.unwrap();
                 counts.queued.fetch_sub(1, SeqCst);
                 counts.running.fetch_add(1, SeqCst);
                 counts.peak_running.fetch_max(1, SeqCst);
+
                 let started = Instant::now();
                 fixture.operation(None);
                 counts
@@ -128,20 +138,25 @@ async fn batch(fixture: Arc<Fixture>, workers: bool, concurrency: usize, label: 
             });
         }
     }
+
     let mut latencies = Vec::new();
     while let Some(result) = requests.join_next().await {
         latencies.push(result.unwrap());
     }
+
     for owner in owners {
         assert_eq!(owner.await.unwrap(), "completed");
     }
+
     let wall = start.elapsed().as_secs_f64() * 1000.0;
     stop.store(true, SeqCst);
+
     let mut jitter = timer.await.unwrap();
     jitter.sort_by(f64::total_cmp);
     latencies.sort_by(f64::total_cmp);
     let mut operation_ms = counts.operation_ms.lock().unwrap();
     operation_ms.sort_by(f64::total_cmp);
+
     println!(
         "{label},{},{concurrency},{wall:.3},{:.3},{:.3},{:.3},{:.3},{},{},{}",
         if workers { "workers" } else { "inline" },
@@ -153,6 +168,7 @@ async fn batch(fixture: Arc<Fixture>, workers: bool, concurrency: usize, label: 
         counts.peak_running.load(SeqCst),
         counts.peak_queued.load(SeqCst)
     );
+
     assert_eq!(counts.running.load(SeqCst), 0);
     assert_eq!(counts.queued.load(SeqCst), 0);
     assert!(counts.peak_running.load(SeqCst) <= concurrency);
@@ -164,6 +180,7 @@ async fn lifecycle(fixture: Arc<Fixture>) {
     let counts = Arc::new(Counts::default());
     let hold = slots.clone().acquire_owned().await.unwrap();
     let cancel = Arc::new(AtomicBool::new(false));
+
     let (result, owner) = submit(
         fixture.clone(),
         slots.clone(),
@@ -171,9 +188,11 @@ async fn lifecycle(fixture: Arc<Fixture>) {
         cancel.clone(),
         None,
     );
+
     tokio::task::yield_now().await;
     cancel.store(true, SeqCst);
     drop(hold);
+
     assert_eq!(result.await.unwrap(), "cancelled-before-dispatch");
     assert_eq!(owner.await.unwrap(), "cancelled-before-dispatch");
     assert_eq!(counts.peak_running.load(SeqCst), 0);
@@ -187,6 +206,7 @@ async fn lifecycle(fixture: Arc<Fixture>) {
         Arc::new(AtomicBool::new(false)),
         None,
     );
+
     drop(result);
     drop(hold);
     assert_eq!(owner.await.unwrap(), "completed");
@@ -201,6 +221,7 @@ async fn lifecycle(fixture: Arc<Fixture>) {
             started,
             release: receive,
         };
+
         let (result, owner) = submit(
             fixture.clone(),
             slots.clone(),
@@ -208,9 +229,11 @@ async fn lifecycle(fixture: Arc<Fixture>) {
             cancel.clone(),
             Some(gate),
         );
+
         observed_start.await.unwrap();
         cancel.store(true, SeqCst);
         assert_eq!(slots.available_permits(), 0);
+
         if drop_request {
             drop(result);
             release.send(()).unwrap();
@@ -218,9 +241,11 @@ async fn lifecycle(fixture: Arc<Fixture>) {
             release.send(()).unwrap();
             assert_eq!(result.await.unwrap(), "completed");
         }
+
         assert_eq!(owner.await.unwrap(), "completed");
         assert_eq!(counts.running.load(SeqCst), 0);
         assert_eq!(slots.available_permits(), 1);
+
         eprintln!(
             "started cancellation (request dropped={drop_request}): operation completed; supervisor joined; permit returned"
         );
@@ -233,14 +258,17 @@ fn main() {
         .max_blocking_threads(4)
         .build()
         .unwrap();
+
     println!(
         "storage_touch,mode,concurrency,batch_ms,request_p50_ms,operation_p50_ms,timer_p95_ms,timer_max_ms,timer_samples,peak_running,peak_queued"
     );
+
     for packed in [false, true] {
         for workers in [false, true] {
             for concurrency in [1, 4] {
                 let fixture = Arc::new(Fixture::new(packed));
                 let storage = if packed { "packed" } else { "loose" };
+
                 runtime.block_on(batch(
                     fixture.clone(),
                     workers,

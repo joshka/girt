@@ -38,6 +38,7 @@ use std::time::Instant;
 ///     BTreeSet::new(),
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let result = request.receive_local(
 ///     upstream.git_dir(),
 ///     &KnownHistory::default(),
@@ -45,6 +46,7 @@ use std::time::Instant;
 ///     control,
 ///     girt::fetch::LocalFetchObserver::default(),
 /// );
+///
 /// assert!(matches!(
 ///     result,
 ///     Err(FetchWorkflowError::Transfer(FetchError::Cancelled))

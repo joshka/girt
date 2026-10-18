@@ -16,10 +16,12 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let repository = Repository::open(args.path)?;
+
     println!("Git directory: {}", repository.git_dir().display());
     println!("Common directory: {}", repository.common_dir().display());
     println!("Bare: {}", repository.is_bare());
     println!("Checkout: {:?}", repository.worktree());
+
     for worktree in repository.worktrees(10_000, &AtomicBool::new(false))? {
         println!(
             "{}: {:?} ({:?})",
@@ -28,6 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             worktree.state
         );
     }
+
     for root in repository.shallow_roots().iter() {
         println!("Shallow root: {root}");
     }

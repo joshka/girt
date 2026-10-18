@@ -339,9 +339,11 @@ impl PreparedPush {
     /// use girt::refs::RefName;
     /// # let (_directory, _, repo, _, _) = include!("../doctest/remote.rs");
     /// # let commit = include!("../doctest/commit.rs");
+    ///
     /// let tip = commit(&repo, &[], "Review me")?;
     /// let command = PushCommand::new(RefName::new("refs/for/main")?, None, tip);
     /// let objects = repo.objects_with(PackLimits::default())?;
+    ///
     /// let prepared = PreparedPush::new(
     ///     &objects,
     ///     vec![command],
@@ -355,6 +357,7 @@ impl PreparedPush {
     ///     b"r=reviewer@example.com".to_vec(),
     /// ])?
     /// .with_progress();
+    ///
     /// assert_eq!(prepared.commands().len(), 1);
     /// assert_eq!(prepared.object_count(), 2);
     /// assert!(prepared.pack_bytes() > 0);

@@ -452,12 +452,14 @@ impl Remote {
     ///     b"[url \"git@example.com:\"]\npushInsteadOf = https://example.com/\n\
     ///       [remote \"origin\"]\nurl = https://example.com/project.git\n",
     /// )?;
+    ///
     /// let origin = Remote::find(&config, b"origin")?.expect("configured");
     /// let environment = ProtocolEnvironment::default();
     /// assert_eq!(
     ///     origin.fetch_destination(&config, &environment)?.protocol(),
     ///     Protocol::Https
     /// );
+    ///
     /// let push = origin.push_destinations(&config, &environment)?;
     /// assert_eq!(push[0].bytes(), b"git@example.com:project.git");
     /// assert_eq!(push[0].protocol(), Protocol::Ssh);
@@ -529,6 +531,7 @@ impl RemoteUrls {
     ///     b"[url \"git@example.com:\"]\npushInsteadOf = https://example.com/\n\
     ///       [remote \"origin\"]\nurl = https://example.com/project.git\n",
     /// )?;
+    ///
     /// let urls = RemoteUrls::find(&config, b"origin")?.expect("configured");
     /// assert_eq!(
     ///     urls.fetch_display_url(&config)?,

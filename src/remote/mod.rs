@@ -202,6 +202,7 @@
 //!     name: RefName::new("refs/heads/main")?,
 //!     id,
 //! }];
+//!
 //! let mappings = origin.fetch_refspecs().map(&sources)?;
 //! assert_eq!(
 //!     mappings[0].destination,

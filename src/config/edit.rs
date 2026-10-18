@@ -30,12 +30,15 @@ use crate::Repository;
 ///
 /// ```
 /// use girt::config::ConfigEdit;
+///
 /// let directory = tempfile::tempdir()?;
 /// let path = directory.path().join("config");
 /// std::fs::write(&path, b"# keep comment\n[core]\neditor = old\n")?;
+///
 /// let mut edit = ConfigEdit::open(&path, 4096)?;
 /// edit.document_mut().set_value(0, b"new editor")?;
 /// edit.commit()?;
+///
 /// let bytes = std::fs::read(&path)?;
 /// assert!(bytes.starts_with(b"# keep comment\n"));
 /// assert_eq!(
@@ -128,16 +131,19 @@ impl Repository {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let mut edit = repo.edit_config(4096)?;
     /// edit.document_mut()
     ///     .append("core", None, "editor", b"chosen")?;
     /// edit.commit()?;
+    ///
     /// assert!(repo.config().string("core", None, "editor").is_none());
     /// let reopened = Repository::open(repo.git_dir())?;
     /// assert_eq!(
@@ -160,13 +166,16 @@ impl ConfigEdit {
     ///
     /// ```
     /// use girt::config::{ConfigEdit, EditError};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("config");
     /// let first = ConfigEdit::open(&path, 4096)?; // Missing source starts an empty draft.
+    ///
     /// assert!(matches!(
     ///     ConfigEdit::open(&path, 4096),
     ///     Err(EditError::Locked(_))
     /// ));
+    ///
     /// first.abort()?; // Release this lifecycle before acquiring another.
     /// ConfigEdit::open(&path, 4096)?.abort()?;
     /// assert!(!path.exists()); // Opening and aborting do not publish the missing source.
@@ -279,20 +288,24 @@ impl ConfigEdit {
     ///
     /// ```
     /// use girt::config::{ConfigEdit, EditError};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("config");
     /// std::fs::write(&path, b"[core]\neditor = current\n")?;
+    ///
     /// let edit = ConfigEdit::open(&path, 4096)?;
     /// assert!(matches!(
     ///     edit.require_source(Some(b"old observation")),
     ///     Err(EditError::Changed(_))
     /// ));
     /// edit.abort()?; // Start a fresh decision instead of publishing from stale expectations.
+    ///
     /// let observed = std::fs::read(&path)?;
     /// let mut fresh = ConfigEdit::open(&path, 4096)?;
     /// fresh.require_source(Some(&observed))?;
     /// fresh.document_mut().set_value(0, b"replacement")?;
     /// fresh.commit()?;
+    ///
     /// assert!(std::fs::read(&path)?.ends_with(b"replacement\n"));
     ///
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -317,12 +330,15 @@ impl ConfigEdit {
     ///
     /// ```
     /// use girt::config::ConfigEdit;
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("config");
+    ///
     /// let mut edit = ConfigEdit::open(&path, 4096)?;
     /// edit.document_mut()
     ///     .append("core", None, "editor", b"editor with spaces")?;
     /// edit.commit()?;
+    ///
     /// let bytes = std::fs::read(&path)?;
     /// assert_eq!(
     ///     girt::Config::parse(&bytes)?.string("core", None, "editor"),

@@ -17,6 +17,7 @@ use crate::refs::RefName;
 ///
 /// ```
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let bare = Repository::init(
 ///     ObjectFormat::Sha1,
@@ -28,6 +29,7 @@ use crate::refs::RefName;
 ///     directory.path().join("project"),
 ///     InitKind::Worktree,
 /// )?;
+///
 /// assert!(bare.worktree().is_none());
 /// assert!(project.worktree().is_some());
 /// assert_ne!(

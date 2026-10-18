@@ -21,6 +21,7 @@ impl Table {
     /// use girt::refs::Target;
     /// use girt::refs::reftable::{Limits, RecordName, RefRecord, Table};
     /// use girt::{ObjectFormat, ObjectId};
+    ///
     /// let table = Table {
     ///     format: ObjectFormat::Sha1,
     ///     min_update_index: 1,
@@ -33,8 +34,10 @@ impl Table {
     ///     }],
     ///     logs: vec![],
     /// };
+    ///
     /// let bytes = table.encode(Limits::default())?;
     /// let decoded = Table::decode(&bytes, Limits::default())?;
+    ///
     /// assert_eq!(decoded.references, table.references);
     /// assert_eq!(decoded.format, ObjectFormat::Sha1);
     /// # Ok::<(), girt::refs::reftable::Error>(())

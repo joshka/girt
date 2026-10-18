@@ -25,15 +25,18 @@ impl Repository {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, OpenError, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("project");
     /// Repository::init(ObjectFormat::Sha1, &path, InitKind::Worktree)?;
+    ///
     /// let nested = path.join("src");
     /// std::fs::create_dir(&nested)?;
     /// assert!(matches!(
     ///     Repository::open(&nested),
     ///     Err(OpenError::NotFound(_))
     /// ));
+    ///
     /// // Explicit opening stays at the supplied location; discovery can select an ancestor.
     /// assert_eq!(
     ///     Repository::discover(&nested)?.worktree(),
@@ -60,17 +63,21 @@ impl Repository {
     /// use girt::config::ConfigInputs;
     /// use girt::workflow::Environment;
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let project = directory.path().join("project");
     /// Repository::init(ObjectFormat::Sha1, &project, InitKind::Worktree)?;
+    ///
     /// std::fs::write(
     ///     directory.path().join(".gitconfig"),
     ///     b"[core]\n\texcludesFile = ~/ignore\n",
     /// )?;
+    ///
     /// let environment = Environment::default()
     ///     .with("HOME", directory.path())
     ///     .with("GIT_CONFIG_NOSYSTEM", "1");
     /// let inputs = ConfigInputs::git_default(&environment)?;
+    ///
     /// let nested = project.join("src");
     /// std::fs::create_dir(&nested)?;
     /// let repository = Repository::discover_with_config(&nested, &inputs)?;

@@ -33,11 +33,13 @@ impl Config {
     ///
     /// ```
     /// use girt::Config;
+    ///
     /// let config = Config::from_command_environment(
     ///     |key| (key == "GIT_CONFIG_PARAMETERS").then(|| b"'core.flag' 'core.value'=''".to_vec()),
     ///     2,
     ///     1024,
     /// )?;
+    ///
     /// assert_eq!(config.value("core", None, "flag"), Some(None));
     /// assert_eq!(
     ///     config.value("core", None, "value"),

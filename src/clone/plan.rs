@@ -28,6 +28,7 @@ use crate::remote::{Direction, Mapping, MappingError, Refspecs};
 ///     BranchSelection::Branch(RefName::new("refs/heads/release")?),
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let result = request.receive_local(
 ///     upstream.git_dir(),
@@ -35,6 +36,7 @@ use crate::remote::{Direction, Mapping, MappingError, Refspecs};
 ///     TransportControl::new(&cancel),
 ///     |_| ControlFlow::Continue(()),
 /// );
+///
 /// assert!(matches!(
 ///     result,
 ///     Err(CloneTransferError::Plan(ClonePlanError::MissingBranch(_)))
@@ -113,6 +115,7 @@ pub enum CloneHead {
 ///     BranchSelection::Default,
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let discovery = discover_local(
 ///     upstream.git_dir(),
@@ -120,6 +123,7 @@ pub enum CloneHead {
 ///     TransportControl::new(&cancel),
 /// )?;
 /// let plan = request.plan(&discovery.advertisement)?;
+///
 /// assert_eq!(
 ///     plan.head,
 ///     CloneHead::Branch {
@@ -127,6 +131,7 @@ pub enum CloneHead {
 ///         id: main
 ///     }
 /// );
+///
 /// // `main` maps to `refs/remotes/origin/main`; `HEAD` is fetched without a destination.
 /// let tracking = Some(RefName::new("refs/remotes/origin/main")?);
 /// assert!(

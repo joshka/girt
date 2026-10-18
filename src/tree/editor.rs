@@ -12,17 +12,20 @@ use crate::{EntryMode, LooseObjects, ObjectId, Tree, TreeEntry, TreeError, TreeV
 /// ```
 /// use girt::tree::TreeEditor;
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let objects = repo.loose_objects();
 /// let mut editor = TreeEditor::new(&objects);
 /// editor.set(b"src/lib.rs", objects.write_blob(b"pub fn run() {}\n")?)?;
 /// editor.set(b"temporary", objects.write_blob(b"discard")?)?;
 /// editor.remove(b"temporary")?;
+///
 /// let root = objects.read_tree(editor.write()?, 1024)?;
 /// assert_eq!(root.entries()[0].name, b"src");
 /// # Ok::<(), Box<dyn std::error::Error>>(())

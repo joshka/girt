@@ -129,8 +129,10 @@ pub enum RemoteHead {
 ///     FetchLimits::default(),
 ///     TransportControl::new(&cancel),
 /// )?;
+///
 /// // A local repository is read directly, with no wire protocol.
 /// assert_eq!(discovery.version, ProtocolVersion::Native);
+///
 /// // Fails early if the source uses SHA-256 and the destination SHA-1, or the reverse.
 /// discovery.require_format(repo.object_format())?;
 /// assert_eq!(discovery.object_format, ObjectFormat::Sha1);
@@ -354,6 +356,7 @@ pub fn discover_session(
 ///     pkt(&mut server, capability);
 /// }
 /// server.extend(b"0000");
+///
 /// // The server's answer to `ls-refs`.
 /// pkt(
 ///     &mut server,
@@ -452,18 +455,21 @@ enum Inventory {
 /// use girt::transport::TransportControl;
 /// use girt::{InitKind, ObjectFormat, Repository};
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+///
 /// let root = tempfile::tempdir()?;
 /// let repository = Repository::init(
 ///     ObjectFormat::Sha256,
 ///     root.path().join("repo"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let cancel = AtomicBool::new(false);
 /// let discovered = discover_local(
 ///     repository.git_dir(),
 ///     FetchLimits::default(),
 ///     TransportControl::new(&cancel),
 /// )?;
+///
 /// assert_eq!(discovered.object_format, ObjectFormat::Sha256);
 /// assert!(matches!(discovered.head, RemoteHead::Unborn { .. }));
 /// # Ok(())

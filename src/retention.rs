@@ -154,6 +154,7 @@
 //!         directory.path().join("r"),
 //!         InitKind::Bare,
 //!     )?;
+//!
 //!     let content = b"content with a verified loose duplicate";
 //!     let id = repo.loose_objects().write_blob(content)?;
 //!     let mut pack = Vec::new();
@@ -169,10 +170,12 @@
 //!         &mut index,
 //!         Default::default(),
 //!     )?;
+//!
 //!     // Byte 15 is inside this entry's compressed stream, after its object header.
 //!     // This triggers corruption fallback rather than an unsupported header refusal.
 //!     // Damage only this private fixture before opening the reader.
 //!     pack[15] ^= 0x55;
+//!
 //!     let packs = repo.git_dir().join("objects/pack");
 //!     std::fs::create_dir_all(&packs)?;
 //!     let path = packs.join(format!("pack-{}.pack", written.checksum));
@@ -184,6 +187,7 @@
 //!         .read_with(id, Default::default())?
 //!         .expect("loose duplicate");
 //!     assert_eq!(rescued.data(), content);
+//!
 //!     // The damaged bytes remain invalid despite the successful content rescue.
 //!     // This fixture also breaks raw checksums; a fresh reader would reject it too.
 //!     let diagnostic = objects.verify_packs(&AtomicBool::new(false)).unwrap_err();
@@ -194,10 +198,12 @@
 //!         let Some(source) = cause.source() else { break };
 //!         cause = source;
 //!     }
+//!
 //!     let diagnostic = messages.join(": ");
 //!     assert!(diagnostic.contains(&path.display().to_string()));
 //!     assert!(diagnostic.contains("offset 12")); // First entry offset, after the pack header.
 //!     eprintln!("{diagnostic}");
+//!
 //!     // Preserve the original pack for recovery; do not unlink it based on one rescued object.
 //!     assert!(path.exists());
 //!     Ok(())
@@ -557,6 +563,7 @@ impl RetentionPolicy {
 /// let cancel = AtomicBool::new(false);
 ///
 /// use girt::retention::{RetentionOutcome, RetentionPolicy};
+///
 /// let id = repo
 ///     .loose_objects()
 ///     .write_blob(b"unreferenced, but retained by default")?;
@@ -566,6 +573,7 @@ impl RetentionPolicy {
 ///     RetentionOutcome::Incomplete(error) => return Err(error.into()),
 ///     _ => return Err("unknown retention outcome".into()),
 /// }
+///
 /// drop(plan); // Release pinned pack handles promptly.
 ///
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -619,17 +627,20 @@ struct ObjectInfo {
 ///
 /// use girt::retention::{RetentionError, RetentionErrorKind, RetentionOutcome, RetentionPolicy};
 /// use girt::{InitKind, ObjectFormat, Repository, WorktreeError};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(true));
 /// let RetentionOutcome::Incomplete(error) = &plan.outcome else {
 ///     panic!("cancelled inventory cannot establish completeness");
 /// };
 /// assert_eq!(error.kind(), RetentionErrorKind::Read);
+///
 /// let RetentionError::Read(source) = error else {
 ///     panic!("expected inventory failure");
 /// };
@@ -637,6 +648,7 @@ struct ObjectInfo {
 ///     source.downcast_ref::<WorktreeError>(),
 ///     Some(WorktreeError::Cancelled)
 /// ));
+///
 /// assert!(!plan.is_complete());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -750,12 +762,14 @@ impl Repository {
     ///
     /// use girt::Repository;
     /// use girt::retention::RetentionPolicy;
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repository = Repository::init(
     ///     girt::ObjectFormat::Sha1,
     ///     directory.path().join("r"),
     ///     girt::InitKind::Bare,
     /// )?;
+    ///
     /// let plan = repository.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
     /// if !plan.is_complete() {
     ///     eprintln!("retention scan incomplete: {:?}", plan.outcome);

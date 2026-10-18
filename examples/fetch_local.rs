@@ -20,6 +20,7 @@ fn repository() -> Result<(tempfile::TempDir, Repository), Box<dyn std::error::E
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_source_root, source) = repository()?;
     let (_destination_root, destination) = repository()?;
+
     let objects = source.loose_objects();
     let blob = objects.write_blob(b"Fetched through native local storage\n")?;
     let tree = objects.write_tree(&Tree::new(
@@ -30,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: blob,
         }],
     )?)?;
+
     let author = Signature::now(b"Fetch Example", b"fetch@example.com")?;
     let commit = objects.write_commit(&Commit::new(CommitFields {
         tree,
@@ -39,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: vec![],
         message: b"Local fetch fixture\n".to_vec(),
     })?)?;
+
     let branch = RefName::branch("main")?;
     source.references()?.update_without_reflog(
         &branch,
@@ -65,21 +68,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
         girt::fetch::LocalFetchObserver::default(),
     )?;
+
     let result = received.install(&destination, girt::PackLimits::default(), &cancel)?;
+
     // Updating a ref is a separate, conditional operation, explicitly without a reflog.
     destination.references()?.update_without_reflog(
         &branch,
         Target::Direct(commit),
         Expected::Absent,
     )?;
+
     let fetched = destination.objects()?;
     let restored = fetched.read(blob)?.ok_or("missing fetched blob")?;
     assert_eq!(restored.data(), b"Fetched through native local storage\n");
+
     println!(
         "Fetched {} objects ({} pack bytes); published {commit} without a reflog",
         result.objects,
         received.pack_bytes()
     );
+
     let known = KnownHistory::new(&fetched, &[commit], FetchLimits::default(), &cancel)?;
     let repeated = receive_local(
         source.git_dir(),
@@ -89,6 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
         girt::fetch::LocalFetchObserver::default(),
     )?;
+
     // Recheck known dependencies in the destination even when no pack was needed.
     repeated.install(&destination, girt::PackLimits::default(), &cancel)?;
     assert_eq!(repeated.pack_bytes(), 0);
@@ -97,5 +106,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         repeated.object_count(),
         repeated.pack_bytes()
     );
+
     Ok(())
 }

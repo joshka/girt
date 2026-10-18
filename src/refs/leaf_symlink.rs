@@ -44,12 +44,14 @@ impl References<'_> {
     /// ```
     /// use girt::refs::RefName;
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("repo"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let observation = repo
     ///     .references()?
     ///     .read_observation_following_leaf_symlinks(&RefName::HEAD, 32, 64 * 1024)?;

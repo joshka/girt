@@ -11,12 +11,14 @@
 //! use girt::{
 //!     Commit, CommitFields, HistoryLimits, InitKind, ObjectFormat, Repository, Signature, Tree,
 //! };
+//!
 //! let directory = tempfile::tempdir()?;
 //! let repo = Repository::init(
 //!     ObjectFormat::Sha1,
 //!     directory.path().join("r.git"),
 //!     InitKind::Bare,
 //! )?;
+//!
 //! let loose = repo.loose_objects();
 //! let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
 //! let person = Signature {
@@ -35,13 +37,16 @@
 //!         message: message.to_vec(),
 //!     })?)
 //! };
+//!
 //! let base = commit(vec![], b"base\n")?;
 //! let left = commit(vec![base], b"left\n")?;
 //! let right = commit(vec![base], b"right\n")?;
+//!
 //! let objects = repo.objects()?;
 //! assert_eq!(objects.walk(&[left])?, [left, base]);
 //! assert!(objects.is_ancestor(base, right)?);
 //! assert_eq!(objects.merge_bases(left, right)?, [base]);
+//!
 //! // The `_with` forms take the bounds the short forms fill in.
 //! let limits = HistoryLimits::default().with_max_commits(10);
 //! assert_eq!(objects.walk_with(&[right], limits)?, [right, base]);
@@ -178,6 +183,7 @@ impl Objects {
     ///     directory.path().join("repo.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let loose = repository.loose_objects();
     /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
     /// let person = Signature {
@@ -196,6 +202,7 @@ impl Objects {
     ///         message: message.to_vec(),
     ///     })?)
     /// };
+    ///
     /// let first = commit(vec![], b"first\n")?;
     /// let second = commit(vec![first], b"second\n")?;
     ///
@@ -204,6 +211,7 @@ impl Objects {
     ///     objects.walk_with(&[second], HistoryLimits::default())?,
     ///     [second, first]
     /// );
+    ///
     /// // Supplied root order wins over ancestry: the walk is not topological.
     /// let limits = HistoryLimits::default();
     /// assert_eq!(
@@ -659,12 +667,14 @@ fn check_cancelled(cancel: &AtomicBool, id: ObjectId) -> Result<(), HistoryError
 ///     HistoryError, HistoryLimits, InitKind, ObjectFormat, ObjectId, PackLimits,
 ///     Repository,
 /// };
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let missing = ObjectId::Sha1([1; 20]);
 /// let error = repo
 ///     .objects_with(PackLimits::default())?

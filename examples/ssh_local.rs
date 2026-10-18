@@ -28,11 +28,13 @@ mod supported {
             .args(args)
             .status()
             .unwrap();
+
         assert!(status.success());
     }
     pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let source = tempfile::tempdir()?;
         let destination = tempfile::tempdir()?;
+
         git(
             source.path(),
             &[
@@ -44,6 +46,7 @@ mod supported {
                 ".",
             ],
         );
+
         git(
             destination.path(),
             &[
@@ -55,15 +58,19 @@ mod supported {
                 ".",
             ],
         );
+
         let source_repo = Repository::open(source.path())?;
         let destination_repo = Repository::open(destination.path())?;
+
         let id = source_repo
             .loose_objects()
             .write_blob(b"Disposable SSH example\n")?;
+
         let cancel = AtomicBool::new(false);
         let control = TransportControl::new(&cancel).with_deadline(Some(
             std::time::Instant::now() + std::time::Duration::from_secs(30),
         ));
+
         let prepared = PreparedPush::new(
             &source_repo.objects()?,
             vec![
@@ -74,13 +81,17 @@ mod supported {
             PushLimits::default(),
             &cancel,
         )?;
+
         let server = ssh_git::Server::new(destination_repo.git_dir(), "none");
         let remote = server.remote("config");
+
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
+
         let report = runtime.block_on(send_ssh(&remote, &prepared, control))?;
         assert!(report.all_succeeded());
+
         let download = runtime.block_on(receive_ssh(
             &remote,
             |_| vec![id],
@@ -88,6 +99,7 @@ mod supported {
             FetchLimits::default(),
             control,
         ))?;
+
         // CPU validation is deliberately outside block_on. Services can use their bounded worker
         // pool.
         let validated = download.validate(&cancel, |_| ControlFlow::Continue(()))?;
@@ -101,8 +113,10 @@ mod supported {
             FetchLimits::default(),
             &cancel,
         )?);
+
         let workers = Arc::new(tokio::sync::Semaphore::new(1));
         let validation_cancel = Arc::new(AtomicBool::new(false));
+
         let validated = runtime.block_on(async {
             let download = receive_ssh(
                 &remote,
@@ -113,6 +127,7 @@ mod supported {
             )
             .await?;
             drop(known);
+
             // This example submits one request, bounding both waiting downloads and running work.
             // A service must also bound its queue and aggregate retained bytes before downloading.
             let permit = workers.acquire_owned().await?;
@@ -121,11 +136,13 @@ mod supported {
                 let _permit = permit;
                 download.validate(&worker_cancel, |_| ControlFlow::Continue(()))
             });
+
             // Keep observing completion if cancellation is requested. Dropping this handle would
             // detach a started worker; it would not stop validation or release its permit early.
             let result = completion.await?; // Join failure and validation failure are separate outcomes.
             Ok::<_, Box<dyn std::error::Error>>(result?)
         })?;
+
         assert_eq!(validated.pack_bytes(), 0);
         // Installation is an explicit blocking step outside the executor; it rechecks dependencies.
         validated.install(

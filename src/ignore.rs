@@ -22,9 +22,11 @@
 //!
 //! ```
 //! use girt::ignore::{Case, Ignore, Limits, Source};
+//!
 //! let mut ignore = Ignore::new(Case::Sensitive, Limits::default());
 //! ignore.add(Source::Global, b"*.log\n")?;
 //! ignore.add(Source::Directory(b""), b"!keep.log\nbuild/\n!build/keep\n")?;
+//!
 //! assert!(
 //!     ignore
 //!         .check(b"keep.log", girt::ignore::InputKind::File)?

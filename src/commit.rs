@@ -9,13 +9,16 @@
 //!
 //! ```
 //! use girt::{Commit, ObjectFormat, Tree};
+//!
 //! let tree = Tree::new(ObjectFormat::Sha1, vec![])?;
 //! let payload = format!("tree {}\n\nImported snapshot\n", tree.id());
 //! let commit = Commit::parse(ObjectFormat::Sha1, payload.as_bytes())?;
+//!
 //! assert_eq!(commit.tree(), tree.id());
 //! assert!(commit.parents().is_empty());
 //! assert_eq!(commit.message(), b"Imported snapshot\n");
 //! assert_eq!(commit.encode(), payload.as_bytes());
+//!
 //! // Graph records are readable even when construction fields are absent.
 //! assert!(commit.author()?.is_none());
 //! assert!(commit.to_fields().is_err());
@@ -89,6 +92,7 @@ use crate::ObjectId;
 ///
 /// ```
 /// use girt::{Commit, CommitFields, Signature, Tree};
+///
 /// let person = Signature {
 ///     name: b"A. Writer".to_vec(),
 ///     email: b"writer@example.com".to_vec(),
@@ -103,6 +107,7 @@ use crate::ObjectId;
 ///     extra_headers: vec![],
 ///     message: b"Initial snapshot\n".to_vec(),
 /// })?;
+///
 /// let parsed = Commit::parse(girt::ObjectFormat::Sha1, commit.as_bytes())?;
 /// assert_eq!(parsed.to_fields()?.message, b"Initial snapshot\n");
 /// assert_eq!(parsed.id(), commit.id());
@@ -165,6 +170,7 @@ impl Commit {
     ///
     /// ```
     /// use girt::{Commit, CommitFields, ObjectFormat, Signature, Tree};
+    ///
     /// let person = Signature {
     ///     name: b"A. Writer".to_vec(),
     ///     email: b"a@example.com".to_vec(),
@@ -179,6 +185,7 @@ impl Commit {
     ///     extra_headers: vec![],
     ///     message: b"Initial snapshot\n".to_vec(),
     /// })?;
+    ///
     /// assert!(commit.parents().is_empty());
     /// assert_eq!(commit.message(), b"Initial snapshot\n");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -224,6 +231,7 @@ impl Commit {
     ///
     /// ```
     /// use girt::{Commit, CommitFields, ObjectFormat, Signature, Tree};
+    ///
     /// let person = Signature {
     ///     name: b"A. Writer".to_vec(),
     ///     email: b"a@example.com".to_vec(),
@@ -238,6 +246,7 @@ impl Commit {
     ///     extra_headers: vec![],
     ///     message: b"Initial snapshot\n".to_vec(),
     /// })?;
+    ///
     /// let parsed = Commit::parse(ObjectFormat::Sha1, commit.as_bytes())?;
     /// assert_eq!(parsed.encode(), commit.encode());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -349,6 +358,7 @@ impl Commit {
     ///
     /// ```
     /// use girt::{Commit, CommitFields, ObjectFormat, Signature, Tree};
+    ///
     /// let person = Signature {
     ///     name: b"A. Writer".to_vec(),
     ///     email: b"a@example.com".to_vec(),
@@ -363,9 +373,11 @@ impl Commit {
     ///     extra_headers: vec![],
     ///     message: b"Initial snapshot\n".to_vec(),
     /// })?;
+    ///
     /// let mut fields = commit.to_fields()?;
     /// fields.message = b"Reworded snapshot\n".to_vec();
     /// let reworded = Commit::new(fields)?;
+    ///
     /// assert_eq!(reworded.tree(), commit.tree());
     /// assert_ne!(reworded.id(), commit.id());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -471,6 +483,7 @@ impl Commit {
 ///
 /// ```
 /// use girt::{Commit, CommitFields, CommitHeader, ObjectFormat, Signature, Tree};
+///
 /// let person = Signature::parse(b"A <a@example.com> 60 +0000")?;
 /// let fields = CommitFields {
 ///     tree: Tree::new(ObjectFormat::Sha1, vec![])?.id(),
@@ -483,10 +496,12 @@ impl Commit {
 ///     }],
 ///     message: b"Snapshot\n".to_vec(),
 /// };
+///
 /// let original = Commit::new(fields.clone())?;
 /// let mut edited = fields;
 /// edited.message = b"Reworded\n".to_vec();
 /// let replacement = Commit::new(edited)?;
+///
 /// assert_eq!(replacement.tree(), original.tree());
 /// assert_ne!(replacement.id(), original.id());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -540,6 +555,7 @@ impl CommitFields {
 ///
 /// ```
 /// use girt::{Commit, CommitError, CommitFields, ObjectFormat, ObjectKind, Signature};
+///
 /// let author = Signature {
 ///     name: b"A. Writer".to_vec(),
 ///     email: b"a@example.com".to_vec(),
@@ -556,10 +572,12 @@ impl CommitFields {
 ///     extra_headers: vec![],
 ///     message: b"Import\n".to_vec(),
 /// })?;
+///
 /// assert_eq!(
 ///     commit.author()?.map(|identity| identity.name),
 ///     Some(author.name.as_slice())
 /// );
+///
 /// let recorded = commit
 ///     .committer()?
 ///     .ok_or(CommitError::RequiredHeader)?

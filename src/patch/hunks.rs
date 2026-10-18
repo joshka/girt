@@ -30,6 +30,7 @@ use crate::content_diff::TextDiff;
 ///
 /// let old = b"fn main() {\n    one();\n    two();\n}\n";
 /// let new = b"fn main() {\n    one();\n    three();\n}\n";
+///
 /// let ContentDiff::Text(text) = diff(
 ///     old,
 ///     new,
@@ -40,6 +41,7 @@ use crate::content_diff::TextDiff;
 /// else {
 ///     panic!("expected text");
 /// };
+///
 /// let mut hunks = Vec::new();
 /// write_hunks(&mut hunks, &text, 0)?;
 /// assert_eq!(
@@ -73,6 +75,7 @@ pub fn write_hunks(
 ///
 /// let old = b"impl Tool {\n    fn run() {\n        one();\n    }\n}\n";
 /// let new = b"impl Tool {\n    fn run() {\n        two();\n    }\n}\n";
+///
 /// let ContentDiff::Text(text) = diff(
 ///     old,
 ///     new,
@@ -83,6 +86,7 @@ pub fn write_hunks(
 /// else {
 ///     panic!("expected text");
 /// };
+///
 /// let rust = FunctionLines::builtin(b"rust").unwrap();
 /// let mut hunks = Vec::new();
 /// write_hunks_with(&mut hunks, &text, 0, &rust)?;

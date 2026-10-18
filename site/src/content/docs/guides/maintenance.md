@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         directory.path().join("repo.git"),
         InitKind::Bare,
     )?;
+
     let id = repo.loose_objects().write_blob(b"application-owned")?;
     let policy = RetentionPolicy::default().with_heads(vec![id]);
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
@@ -67,6 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         RetentionOutcome::Incomplete(error) => return Err(error.into()),
         _ => return Err("unknown retention outcome".into()),
     }
+
     drop(plan);
     Ok(())
 }
@@ -183,14 +185,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hex = id.to_string();
     let path = repo.object_dir().join(&hex[..2]).join(&hex[2..]);
     std::fs::File::open(path)?.set_modified(UNIX_EPOCH + Duration::from_secs(1))?;
+
     let policy = RetentionPolicy::default().with_recent_cutoff(UNIX_EPOCH + Duration::from_secs(2));
     let report = repo.collect_garbage(&mut PrivateFixture, &policy, &cancel)?;
+
     assert_eq!(report.pruned.unwrap().deleted, [id]);
     assert!(
         repo.objects()?
             .read(id)?
             .is_none()
     );
+
     Ok(())
 }
 ```

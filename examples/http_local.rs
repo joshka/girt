@@ -25,11 +25,13 @@ fn git(path: &std::path::Path, args: &[&str]) {
         .args(args)
         .status()
         .unwrap();
+
     assert!(status.success());
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source = tempfile::tempdir()?;
     let destination = tempfile::tempdir()?;
+
     git(
         source.path(),
         &[
@@ -41,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ".",
         ],
     );
+
     git(
         destination.path(),
         &[
@@ -53,11 +56,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     );
     git(destination.path(), &["config", "http.receivepack", "true"]);
+
     let source_repo = Repository::open(source.path())?;
     let destination_repo = Repository::open(destination.path())?;
+
     let id = source_repo
         .loose_objects()
         .write_blob(b"Disposable HTTP example\n")?;
+
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let prepared = PreparedPush::new(
@@ -70,13 +76,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PushLimits::default(),
         &cancel,
     )?;
+
     let server = http_git::Server::new(destination_repo.git_dir(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[])?;
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
+
     let report = runtime.block_on(send_http(&remote, prepared, control))?;
     assert!(report.all_succeeded());
+
     let download = runtime.block_on(receive_http(
         &remote,
         |_| vec![id],
@@ -84,6 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         FetchLimits::default(),
         control,
     ))?;
+
     // CPU validation is deliberately outside block_on. Services can use their bounded worker pool.
     let validated = download.validate(&cancel, |_| ControlFlow::Continue(()))?;
     assert_eq!(validated.object_count(), 1);
@@ -96,8 +107,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         FetchLimits::default(),
         &cancel,
     )?);
+
     let workers = Arc::new(tokio::sync::Semaphore::new(1));
     let validation_cancel = Arc::new(AtomicBool::new(false));
+
     let validated = runtime.block_on(async {
         let download = receive_http(
             &remote,
@@ -108,6 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
         drop(known);
+
         // This example submits one request, bounding both waiting downloads and running work.
         // A service must also bound its queue and aggregate retained bytes before downloading.
         let permit = workers.acquire_owned().await?;
@@ -116,11 +130,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _permit = permit;
             download.validate(&worker_cancel, |_| ControlFlow::Continue(()))
         });
+
         // Keep observing completion if cancellation is requested. Dropping this handle would
         // detach a started worker; it would not stop validation or release its permit early.
         let result = completion.await?; // Join failure and validation failure are separate outcomes.
         Ok::<_, Box<dyn std::error::Error>>(result?)
     })?;
+
     assert_eq!(validated.pack_bytes(), 0);
     // Installation is an explicit blocking step outside the executor; it rechecks dependencies.
     validated.install(

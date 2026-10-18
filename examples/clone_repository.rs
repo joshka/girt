@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         InitKind::Bare,
     )?;
     let destination_path = root.path().join("destination");
+
     let objects = source.loose_objects();
     let blob = objects.write_blob(b"hello from the clone\n")?;
     let tree = objects.write_tree(&Tree::new(
@@ -28,6 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: blob,
         }],
     )?)?;
+
     let identity = Signature {
         name: b"Fetch Example".to_vec(),
         email: b"fetch@example.com".to_vec(),
@@ -42,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: Vec::new(),
         message: b"Original fetch example\n".to_vec(),
     })?)?;
+
     source.references()?.update_without_reflog(
         &RefName::branch("main")?,
         Target::Direct(commit),
@@ -60,6 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         BranchSelection::Default,
         Reflog::Preserve,
     )?;
+
     let cancel = AtomicBool::new(false);
     let ready = request.receive_local(
         &source_path,
@@ -68,7 +72,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
         |_| ControlFlow::Continue(()),
     )?;
+
     assert!(!destination_path.exists());
+
     // HTTP/SSH callers receive an owned download instead. Move it to a bounded worker, validate
     // synchronously, then finish here. Join that worker even after requesting cancellation.
     let report = match ready.finish(FetchUpdateLimits::default(), &cancel) {
@@ -83,6 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(error.into());
         }
     };
+
     let repository = report
         .repository
         .as_ref()
@@ -95,8 +102,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert!(!repository.git_dir().join("index").exists());
     assert_eq!(std::fs::read_dir(&destination_path)?.count(), 1); // Only .git; no checkout.
+
     let remote = Remote::find(repository.config(), b"origin")?.ok_or("missing origin")?;
     assert_eq!(remote.fetch_url(), Some(url.as_bytes()));
+
     // Pass remote.fetch_refspecs().clone() to FetchRequest::prepare for subsequent fetch.
     println!(
         "Created no-checkout repository at {} with {:?}",
@@ -104,6 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         report.head
     );
     drop(report);
+
     // The configured workflow composes the same core clone with checkout. Explicit empty inputs
     // and environment isolate this disposable example from the caller's machine settings.
     let checked_out = root.path().join("checked-out");
@@ -116,6 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &girt::workflow::Environment::default(),
         &mut girt::workflow::NoCallbacks,
     )?;
+
     if cfg!(any(target_os = "linux", target_os = "macos")) {
         assert!(
             outcome
@@ -124,12 +135,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .is_some_and(|report| report.index_published)
         );
     }
+
     if cfg!(any(target_os = "linux", target_os = "macos")) {
         assert_eq!(
             std::fs::read(checked_out.join("hello.txt"))?,
             b"hello from the clone\n"
         );
     }
+
     drop(outcome);
     root.close()?; // Cleanup belongs to this disposable example, not the clone operation.
     Ok(())

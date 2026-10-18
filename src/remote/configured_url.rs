@@ -18,6 +18,7 @@
 ///     error(b"https://example.com:0/project.git"),
 ///     Some(ConfiguredUrlError::Port)
 /// );
+///
 /// // A Windows UNC path is valid Git syntax that girt does not interpret yet.
 /// assert_eq!(
 ///     error(b"\\\\server\\share\\project.git"),
@@ -159,6 +160,7 @@ pub fn parse_configured_url(bytes: &[u8]) -> Result<ConfiguredUrlParts, Configur
 ///
 /// ```
 /// use girt::remote::{ConfiguredUrlError, normalize_configured_url};
+///
 /// assert_eq!(
 ///     normalize_configured_url(b"https://HOST:00443/repo")?,
 ///     b"https://host:443/repo"

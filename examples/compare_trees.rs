@@ -48,9 +48,11 @@ fn main() -> girt::Result<()> {
                 temporary.path().join("sample"),
                 InitKind::Bare,
             )?;
+
             let store = repo.loose_objects();
             let old_blob = store.write_blob(b"hello\n")?;
             let new_blob = store.write_blob(b"hello, trees\n")?;
+
             let old = store.write_tree(&Tree::new(
                 girt::ObjectFormat::Sha1,
                 vec![TreeEntry {
@@ -67,10 +69,13 @@ fn main() -> girt::Result<()> {
                     id: new_blob,
                 }],
             )?)?;
+
             (repo, Some(old), Some(new))
         };
+
     let objects = repo.objects()?;
     let changes = objects.compare_trees(old, new)?;
+
     for change in changes {
         // Git's quoting keeps non-UTF-8 names and control bytes distinguishable on a terminal.
         println!(
@@ -81,6 +86,7 @@ fn main() -> girt::Result<()> {
             describe(change.new)
         );
     }
+
     Ok(())
 }
 

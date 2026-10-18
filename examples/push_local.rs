@@ -19,9 +19,11 @@ fn repository() -> Result<(tempfile::TempDir, Repository), Box<dyn std::error::E
     let repo = Repository::open(root.path())?;
     Ok((root, repo))
 }
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_source_root, source) = repository()?;
     let (_destination_root, destination) = repository()?;
+
     let loose = source.loose_objects();
     let blob = loose.write_blob(b"Published by girt through native local storage\n")?;
     let tree = loose.write_tree(&Tree::new(
@@ -32,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: blob,
         }],
     )?)?;
+
     let author = Signature::now(b"Push Example", b"push@example.com")?;
     let commit = loose.write_commit(&Commit::new(CommitFields {
         tree,
@@ -41,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: vec![],
         message: b"Local push fixture\n".to_vec(),
     })?)?;
+
     let tag = loose.write_tag(&Tag::new(TagFields {
         target: commit,
         target_kind: ObjectKind::Commit,
@@ -49,6 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_headers: vec![],
         message: b"First publication\n".to_vec(),
     })?)?;
+
     let cancel = AtomicBool::new(false);
     let objects = source.objects()?;
     let commands = vec![
@@ -58,6 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_force(ForcePolicy::FastForwardOnly),
     ];
     let prepared = PreparedPush::new(&objects, commands, &[], PushLimits::default(), &cancel)?;
+
     let report = send_local(
         destination.git_dir(),
         girt::push::LocalPushRequest::new(&prepared),
@@ -65,10 +71,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
         |_| {},
     )?;
+
     // A complete protocol exchange can still contain rejection or partial success.
     if !report.all_succeeded() {
         return Err(format!("native local push rejected updates: {report:?}").into());
     }
+
     let restored = destination
         .objects()?
         .read(blob)?
@@ -77,11 +85,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         restored.data(),
         b"Published by girt through native local storage\n"
     );
+
     println!(
         "Published branch and annotated tag: {} objects, {} pack bytes",
         prepared.object_count(),
         prepared.pack_bytes()
     );
+
     let repeated = PreparedPush::new(
         &objects,
         vec![
@@ -92,6 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PushLimits::default(),
         &cancel,
     )?;
+
     let report = send_local(
         destination.git_dir(),
         girt::push::LocalPushRequest::new(&repeated),
@@ -99,6 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
         |_| {},
     )?;
+
     if !report.all_succeeded() {
         return Err(format!("repeat rejected: {report:?}").into());
     }
@@ -108,5 +120,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         repeated.object_count(),
         repeated.pack_bytes()
     );
+
     Ok(())
 }

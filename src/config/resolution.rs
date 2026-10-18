@@ -81,21 +81,25 @@ impl Config {
     /// ```
     /// use girt::Config;
     /// use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let global = directory.path().join("global");
     /// let local = directory.path().join("local");
     /// std::fs::write(&global, b"[core]\neditor = user-editor\n")?;
     /// std::fs::write(&local, b"[core]\neditor = project-editor\n")?;
+    ///
     /// // Scope determines precedence even though the caller lists local first.
     /// let inputs = ConfigInputs::default().with_files(vec![
     ///     ConfigFile::new(local.clone(), ConfigScope::Local),
     ///     ConfigFile::new(global, ConfigScope::Global),
     /// ]);
+    ///
     /// let config = Config::resolve(&inputs)?;
     /// assert_eq!(
     ///     config.string("core", None, "editor"),
     ///     Some(&b"project-editor"[..])
     /// );
+    ///
     /// let winning = config
     ///     .entries()
     ///     .last()
@@ -127,6 +131,7 @@ impl Config {
     /// ```
     /// use girt::Config;
     /// use girt::config::{ConfigFile, ConfigInputs, ConfigScope, IncludePlacement};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let root = directory.path().join("config");
     /// std::fs::write(&root, b"[include]\npath = first\npath = second\n")?;
@@ -135,11 +140,13 @@ impl Config {
     ///     directory.path().join("second"),
     ///     b"[core]\neditor = second\n",
     /// )?;
+    ///
     /// let inputs =
     ///     ConfigInputs::default().with_files(vec![ConfigFile::new(root, ConfigScope::Global)]);
     /// let ordinary = Config::resolve(&inputs)?;
     /// let reordered =
     ///     Config::resolve_with_include_placement(&inputs, IncludePlacement::AfterSectionReverse)?;
+    ///
     /// assert_eq!(
     ///     ordinary.string("core", None, "editor"),
     ///     Some(&b"second"[..])
@@ -285,6 +292,7 @@ impl Config {
     ///     },
     ///     4,
     /// )?;
+    ///
     /// assert_eq!(
     ///     config.string("core", None, "editor"),
     ///     Some(&b"literal\nvalue"[..])

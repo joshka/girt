@@ -8,6 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         temp.path().join("repo"),
         InitKind::Worktree,
     )?;
+
     let objects = repo.loose_objects();
     let blob = objects.write_blob(b"literal\r\nbytes\0\xff")?;
     let target = objects.write_tree(&Tree::new(
@@ -18,6 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: blob,
         }],
     )?)?;
+
     // This example owns the repository exclusively. After a no-checkout clone, likewise pass
     // None as baseline and read the desired commit's tree for target. HEAD is never switched.
     match repo.checkout_tree(None, Some(target)) {
@@ -30,14 +32,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(failure.into());
         }
     }
+
     assert_eq!(
         std::fs::read(repo.worktree().unwrap().join("hello.txt"))?,
         b"literal\r\nbytes\0\xff"
     );
+
     // A subsequent checkout names the current baseline explicitly. This removes only our
     // verified tracked file and publishes an empty index; it does not delete unknown contents.
     repo.checkout_tree(Some(target), None)?;
     assert!(!repo.worktree().unwrap().join("hello.txt").exists());
+
     drop(repo);
     temp.close()?; // Recursive cleanup belongs only to this disposable example's owner.
     Ok(())

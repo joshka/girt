@@ -102,6 +102,7 @@ impl SshRemote {
     ///     .into_iter()
     ///     .filter_map(|name| Some((name.into(), std::env::var_os(name)?)))
     ///     .collect();
+    ///
     /// let options = OpenSshOptions::default()
     ///     .with_default_executable("/usr/bin/ssh".into())
     ///     .with_environment(environment);

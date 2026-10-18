@@ -89,6 +89,7 @@ pub enum MaintenanceCause {
 /// }
 ///
 /// use girt::retention::{MaintenanceCause, RepackLimits, RetentionPolicy};
+///
 /// let failure = repo
 ///     .run_maintenance(
 ///         &mut PrivateFixture,
@@ -97,6 +98,7 @@ pub enum MaintenanceCause {
 ///         &AtomicBool::new(true),
 ///     )
 ///     .unwrap_err();
+///
 /// assert!(matches!(failure.cause, MaintenanceCause::Cancelled));
 /// assert!(failure.report.expired.is_none());
 /// assert!(failure.report.retired.is_none());
@@ -171,6 +173,7 @@ impl Repository {
     /// }
     ///
     /// use girt::retention::{RepackLimits, RetentionPolicy};
+    ///
     /// let id = repo.loose_objects().write_blob(b"retained by default")?;
     /// let report = repo.run_maintenance(
     ///     &mut PrivateFixture,
@@ -178,6 +181,7 @@ impl Repository {
     ///     RepackLimits::default(),
     ///     &cancel,
     /// )?;
+    ///
     /// assert!(report.expired.is_some() && report.retired.is_some() && report.pruned.is_some());
     /// assert!(report.pruned.unwrap().deleted.is_empty());
     /// assert!(
@@ -267,12 +271,14 @@ impl Repository {
     /// }
     ///
     /// use girt::retention::{PackConsolidation, RepackLimits, RetentionPolicy};
+    ///
     /// let first = repo.loose_objects().write_blob(b"first")?;
     /// repo.repack_retained(
     ///     &RetentionPolicy::default(),
     ///     RepackLimits::default(),
     ///     &cancel,
     /// )?;
+    ///
     /// let second = repo.loose_objects().write_blob(b"second")?;
     /// repo.repack_retained(
     ///     &RetentionPolicy::default(),
@@ -288,6 +294,7 @@ impl Repository {
     ///     &cancel,
     /// )?;
     /// assert!(report.consolidated);
+    ///
     /// let packs = std::fs::read_dir(repo.object_dir().join("pack"))?
     ///     .filter(|entry| {
     ///         entry
@@ -296,6 +303,7 @@ impl Repository {
     ///     })
     ///     .count();
     /// assert_eq!(packs, 1);
+    ///
     /// let objects = repo.objects_with(Default::default())?;
     /// assert!(objects.read_with(first, Default::default())?.is_some());
     /// assert!(objects.read_with(second, Default::default())?.is_some());
@@ -364,10 +372,12 @@ impl Repository {
     /// use std::time::{Duration, UNIX_EPOCH};
     ///
     /// use girt::retention::RetentionPolicy;
+    ///
     /// let id = repo.loose_objects().write_blob(b"old and unreachable")?;
     /// let hex = id.to_string();
     /// let path = repo.object_dir().join(&hex[..2]).join(&hex[2..]);
     /// std::fs::File::open(path)?.set_modified(UNIX_EPOCH + Duration::from_secs(1))?;
+    ///
     /// let policy = RetentionPolicy::default().with_recent_cutoff(UNIX_EPOCH + Duration::from_secs(2));
     /// let report = repo.collect_garbage(&mut PrivateFixture, &policy, &cancel)?;
     /// assert_eq!(report.pruned.unwrap().deleted, [id]);

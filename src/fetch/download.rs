@@ -44,10 +44,12 @@ use crate::packet::Wire;
 /// let runtime = tokio::runtime::Builder::new_current_thread()
 ///     .enable_all()
 ///     .build()?;
+///
 /// let received = runtime
 ///     .block_on(async {
 ///         let remote = HttpRemote::new("https://example.com/project.git", &[], &[])?;
 ///         let cancel = AtomicBool::new(false);
+///
 ///         let download = receive_http(
 ///             &remote,
 ///             |advertisement| {
@@ -63,6 +65,7 @@ use crate::packet::Wire;
 ///             TransportControl::new(&cancel),
 ///         )
 ///         .await?;
+///
 ///         let received = tokio::task::spawn_blocking(move || {
 ///             download.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
 ///         })
@@ -70,6 +73,7 @@ use crate::packet::Wire;
 ///         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(received)
 ///     })
 ///     .map_err(|error| error as Box<dyn std::error::Error>)?;
+///
 /// println!("validated {} objects", received.object_count());
 /// # Ok(())
 /// # }

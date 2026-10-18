@@ -63,6 +63,7 @@ pub struct Index {
 /// ```
 /// use girt::index::{Entry, Error, Index, Limits, Mode, Version};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let entry = Entry::new(
 ///     b"future".to_vec(),
 ///     Mode::Regular,
@@ -70,6 +71,7 @@ pub struct Index {
 /// )
 /// .with_intent_to_add(true);
 /// let mut index = Index::new(ObjectFormat::Sha1, vec![entry], Limits::default())?;
+///
 /// assert_eq!(index.version(), Version::V3);
 /// assert!(matches!(
 ///     index.set_version(Version::V2, Limits::default()),
@@ -136,6 +138,7 @@ impl Extension {
 /// ```
 /// use girt::index::{Entry, Error, Index, Limits, Mode};
 /// use girt::{ObjectFormat, ObjectId};
+///
 /// let format = ObjectFormat::Sha1;
 /// let limits = Limits::default().with_max_entries(0);
 /// let entry = Entry::new(
@@ -143,6 +146,7 @@ impl Extension {
 ///     Mode::Regular,
 ///     ObjectId::for_blob(format, b""),
 /// );
+///
 /// assert!(matches!(
 ///     Index::new(format, vec![entry], limits),
 ///     Err(Error::Limit(_))
@@ -325,6 +329,7 @@ impl Index {
     /// ```
     /// use girt::index::{Entry, Index, Limits, Mode};
     /// use girt::{ObjectFormat, ObjectId};
+    ///
     /// let format = ObjectFormat::Sha256;
     /// let entry = |path: &[u8]| {
     ///     Entry::new(
@@ -464,6 +469,7 @@ impl Index {
     /// ```
     /// use girt::index::{Entry, Index, Limits, Mode};
     /// use girt::{ObjectFormat, ObjectId};
+    ///
     /// let format = ObjectFormat::Sha1;
     /// let mut index = Index::new(
     ///     format,
@@ -474,6 +480,7 @@ impl Index {
     ///     )],
     ///     Limits::default(),
     /// )?;
+    ///
     /// index.replace_entries(Vec::new(), Limits::default())?;
     /// assert!(index.entries().is_empty());
     /// # Ok::<(), girt::index::Error>(())
@@ -826,6 +833,7 @@ impl Index {
     /// ```
     /// use girt::index::{Entry, Index, Limits, Mode};
     /// use girt::{ObjectFormat, ObjectId};
+    ///
     /// let format = ObjectFormat::Sha256;
     /// let entry = Entry::new(
     ///     b"raw-\xff".to_vec(),
@@ -835,6 +843,7 @@ impl Index {
     /// let index = Index::new(format, vec![entry], Limits::default())?;
     /// let bytes = index.encode(Limits::default())?;
     /// let decoded = Index::parse(format, &bytes, Limits::default())?;
+    ///
     /// assert_eq!(decoded.entries()[0].path, b"raw-\xff");
     /// assert_eq!(decoded.encode(Limits::default())?, bytes);
     /// # Ok::<(), girt::index::Error>(())

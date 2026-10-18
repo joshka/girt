@@ -67,6 +67,7 @@ impl Repository {
     ///
     /// use girt::Repository;
     /// use girt::status::{Baseline, Limits, Untracked};
+    ///
     /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
     /// let directory = tempfile::tempdir()?;
     /// let repository = Repository::init(
@@ -74,12 +75,14 @@ impl Repository {
     ///     directory.path().join("repo"),
     ///     girt::InitKind::Worktree,
     /// )?;
+    ///
     /// let report = repository.raw_status_with(
     ///     Baseline::Head,
     ///     Untracked::Omit,
     ///     Limits::default(),
     ///     &AtomicBool::new(false),
     /// )?;
+    ///
     /// println!(
     ///     "{} staged, {} raw unstaged",
     ///     report.staged.len(),
@@ -164,6 +167,7 @@ impl Repository {
     /// use girt::config::ConfigInputs;
     /// use girt::status::{Baseline, Limits, UntrackedFiles, UntrackedKind};
     /// use girt::workflow::Environment;
+    ///
     /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
     /// let directory = tempfile::tempdir()?;
     /// Repository::init(
@@ -171,12 +175,14 @@ impl Repository {
     ///     directory.path().join("w"),
     ///     girt::InitKind::Worktree,
     /// )?;
+    ///
     /// // Read configuration as `git` does, so `core.excludesFile` is honoured.
     /// let environment = Environment::default().with("GIT_CONFIG_NOSYSTEM", "1");
     /// let repo = Repository::open_with_config(
     ///     directory.path().join("w"),
     ///     &ConfigInputs::git_default(&environment)?,
     /// )?;
+    ///
     /// let worktree = repo.worktree().unwrap();
     /// std::fs::create_dir(worktree.join("target"))?;
     /// std::fs::write(worktree.join("target/app"), b"binary")?;
@@ -191,6 +197,7 @@ impl Repository {
     ///     Limits::default(),
     ///     &AtomicBool::new(false),
     /// )?;
+    ///
     /// let untracked: Vec<_> = report
     ///     .untracked
     ///     .iter()

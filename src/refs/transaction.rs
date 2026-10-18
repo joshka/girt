@@ -103,17 +103,20 @@ impl RefEdit {
     /// ```
     /// use girt::refs::{RefEdit, RefName, Reflog, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"release notes")?;
     /// let refs = repo.references()?;
     /// let tag = RefName::tag("notes")?;
     /// refs.transaction(&[RefEdit::create(tag.clone(), id, Reflog::Preserve)])?;
     /// assert_eq!(refs.read(&tag)?, Some(Target::Direct(id)));
+    ///
     /// // A second create fails its precondition instead of replacing the tag.
     /// assert!(
     ///     refs.transaction(&[RefEdit::create(tag, id, Reflog::Preserve)])
@@ -137,14 +140,17 @@ impl RefEdit {
     /// ```
     /// use girt::refs::{RefEdit, RefName, Reflog, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let loose = repo.loose_objects();
     /// let (first, second) = (loose.write_blob(b"one")?, loose.write_blob(b"two")?);
+    ///
     /// let refs = repo.references()?;
     /// let branch = RefName::branch("topic")?;
     /// refs.transaction(&[RefEdit::create(branch.clone(), first, Reflog::Preserve)])?;
@@ -155,6 +161,7 @@ impl RefEdit {
     ///     Reflog::Preserve,
     /// )])?;
     /// assert_eq!(refs.read(&branch)?, Some(Target::Direct(second)));
+    ///
     /// // `first` is stale now, so repeating the move fails without changing the branch.
     /// assert!(
     ///     refs.transaction(&[RefEdit::update(branch, first, second, Reflog::Preserve)])
@@ -180,12 +187,14 @@ impl RefEdit {
     /// ```
     /// use girt::refs::{RefEdit, RefName, Reflog};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"draft")?;
     /// let refs = repo.references()?;
     /// let branch = RefName::branch("draft")?;
@@ -304,24 +313,29 @@ pub struct RefEditOutcome {
 ///     Expected, RefEdit, RefName, RefOutcome, ReferenceError, Reflog, Target, TransactionError,
 /// };
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r.git"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let refs = repo.references()?;
 /// let name = RefName::new("refs/tags/result")?;
 /// let id = repo.loose_objects().write_blob(b"build result")?;
+///
 /// let edit = RefEdit::new(
 ///     name.clone(),
 ///     Some(Target::Direct(id)),
 ///     Expected::Absent,
 ///     Reflog::Preserve,
 /// );
+///
 /// let outcomes = refs.transaction(&[edit.clone()])?;
 /// assert_eq!(outcomes[0].reference, RefOutcome::Published);
 /// assert!(outcomes[0].logs.is_empty());
+///
 /// // A stale creation is refused before publication; don't replace it with Expected::Any.
 /// assert!(matches!(
 ///     refs.transaction(&[edit]),
@@ -419,10 +433,12 @@ impl References<'_> {
     /// # refs.transaction(&[edit])?;
     /// // Publish a child only if the branch still has the stored value we observed.
     /// let observed = refs.read(&main)?.ok_or("branch missing")?;
+    ///
     /// let mut fields = loose.read_commit(id, 4096)?.to_fields()?;
     /// fields.parents = vec![id];
     /// fields.message = b"Next snapshot\n".to_vec();
     /// let next = loose.write_commit(&Commit::new(fields)?)?;
+    ///
     /// let advance = RefEdit::new(main.clone(), Some(Target::Direct(next)), Expected::Value(observed),
     ///     Reflog::Append { committer: Signature { name: b"A".to_vec(), email: b"a@example.com".to_vec(),
     ///         seconds: 1_700_000_001, offset_minutes: 0 }, message: b"commit: next".to_vec() });
@@ -496,12 +512,14 @@ impl References<'_> {
     ///
     /// use girt::refs::{Expected, FilesTransactionOptions, RefEdit, RefName, Reflog, Target};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"manifest")?;
     /// let name = RefName::new("refs/tags/exported")?;
     /// let edits = [RefEdit::new(
@@ -510,6 +528,7 @@ impl References<'_> {
     ///     Expected::Absent,
     ///     Reflog::Preserve,
     /// )];
+    ///
     /// let options = FilesTransactionOptions::GIT_DEFAULT.with_reference_lock_wait(
     ///     girt::refs::LockWait::For(std::time::Duration::from_millis(25)),
     /// ); // Shorten loose-ref waits while retaining the one-second packed-refs wait.
@@ -557,19 +576,23 @@ impl References<'_> {
     ///
     /// use girt::refs::{Expected, FilesTransactionOptions, RefEdit, RefName, Reflog, Target};
     /// use girt::{InitKind, ObjectFormat, Repository, Signature};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r.git"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let old = repo.loose_objects().write_blob(b"old")?;
     /// let new = repo.loose_objects().write_blob(b"replacement")?;
+    ///
     /// let refs = repo.references()?;
     /// let base = RefName::new("refs/tags/base")?;
     /// let alias = RefName::new("refs/tags/alias")?;
     /// refs.update_without_reflog(&base, Target::Direct(old), Expected::Absent)?;
     /// refs.update_without_reflog(&alias, Target::Symbolic(base.clone()), Expected::Absent)?;
+    ///
     /// let edit = RefEdit::new(
     ///     alias.clone(),
     ///     Some(Target::Direct(new)),
@@ -584,12 +607,14 @@ impl References<'_> {
     ///         message: b"replace alias".to_vec(),
     ///     },
     /// );
+    ///
     /// let outcomes = refs.transaction_files_with_stored_log_ids(
     ///     &[edit],
     ///     FilesTransactionOptions::default(),
     ///     &AtomicBool::new(false),
     /// )?;
     /// assert_eq!(outcomes[0].name, alias);
+    ///
     /// let log = refs.reflog(&alias)?.ok_or("log absent")?;
     /// assert!(log[0].old.is_null()); // The stored old value was symbolic, not the resolved `old` ID.
     /// assert_eq!(log[0].new, new);

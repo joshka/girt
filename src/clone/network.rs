@@ -37,6 +37,7 @@ use crate::transport::TransportControl;
 ///     BranchSelection::Default,
 ///     Reflog::Preserve,
 /// )?;
+///
 /// let runtime = tokio::runtime::Builder::new_current_thread()
 ///     .enable_all()
 ///     .build()?;
@@ -51,6 +52,7 @@ use crate::transport::TransportControl;
 ///                 TransportControl::new(&cancel),
 ///             )
 ///             .await?;
+///
 ///         tokio::task::spawn_blocking(
 ///             move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 ///                 let cancel = AtomicBool::new(false);

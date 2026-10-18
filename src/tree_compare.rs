@@ -28,6 +28,7 @@ use crate::{
 /// ```
 /// use girt::{EntryMode, ObjectFormat, ObjectId, TreeValue};
 /// let id = ObjectId::for_blob(ObjectFormat::Sha256, b"#!/bin/sh\n");
+///
 /// let regular = TreeValue {
 ///     id,
 ///     mode: EntryMode::Blob,
@@ -36,6 +37,7 @@ use crate::{
 ///     id,
 ///     mode: EntryMode::Executable,
 /// };
+///
 /// assert_ne!(regular, executable); // Same content can still be a structural change.
 /// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -62,12 +64,14 @@ pub struct TreeValue {
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let loose = repo.loose_objects();
 /// let blob = loose.write_blob(b"new file\n")?;
 /// let tree = loose.write_tree(&Tree::new(
@@ -78,6 +82,7 @@ pub struct TreeValue {
 ///         id: blob,
 ///     }],
 /// )?)?;
+///
 /// let changes = repo.objects_with(Default::default())?.compare_trees_with(
 ///     None,
 ///     Some(tree),
@@ -116,12 +121,14 @@ pub struct TreeValue {
 /// let old = tree(vec![entry(b"path", id, EntryMode::Blob)])?;
 /// let child = tree(vec![entry(b"file", id, EntryMode::Blob)])?;
 /// let new = tree(vec![entry(b"path", child, EntryMode::Tree)])?;
+///
 /// let changes = repo.objects_with(Default::default())?.compare_trees_with(
 ///     Some(old),
 ///     Some(new),
 ///     Default::default(),
 ///     &cancel,
 /// )?;
+///
 /// assert_eq!(changes.len(), 2);
 /// assert_eq!(changes[0].path, b"path");
 /// assert!(changes[0].new.is_none());
@@ -161,6 +168,7 @@ impl TreeChange {
     ///     id,
     ///     mode: EntryMode::Symlink,
     /// };
+    ///
     /// assert_eq!(ChangeStatus::between(Some(file), Some(link)).letter(), 'T');
     /// assert_eq!(ChangeStatus::between(None, Some(file)), ChangeStatus::Added);
     /// ```
@@ -266,6 +274,7 @@ fn file_type(mode: EntryMode) -> FileType {
 ///
 /// let id = loose.write_blob(b"data")?;
 /// let root = tree(vec![entry(b"file", id, EntryMode::Blob)])?;
+///
 /// let objects = repo.objects_with(Default::default())?;
 /// let result = objects.compare_trees_with(
 ///     None,
@@ -274,6 +283,7 @@ fn file_type(mode: EntryMode) -> FileType {
 ///     &cancel,
 /// );
 /// assert!(matches!(result, Err(TreeCompareError::Limit(_))));
+///
 /// // Equal tree identities skip traversal, even under this output budget.
 /// assert!(
 ///     objects
@@ -416,6 +426,7 @@ impl Objects {
     ///     directory.path().join("r"),
     ///     InitKind::Bare,
     /// )?;
+    ///
     /// let loose = repo.loose_objects();
     /// let tree = |content: &[u8]| -> Result<_, Box<dyn std::error::Error>> {
     ///     let id = loose.write_blob(content)?;
@@ -693,12 +704,14 @@ fn charge(remaining: &mut usize, count: usize, name: &'static str) -> Result<(),
 /// use std::sync::atomic::AtomicBool;
 ///
 /// use girt::{InitKind, ObjectFormat, Repository, TreeCompareError};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
 ///     InitKind::Bare,
 /// )?;
+///
 /// let objects = repo.objects_with(Default::default())?;
 /// assert!(matches!(
 ///     objects.compare_trees_with(None, None, Default::default(), &AtomicBool::new(true)),

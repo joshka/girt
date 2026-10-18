@@ -47,8 +47,10 @@ use crate::{ObjectId, PackLimits, Repository};
 ///     TransportControl::new(&cancel),
 ///     LocalFetchObserver::default(),
 /// )?;
+///
 /// let (_installed, retention) =
 ///     received.install_retained(&repo, PackLimits::default(), &cancel)?;
+///
 /// assert!(
 ///     retention
 ///         .path()
@@ -143,6 +145,7 @@ impl FetchRetention {
 ///     TransportControl::new(&cancel),
 ///     LocalFetchObserver::default(),
 /// )?;
+///
 /// received.install(&repo, PackLimits::default(), &cancel)?;
 ///
 /// let error = received

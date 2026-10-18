@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         directory.path().join("repo"),
         InitKind::Worktree,
     )?;
+
     let id = repository.loose_objects().write_blob(b"hello\n")?;
     let mut edit = repository.edit_index(Default::default())?;
     let mut entries = edit.index().entries().to_vec();
@@ -41,6 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     entries.push(Entry::new(b"hello.txt".to_vec(), Mode::Regular, id));
     edit.replace_entries(entries)?;
     edit.commit()?;
+
     assert_eq!(
         repository
             .read_index(Default::default())?
@@ -49,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .id,
         id
     );
+
     Ok(())
 }
 ```
@@ -105,15 +108,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         directory.path().join("repo"),
         InitKind::Bare,
     )?;
+
     let path = directory.path().join("preview.index");
     let blob = repository.loose_objects().write_blob(b"preview\n")?;
     let mut edit = repository.edit_index_at(&path, Default::default())?;
     edit.replace_entries(vec![Entry::new(b"preview.txt".to_vec(), Mode::Regular, blob)])?;
     edit.set_version(Version::V4)?;
     edit.commit()?;
+
     let preview = repository.read_index_at(&path, Default::default())?.unwrap();
     assert_eq!(preview.entries()[0].id, blob);
     assert!(repository.read_index(Default::default())?.is_none());
+
     Ok(())
 }
 ```

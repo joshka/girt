@@ -30,6 +30,7 @@
 ///     &cancel,
 ///     |event| events.push(event),
 /// )?;
+///
 /// assert!(events.contains(&PreparationProgress::Packing { objects: (2, 2) }));
 /// assert_eq!(events.last(), Some(&PreparationProgress::Complete));
 /// # Ok::<(), Box<dyn std::error::Error>>(())

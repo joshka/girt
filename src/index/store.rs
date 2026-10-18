@@ -63,23 +63,28 @@ impl IndexCommitOptions {
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use girt::index::{EditOptions, Version};
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
 ///     InitKind::Worktree,
 /// )?;
+///
 /// let original = directory.path().join("original.index");
 /// repo.edit_index_at(&original, Default::default())?
 ///     .commit()?;
 /// let original_bytes = std::fs::read(&original)?;
+///
 /// let selected = directory.path().join("selected.index");
 /// std::os::unix::fs::symlink(&original, &selected)?;
 /// assert!(repo.edit_index_at(&selected, Default::default()).is_err());
+///
 /// let options = EditOptions::default().with_follow_symlink(true);
 /// let mut edit = repo.edit_index_at_with_options(&selected, Default::default(), options)?;
 /// edit.set_version(Version::V4)?;
 /// edit.commit()?;
+///
 /// assert!(
 ///     !std::fs::symlink_metadata(&selected)?
 ///         .file_type()
@@ -201,12 +206,14 @@ impl LeafSnapshot {
 /// ```
 /// use girt::index::IndexCommitOptions;
 /// use girt::{InitKind, ObjectFormat, Repository};
+///
 /// let directory = tempfile::tempdir()?;
 /// let repository = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("repo"),
 ///     InitKind::Worktree,
 /// )?;
+///
 /// let edit = repository.edit_index(Default::default())?;
 /// edit.commit_with_options(IndexCommitOptions::default().with_sync(true))?;
 /// assert!(repository.read_index(Default::default())?.is_some());
@@ -524,6 +531,7 @@ impl Repository {
     /// )?;
     ///
     /// use girt::index::{Entry, Mode};
+    ///
     /// let id = repository.loose_objects().write_blob(b"staged content\n")?;
     /// let mut edit = repository.edit_index(Default::default())?;
     /// // Derive the full replacement from the locked snapshot, retaining other paths.
@@ -532,6 +540,7 @@ impl Repository {
     /// entries.push(Entry::new(b"hello.txt".to_vec(), Mode::Regular, id));
     /// edit.replace_entries(entries)?;
     /// edit.commit()?;
+    ///
     /// assert_eq!(
     ///     repository
     ///         .read_index(Default::default())?
@@ -756,13 +765,16 @@ impl IndexEdit {
     /// )?;
     ///
     /// use girt::index::{Entry, Mode};
+    ///
     /// let id = repo.loose_objects().write_blob(b"staged")?;
     /// let mut edit = repo.edit_index(Default::default())?;
     /// edit.replace_entries(vec![Entry::new(b"file".to_vec(), Mode::Regular, id)])?;
     /// edit.commit()?;
+    ///
     /// let mut edit = repo.edit_index(Default::default())?;
     /// edit.replace_entries(Vec::new())?;
     /// edit.commit()?;
+    ///
     /// assert!(
     ///     repo.read_index(Default::default())?
     ///         .unwrap()
@@ -801,6 +813,7 @@ impl IndexEdit {
     /// )?;
     ///
     /// use girt::index::{Entry, Index, Mode, Version};
+    ///
     /// let id = repo.loose_objects().write_blob(b"replacement")?;
     /// let mut replacement = Index::new(
     ///     ObjectFormat::Sha1,
@@ -808,9 +821,11 @@ impl IndexEdit {
     ///     Default::default(),
     /// )?;
     /// replacement.set_version(Version::V4, Default::default())?;
+    ///
     /// let mut edit = repo.edit_index(Default::default())?;
     /// edit.replace_index(replacement)?;
     /// edit.commit()?;
+    ///
     /// assert_eq!(
     ///     repo.read_index(Default::default())?.unwrap().version(),
     ///     Version::V4
@@ -889,17 +904,21 @@ impl IndexEdit {
     /// )?;
     ///
     /// use girt::index::{Entry, Mode, Stat};
+    ///
     /// let id = repo.loose_objects().write_blob(b"original")?;
     /// let stat = Stat {
     ///     size: 8,
     ///     ..Stat::default()
     /// };
     /// let original = Entry::new(b"file".to_vec(), Mode::Regular, id).with_stat(stat);
+    ///
     /// let mut edit = repo.edit_index(Default::default())?;
     /// edit.replace_entries(vec![original.clone()])?;
+    ///
     /// let draft = Entry::new(b"file".to_vec(), Mode::Regular, id);
     /// edit.replace_entries_reusing_stat(vec![draft])?;
     /// assert_eq!(edit.index().entries()[0].stat, stat);
+    ///
     /// let mut changed = original.with_stat(Stat::default());
     /// changed.id = repo.loose_objects().write_blob(b"replacement")?;
     /// edit.replace_entries_reusing_stat(vec![changed])?;
@@ -1088,12 +1107,14 @@ impl IndexEdit {
     /// )?;
     ///
     /// use girt::index::IndexCommitOptions;
+    ///
     /// let edit = repo.edit_index(Default::default())?;
     /// edit.commit_with_options(
     ///     IndexCommitOptions::default()
     ///         .with_shared_permissions(girt::SharedPermissions::Group)
     ///         .with_sync(true),
     /// )?;
+    ///
     /// use std::os::unix::fs::PermissionsExt;
     /// let mode = std::fs::metadata(repo.git_dir().join("index"))?
     ///     .permissions()

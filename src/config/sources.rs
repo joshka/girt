@@ -100,12 +100,14 @@ impl ConfigFile {
 /// ```
 /// use girt::Config;
 /// use girt::config::{ConfigInputs, ConfigScope};
+///
 /// let command = Config::parse(b"[core]\neditor = command-editor\n")?;
 /// let resolved = Config::resolve(&ConfigInputs::default().with_command(Some(command)))?;
 /// let origin = resolved.entries()[0]
 ///     .origin
 ///     .as_ref()
 ///     .ok_or("origin absent")?;
+///
 /// assert_eq!(origin.scope, ConfigScope::Command);
 /// assert!(origin.location.path.is_none()); // Supplied bytes have no physical file.
 /// assert_eq!(origin.location.line, 2);
@@ -128,14 +130,17 @@ pub struct SourceLocation {
 /// ```
 /// use girt::Config;
 /// use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
+///
 /// let directory = tempfile::tempdir()?;
 /// let root = directory.path().join("config");
 /// let included = directory.path().join("editor");
 /// std::fs::write(&root, b"[include]\npath = editor\n")?;
 /// std::fs::write(&included, b"[core]\neditor = chosen\n")?;
+///
 /// let inputs = ConfigInputs::default()
 ///     .with_files(vec![ConfigFile::new(root.clone(), ConfigScope::Global)]);
 /// let config = Config::resolve(&inputs)?;
+///
 /// let entry = config
 ///     .entries()
 ///     .iter()
@@ -172,6 +177,7 @@ pub struct Origin {
 /// ```
 /// use girt::Config;
 /// use girt::config::{ConfigFile, ConfigInputs, ConfigScope, IncludeContext};
+///
 /// let directory = tempfile::tempdir()?;
 /// let root = directory.path().join("root");
 /// std::fs::write(&root, b"[includeIf \"onbranch:topic/**\"]\npath = topic\n")?;
@@ -179,10 +185,12 @@ pub struct Origin {
 ///     directory.path().join("topic"),
 ///     b"[core]\neditor = topic-editor\n",
 /// )?;
+///
 /// let inputs = ConfigInputs::default()
 ///     .with_files(vec![ConfigFile::new(root, ConfigScope::Global)])
 ///     .with_context(IncludeContext::default().with_branch(Some(b"topic/work".to_vec())));
 /// let effective = Config::resolve(&inputs)?;
+///
 /// assert_eq!(
 ///     effective.string("core", None, "editor"),
 ///     Some(&b"topic-editor"[..])
@@ -324,11 +332,13 @@ impl Default for ResolveLimits {
 /// ```
 /// use girt::Config;
 /// use girt::config::ConfigInputs;
+///
 /// let inputs = ConfigInputs::default()
 ///     .with_environment(Some(Config::parse(
 ///         b"[core]\neditor = environment-editor\n",
 ///     )?))
 ///     .with_command(Some(Config::parse(b"[core]\neditor = caller-editor\n")?));
+///
 /// let effective = Config::resolve(&inputs)?;
 /// assert_eq!(
 ///     effective.string("core", None, "editor"),
@@ -407,14 +417,17 @@ impl ConfigInputs {
     ///
     /// ```
     /// use girt::config::ConfigInputs;
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let selected = directory.path().join("global");
     /// std::fs::write(&selected, b"[core]\neditor = explicit\n")?;
+    ///
     /// let inputs = ConfigInputs::from_environment(
     ///     None,
     ///     |name| (name == "GIT_CONFIG_GLOBAL").then(|| selected.clone().into_os_string()),
     ///     4,
     /// )?;
+    ///
     /// let config = girt::Config::resolve(&inputs)?;
     /// assert_eq!(
     ///     config.string("core", None, "editor"),
@@ -584,12 +597,14 @@ impl ConfigInputs {
     ///
     /// let home = tempfile::tempdir()?;
     /// std::fs::write(home.path().join(".gitconfig"), b"[user]\n\tname = Home\n")?;
+    ///
     /// let environment = Environment::default()
     ///     .with("HOME", home.path())
     ///     .with("GIT_CONFIG_NOSYSTEM", "1")
     ///     .with("GIT_CONFIG_COUNT", "1")
     ///     .with("GIT_CONFIG_KEY_0", "user.email")
     ///     .with("GIT_CONFIG_VALUE_0", "home@example.com");
+    ///
     /// let config = Config::resolve(&ConfigInputs::git_default(&environment)?)?;
     /// assert_eq!(config.string("user", None, "name"), Some(&b"Home"[..]));
     /// assert_eq!(

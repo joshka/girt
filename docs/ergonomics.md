@@ -328,15 +328,19 @@ use girt::push::PushCommand;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let git = Repo::discover("repo")?;
     let head = git.repository().head()?;
+
     if !head.name.is_branch() {
         return Err("current HEAD is not a branch".into());
     }
+
     let tip = head.id.ok_or("unborn branch")?;
     let command = PushCommand::new(head.name, None, tip);
     let report = git.push("origin", vec![command])?;
+
     if !report.all_succeeded() {
         return Err(format!("push rejected: {report:?}").into());
     }
+
     Ok(())
 }
 ```

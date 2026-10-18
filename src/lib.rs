@@ -37,11 +37,13 @@
 //!     directory.path().join("project"),
 //!     InitKind::Worktree,
 //! )?;
+//!
 //! let id = repository.loose_objects().write_blob(b"hello Git\n")?;
 //! let objects = repository.objects_with(PackLimits::default())?;
 //! let blob = objects
 //!     .read_with(id, ReadLimits::default())?
 //!     .ok_or("blob missing")?;
+//!
 //! assert_eq!(blob.kind(), ObjectKind::Blob);
 //! assert_eq!(blob.data(), b"hello Git\n");
 //! # Ok::<(), Box<dyn std::error::Error>>(())

@@ -30,8 +30,10 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME="A. Writer" GIT_AUTHOR_EMAIL=a@example.com
 export GIT_COMMITTER_NAME="A. Writer" GIT_COMMITTER_EMAIL=a@example.com
 export GIT_AUTHOR_DATE=2026-10-01T12:00:00Z GIT_COMMITTER_DATE=2026-10-01T12:00:00Z
+
 git init -q -b main demo && cd demo
 git config user.name "A. Writer" && git config user.email a@example.com
+
 printf 'hello\n' > README.md && mkdir src && printf 'fn main() {}\n' > src/main.rs
 git add . && git commit -qm "Initial commit"
 printf 'hello\nworld\n' > README.md && git commit -qam "Add a second line"

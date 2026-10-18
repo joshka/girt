@@ -36,11 +36,13 @@ use crate::Config;
 ///     b"[url \"https://github.com/\"]\ninsteadOf = gh:\n\
 ///       [remote \"origin\"]\nurl = gh:joshka/girt\nfetch = +refs/heads/*:refs/remotes/origin/*\n",
 /// )?;
+///
 /// let origin = ConfiguredRemote::find(&config, b"origin")?.expect("has a URL");
 /// assert_eq!(
 ///     origin.fetch_url(),
 ///     Some(&b"https://github.com/joshka/girt"[..])
 /// );
+///
 /// // With no `pushurl` or matching `pushInsteadOf`, pushes use the fetch URL.
 /// assert_eq!(origin.push_url(), origin.fetch_url());
 ///
@@ -91,6 +93,7 @@ impl std::fmt::Debug for ConfiguredRemote {
 /// let config =
 ///     Config::parse(b"[remote \"origin\"]\nurl = https://example.com:99999/project.git\n")?;
 /// let error = ConfiguredRemote::find(&config, b"origin").unwrap_err();
+///
 /// assert_eq!(
 ///     error,
 ///     ConfiguredRemoteError::Url {
@@ -100,6 +103,7 @@ impl std::fmt::Debug for ConfiguredRemote {
 ///         source: ConfiguredUrlError::Port
 ///     },
 /// );
+///
 /// // The message names the key and occurrence but never the URL, which may contain a password.
 /// assert_eq!(error.to_string(), "invalid remote url (value 1)");
 /// # Ok::<(), Box<dyn std::error::Error>>(())

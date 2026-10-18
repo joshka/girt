@@ -243,9 +243,11 @@ pub struct Match {
 ///
 /// ```
 /// use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
+///
 /// let mut rules = Ignore::new(Case::Sensitive, Limits::default());
 /// rules.add(Source::Global, b"*.log\n")?;
 /// rules.add(Source::Directory(b""), b"!important.log\n")?;
+///
 /// assert!(rules.check(b"debug.log", InputKind::File)?.unwrap().ignored);
 /// assert!(
 ///     !rules
@@ -446,6 +448,7 @@ impl Ignore {
     ///
     /// let mut rules = Ignore::new(Case::Sensitive, Limits::default());
     /// rules.add(Source::Info, b"build/\n!build/keep\n")?;
+    ///
     /// assert!(
     ///     !rules
     ///         .check_direct(b"build/keep", InputKind::File)?

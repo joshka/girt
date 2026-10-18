@@ -70,6 +70,7 @@ use crate::transport::TransportControl;
 ///             },
 ///         )
 ///         .await??;
+///
 ///         println!("updated {} references", report.references.len());
 ///         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 ///     })

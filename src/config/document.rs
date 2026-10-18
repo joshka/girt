@@ -219,6 +219,7 @@ impl Document {
     ///
     /// ```
     /// use girt::config::Document;
+    ///
     /// let mut document = Document::parse(b"[core]\neditor = first\neditor = second\n")?;
     /// document.set_value(1, b"replacement")?;
     /// assert_eq!(
@@ -228,6 +229,7 @@ impl Document {
     ///         .collect::<Vec<_>>(),
     ///     [Some(&b"first"[..]), Some(&b"replacement"[..])]
     /// );
+    ///
     /// let unchanged = document.as_bytes().to_vec();
     /// assert!(document.set_value(99, b"invalid occurrence").is_err());
     /// assert_eq!(document.as_bytes(), unchanged);

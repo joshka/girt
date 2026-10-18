@@ -395,9 +395,11 @@ pub enum CredentialError {
 ///     b"store".to_vec(),
 ///     CredentialBackend::Store(CredentialStore::file(&file)),
 /// );
+///
 /// let context = CredentialContext::new(b"https".to_vec(), b"example.com".to_vec());
 /// let cancel = AtomicBool::new(false);
 /// let session = CredentialSession::fill(&config, context, &[store], None, &cancel, None)?;
+///
 /// assert_eq!(
 ///     session.credential().username.as_deref(),
 ///     Some(&b"alice"[..])
@@ -425,6 +427,7 @@ pub enum CredentialError {
 /// let context = CredentialContext::new(b"https".to_vec(), b"example.invalid".to_vec())
 ///     .with_path(Some(b"repo".to_vec()))
 ///     .with_use_http_path(false);
+///
 /// let cancel = AtomicBool::new(false);
 /// let mut prompt = |field| {
 ///     Some(match field {
@@ -433,6 +436,7 @@ pub enum CredentialError {
 ///         _ => return None,
 ///     })
 /// };
+///
 /// let session = CredentialSession::fill(&config, context, &[], Some(&mut prompt), &cancel, None)?;
 /// assert!(session.credential().complete());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -630,6 +634,7 @@ impl CredentialSession {
     ///     &cancel,
     ///     None,
     /// )?;
+    ///
     /// // ... authenticate with `session.credential()`; the server accepts it ...
     /// session.approve(&cancel, None)?;
     ///
@@ -720,12 +725,14 @@ pub enum Prompt {
 ///     "echo token-123".into(),
 ///     "askpass".into(),
 /// ]);
+///
 /// let answer = askpass(
 ///     &program,
 ///     "Password for 'https://example.com': ",
 ///     &AtomicBool::new(false),
 ///     None,
 /// )?;
+///
 /// assert_eq!(answer, Some(b"token-123".to_vec()));
 /// # }
 /// # Ok::<(), girt::remote::CredentialError>(())

@@ -37,6 +37,7 @@ impl Repository {
     /// )?;
     ///
     /// use girt::{EntryMode, Tree, TreeEntry};
+    ///
     /// let loose = repo.loose_objects();
     /// let blob = loose.write_blob(b"hello\n")?;
     /// let tree = loose.write_tree(&Tree::new(
@@ -47,9 +48,11 @@ impl Repository {
     ///         id: blob,
     ///     }],
     /// )?)?;
+    ///
     /// let cancel = AtomicBool::new(false);
     /// repo.checkout_tree_with(None, Some(tree), Default::default(), &cancel)?;
     /// let report = repo.checkout_tree_with(Some(tree), None, Default::default(), &cancel)?;
+    ///
     /// assert!(report.index_published);
     /// assert!(!repo.worktree().unwrap().join("hello.txt").exists());
     /// assert!(loose.read_blob(blob, 1024).is_ok()); // Removing a file does not delete its object.

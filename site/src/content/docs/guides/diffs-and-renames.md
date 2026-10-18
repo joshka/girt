@@ -49,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         directory.path().join("r"),
         InitKind::Bare,
     )?;
+
     let loose = repo.loose_objects();
     let id = loose.write_blob(b"added\n")?;
     let tree = loose.write_tree(&Tree::new(
@@ -59,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id,
         }],
     )?)?;
+
     let objects = repo.objects()?;
     let cancel = AtomicBool::new(false);
     let changes = objects.compare_trees(None, Some(tree))?;
@@ -67,6 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(content.old.is_empty());
     assert_eq!(content.new, b"added\n");
     assert!(changes[0].old.is_none()); // Keep existence independently from the empty content buffer.
+
     let ContentDiff::Text(text) = diff(
         &content.old,
         &content.new,
@@ -79,6 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     assert!(text.edits()[0].old_bytes.is_empty());
     assert_eq!(text.new_bytes(), b"added\n");
+
     Ok(())
 }
 ```
@@ -103,13 +107,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         DiffLimits::default(),
         &AtomicBool::new(false),
     )?;
+
     let ContentDiff::Text(text) = result else {
         panic!("expected text edits");
     };
+
     let edit = &text.edits()[0];
     assert_eq!(edit.old_lines, 1..2);
     assert_eq!(&text.old_bytes()[edit.old_bytes.clone()], b"two\n");
     assert_eq!(&text.new_bytes()[edit.new_bytes.clone()], b"three");
+
     Ok(())
 }
 ```
@@ -224,6 +231,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         directory.path().join("r"),
         InitKind::Bare,
     )?;
+
     let loose = repo.loose_objects();
     let tree = |files: &[(&[u8], &[u8])]| -> Result<_, Box<dyn std::error::Error>> {
         let entries = files
@@ -247,9 +255,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (b"exact-new", b"identical\n"),
         (b"edited-new", b"one\ntwo\nthree\nFOUR\n"),
     ])?;
+
     let objects = repo.objects()?;
     let options = Options::default().with_candidate_limit(0);
     let cancel = AtomicBool::new(false);
+
     let detection = objects.detect_rewrites_or_exact(
         Some(old),
         Some(new),
@@ -258,11 +268,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,
         &cancel,
     )?;
+
     assert_eq!(detection.rewrites.len(), 1); // The identical pair survived.
     assert_eq!(detection.rewrites[0].source, b"exact-old");
     let skipped = detection.inexact_skipped.expect("one edited pair remains");
     assert_eq!((skipped.sources, skipped.targets, skipped.limit), (1, 1, 0));
     assert_eq!(skipped.suggested_limit(), 1);
+
     assert!(matches!(
         objects.detect_rewrites(
             Some(old),
@@ -274,6 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         Err(Error::Candidates { .. })
     ));
+
     let retried = objects.detect_rewrites_or_exact(
         Some(old),
         Some(new),
@@ -282,8 +295,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,
         &cancel,
     )?;
+
     assert!(retried.inexact_skipped.is_none());
     assert_eq!(retried.rewrites.len(), 2);
+
     Ok(())
 }
 ```

@@ -202,12 +202,14 @@ impl RepositoryLocation {
     /// ```
     /// use girt::RepositoryLocation;
     /// use girt::config::ConfigInputs;
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = girt::Repository::init(
     ///     girt::ObjectFormat::Sha1,
     ///     directory.path().join("project"),
     ///     girt::InitKind::Worktree,
     /// )?;
+    ///
     /// let location = RepositoryLocation::at_git_dir(repo.git_dir())?;
     /// let repository = location.open_with_config(&ConfigInputs::default())?;
     /// assert_eq!(repository.git_dir(), location.git_dir());
@@ -240,12 +242,14 @@ impl RepositoryLocation {
     /// ```
     /// use girt::RepositoryLocation;
     /// use girt::config::ConfigInputs;
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = girt::Repository::init(
     ///     girt::ObjectFormat::Sha1,
     ///     directory.path().join("project"),
     ///     girt::InitKind::Worktree,
     /// )?;
+    ///
     /// let location = RepositoryLocation::at_git_dir(repo.git_dir())?;
     /// let metadata = location.read_metadata_with_config(&ConfigInputs::default())?;
     /// assert_eq!(metadata.git_dir(), location.git_dir());
@@ -278,12 +282,14 @@ impl RepositoryLocation {
     /// ```
     /// use girt::RepositoryLocation;
     /// use girt::config::{ConfigInputs, IncludePlacement};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = girt::Repository::init(
     ///     girt::ObjectFormat::Sha1,
     ///     directory.path().join("project"),
     ///     girt::InitKind::Worktree,
     /// )?;
+    ///
     /// let location = RepositoryLocation::at_git_dir(repo.git_dir())?;
     /// let metadata = location.read_metadata_with_config_and_include_placement(
     ///     &ConfigInputs::default(),
@@ -958,15 +964,18 @@ impl Repository {
     /// ```
     /// use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("project");
     /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Worktree)?;
     /// let global = directory.path().join("global");
     /// std::fs::write(&global, b"[core]\neditor = user-editor\n")?;
+    ///
     /// let mut edit = repo.edit_config(4096)?;
     /// edit.document_mut()
     ///     .append("core", None, "editor", b"project-editor")?;
     /// edit.commit()?;
+    ///
     /// let inputs =
     ///     ConfigInputs::default().with_files(vec![ConfigFile::new(global, ConfigScope::Global)]);
     /// let opened = Repository::open_with_config(&path, &inputs)?;
@@ -1003,6 +1012,7 @@ impl Repository {
     /// use girt::refs::Backend;
     /// use girt::refs::reftable::StackLimits;
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init_with_backend(
     ///     ObjectFormat::Sha1,
@@ -1010,12 +1020,14 @@ impl Repository {
     ///     InitKind::Bare,
     ///     Backend::Reftable,
     /// )?;
+    ///
     /// let opened = Repository::open_with_config_and_reference_limits(
     ///     repo.git_dir(),
     ///     &ConfigInputs::default(),
     ///     StackLimits::default().with_tables(8),
     /// )?;
     /// assert_eq!(opened.reference_backend(), Backend::Reftable);
+    ///
     /// assert!(matches!(
     ///     Repository::open_with_config_and_reference_limits(
     ///         repo.git_dir(),
@@ -1067,14 +1079,17 @@ impl Repository {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("r.git");
     /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
     /// let mut repo = repo;
     /// let objects = repo.objects_with(girt::PackLimits::default())?;
+    ///
     /// let boundary = girt::ObjectId::Sha1([1; 20]); // Declaration only; not checked against objects here.
     /// std::fs::write(repo.common_dir().join("shallow"), format!("{boundary}\n"))?;
     /// repo.refresh_shallow(4096, &std::sync::atomic::AtomicBool::new(false))?;
+    ///
     /// assert!(repo.shallow_roots().contains(boundary));
     /// assert!(objects.shallow_roots().is_empty()); // Existing reader retains the old snapshot.
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1147,9 +1162,11 @@ impl Repository {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("r.git");
     /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+    ///
     /// let id = repo.loose_objects().write_blob(b"retained reader")?;
     /// let objects = repo.objects_with(girt::PackLimits::default())?;
     /// let limits = girt::ReadLimits::default();
@@ -1233,9 +1250,11 @@ impl Repository {
     ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
     /// let directory = tempfile::tempdir()?;
     /// let path = directory.path().join("r.git");
     /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+    ///
     /// let cancelled = std::sync::atomic::AtomicBool::new(true);
     /// assert!(matches!(
     ///     repo.objects_controlled(
