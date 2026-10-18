@@ -202,6 +202,43 @@ askpass program with Git's `GIT_ASKPASS` fallback. Credentials remain Supported 
 and askpass; applications own interactive terminal prompts. These observations use Git 2.56.0 and
 disposable original fixtures.
 
+## Git Capability Audit: Transfer
+
+The audit baseline is `2e67ff57` (the merged Git guide), with original fixtures observed using Git
+2.56.0 on macOS and a case-insensitive temporary filesystem. Storage through transfer retain the
+scope of their named comparisons; these are not claims of exhaustive Git CLI equivalence.
+
+`tests/fetch_workflow.rs` compares refspec mapping, exclusions, conditional publication and pruning
+with Git fetch. `automatic_tags_and_fetch_head_remain_caller_owned` confirms that Git's default
+fetch follows a reachable annotated tag and writes `FETCH_HEAD`, while girt leaves both absent.
+Fetch/clone remain Partial under [issue 505](https://github.com/joshka/girt/issues/505): automatic
+tags, `FETCH_HEAD` and multi-round HTTP negotiation remain caller work or absent. HTTP currently
+sends all haves in one request. `tests/clone.rs` compares repository layouts, selected HEAD,
+configuration, object connectivity and checkout behavior.
+
+`git_partial_clone_filter_has_no_girt_fetch_equivalent` creates a Git blob-filtered bare clone and
+observes its missing blob without lazy fetching, then confirms that the current girt fetch installs
+the complete blob. Filters and promisor fulfillment remain absent under
+[issue 521](https://github.com/joshka/girt/issues/521). Server implementation remains separate under
+[issue 520](https://github.com/joshka/girt/issues/520); using Git's server as an oracle does not
+implement a girt server.
+
+`tests/push.rs`, `tests/push_deltas.rs`, `tests/http.rs` and `tests/ssh.rs` compare accepted and
+rejected refs, partial success, leases, delete commands, thin deltas and Git readability. Push
+retains Supported. HTTP and SSH tests exercise v0/v1/v2 discovery and fetch, depth and incremental
+receipt. `tests/ssh.rs::protocol_v2_fetch_agrees_with_git_client` additionally runs Git's client and
+girt through the same independently generated SSH fixture in both object formats, comparing commit
+bytes and checking received connectivity. Local, HTTP and SSH client transports retain Supported;
+HTTP/SSH remain feature-gated, and SSH requires the documented native platform support.
+
+The all-feature macOS transfer run passed its non-SSH suites, but four of 133 SSH cases failed with
+service exit 1 under host contention. Focused deletion reruns passed; protocol reruns had mixed
+results before a diagnostic rerun passed all five cases, and the direct Git-client comparison passed
+both cases. [Issue 572](https://github.com/joshka/girt/issues/572) records this unclassified
+validation failure. It does not establish a missing protocol capability. Follow-up serial results
+and classification will be recorded in that issue; fixture processes were absent after the completed
+runs.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger

@@ -1685,3 +1685,71 @@ fn repository_workflow_fetches_with_protocol_version(
     assert_eq!(protocols, format!("{sent}\n{sent}\n{sent}\n"));
     git(repo.git_dir(), &["fsck", "--full"], b"");
 }
+
+/// Compare clients through the same independently generated SSH server and Git service.
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn protocol_v2_fetch_agrees_with_git_client(#[case] format: girt::ObjectFormat) {
+    let source = Fixture::new(format, true, 4);
+    let server = Server::new(source.root.path(), "none");
+    let (_oracle_root, oracle) = destination_for(format);
+    let url = format!(
+        "ssh://{}@127.0.0.1:{}{}",
+        server.user, server.port, server.repository
+    );
+    let mut command = std::process::Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let ssh = format!("/usr/bin/ssh -F '{}'", server.root.join("config").display());
+    let observed = command
+        .current_dir(oracle.git_dir())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", oracle.git_dir().join("absent-config"))
+        .env("GIT_SSH_COMMAND", ssh)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args([
+            "-c",
+            "protocol.version=2",
+            "fetch",
+            "--no-tags",
+            &url,
+            "refs/heads/main:refs/heads/main",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        observed.status.success(),
+        "Git SSH: {}",
+        String::from_utf8_lossy(&observed.stderr)
+    );
+    let remote = server.remote("config").with_protocol(RequestedProtocol::V2);
+    let cancel = AtomicBool::new(false);
+    let received = runtime()
+        .block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    let received = validated(received);
+    let (_root, destination) = destination_for(format);
+    received
+        .install(&destination, PackLimits::default(), &cancel)
+        .unwrap();
+    let wanted = tip(&source.repo, "refs/heads/main");
+    let oracle_object = oracle.objects().unwrap().read(wanted).unwrap().unwrap();
+    let actual_object = destination
+        .objects()
+        .unwrap()
+        .read(wanted)
+        .unwrap()
+        .unwrap();
+    assert_eq!(oracle_object.data(), actual_object.data());
+    git(destination.git_dir(), &["fsck", "--full"], b"");
+}
