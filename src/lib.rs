@@ -195,6 +195,7 @@ mod error;
 pub mod format_patch;
 pub mod multi_pack_index;
 pub use error::{Error, Result};
+pub mod am;
 pub mod apply;
 pub mod fetch;
 pub mod filter;
