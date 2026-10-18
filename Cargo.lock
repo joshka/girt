@@ -709,6 +709,7 @@ name = "girt"
 version = "0.17.0"
 dependencies = [
  "aws-lc-rs",
+ "base64 0.22.1",
  "clap",
  "crc32fast",
  "criterion",

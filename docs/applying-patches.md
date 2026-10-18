@@ -267,3 +267,28 @@ no partial message list and perform no filesystem operations.
 
 This layer does not decode headers, MIME or transfer encodings, remove signatures, or extract a
 standalone patch. Maildir traversal, numbered output files and publication stay caller-owned.
+
+## Extract metadata and a patch from mail
+
+Pass a message from `mailbox::split` to `mailinfo::parse`. The returned `Message` contains decoded
+UTF-8 author/email/subject/date/Message-ID fields, log-message bytes and patch bytes. No files or
+repository state are written. The patch retains its diffstat preamble and trailing signature; it
+must still be prepared as a standalone patch before passing it to `apply::Patch`.
+
+`parse_with` takes independent limits and explicit policy. `Subject::Keep` retains subject prefixes
+and interior spacing (`-k`); `KeepNonPatch` retains brackets without uppercase `PATCH` (`-b`). The
+default removes reply/bracket prefixes and collapses subject whitespace. An optional Message-ID
+trailer is charged to the log-byte bound and added only when a patch is found. In-body author,
+subject and date fields override outer metadata when a patch is found. Dates remain unfolded text
+for the caller to interpret.
+
+Single-part text mail supports UTF-8/ASCII, RFC 2047 Q/B headers (also Latin-1 metadata), and 7bit,
+8bit, binary, base64 and quoted-printable transfer encodings. Multipart MIME and other character
+sets are explicitly refused. Scissors supports standard dashed cut lines such as `-- >8 --` and
+`-- 8< --`; other marker-bearing lines are explicit refusals when scissors is enabled. Broader
+scissors recognition and multipart extraction remain tracked before `am` integration.
+
+Input, raw headers, field count, decoded content, log output and patch output are independently
+bounded. Any metadata, decoding, cancellation or limit error returns no partial result. Unknown
+outer headers still consume the header limits, and output limits include an optional Message-ID
+trailer. The parser consults no environment or mail configuration.
