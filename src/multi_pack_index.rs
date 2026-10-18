@@ -5,6 +5,12 @@
 //! Pack indexes and object hashes remain necessary to verify those claims. Unknown chunks are
 //! ignored; bitmap ordering chunks are checked when present.
 //!
+//! [`crate::Objects::encode_multi_pack_index`] builds caller-owned bytes from verified primary
+//! pack indexes. [`crate::Repository::write_multi_pack_index`] publishes under caller-provided
+//! maintenance exclusion; it does not repack objects or select retention policy. Use
+//! [`crate::Repository::verify_multi_pack_index`] for explicit standalone/chain diagnostics.
+//! Optional read-path discovery falls back on unusable metadata; explicit verification reports it.
+//!
 //! ```no_run
 //! use girt::ObjectFormat;
 //! use girt::multi_pack_index::MultiPackIndex;
@@ -17,6 +23,13 @@
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+
+mod install;
+mod verify;
+pub use install::{IndexWritten, InstallError};
+
+mod write;
+pub use write::{WriteError, WriteLimits, WriteOptions};
 
 mod store;
 use std::collections::BTreeMap;
@@ -72,6 +85,21 @@ pub struct Location {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// No standalone index or incremental manifest is present.
+    #[error("multi-pack index is absent")]
+    MissingIndex,
+    /// The caller requested cancellation; no files were changed.
+    #[error("multi-pack index verification cancelled")]
+    Cancelled,
+    /// An index or chain file could not be read.
+    #[error("reading multi-pack index {path}")]
+    Path {
+        /// File being inspected.
+        path: std::path::PathBuf,
+        /// Underlying filesystem error.
+        #[source]
+        source: std::io::Error,
+    },
     /// The object-store snapshot does not contain all packs named by the index.
     /// Reopen after repacking, or regenerate the stale MIDX.
     #[error("multi-pack index names unavailable packs")]

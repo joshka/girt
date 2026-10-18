@@ -137,6 +137,9 @@ enum Command {
     /// Verify and rebuild packs.
     #[command(subcommand)]
     Pack(maintenance::PackCommand),
+    /// Inspect and write the index across primary-store packs.
+    #[command(subcommand)]
+    MultiPackIndex(maintenance::MultiPackIndexCommand),
     /// Plan retention, repack and run maintenance.
     #[command(subcommand)]
     Maintenance(maintenance::Command),
@@ -288,6 +291,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Fetch(args) => transfer::fetch(args, context),
         Command::Push(args) => transfer::push(args, context),
         Command::Pack(command) => maintenance::pack(command, context),
+        Command::MultiPackIndex(command) => maintenance::multi_pack_index(command, context),
         Command::Maintenance(command) => maintenance::run(command, context),
         Command::Completions(args) => complete::completions(args),
         Command::Man(args) => complete::man(args),
