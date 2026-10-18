@@ -161,6 +161,7 @@ from_domain_errors! {
     crate::index::SparseError,
     crate::index::StorageError,
     crate::index::WriteTreeError,
+    crate::apply::TreeError,
     crate::tree::TreeWriteError,
     crate::tree_diff::Error,
     crate::locks::CleanupFailure,
