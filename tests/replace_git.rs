@@ -364,7 +364,7 @@ fn kind_changing_and_missing_replacements() {
     std::fs::write(replace_dir.join(c2.to_string()), format!("{absent}\n")).unwrap();
     assert!(matches!(
         fixture.view(&Settings::default()).read(c2),
-        Err(ObjectReadError::MissingReplacement { original, .. }) if original == c2
+        Err(ObjectReadError::MissingReplacement(id)) if id.to_string() == absent
     ));
     assert!(
         !run(fixture.path(), &["cat-file", "-p", &c2.to_string()])

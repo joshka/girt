@@ -194,3 +194,14 @@ fn midx_configuration_controls_loading_and_refresh(#[case] value: &str, #[case] 
     assert_eq!(objects.stores[0].midx.is_some(), expected);
     assert!(objects.read(fixture.ordinary).unwrap().is_some());
 }
+
+/// No variant outgrows the pack-pair paths, so errors embedding `ObjectReadError` stay under
+/// Clippy's `result_large_err` bound on every platform, including Windows' larger paths.
+#[test]
+fn read_error_stays_small() {
+    type PackArtifacts = (std::path::PathBuf, std::path::PathBuf, Box<ObjectReadError>);
+    assert!(
+        std::mem::size_of::<ObjectReadError>()
+            <= std::mem::size_of::<PackArtifacts>() + std::mem::align_of::<PackArtifacts>()
+    );
+}
