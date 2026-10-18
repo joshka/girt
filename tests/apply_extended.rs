@@ -65,6 +65,11 @@ impl Fixture {
             .unwrap();
         assert_eq!(result.tree().id(), before);
         git(self.root.path(), &["read-tree", &after_hex], b"");
+        let index = self.repo.read_index(Default::default()).unwrap().unwrap();
+        let applied = reversed
+            .apply_index(&self.repo.objects().unwrap(), &index)
+            .unwrap();
+        assert_eq!(applied.index().tree_id(), Some(before));
         git(self.root.path(), &["apply", "--cached", "-R"], &bytes);
         assert_eq!(
             git(self.root.path(), &["write-tree"], b""),
@@ -110,6 +115,12 @@ impl Fixture {
             String::from_utf8_lossy(&bytes)
         );
         git(self.root.path(), &["read-tree", &before_hex], b"");
+        let index = self.repo.read_index(Default::default()).unwrap().unwrap();
+        let applied = patch
+            .apply_index(&self.repo.objects().unwrap(), &index)
+            .unwrap();
+        assert_eq!(applied.tree().id(), after);
+        assert_eq!(applied.index().tree_id(), Some(after));
         git(self.root.path(), &["apply", "--cached"], &bytes);
         assert_eq!(
             git(self.root.path(), &["write-tree"], b""),
