@@ -468,12 +468,13 @@ pub fn reftable(data: &[u8]) {
 pub fn apply(data: &[u8]) {
     let mut input = Input(data);
     let preimage = input.part();
-    let mut limits = crate::apply::Limits::default();
-    limits.max_input_bytes = MAX_BYTES;
-    limits.max_output_bytes = MAX_BYTES;
-    limits.max_files = MAX_VISITS;
-    limits.max_hunks = MAX_VISITS;
-    limits.max_lines = MAX_VISITS;
+    let limits = crate::apply::Limits {
+        max_input_bytes: MAX_BYTES,
+        max_output_bytes: MAX_BYTES,
+        max_files: MAX_VISITS,
+        max_hunks: MAX_VISITS,
+        max_lines: MAX_VISITS,
+    };
     if let Ok(patch) = crate::apply::Patch::parse_with(input.rest(), limits) {
         for file in patch.files() {
             if let Ok(applied) = file.apply_with(preimage, limits) {
