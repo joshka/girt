@@ -1368,8 +1368,17 @@ struct Http {
     helpers: Vec<crate::remote::CredentialHelper>,
     /// `GIT_ASKPASS`, `core.askPass` or `SSH_ASKPASS`, asked before the callbacks.
     askpass: Option<crate::remote::CredentialProgram>,
+    /// Credentials for a proxy whose URL names a user.
+    proxy_login: Option<ProxyLogin>,
     /// URL for prompts, without userinfo.
     display_url: String,
+}
+
+#[cfg(feature = "http")]
+struct ProxyLogin {
+    credentials: (String, String),
+    // The helpers to notify; `None` when the proxy URL held the password.
+    session: Option<crate::remote::CredentialSession>,
 }
 
 #[cfg(feature = "http")]
@@ -1385,6 +1394,10 @@ impl Http {
             &self.environment,
         )
         .map_err(|error| TransferError::Configuration(error.to_string()))?;
+        let settings = match &self.proxy_login {
+            Some(login) => settings.with_proxy_credentials(Some(login.credentials.clone())),
+            None => settings,
+        };
         let remote = crate::transport::http::HttpRemote::configured(settings)
             .map_err(|error| TransferError::Configuration(error.to_string()))?
             .with_protocol(self.protocol);
@@ -1393,6 +1406,74 @@ impl Http {
                 .with_credentials(session)
                 .map_err(|error| TransferError::Configuration(error.to_string())),
             None => Ok(remote),
+        }
+    }
+
+    // Like Git, a proxy URL that names a user asks the credential helpers, then askpass, for its
+    // password before the first request. The application's own prompt is not asked for proxies.
+    fn proxy_login(&self) -> Result<Option<ProxyLogin>, TransferError> {
+        let settings = crate::transport::http::HttpSettings::resolve_for_remote(
+            &self.settings_config,
+            &self.remote_name,
+            &self.destination,
+            &self.environment,
+        )
+        .map_err(|error| TransferError::Configuration(error.to_string()))?;
+        let Some(context) = settings.proxy_credential_context() else {
+            return Ok(None);
+        };
+        let username =
+            String::from_utf8_lossy(context.username.as_deref().unwrap_or_default()).into_owned();
+        if let Some(password) = settings.proxy_password() {
+            return Ok(Some(ProxyLogin {
+                credentials: (username, password.to_owned()),
+                session: None,
+            }));
+        }
+        let cancel = AtomicBool::new(false);
+        let mut prompt = |request: &crate::remote::PromptRequest<'_>| {
+            let program = self.askpass.as_ref()?;
+            crate::remote::askpass(program, &request.question(), &cancel, None)
+                .ok()
+                .map(Option::unwrap_or_default)
+        };
+        let refused = || TransferError::Authentication("HTTP proxy".to_owned());
+        let session = crate::remote::CredentialSession::fill_prompting(
+            &self.settings_config,
+            context,
+            &self.helpers,
+            Some(&mut prompt),
+            &AtomicBool::new(false),
+            None,
+        )
+        .map_err(|_| refused())?;
+        let credential = session.credential();
+        let password = credential.password.as_deref().ok_or_else(refused)?;
+        // Basic proxy credentials are text; changing a helper's bytes would send the wrong ones.
+        let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).map_err(|_| refused());
+        let credentials = (
+            text(credential.username.as_deref().unwrap_or_default())?,
+            text(password)?,
+        );
+        Ok(Some(ProxyLogin {
+            credentials,
+            session: Some(session),
+        }))
+    }
+
+    // Stores accepted proxy credentials with the helpers that supplied them, as Git does. The
+    // proxy accepted them when the server answered, even with 401. Git does not erase them after
+    // a 407, and neither does girt; other failures say nothing about the proxy.
+    fn settle_proxy(&self, outcome: Result<(), Option<u16>>) {
+        let Some(session) = self
+            .proxy_login
+            .as_ref()
+            .and_then(|login| login.session.as_ref())
+        else {
+            return;
+        };
+        if matches!(outcome, Ok(()) | Err(Some(401))) {
+            let _ = session.approve(&AtomicBool::new(false), None);
         }
     }
 
@@ -1407,6 +1488,7 @@ impl Http {
             host: url.authority.into_bytes(),
             path: Some(url.path.trim_matches('/').as_bytes().to_vec()),
             use_http_path: false,
+            username: None,
         };
         let display_url = self.display_url.clone();
         let cancel = AtomicBool::new(false);
@@ -1847,17 +1929,22 @@ fn configured_endpoint(
             Endpoint::Local(base.join(path))
         }
         #[cfg(feature = "http")]
-        Protocol::Http | Protocol::Https => Endpoint::Http(Box::new(Http {
-            environment: http_environment(config, &destination, environment)?
-                .with_certificate_check(callbacks.certificate_check()),
-            protocol: requested_protocol(config)?,
-            helpers: credential_helpers(config, environment),
-            askpass: askpass_program(config, environment),
-            display_url: redacted_url(destination.bytes()),
-            settings_config: config.clone(),
-            remote_name: remote_name.as_bytes().to_vec(),
-            destination: destination.clone(),
-        })),
+        Protocol::Http | Protocol::Https => {
+            let mut http = Http {
+                environment: http_environment(config, &destination, environment)?
+                    .with_certificate_check(callbacks.certificate_check()),
+                protocol: requested_protocol(config)?,
+                helpers: credential_helpers(config, environment),
+                askpass: askpass_program(config, environment),
+                display_url: redacted_url(destination.bytes()),
+                settings_config: config.clone(),
+                remote_name: remote_name.as_bytes().to_vec(),
+                destination: destination.clone(),
+                proxy_login: None,
+            };
+            http.proxy_login = http.proxy_login()?;
+            Endpoint::Http(Box::new(http))
+        }
         #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
         Protocol::Ssh => Endpoint::Ssh(Box::new(
             ssh_endpoint(config, &destination, environment)?
@@ -1922,6 +2009,7 @@ impl Repository {
                     limits,
                     control,
                 ));
+                http.settle_proxy(fetch_status(&result));
                 if is_unauthorized_fetch(&result) {
                     let session = http.credentials(callbacks)?;
                     runtime.block_on(crate::fetch::discover_http(
@@ -2030,6 +2118,11 @@ impl Repository {
                     Ok(download)
                 };
                 let mut download = receive(http.remote(None)?, &mut on_message)?;
+                http.settle_proxy(match &download {
+                    Ok(_) => Ok(()),
+                    Err(FetchWorkflowError::Transfer(error)) => Err(status_of(error)),
+                    Err(_) => Err(None),
+                });
                 if matches!(
                     &download,
                     Err(FetchWorkflowError::Transfer(
@@ -2317,6 +2410,13 @@ impl Repository {
                 };
                 let remote = http.remote(None)?;
                 let mut result = send(&remote, &callbacks);
+                http.settle_proxy(match &result {
+                    Ok(_) => Ok(()),
+                    Err(crate::push::PushError::NotSent(crate::push::PushFailure::Http(
+                        crate::transport::http::HttpError::Status(status),
+                    ))) => Err(Some(*status)),
+                    Err(_) => Err(None),
+                });
                 if is_unauthorized_push(&result) {
                     let session = http.credentials(&mut **callbacks.borrow_mut())?;
                     let remote = http.remote(Some(session))?;
@@ -2484,6 +2584,22 @@ fn is_unauthorized_push<T>(result: &Result<T, crate::push::PushError>) -> bool {
             crate::push::PushFailure::Http(crate::transport::http::HttpError::Status(401))
         ))
     )
+}
+
+// The HTTP status a fetch failed with, for `Http::settle_proxy`.
+#[cfg(feature = "http")]
+fn fetch_status<T>(result: &Result<T, crate::fetch::FetchError>) -> Result<(), Option<u16>> {
+    result.as_ref().map(|_| ()).map_err(status_of)
+}
+
+#[cfg(feature = "http")]
+fn status_of(error: &crate::fetch::FetchError) -> Option<u16> {
+    match error {
+        crate::fetch::FetchError::Http(crate::transport::http::HttpError::Status(status)) => {
+            Some(*status)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(feature = "http")]

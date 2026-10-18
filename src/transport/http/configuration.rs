@@ -50,7 +50,8 @@ pub struct HttpEnvironment {
     pub proxy: Option<String>,
     /// `no_proxy` selected by the application.
     pub no_proxy: Option<String>,
-    /// Approved Basic credentials for the selected proxy, never parsed from a proxy URL.
+    /// Approved Basic credentials for the selected proxy. They take precedence over a user named
+    /// in the proxy URL; see [`HttpSettings::proxy_credential_context`].
     pub proxy_credentials: Option<(String, String)>,
     /// Explicit application authorization for disabling certificate and hostname checks.
     pub allow_insecure_tls: bool,
@@ -202,6 +203,8 @@ pub struct HttpSettings {
     pub(super) proxy: Option<String>,
     pub(super) no_proxy: Option<String>,
     pub(super) proxy_credentials: Option<(String, String)>,
+    // The user, and any password, named in the proxy URL.
+    proxy_user: Option<(String, Option<String>)>,
     pub(super) verify_tls: bool,
     pub(super) follow_initial_redirect: bool,
     pub(super) user_agent: Option<String>,
@@ -242,8 +245,9 @@ impl HttpSettings {
     ///
     /// The caller supplies the selected remote's exact name and its resolved destination.
     /// Remote proxy configuration overrides URL-scoped/global HTTP configuration and environment;
-    /// an empty value explicitly disables proxying. Only approved Basic proxy credentials are
-    /// supported, and proxy URLs must omit userinfo.
+    /// an empty value explicitly disables proxying. Only Basic proxy credentials are supported. A
+    /// user and password in the proxy URL are removed from it; see
+    /// [`Self::proxy_credential_context`].
     ///
     /// # Errors
     ///
@@ -341,6 +345,39 @@ impl HttpSettings {
             certificate: path("sslcert"),
             key: path("sslkey"),
         })
+    }
+
+    /// Returns the credential context for the selected proxy, when its URL names a user and the
+    /// application supplied no [`HttpEnvironment::proxy_credentials`].
+    ///
+    /// Git asks for proxy credentials only in that case, as `protocol=http` and
+    /// `host=<proxy host>:<port>` with the URL's username. Fill a
+    /// [`CredentialSession`](crate::remote::CredentialSession) for it, then pass the result to
+    /// [`Self::with_proxy_credentials`]. [`Self::proxy_password`] returns a password the URL
+    /// already contains.
+    pub fn proxy_credential_context(&self) -> Option<crate::remote::CredentialContext> {
+        if self.proxy_credentials.is_some() {
+            return None;
+        }
+        let (user, _) = self.proxy_user.as_ref()?;
+        let proxy = Url::parse(self.proxy.as_deref()?).ok()?;
+        let host = format!("{}:{}", proxy.host_str()?, proxy.port_or_known_default()?);
+        Some(
+            crate::remote::CredentialContext::new(b"http".to_vec(), host.into_bytes())
+                .with_username(Some(user.clone().into_bytes())),
+        )
+    }
+
+    /// Returns the password the proxy URL contains, if any.
+    pub fn proxy_password(&self) -> Option<&str> {
+        self.proxy_user.as_ref()?.1.as_deref()
+    }
+
+    /// Sets the Basic credentials sent to the proxy, replacing any the environment supplied.
+    #[must_use]
+    pub fn with_proxy_credentials(mut self, credentials: Option<(String, String)>) -> Self {
+        self.proxy_credentials = credentials;
+        self
     }
 
     fn resolve_policy(
@@ -442,20 +479,39 @@ impl HttpSettings {
             ),
             None => environment.proxy.clone(),
         };
-        let proxy = proxy.filter(|value| !value.is_empty());
-        if let Some(value) = &proxy {
+        let mut proxy = proxy.filter(|value| !value.is_empty());
+        let mut proxy_user = None;
+        if let Some(value) = &mut proxy {
             if value.len() > 8192 {
                 return Err(HttpError::Limit("proxy URL"));
             }
-            let parsed = Url::parse(value).map_err(|_| HttpError::Configuration("proxy URL"))?;
+            let mut parsed =
+                Url::parse(value).map_err(|_| HttpError::Configuration("proxy URL"))?;
+            // Like Git, a user in the proxy URL asks for proxy credentials; the user and any
+            // password are taken out before the URL reaches the HTTP client.
+            if !parsed.username().is_empty() {
+                let decode = |text: &str| {
+                    String::from_utf8(percent_decode(text.as_bytes()))
+                        .map_err(|_| HttpError::Configuration("proxy URL"))
+                };
+                proxy_user = Some((
+                    decode(parsed.username())?,
+                    parsed.password().map(decode).transpose()?,
+                ));
+                parsed
+                    .set_username("")
+                    .and_then(|()| parsed.set_password(None))
+                    .map_err(|()| HttpError::Configuration("proxy URL"))?;
+                *value = parsed.as_str().trim_end_matches('/').to_owned();
+            } else if value.contains('@') {
+                return Err(HttpError::Configuration("proxy URL"));
+            }
             if !matches!(parsed.scheme(), "http")
                 || parsed.host_str().is_none()
-                || !parsed.username().is_empty()
                 || parsed.password().is_some()
                 || parsed.query().is_some()
                 || parsed.fragment().is_some()
                 || parsed.path() != "/"
-                || value.contains('@')
                 || value
                     .bytes()
                     .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
@@ -483,6 +539,7 @@ impl HttpSettings {
             proxy,
             no_proxy: environment.no_proxy.clone(),
             proxy_credentials: environment.proxy_credentials.clone(),
+            proxy_user,
             verify_tls,
             follow_initial_redirect,
             user_agent,
@@ -576,6 +633,29 @@ fn scope_score(scope: &[u8], target: &Url) -> Option<(usize, usize)> {
         && (target_path.len() == path.len()
             || target_path.as_bytes().get(path.len()) == Some(&b'/')))
     .then_some((host_score, path.len()))
+}
+
+// Decodes `%XX` escapes; other bytes pass through.
+fn percent_decode(text: &[u8]) -> Vec<u8> {
+    let mut decoded = Vec::with_capacity(text.len());
+    let mut bytes = text.iter();
+    while let Some(&byte) = bytes.next() {
+        let escaped = (byte == b'%')
+            .then(|| {
+                let digits = bytes.as_slice().get(..2)?;
+                let digits = std::str::from_utf8(digits).ok()?;
+                u8::from_str_radix(digits, 16).ok()
+            })
+            .flatten();
+        match escaped {
+            Some(value) => {
+                decoded.push(value);
+                bytes.nth(1);
+            }
+            None => decoded.push(byte),
+        }
+    }
+    decoded
 }
 
 fn destination_url(destination: &Destination) -> Result<Url, HttpError> {
@@ -763,8 +843,26 @@ mod tests {
         HttpSettings::resolve(&config, &destination, &HttpEnvironment::default()).unwrap();
     }
 
+    #[test]
+    fn proxy_user_is_removed_and_decoded() {
+        let (config, destination) = configuration("");
+        let environment = HttpEnvironment {
+            proxy: Some("http://al%40ice:s%3Acret@proxy.test:3128".into()),
+            ..Default::default()
+        };
+        let settings = HttpSettings::resolve(&config, &destination, &environment).unwrap();
+        assert_eq!(settings.proxy.as_deref(), Some("http://proxy.test:3128"));
+        assert_eq!(settings.proxy_password(), Some("s:cret"));
+        let context = settings.proxy_credential_context().unwrap();
+        assert_eq!(context.protocol, b"http");
+        assert_eq!(context.host, b"proxy.test:3128");
+        assert_eq!(context.username.as_deref(), Some(&b"al@ice"[..]));
+        let supplied = environment.with_proxy_credentials(Some(("u".into(), "p".into())));
+        let settings = HttpSettings::resolve(&config, &destination, &supplied).unwrap();
+        assert!(settings.proxy_credential_context().is_none());
+    }
+
     #[rstest]
-    #[case::userinfo("http://user:secret@proxy.test")]
     #[case::empty_userinfo("http://@proxy.test")]
     #[case::socks("socks5://proxy.test")]
     #[case::https_proxy("https://proxy.test")]

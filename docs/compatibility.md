@@ -510,6 +510,15 @@ terminal, girt's `TransferCallbacks::credential`. Evidence: macOS arm64, Git 2.5
 output, including a peeled annotated tag, and the questions asked are identical. The CLI reaches the
 remote through `workflow::remote_refs`. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
 
+`tests/http_proxy_credentials.rs` runs `git ls-remote` and `workflow::remote_head` through a
+loopback proxy that answers 407 with a Basic challenge until it sees the expected credentials. A
+recording credential helper and askpass program compare what each client asks. Cases: a helper
+supplying the password for `http://pu@proxy`, askpass asking
+`Password for 'http://pu@proxy:port': `, a wrong helper password (both fail, and neither erases it),
+and a proxy URL with no user, where neither client asks anyone and both fail. Git asks the helper
+with `protocol=http`, `host=<proxy>:<port>` and the username in the URL, and stores accepted
+credentials. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
+
 ## Git Capability Audit: Transfer
 
 The audit baseline is `2e67ff57` (the merged Git guide), with original fixtures observed using Git

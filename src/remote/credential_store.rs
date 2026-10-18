@@ -436,6 +436,7 @@ mod tests {
             host: b"example.invalid:8443".to_vec(),
             path: path.map(|path| path.as_bytes().to_vec()),
             use_http_path: path.is_some(),
+            username: None,
         }
     }
 
