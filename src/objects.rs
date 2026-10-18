@@ -129,7 +129,7 @@ pub use header::ObjectHeader;
 pub use listing::{IndexedPack, ListLimits, LooseIds, LooseObject, ObjectStore, PackIds};
 pub(crate) use prefix::LooseListing;
 pub use prefix::ResolvePrefixError;
-pub use promised::PromisedObjects;
+pub use promised::{MissingObjectsError, PromisedObjects};
 pub use typed::{ReadBlobError, ReadCommitError, ReadTagError, ReadTreeError};
 pub use walk::{MissingObjects, ObjectWalk, ObjectWalkError, ObjectWalkLimits};
 

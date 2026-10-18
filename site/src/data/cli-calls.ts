@@ -174,12 +174,17 @@ export const calls: Record<string, CliCalls> = {
       objects('compare_trees'),
       objects('diff_trees_with'),
       method('rewrites::Options', 'rewrites/struct.Options.html', 'with_copies'),
+      unreleased('workflow::fetch_needed', 521),
     ],
   },
   'diff patch': {
     command: 'girt diff --patch',
     git: 'git diff',
-    api: [objects('write_patch_with'), repository('diff_attributes')],
+    api: [
+      objects('write_patch_with'),
+      repository('diff_attributes'),
+      unreleased('workflow::fetch_needed', 521),
+    ],
   },
   'bisect run': {
     git: 'git bisect run',
@@ -191,7 +196,10 @@ export const calls: Record<string, CliCalls> = {
   },
   blame: {
     git: 'git blame',
-    api: [method('Repo', 'repo/struct.Repo.html', 'blame')],
+    api: [
+      method('Repo', 'repo/struct.Repo.html', 'blame'),
+      unreleased('workflow::fetch_needed', 521),
+    ],
   },
   archive: {
     git: 'git archive',
@@ -237,7 +245,11 @@ export const calls: Record<string, CliCalls> = {
   },
   checkout: {
     git: 'git read-tree -m -u',
-    api: [repository('checkout_tree'), repository('checkout_tree_with_progress')],
+    api: [
+      repository('checkout_tree'),
+      repository('checkout_tree_with_progress'),
+      unreleased('workflow::fetch_needed', 521),
+    ],
   },
   reset: {
     git: 'git reset',

@@ -33,7 +33,13 @@ pub fn run(args: Args, context: &Context) -> Result<ExitCode> {
     };
     let mut emails = std::collections::HashMap::new();
     let mut out = common::stdout();
-    for hunk in handle.blame(args.revision, args.path.as_bytes())? {
+    // A new handle per attempt reads objects a lazy fetch installed; blame reports one missing
+    // version at a time.
+    let hunks = crate::lazy_fetch::retry(context, repository, || {
+        let handle = girt::Repo::new(context.repository()?);
+        Ok::<_, color_eyre::eyre::Report>(handle.blame(&args.revision, args.path.as_bytes())?)
+    })?;
+    for hunk in hunks {
         if args.email {
             let email = match emails.entry(hunk.commit) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),

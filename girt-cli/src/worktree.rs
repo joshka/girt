@@ -585,6 +585,40 @@ pub fn ignore(command: IgnoreCommand, context: &Context) -> Result<ExitCode> {
 
 pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
+    let mut progress = crate::progress::Progress::new(context.progress);
+    // Preparation lists every missing blob before mutating anything, so a retry after a lazy
+    // fetch starts from the same worktree.
+    let report = crate::lazy_fetch::retry(context, &repository, || {
+        checkout_once(&args, context, &repository, &mut progress)
+    })?;
+    progress.finish();
+    if context.git {
+        return Ok(ExitCode::SUCCESS);
+    }
+    let count = |action| report.applied.iter().filter(|a| a.action == action).count();
+    let mut out = stdout();
+    writeln!(
+        out,
+        "installed {}, removed {}, created {} directories, removed {} directories",
+        count(Action::Install),
+        count(Action::Remove),
+        count(Action::CreateDirectory),
+        count(Action::RemoveDirectory),
+    )?;
+    if !report.index_published {
+        writeln!(out, "index not updated")?;
+    }
+    out.flush()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Runs one checkout attempt, returning its report.
+fn checkout_once(
+    args: &CheckoutArgs,
+    context: &Context,
+    repository: &Repository,
+    progress: &mut crate::progress::Progress,
+) -> Result<girt::checkout::Report> {
     let objects = repository.objects()?;
     let tree = |revision: &str| -> Result<Option<ObjectId>> {
         if revision == "HEAD" {
@@ -594,7 +628,7 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
                 return Ok(None);
             }
         }
-        resolve_tree(&repository, &objects, revision).map(Some)
+        resolve_tree(repository, &objects, revision).map(Some)
     };
     let index_exists = repository
         .read_index(Default::default())
@@ -606,7 +640,6 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
         None
     };
     let target = tree(&args.revision)?;
-    let mut progress = crate::progress::Progress::new(context.progress);
     let result = match (args.filters.commands(), target) {
         (Some(commands), Some(target)) => {
             let mut current = repository
@@ -632,33 +665,14 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
             |done, total| progress.update("Updating files", done, Some(total)),
         ),
     };
-    let report = match result {
-        Ok(report) => report,
+    match result {
+        Ok(report) => Ok(report),
         Err(failure) => {
             let applied = failure.report.applied.len();
-            return Err(color_eyre::eyre::Report::new(failure))
-                .wrap_err_with(|| format!("checkout failed after {applied} operations"));
+            Err(color_eyre::eyre::Report::new(failure))
+                .wrap_err_with(|| format!("checkout failed after {applied} operations"))
         }
-    };
-    progress.finish();
-    if context.git {
-        return Ok(ExitCode::SUCCESS);
     }
-    let count = |action| report.applied.iter().filter(|a| a.action == action).count();
-    let mut out = stdout();
-    writeln!(
-        out,
-        "installed {}, removed {}, created {} directories, removed {} directories",
-        count(Action::Install),
-        count(Action::Remove),
-        count(Action::CreateDirectory),
-        count(Action::RemoveDirectory),
-    )?;
-    if !report.index_published {
-        writeln!(out, "index not updated")?;
-    }
-    out.flush()?;
-    Ok(ExitCode::SUCCESS)
 }
 
 pub fn worktree(command: WorktreeCommand, context: &Context) -> Result<ExitCode> {

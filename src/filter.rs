@@ -577,6 +577,18 @@ impl Pipeline {
         self.drivers.limits = limits;
     }
 
+    /// The `.gitattributes` blobs a partial clone lacks that converting `paths` would read; see
+    /// [`Lookup::missing_blobs`].
+    pub(crate) fn missing_attribute_blobs<'p>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'p [u8]>,
+    ) -> Result<Vec<ObjectId>, LoadError> {
+        match &mut self.rules {
+            Rules::Lookup(lookup) => lookup.missing_blobs(paths),
+            Rules::Attributes(_) => Ok(Vec::new()),
+        }
+    }
+
     /// Uses attribute files read on demand by `lookup`.
     pub fn new(lookup: Lookup, settings: Settings, drivers: Drivers) -> Self {
         Self {

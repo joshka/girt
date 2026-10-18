@@ -54,10 +54,15 @@ pub struct DiffArgs {
 
 pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
+    // Each attempt opens a new reader, so it sees objects a lazy fetch installed.
+    crate::lazy_fetch::retry(context, &repository, || diff(&args, context, &repository))
+}
+
+fn diff(args: &DiffArgs, context: &Context, repository: &girt::Repository) -> Result<ExitCode> {
     let objects = repository.objects()?;
-    let old = resolve_tree(&repository, &objects, &args.a)?;
-    let new = resolve_tree(&repository, &objects, &args.b)?;
-    let paths = context.pathspec(&repository, &args.pathspecs)?;
+    let old = resolve_tree(repository, &objects, &args.a)?;
+    let new = resolve_tree(repository, &objects, &args.b)?;
+    let paths = context.pathspec(repository, &args.pathspecs)?;
     let entries = if args.renames || args.copies {
         let options = rewrites::Options::default().with_copies(if args.copies {
             Copies::Modified
@@ -96,7 +101,7 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
             .collect()
     };
     let mut out = stdout();
-    let width = crate::common::abbrev_len(&repository, &objects)?;
+    let width = crate::common::abbrev_len(repository, &objects)?;
     if args.patch {
         // The CLI reads trusted local storage, so blobs are read without the default object cap.
         let options = Options::default().with_abbrev_len(Some(width));

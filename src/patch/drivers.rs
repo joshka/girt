@@ -158,6 +158,14 @@ impl DiffAttributes {
     }
 
     /// Resolves the driver of the file at `path`.
+    /// The `.gitattributes` blobs a partial clone lacks that drivers for `paths` would read.
+    pub(super) fn missing_blobs<'p>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'p [u8]>,
+    ) -> Result<Vec<crate::ObjectId>, crate::attributes::LoadError> {
+        self.lookup.missing_blobs(paths)
+    }
+
     pub(super) fn driver(&mut self, path: &[u8]) -> Result<Driver, Error> {
         if let Some((last, driver)) = &self.last
             && last == path

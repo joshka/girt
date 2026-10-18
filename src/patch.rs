@@ -84,7 +84,8 @@ use crate::display::quote_path;
 use crate::rewrites::Kind;
 use crate::tree_diff::Entry;
 use crate::{
-    ChangeStatus, EntryMode, ObjectId, ObjectReadError, Objects, ReadLimits, TreeChange, TreeValue,
+    ChangeStatus, EntryMode, ObjectId, ObjectKind, ObjectReadError, Objects, ReadLimits,
+    TreeChange, TreeValue,
 };
 
 /// Presentation choices for [`Objects::write_patch_with`]; the defaults match `git diff`.
@@ -341,6 +342,11 @@ pub enum Error {
         /// `textconv` or `command`.
         kind: &'static str,
     },
+    /// In a partial clone, blobs the entries need are not stored. Every missing blob is listed
+    /// before any output is written; fetch them, for example with
+    /// [`workflow::fetch_needed`](crate::workflow::fetch_needed), and render again.
+    #[error("patch needs objects the repository does not store")]
+    MissingObjects(#[source] crate::MissingObjectsError),
 }
 
 impl Objects {
@@ -394,10 +400,11 @@ impl Objects {
         mut out: impl io::Write,
         entries: &[Entry],
         options: Options,
-        attributes: Option<&mut DiffAttributes>,
+        mut attributes: Option<&mut DiffAttributes>,
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<(), Error> {
+        require_patch_blobs(self, entries, attributes.as_deref_mut())?;
         let mut renderer = Renderer {
             objects: self,
             out: &mut out,
@@ -415,6 +422,83 @@ impl Objects {
             renderer.entry(entry)?;
         }
         Ok(())
+    }
+}
+
+/// In a partial clone, fails with every blob `entries` would read that is not stored, including
+/// the `.gitattributes` blobs an attribute tree supplies for their drivers.
+///
+/// Other repositories skip this pass: a missing blob there is damage, reported where it is read.
+fn require_patch_blobs(
+    objects: &Objects,
+    entries: &[Entry],
+    attributes: Option<&mut DiffAttributes>,
+) -> Result<(), Error> {
+    if !objects.partial_clone {
+        return Ok(());
+    }
+    let mut seen = crate::IdSet::default();
+    let mut missing = Vec::new();
+    for entry in entries {
+        let (old, new, type_changed) = match entry {
+            Entry::Change(change) => (
+                change.old,
+                change.new,
+                change.status() == ChangeStatus::TypeChanged,
+            ),
+            Entry::Rewrite { old, new, .. } => (Some(*old), Some(*new), false),
+        };
+        // Identical identities print headers only, unless a type change renders both sides.
+        if !type_changed && old.map(|value| value.id) == new.map(|value| value.id) {
+            continue;
+        }
+        for value in [old, new].into_iter().flatten() {
+            if matches!(value.mode, EntryMode::Gitlink | EntryMode::Tree) || !seen.insert(value.id)
+            {
+                continue;
+            }
+            let stored = objects.contains(value.id).map_err(|source| Error::Read {
+                path: entry_path(entry).to_vec(),
+                source: Box::new(ContentReadError::Read {
+                    id: value.id,
+                    source,
+                }),
+            })?;
+            if !stored {
+                missing.push((value.id, ObjectKind::Blob));
+            }
+        }
+    }
+    if let Some(attributes) = attributes {
+        let paths = entries.iter().flat_map(|entry| match entry {
+            Entry::Change(change) => [Some(change.path.as_slice()), None],
+            Entry::Rewrite { source, target, .. } => [Some(source.as_slice()), Some(target)],
+        });
+        let blobs = attributes
+            .missing_blobs(paths.flatten())
+            .map_err(|source| Error::Attributes {
+                path: Vec::new(),
+                source: Box::new(source),
+            })?;
+        for id in blobs {
+            if seen.insert(id) {
+                missing.push((id, ObjectKind::Blob));
+            }
+        }
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::MissingObjects(crate::MissingObjectsError::new(
+            missing,
+        )))
+    }
+}
+
+fn entry_path(entry: &Entry) -> &[u8] {
+    match entry {
+        Entry::Change(change) => &change.path,
+        Entry::Rewrite { target, .. } => target,
     }
 }
 
@@ -784,7 +868,7 @@ pub(crate) fn mail_patch(
     objects: &Objects,
     entries: &[Entry],
     options: Options,
-    attributes: Option<&mut DiffAttributes>,
+    mut attributes: Option<&mut DiffAttributes>,
     bounds: MailBounds,
     cancel: &AtomicBool,
 ) -> Result<MailPatch, Error> {
@@ -813,6 +897,7 @@ pub(crate) fn mail_patch(
         limit: bounds.output,
         exceeded: false,
     };
+    require_patch_blobs(objects, entries, attributes.as_deref_mut())?;
     let result = {
         let mut renderer = Renderer {
             objects,

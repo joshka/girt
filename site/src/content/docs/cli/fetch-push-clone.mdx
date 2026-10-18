@@ -39,13 +39,14 @@ the cause and run `girt -C <dir> checkout HEAD` instead of downloading again.
 `--filter=<spec>` makes a partial clone, as in Git: `--filter=blob:none` downloads commits and trees
 but no file contents, and records `origin` as a promisor. Before checking out, girt fetches the
 checked-out files' contents in one batch; with `--no-checkout` it fetches nothing more. Afterwards,
-only the `girt object` commands fetch a missing object when they read it, as Git's commands do.
-Other commands, such as a later `girt checkout` of a `--no-checkout` partial clone, fail on missing
-objects. A server that doesn't allow filters sends everything, with Git's warning
-`filtering not recognized by server, ignoring`. Git ignores `--filter` for a plain local path and
-says so; girt does the same. Unlike Git, girt also reads `file://` URLs directly, so they send every
-object too. Repeated `--filter` values combine, so `--filter=blob:none --filter=tree:0` records
-`combine:blob:none+tree:0`, and `--no-filter` discards earlier `--filter` values.
+the `girt object` commands, `girt checkout`, `girt diff` and `girt blame` fetch missing objects when
+they need them, as Git's commands do; see
+[Missing objects in a partial clone](/girt/cli/objects/#missing-objects-in-a-partial-clone). Other
+commands fail on missing objects. A server that doesn't allow filters sends everything, with Git's
+warning `filtering not recognized by server, ignoring`. Git ignores `--filter` for a plain local
+path and says so; girt does the same. Unlike Git, girt also reads `file://` URLs directly, so they
+send every object too. Repeated `--filter` values combine, so `--filter=blob:none --filter=tree:0`
+records `combine:blob:none+tree:0`, and `--no-filter` discards earlier `--filter` values.
 
 ## Download from a remote (`girt fetch`)
 

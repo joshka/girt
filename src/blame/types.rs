@@ -122,4 +122,9 @@ pub enum Error {
     /// A lower-level read or comparison failed.
     #[error(transparent)]
     Operation(#[from] crate::Error),
+    /// In a partial clone, a version of the file is not stored. Blame reads versions as the
+    /// walk reaches them, so this lists only the first missing blob; fetch it, for example with
+    /// [`workflow::fetch_needed`](crate::workflow::fetch_needed), and blame again.
+    #[error("blame needs objects the repository does not store")]
+    MissingObjects(#[source] crate::MissingObjectsError),
 }

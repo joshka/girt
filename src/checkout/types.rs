@@ -533,6 +533,11 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    /// In a partial clone, blobs the baseline or target name are not stored. Preparation
+    /// lists every missing blob before failing, so nothing was mutated; fetch them, for example
+    /// with [`workflow::fetch_needed`](crate::workflow::fetch_needed), and check out again.
+    #[error("checkout needs objects the repository does not store")]
+    MissingObjects(#[source] crate::MissingObjectsError),
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

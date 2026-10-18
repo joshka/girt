@@ -111,9 +111,16 @@ girt fetches it from the promisor remotes first, as Git's lazy fetch does, and t
 `GIT_NO_LAZY_FETCH=1` to read only what is stored; a missing object then reads as missing. If the
 fetch fails, girt prints a warning and treats the object as missing.
 
-Only the CLI fetches on read. The library never contacts a remote while reading:
-`workflow::fetch_missing` and `workflow::fetch_promised` fetch a batch of missing objects when the
-caller asks.
+Commands that read file contents fetch on demand too: `girt checkout`, `girt diff --patch`,
+`girt diff --renames` and `--copies`, and `girt blame`. Checkout and diff first list every missing
+file they need, fetch them in one batch and run again. Blame fetches each older version as it
+reaches it. With `GIT_NO_LAZY_FETCH=1` these commands fail instead, saying how many objects the
+partial clone is missing and naming the first.
+
+Only the CLI fetches on read. The library never contacts a remote while reading: checkout, patches,
+rename detection and blame fail with `MissingObjectsError` listing what they need, and
+`workflow::fetch_needed`, `workflow::fetch_missing` and `workflow::fetch_promised` fetch a batch of
+missing objects when the caller asks.
 
 ## Hash content (`girt object hash`)
 

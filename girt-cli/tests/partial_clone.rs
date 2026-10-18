@@ -484,3 +484,181 @@ fn repeated_filters_combine_like_git() {
         }
     }
 }
+
+/// A source with a modified file and an edited rename across two commits, and two blob:none
+/// no-checkout clones of it, one for Git and one for girt.
+fn history_clones() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    let git = |args: &[&str]| support::git(&source, args, b"");
+    git(&["init", "-q", "--template=", "-b", "main"]);
+    git(&["config", "uploadpack.allowFilter", "true"]);
+    let moved = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+    std::fs::write(source.join("a"), "a\nkept\n").unwrap();
+    std::fs::write(source.join("moved"), moved).unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-q", "--no-gpg-sign", "-m", "one"]);
+    std::fs::write(source.join("a"), "c\nkept\n").unwrap();
+    std::fs::remove_file(source.join("moved")).unwrap();
+    std::fs::write(source.join("renamed"), moved.replace("five", "FIVE")).unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "--no-gpg-sign", "-m", "two"]);
+    let url = format!("file://{}", source.display());
+    let paths = ["git", "girt"].map(|name| root.path().join(name));
+    for path in &paths {
+        support::git(
+            root.path(),
+            &[
+                "clone",
+                "-q",
+                "--template=",
+                "--filter=blob:none",
+                "--no-checkout",
+                &url,
+                path.to_str().unwrap(),
+            ],
+            b"",
+        );
+    }
+    let [git, girt] = paths;
+    (root, git, girt)
+}
+
+fn assert_success(output: &Output) {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Under `GIT_NO_LAZY_FETCH`, a content-reading command fails naming the missing objects and
+/// fetches nothing, as Git refuses.
+fn assert_offline_failure(git_clone: &Path, girt_clone: &Path, git: &[&str], girt_args: &[&str]) {
+    let offline = [("GIT_NO_LAZY_FETCH", "1")];
+    assert!(!run("git", git_clone, git, &offline, b"").status.success());
+    let output = girt(girt_clone, girt_args, &offline, b"");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("missing from this partial clone"),
+        "{stderr}"
+    );
+    assert_eq!(promisor_packs(girt_clone), 1);
+}
+
+#[test]
+fn diff_fetches_missing_blobs_in_one_batch() {
+    let (_root, git_clone, girt_clone) = history_clones();
+    let git_args = ["diff", "--no-renames", "HEAD~1", "HEAD"];
+    let girt_args = ["diff", "--patch", "HEAD~1", "HEAD"];
+    assert_offline_failure(&git_clone, &girt_clone, &git_args, &girt_args);
+
+    let expected = run("git", &git_clone, &git_args, &[], b"");
+    assert_success(&expected);
+    let output = girt(&girt_clone, &girt_args, &[], b"");
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&expected.stdout)
+    );
+    // Both sides of both changed files arrive in one promisor pack.
+    assert_eq!(promisor_packs(&girt_clone), 2);
+}
+
+#[test]
+fn rename_detection_fetches_missing_candidates() {
+    let (_root, git_clone, girt_clone) = history_clones();
+    let git_args = ["diff-tree", "-r", "-M", "--name-status", "HEAD~1", "HEAD"];
+    let girt_args = ["--git", "diff", "--renames", "HEAD~1", "HEAD"];
+    assert_offline_failure(&git_clone, &girt_clone, &git_args, &girt_args);
+
+    let expected = run("git", &git_clone, &git_args, &[], b"");
+    assert_success(&expected);
+    let output = girt(&girt_clone, &girt_args, &[], b"");
+    assert_success(&output);
+    assert_eq!(output.stdout, expected.stdout);
+}
+
+#[test]
+fn blame_fetches_each_missing_version() {
+    let (_root, git_clone, girt_clone) = history_clones();
+    let git_args = ["blame", "--porcelain", "HEAD", "--", "a"];
+    assert_offline_failure(&git_clone, &girt_clone, &git_args, &["blame", "a"]);
+
+    let expected = run("git", &git_clone, &git_args, &[], b"");
+    assert_success(&expected);
+    // Porcelain starts each group with `<commit> <original> <final> <count>`.
+    let expected: Vec<String> = String::from_utf8(expected.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(' ').collect();
+            (fields.len() == 4 && fields[0].len() == 40)
+                .then(|| format!("{} {} {} {} a", fields[0], fields[2], fields[3], fields[1]))
+        })
+        .collect();
+    let output = girt(&girt_clone, &["blame", "a"], &[], b"");
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        expected
+    );
+}
+
+#[test]
+fn checkout_fetches_missing_blobs_like_git() {
+    let (_root, git_clone, girt_clone) = history_clones();
+    let girt_args = ["checkout", "HEAD"];
+    assert_offline_failure(
+        &git_clone,
+        &girt_clone,
+        &["checkout", "-q", "HEAD"],
+        &girt_args,
+    );
+    assert!(!girt_clone.join(".git/index").exists());
+
+    let index = |clone: &Path| {
+        let output = run(
+            "git",
+            clone,
+            &["ls-files", "-s"],
+            &[("GIT_NO_LAZY_FETCH", "1")],
+            b"",
+        );
+        assert_success(&output);
+        output.stdout
+    };
+    assert_success(&run(
+        "git",
+        &git_clone,
+        &["checkout", "-q", "HEAD"],
+        &[],
+        b"",
+    ));
+    assert_success(&girt(&girt_clone, &girt_args, &[], b""));
+    assert_eq!(index(&girt_clone), index(&git_clone));
+    assert_eq!(promisor_packs(&girt_clone), 2);
+
+    // Another commit's blobs that differ arrive the same way.
+    assert_success(&run(
+        "git",
+        &git_clone,
+        &["checkout", "-q", "HEAD~1"],
+        &[],
+        b"",
+    ));
+    assert_success(&girt(&girt_clone, &["checkout", "HEAD~1"], &[], b""));
+    assert_eq!(index(&girt_clone), index(&git_clone));
+    for name in ["a", "moved"] {
+        assert_eq!(
+            std::fs::read(girt_clone.join(name)).unwrap(),
+            std::fs::read(git_clone.join(name)).unwrap()
+        );
+    }
+    assert!(!girt_clone.join("renamed").exists());
+}
