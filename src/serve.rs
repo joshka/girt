@@ -38,9 +38,10 @@
 //!
 //! # Status
 //!
-//! Protocol v2 `ls-refs` and `fetch` are served, with `include-tag`, thin packs and
-//! `wait-for-done`. Negotiation sends the pack as soon as one common object is found. Shallow
-//! requests, `filter`, `object-info` and protocol v0 aren't supported yet; see
+//! Protocol v2 `ls-refs` and `fetch` are served, with `include-tag`, thin packs, `wait-for-done`
+//! and shallow requests (`deepen`, `deepen-relative`, `deepen-since` and `deepen-not`).
+//! Negotiation sends the pack as soon as one common object is found. `filter`, `object-info` and
+//! protocol v0 aren't supported yet, and a shallow repository can't be served; see
 //! [#520](https://github.com/joshka/girt/issues/520).
 
 #![warn(
@@ -52,6 +53,7 @@
     reason = "parses untrusted network input (#103)"
 )]
 
+mod shallow;
 mod upload;
 
 #[cfg(test)]
@@ -140,6 +142,9 @@ pub enum ServeError {
     /// Selecting or writing the objects to send failed.
     #[error("generating the pack")]
     Pack(#[source] Box<crate::push::PushFailure>),
+    /// Reading a commit for a shallow request failed.
+    #[error("reading a commit")]
+    Commit(#[source] Box<crate::ReadCommitError>),
 }
 
 impl From<crate::packet::Error> for ServeError {

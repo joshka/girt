@@ -110,5 +110,5 @@ $ git -C served branch -r
 
 It speaks protocol v2, which Git clients request by default. References hidden by
 `uploadpack.hideRefs` or `transfer.hideRefs` aren't listed. As with Git's server, a v2 client may
-still fetch any object by ID, so keep private data in a separate repository. Shallow clones,
-partial-clone filters and protocol v0 clients aren't served yet.
+still fetch any object by ID, so keep private data in a separate repository. Shallow clones and
+fetches are served; partial-clone filters and protocol v0 clients aren't yet.

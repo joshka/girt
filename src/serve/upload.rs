@@ -3,6 +3,7 @@
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::shallow::{self, Deepen};
 use super::{Protocol, ServeError};
 use crate::hide_refs::HideRules;
 use crate::packet::{self, Frame, Wire};
@@ -222,6 +223,12 @@ struct FetchRequest {
     include_tag: bool,
     thin_pack: bool,
     wait_for_done: bool,
+    /// The client's current boundary commits, in request order.
+    shallow: Vec<ObjectId>,
+    shallow_seen: IdSet,
+    deepen: Deepen,
+    /// `deepen-not` names, resolved after parsing.
+    deepen_not: Vec<Vec<u8>>,
 }
 
 impl<'r> UploadPack<'r> {
@@ -320,7 +327,7 @@ impl<'r> UploadPack<'r> {
             "version 2".to_owned(),
             format!("agent=girt/{}", env!("CARGO_PKG_VERSION")),
             "ls-refs=unborn".to_owned(),
-            "fetch=wait-for-done".to_owned(),
+            "fetch=shallow wait-for-done".to_owned(),
             "server-option".to_owned(),
             format!("object-format={format}"),
         ] {
@@ -557,6 +564,7 @@ impl<'r> UploadPack<'r> {
                 b"thin-pack" => request.thin_pack = true,
                 b"wait-for-done" => request.wait_for_done = true,
                 b"no-progress" => {}
+                b"deepen-relative" => request.deepen.relative = true,
                 argument => {
                     if let Some(hex) = argument.strip_prefix(b"want ") {
                         if request.wants.len() == self.limits.max_wants {
@@ -568,6 +576,28 @@ impl<'r> UploadPack<'r> {
                             return Err(ServeError::Limit("haves"));
                         }
                         request.haves.push(id(hex)?);
+                    } else if let Some(hex) = argument.strip_prefix(b"shallow ") {
+                        if request.shallow.len() == self.limits.max_haves {
+                            return Err(ServeError::Limit("shallow"));
+                        }
+                        let id = id(hex)?;
+                        if request.shallow_seen.insert(id) {
+                            request.shallow.push(id);
+                        }
+                    } else if let Some(depth) = argument.strip_prefix(b"deepen ") {
+                        let depth = number(depth)?;
+                        request.deepen.depth = Some(if depth == 0 {
+                            return Err(ServeError::Protocol("deepen 0"));
+                        } else {
+                            depth
+                        });
+                    } else if let Some(since) = argument.strip_prefix(b"deepen-since ") {
+                        request.deepen.since = Some(number(since)?);
+                    } else if let Some(name) = argument.strip_prefix(b"deepen-not ") {
+                        if request.deepen_not.len() == self.limits.max_wants {
+                            return Err(ServeError::Limit("deepen-not"));
+                        }
+                        request.deepen_not.push(name.to_vec());
                     } else {
                         return Err(ServeError::Unsupported("fetch argument"));
                     }
@@ -576,6 +606,16 @@ impl<'r> UploadPack<'r> {
         }
         if request.wants.is_empty() {
             return Err(ServeError::Protocol("fetch without wants"));
+        }
+        if request.deepen.depth.is_some()
+            && (request.deepen.since.is_some() || !request.deepen_not.is_empty())
+        {
+            return Err(ServeError::Protocol(
+                "deepen and deepen-since (or deepen-not) cannot be used together",
+            ));
+        }
+        if request.deepen.relative && request.deepen.depth.is_none() {
+            return Err(ServeError::Protocol("deepen-relative without deepen"));
         }
         Ok(request)
     }
@@ -586,10 +626,23 @@ impl<'r> UploadPack<'r> {
         output: &mut impl Write,
         cancel: &AtomicBool,
     ) -> Result<(), ServeError> {
-        let request = self.parse_fetch(arguments)?;
+        let mut request = self.parse_fetch(arguments)?;
+        // The pack walk would reach the missing parents of the repository's own boundaries.
+        if !self.repository.shallow_roots().is_empty() {
+            return Err(ServeError::Unsupported("fetch from a shallow repository"));
+        }
         let (advertised, _) = self.advertised(|_| true, cancel)?;
         self.check_wants(&request.wants, &advertised)?;
         let objects = self.objects()?;
+        for name in std::mem::take(&mut request.deepen_not) {
+            let id = self
+                .resolve_short(&name)?
+                .ok_or(ServeError::Protocol("deepen-not is not a ref"))?;
+            request
+                .deepen
+                .not
+                .push(self.peel_commit(&objects, id, cancel)?);
+        }
         let mut common = Vec::new();
         for &have in &request.haves {
             packet::check_cancelled(cancel)?;
@@ -624,7 +677,83 @@ impl<'r> UploadPack<'r> {
         } else {
             Vec::new()
         };
-        self.send_pack(&objects, &request, &common, &tags, output, cancel)
+        let boundaries = if request.deepen.requested() {
+            let mut wants = Vec::new();
+            for &want in &request.wants {
+                wants.push(self.peel_commit(&objects, want, cancel)?);
+            }
+            shallow::boundaries(
+                &objects,
+                &wants,
+                &request.shallow,
+                &request.deepen,
+                self.limits.history,
+                cancel,
+            )?
+        } else {
+            shallow::Boundaries::default()
+        };
+        if request.deepen.requested() || !request.shallow.is_empty() {
+            packet::packet(output, b"shallow-info\n", cancel)?;
+            for id in &boundaries.shallow {
+                packet::packet(output, format!("shallow {id}").as_bytes(), cancel)?;
+            }
+            for id in &boundaries.unshallow {
+                packet::packet(output, format!("unshallow {id}").as_bytes(), cancel)?;
+            }
+            packet::put(output, b"0001", cancel)?;
+        }
+        self.send_pack(
+            &objects,
+            &request,
+            &common,
+            &boundaries,
+            &tags,
+            output,
+            cancel,
+        )
+    }
+
+    /// Resolves a `deepen-not` name as Git does: as given, then under `refs/`, `refs/tags/`,
+    /// `refs/heads/` and `refs/remotes/`. Hidden references don't resolve.
+    fn resolve_short(&self, name: &[u8]) -> Result<Option<ObjectId>, ServeError> {
+        let refs = self.repository.references()?;
+        for prefix in [
+            &b""[..],
+            b"refs/",
+            b"refs/tags/",
+            b"refs/heads/",
+            b"refs/remotes/",
+        ] {
+            let Ok(full) = RefName::new([prefix, name].concat()) else {
+                continue;
+            };
+            if self.hide.matches(&full) {
+                continue;
+            }
+            if let Some(id) = refs.resolve(&full)?.id {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Peels `id` to a commit for the shallow walks.
+    fn peel_commit(
+        &self,
+        objects: &Objects,
+        id: ObjectId,
+        cancel: &AtomicBool,
+    ) -> Result<ObjectId, ServeError> {
+        let limits = PeelLimits {
+            read: self.limits.read,
+            ..PeelLimits::default()
+        };
+        let peeled = objects.peel(id, limits, cancel)?;
+        if peeled.kind != ObjectKind::Commit {
+            return Err(ServeError::Unsupported("shallow fetch of a non-commit"));
+        }
+        Ok(peeled.target)
     }
 
     /// Refuses the first want that the want policy doesn't allow.
@@ -673,20 +802,36 @@ impl<'r> UploadPack<'r> {
     }
 
     /// Counts the objects to send, then streams them as the `packfile` section.
+    #[allow(clippy::too_many_arguments)]
     fn send_pack(
         &self,
         objects: &Objects,
         request: &FetchRequest,
         common: &[ObjectId],
+        boundaries: &shallow::Boundaries,
         tags: &[Advertised],
         output: &mut impl Write,
         cancel: &AtomicBool,
     ) -> Result<(), ServeError> {
         let limits = self.limits.selection();
+        let mut wants = request.wants.clone();
+        wants.extend(&boundaries.tips);
+        // The client's boundaries stay in place unless lifted, so history behind them isn't sent.
+        let lifted: IdSet = boundaries.unshallow.iter().copied().collect();
+        let mut send_cut = boundaries.cut.clone();
+        send_cut.extend(request.shallow.iter().filter(|id| !lifted.contains(id)));
+        // When deepening, Git counts the client's boundary commits as held, without their
+        // parents; an ordinary fetch from a shallow client sends them again.
+        let mut known = common.to_vec();
+        if request.deepen.requested() {
+            known.extend(&request.shallow);
+        }
         let mut selection = crate::push::graph::select_wants(
             objects,
-            &request.wants,
-            common,
+            &wants,
+            &known,
+            request.shallow_seen.clone(),
+            send_cut,
             limits,
             cancel,
             |_| {},
@@ -764,6 +909,14 @@ impl<'r> UploadPack<'r> {
     pub fn object_format(&self) -> ObjectFormat {
         self.repository.object_format()
     }
+}
+
+/// Parses a decimal number argument.
+fn number<T: std::str::FromStr>(digits: &[u8]) -> Result<T, ServeError> {
+    std::str::from_utf8(digits)
+        .ok()
+        .and_then(|digits| digits.parse().ok())
+        .ok_or(ServeError::Protocol("number"))
 }
 
 /// Reads an `uploadpack` boolean, `None` when unset.

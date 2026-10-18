@@ -75,11 +75,16 @@ pub(super) fn select(
 /// Selects objects reachable from `wants` that are not proven to be in the closure of a locally
 /// present `haves` entry, as upload-pack does when serving a fetch.
 ///
-/// Uses [`select`]'s walk and bounds without any fast-forward proof.
+/// Uses [`select`]'s walk and bounds without any fast-forward proof. For a shallow client,
+/// `known_cut` holds its boundary commits, whose parents it lacks, and `send_cut` the commits
+/// whose parents aren't sent.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn select_wants(
     store: &Objects,
     wants: &[ObjectId],
     haves: &[ObjectId],
+    known_cut: IdSet,
+    send_cut: IdSet,
     limits: PushLimits,
     cancel: &AtomicBool,
     observe: impl FnMut(u64),
@@ -88,6 +93,8 @@ pub(crate) fn select_wants(
         return Err(Error::Limit("common objects"));
     }
     let mut walk = Walk::new(store, limits, cancel, observe);
+    walk.known_cut = known_cut;
+    walk.send_cut = send_cut;
     walk.mark_roots(haves)?;
     walk.resolve_tips(wants.iter().map(|&id| (id, None)))?;
     walk.walk_commits()?;
@@ -164,6 +171,10 @@ struct Walk<'a, F> {
     edges: usize,
     exclusion_edges: usize,
     ancestry_steps: usize,
+    /// Commits the receiver has without their parents: known marks stop here.
+    known_cut: IdSet,
+    /// Commits whose parents aren't sent.
+    send_cut: IdSet,
 }
 
 impl<'a, F: FnMut(u64)> Walk<'a, F> {
@@ -190,6 +201,8 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             edges: limits.max_edges,
             exclusion_edges: limits.max_edges,
             ancestry_steps: limits.max_ancestry_steps,
+            known_cut: IdSet::default(),
+            send_cut: IdSet::default(),
         }
     }
 
@@ -518,7 +531,10 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
                 }
                 Some(Visit::Queued) => self.unknown_queued -= 1,
                 // Parents of a walked candidate were all discovered when it was popped.
-                Some(Visit::Done) => pending.extend(&self.commits[&id].parents),
+                Some(Visit::Done) if !self.known_cut.contains(&id) => {
+                    pending.extend(&self.commits[&id].parents);
+                }
+                Some(Visit::Done) => {}
             }
         }
         Ok(())
@@ -547,6 +563,9 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             check_cancelled(self.cancel)?;
             self.visits.insert(id, Visit::Done);
             if let Some(mark) = self.known.get(&id).copied() {
+                if self.known_cut.contains(&id) {
+                    continue;
+                }
                 let Some(node) = self.commits.get(&id) else {
                     continue;
                 };
@@ -558,6 +577,7 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             }
             self.unknown_queued -= 1;
             let parents = match self.commits.get(&id) {
+                Some(_) if self.send_cut.contains(&id) => Vec::new(),
                 Some(node) => node.parents.clone(),
                 None => return Err(Error::Missing(id)),
             };
@@ -588,7 +608,7 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
         let mut seen = IdSet::default();
         for index in 0..self.processed.len() {
             let id = self.processed[index];
-            if self.rely_on(id) {
+            if self.rely_on(id) || self.send_cut.contains(&id) {
                 continue;
             }
             for &parent in &self.commits[&id].parents {
