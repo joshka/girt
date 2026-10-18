@@ -218,6 +218,7 @@ pub mod loose;
 pub mod mailbox;
 pub mod mailinfo;
 pub mod mailmap;
+pub mod maintenance;
 pub mod merge;
 pub mod message;
 pub mod notes;
