@@ -3012,3 +3012,16 @@ fault/race tests cover the shared engine. The same Linux/macOS/path/gitlink rest
 caller-owned writer exclusion apply; no batch rollback or crash durability is added. Directory
 conflicts require explicit leaf expansion before publication. Resolve-undo remains index codec data;
 this increment does not add rerere or automatic conflict resolution.
+
+## Merge Whitespace Policies
+
+`tests/merge_whitespace.rs` compares original histories with isolated `git merge-tree --write-tree`
+and its ignore-space-change, ignore-all-space, ignore-space-at-eol and ignore-cr-at-eol strategy
+options. It checks clean tree identities and conflict classification, whole-side whitespace-only
+selection, substantive changes with formatting differences, retained context, insertion/deletion
+mapping, CRLF, invalid UTF-8 and missing final LF. Work exhaustion and pre-normalization
+cancellation have focused checks. The existing exact-byte content oracle matrix remains applicable.
+
+Matching uses comparison-only line keys and maps edits back to original byte ranges. Missing final
+LF remains distinct even for a line whose normalized body is empty. Repeated-line placement and
+internal conflict-refinement limits remain tracked in the content-refinement issue.

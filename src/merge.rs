@@ -30,6 +30,8 @@
 //! [`TreeMerge::prepare_checkout`] prepares marker working bytes and original conflict stages.
 //! [`crate::Repository::checkout_merge`] publishes them through guarded checkout; computation
 //! remains separate from mutable working-file and index publication.
+//! [`Whitespace`] changes line matching while retaining original payload bytes and final-LF
+//! distinctions. Its comparison-only keys never become stored blob content.
 mod commits;
 mod content;
 mod driver;
@@ -39,6 +41,7 @@ mod renames;
 mod render;
 mod tree;
 mod types;
+mod whitespace;
 
 pub use commits::{CommitError, CommitMerge, CommitOptions};
 pub use content::{content, content_with};
@@ -49,3 +52,4 @@ pub use tree::{ConflictKind, TreeConflict, TreeError, TreeMerge, TreeOptions};
 pub use types::{
     ConflictStyle, ContentHunk, ContentMerge, ContentOptions, Error, Favor, MarkerOptions,
 };
+pub use whitespace::Whitespace;

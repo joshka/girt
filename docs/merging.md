@@ -39,6 +39,23 @@ from Git. Check the [compatibility evidence](compatibility.md#content-merging) b
 exact marker placement. The [API reference](https://docs.rs/girt/latest/girt/merge/) defines the
 byte and failure contracts.
 
+## Whitespace Comparison
+
+`ContentOptions::with_whitespace` selects exact comparison, ignoring changes in whitespace amount,
+ignoring all horizontal ASCII whitespace, ignoring trailing whitespace, or ignoring CR at line ends.
+Comparison keys retain line and final-LF distinctions. Accepted output uses original bytes; key
+normalization never rewrites a resolved payload. Binary detection still examines raw inputs.
+
+If one side has no comparison edits, Git selects the entire other payload; when both comparisons
+have no edits, it selects theirs. Otherwise unchanged context comes from ours, with substantive
+replacement bytes from either side. This can discard whitespace-only changes when a whole side
+compares unchanged. Favoring remains restricted to unresolved overlapping regions.
+
+Non-exact policies reserve four work units per raw input byte before diff work, and keys use at most
+two extra bytes per line. The same input/line/trace bounds and cancellation apply. Existing
+repeated-line placement and internal conflict-refinement limitations remain; whitespace options do
+not imply complete Git content-merge parity.
+
 ## Tree Entries
 
 `Objects::merge_tree_entries` combines three tree snapshots by matching byte paths. It needs only an

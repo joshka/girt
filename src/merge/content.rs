@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 
 use super::{ContentHunk, ContentMerge, ContentOptions, Error, Favor};
-use crate::content_diff::{self, ContentDiff, ContentEdit};
+use crate::content_diff::ContentEdit;
 
 /// Merges base, ours and theirs with default comparison bounds and automatic binary detection.
 ///
@@ -25,7 +25,9 @@ pub fn content(base: &[u8], ours: &[u8], theirs: &[u8]) -> Result<ContentMerge, 
 /// Exact equality resolves identical sides or one unchanged side before conflict classification.
 /// Each comparison independently enforces [`ContentOptions::limits`], even for equal inputs.
 /// Total comparison work is at most twice that bound. Output and retained regions are linear in
-/// combined input size; neither missing final LF nor invalid UTF-8 is normalized. Automatic
+/// combined input size. [`super::Whitespace`] uses comparison-only keys and original line ranges;
+/// output retains accepted original bytes and final-LF distinctions. A side with no comparison
+/// edits selects the entire opposite payload; two edit-free comparisons select theirs. Automatic
 /// binary classification tests for NUL anywhere in any input. Union does not resolve binary
 /// conflicts. Cancellation is checked by both comparisons and between output regions.
 ///
@@ -40,10 +42,9 @@ pub fn content_with(
     options: ContentOptions,
     cancel: &AtomicBool,
 ) -> Result<ContentMerge, Error> {
-    let left = content_diff::diff(base, ours, options.binary, options.limits, cancel)?;
-    let right = content_diff::diff(base, theirs, options.binary, options.limits, cancel)?;
-    let binary =
-        matches!(left, ContentDiff::Binary { .. }) || matches!(right, ContentDiff::Binary { .. });
+    let (left, left_binary) = super::whitespace::compare(base, ours, options, cancel)?;
+    let (right, right_binary) = super::whitespace::compare(base, theirs, options, cancel)?;
+    let binary = left_binary || right_binary;
     if ours == theirs || base == theirs {
         return Ok(resolved(ours, binary));
     }
@@ -63,9 +64,15 @@ pub fn content_with(
             binary,
         });
     }
-    let left = edits(left);
-    let right = edits(right);
-    combine(base, ours, theirs, &left, &right, options.favor, cancel)
+    // Git selects the entire opposite payload when one comparison has no edits,
+    // including whitespace-only differences. Both empty comparisons select theirs.
+    if left.is_empty() {
+        return Ok(resolved(theirs, false));
+    }
+    if right.is_empty() {
+        return Ok(resolved(ours, false));
+    }
+    combine([base, ours, theirs], &left, &right, options, cancel)
 }
 
 fn resolved(bytes: &[u8], binary: bool) -> ContentMerge {
@@ -75,24 +82,17 @@ fn resolved(bytes: &[u8], binary: bool) -> ContentMerge {
     }
 }
 
-fn edits(diff: ContentDiff<'_>) -> Vec<ContentEdit> {
-    match diff {
-        ContentDiff::Text(text) => text.edits().to_vec(),
-        _ => Vec::new(),
-    }
-}
-
 fn combine(
-    base: &[u8],
-    ours: &[u8],
-    theirs: &[u8],
+    inputs: [&[u8]; 3],
     left: &[ContentEdit],
     right: &[ContentEdit],
-    favor: Favor,
+    options: ContentOptions,
     cancel: &AtomicBool,
 ) -> Result<ContentMerge, Error> {
+    let [base, ours, theirs] = inputs;
     let mut hunks = Vec::new();
     let (mut l, mut r, mut cursor) = (0, 0, 0);
+    let (mut ours_cursor, mut theirs_cursor) = (0, 0);
     while l < left.len() || r < right.len() {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(crate::content_diff::DiffError::Cancelled.into());
@@ -101,7 +101,10 @@ fn combine(
             .get(l)
             .map_or(usize::MAX, |e| e.old_bytes.start)
             .min(right.get(r).map_or(usize::MAX, |e| e.old_bytes.start));
-        append(&mut hunks, &base[cursor..start]);
+        let gap = records(&base[cursor..start]);
+        let ours_start = advance(ours, ours_cursor, gap);
+        let theirs_start = advance(theirs, theirs_cursor, gap);
+        append(&mut hunks, &ours[ours_cursor..ours_start]);
         let (begin_l, begin_r) = (l, r);
         let mut end = start;
         // Connected base intervals include touching edits. Extend until neither side grows.
@@ -119,39 +122,70 @@ fn combine(
                 break;
             }
         }
-        let a = apply(base, ours, &left[begin_l..l], start, end);
-        let b = apply(base, theirs, &right[begin_r..r], start, end);
+        let (a, ours_end) = apply(base, ours, &left[begin_l..l], start..end, ours_start);
+        let (b, theirs_end) = apply(base, theirs, &right[begin_r..r], start..end, theirs_start);
         let original = &base[start..end];
-        let hunk = if a == b || b == original {
+        let hunk = if begin_r == r {
             ContentHunk::Resolved(a)
-        } else if a == original {
+        } else if begin_l == l {
             ContentHunk::Resolved(b)
+        } else if super::whitespace::equivalent(&a, &b, options, cancel)? {
+            ContentHunk::Resolved(a)
         } else {
-            choose(original.to_vec(), a, b, favor, false)
+            choose(original.to_vec(), a, b, options.favor, false)
         };
         match hunk {
             ContentHunk::Resolved(bytes) => append(&mut hunks, &bytes),
             conflict => hunks.push(conflict),
         }
         cursor = end;
+        ours_cursor = ours_end;
+        theirs_cursor = theirs_end;
     }
-    append(&mut hunks, &base[cursor..]);
+    append(&mut hunks, &ours[ours_cursor..]);
     Ok(ContentMerge {
         hunks,
         binary: false,
     })
 }
 
-fn apply(base: &[u8], side: &[u8], edits: &[ContentEdit], start: usize, end: usize) -> Vec<u8> {
+fn apply(
+    base: &[u8],
+    side: &[u8],
+    edits: &[ContentEdit],
+    region: std::ops::Range<usize>,
+    side_start: usize,
+) -> (Vec<u8>, usize) {
     let mut bytes = Vec::new();
-    let mut cursor = start;
+    let mut cursor = region.start;
+    let mut side_cursor = side_start;
     for edit in edits {
-        bytes.extend_from_slice(&base[cursor..edit.old_bytes.start]);
+        let matched = advance(
+            side,
+            side_cursor,
+            records(&base[cursor..edit.old_bytes.start]),
+        );
+        bytes.extend_from_slice(&side[side_cursor..matched]);
         bytes.extend_from_slice(&side[edit.new_bytes.clone()]);
         cursor = edit.old_bytes.end;
+        side_cursor = edit.new_bytes.end;
     }
-    bytes.extend_from_slice(&base[cursor..end]);
-    bytes
+    let end = advance(side, side_cursor, records(&base[cursor..region.end]));
+    bytes.extend_from_slice(&side[side_cursor..end]);
+    (bytes, end)
+}
+
+fn records(bytes: &[u8]) -> usize {
+    bytes.split_inclusive(|b| *b == b'\n').count()
+}
+
+fn advance(bytes: &[u8], start: usize, records: usize) -> usize {
+    start
+        + bytes[start..]
+            .split_inclusive(|b| *b == b'\n')
+            .take(records)
+            .map(<[u8]>::len)
+            .sum::<usize>()
 }
 
 fn choose(

@@ -80,6 +80,7 @@
 //! | Write individual objects | [`loose`], [`LooseObjects`] |
 //! | Read or produce pack artifacts | [`pack`] |
 //! | Walk ancestry, test reachability, find merge bases | [`history`] |
+//! | Combine content, trees or commits and publish conflicts | [`merge`] |
 //! | Resolve names, conditionally update refs, inspect reflogs | [`refs`] |
 //! | Parse, resolve, interpret, or edit configuration | [`config`] |
 //! | Interpret named remotes and refspecs | [`remote`] |
