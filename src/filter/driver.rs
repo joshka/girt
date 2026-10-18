@@ -21,8 +21,12 @@ pub enum Commands {
     /// the direction are converted without it, as Git does.
     #[default]
     Refuse,
-    /// Run configured commands as Git does: through `sh -c` in the working tree root, with `%f`
-    /// replaced by the shell-quoted path and `%%` by `%`.
+    /// Run configured commands as Git does: through `sh -c` in the working tree root. A one-shot
+    /// `clean` or `smudge` command gets `%f` replaced by the shell-quoted path and `%%` by `%`. A
+    /// `process` command, which takes precedence, is started once per [`Pipeline`] and stopped
+    /// when the pipeline is dropped.
+    ///
+    /// [`Pipeline`]: super::Pipeline
     Run,
 }
 
@@ -114,6 +118,26 @@ pub enum DriverError {
         String::from_utf8_lossy(driver)
     )]
     TooLarge {
+        /// The driver name.
+        driver: Vec<u8>,
+        /// The direction being run.
+        direction: Direction,
+    },
+    /// The filter process answered `status=error` for this file.
+    #[error(
+        "{direction} filter {:?} reported an error",
+        String::from_utf8_lossy(driver)
+    )]
+    Rejected {
+        /// The driver name.
+        driver: Vec<u8>,
+        /// The direction being run.
+        direction: Direction,
+    },
+    /// The filter process answered `status=abort`, or aborted earlier, and takes no more requests
+    /// in this direction.
+    #[error("{direction} filter {:?} aborted", String::from_utf8_lossy(driver))]
+    Aborted {
         /// The driver name.
         driver: Vec<u8>,
         /// The direction being run.
@@ -364,13 +388,13 @@ pub(super) fn run(
 }
 
 #[cfg(unix)]
-fn os_string(bytes: Vec<u8>) -> std::ffi::OsString {
+pub(super) fn os_string(bytes: Vec<u8>) -> std::ffi::OsString {
     use std::os::unix::ffi::OsStringExt;
     std::ffi::OsString::from_vec(bytes)
 }
 
 #[cfg(not(unix))]
-fn os_string(bytes: Vec<u8>) -> std::ffi::OsString {
+pub(super) fn os_string(bytes: Vec<u8>) -> std::ffi::OsString {
     String::from_utf8_lossy(&bytes).into_owned().into()
 }
 
