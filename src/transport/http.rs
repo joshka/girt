@@ -61,7 +61,7 @@ use super::TransportControl;
 use crate::remote::CredentialSession;
 
 mod configuration;
-pub use configuration::{HttpEnvironment, HttpSettings};
+pub use configuration::{HttpEnvironment, HttpSettings, TlsPaths};
 
 /// One repository endpoint and explicit headers, usable with [`crate::fetch::receive_http`] and
 /// [`crate::push::send_http`]. No URL or headers are included in Debug output or transport errors.
@@ -206,6 +206,13 @@ pub enum HttpError {
 }
 
 /// Configured CA bundles replace platform roots; the explicit legacy constructor adds roots.
+struct Tls<'a> {
+    roots: TrustRoots<'a>,
+    // Client certificate and key PEM.
+    identity: Option<&'a [u8]>,
+    verify: bool,
+}
+
 enum TrustRoots<'a> {
     Configured(&'a [&'a [u8]]),
     Additional(&'a [&'a [u8]]),
@@ -346,11 +353,14 @@ impl HttpRemote {
         let mut remote = Self::build(
             &settings.url,
             configured_headers(&settings)?,
-            TrustRoots::Configured(&roots),
+            Tls {
+                roots: TrustRoots::Configured(&roots),
+                identity: settings.client_identity.as_deref(),
+                verify: settings.verify_tls,
+            },
             settings.proxy.as_deref(),
             settings.no_proxy.as_deref(),
             settings.proxy_credentials.as_ref(),
-            settings.verify_tls,
         )?;
         remote.follow_initial_redirect = settings.follow_initial_redirect;
         Ok(remote)
@@ -455,22 +465,24 @@ impl HttpRemote {
         Self::build(
             url,
             explicit_headers(headers)?,
-            TrustRoots::Additional(roots),
+            Tls {
+                roots: TrustRoots::Additional(roots),
+                identity: None,
+                verify: true,
+            },
             None,
             None,
             None,
-            true,
         )
     }
 
     fn build(
         url: &str,
         supplied: HeaderMap,
-        roots: TrustRoots<'_>,
+        tls: Tls<'_>,
         proxy: Option<&str>,
         no_proxy: Option<&str>,
         proxy_credentials: Option<&(String, String)>,
-        verify_tls: bool,
     ) -> Result<Self, HttpError> {
         if url.len() > 8192
             || url
@@ -531,12 +543,17 @@ impl HttpRemote {
             }
             builder = builder.proxy(configured);
         }
-        if !verify_tls {
+        if !tls.verify {
             builder = builder
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true);
         }
-        builder = roots.configure(builder)?;
+        builder = tls.roots.configure(builder)?;
+        if let Some(identity) = tls.identity {
+            let identity = reqwest::Identity::from_pem(identity)
+                .map_err(|_| HttpError::Configuration("TLS client certificate"))?;
+            builder = builder.identity(identity);
+        }
         let client = builder
             .build()
             .map_err(|_| HttpError::Configuration("TLS client"))?;

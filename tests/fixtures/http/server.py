@@ -16,6 +16,7 @@ parser.add_argument("--fault", default="")
 parser.add_argument("--authorization", default="")
 parser.add_argument("--certificate")
 parser.add_argument("--key")
+parser.add_argument("--client-ca", help="require client certificates issued by this CA")
 parser.add_argument("--requests")
 parser.add_argument("--owner", type=int, required=True, help="test process whose exit stops this server")
 args = parser.parse_args()
@@ -157,6 +158,9 @@ server.daemon_threads = True
 if args.certificate:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(args.certificate, args.key)
+    if args.client_ca:
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.load_verify_locations(args.client_ca)
     server.socket = context.wrap_socket(server.socket, server_side=True)
 
 

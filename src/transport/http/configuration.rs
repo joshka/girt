@@ -35,6 +35,13 @@ pub struct HttpEnvironment {
     /// Select `GIT_SSL_CAINFO` first, otherwise [`HttpSettings::configured_ca_info`]. A present
     /// bundle replaces platform roots for this connection. It must contain certificates.
     pub ssl_ca_info: Option<Vec<u8>>,
+    /// Selected client certificate PEM, from `GIT_SSL_CERT` or [`TlsPaths::certificate`].
+    ///
+    /// Without [`Self::ssl_key`], the file must also hold the private key, as Git allows.
+    /// Together with the key it is limited to 1 MiB.
+    pub ssl_cert: Option<Vec<u8>>,
+    /// Selected client private key PEM, from `GIT_SSL_KEY` or [`TlsPaths::key`].
+    pub ssl_key: Option<Vec<u8>>,
     /// `GIT_SSL_NO_VERIFY`; disabling verification also requires `allow_insecure_tls`.
     pub ssl_no_verify: Option<bool>,
     /// `https_proxy`, `http_proxy`, or `all_proxy` selected by the application.
@@ -57,6 +64,18 @@ impl HttpEnvironment {
     #[must_use]
     pub fn with_ssl_ca_info(mut self, ssl_ca_info: Option<Vec<u8>>) -> Self {
         self.ssl_ca_info = ssl_ca_info;
+        self
+    }
+
+    /// Sets [`Self::ssl_cert`] and [`Self::ssl_key`].
+    #[must_use]
+    pub fn with_ssl_client_certificate(
+        mut self,
+        ssl_cert: Option<Vec<u8>>,
+        ssl_key: Option<Vec<u8>>,
+    ) -> Self {
+        self.ssl_cert = ssl_cert;
+        self.ssl_key = ssl_key;
         self
     }
 
@@ -109,6 +128,25 @@ impl std::fmt::Debug for HttpEnvironment {
     }
 }
 
+/// Configured TLS file paths for one destination, selected from `http.<url>.*` settings.
+///
+/// girt opens no files: the application checks for the `GIT_SSL_CAINFO`, `GIT_SSL_CERT` and
+/// `GIT_SSL_KEY` environment variables first (each takes precedence over its setting), and only
+/// for a setting it actually uses refuses an empty or NUL-containing path, expands Git path
+/// syntax, reads a bounded file, and passes the bytes in [`HttpEnvironment`]. A setting written
+/// without a value is returned as an empty path. Paths may be private and should not be logged
+/// automatically. `http.sslCAPath` is not supported yet and fails resolution.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TlsPaths<'a> {
+    /// `http.sslCAInfo`: a CA bundle that replaces platform trust.
+    pub ca_info: Option<&'a [u8]>,
+    /// `http.sslCert`: the client certificate.
+    pub certificate: Option<&'a [u8]>,
+    /// `http.sslKey`: the client private key.
+    pub key: Option<&'a [u8]>,
+}
+
 /// Resolved HTTP policy for one destination. Its Debug output omits URLs and secrets.
 ///
 /// Resolution reads `http.<url>.*` settings scoped to the destination's URL, and fails on settings
@@ -145,6 +183,7 @@ impl std::fmt::Debug for HttpEnvironment {
 pub struct HttpSettings {
     pub(super) url: String,
     pub(super) roots: Vec<Vec<u8>>,
+    pub(super) client_identity: Option<Vec<u8>>,
     pub(super) proxy: Option<String>,
     pub(super) no_proxy: Option<String>,
     pub(super) proxy_credentials: Option<(String, String)>,
@@ -250,6 +289,45 @@ impl HttpSettings {
             .transpose()
     }
 
+    /// Returns the configured TLS file paths for a destination without opening them.
+    ///
+    /// See [`TlsPaths`] for how the application turns them into [`HttpEnvironment`] inputs.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-HTTP destination.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::{ProtocolEnvironment, Remote};
+    /// use girt::transport::http::HttpSettings;
+    ///
+    /// let config = Config::parse(
+    ///     b"[http]\nsslCert = ~/client.pem\nsslKey = ~/client.key\n\
+    ///       [remote \"origin\"]\nurl = https://example.com/project.git\n",
+    /// )?;
+    /// let origin = Remote::find(&config, b"origin")?.expect("configured");
+    /// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+    /// let paths = HttpSettings::configured_tls_paths(&config, &destination)?;
+    /// assert_eq!(paths.certificate, Some(&b"~/client.pem"[..]));
+    /// assert_eq!(paths.ca_info, None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn configured_tls_paths<'a>(
+        config: &'a Config,
+        destination: &Destination,
+    ) -> Result<TlsPaths<'a>, HttpError> {
+        let target = destination_url(destination)?;
+        let path = |name| http_value(config, &target, name).map(|value| value.unwrap_or_default());
+        Ok(TlsPaths {
+            ca_info: path("sslcainfo"),
+            certificate: path("sslcert"),
+            key: path("sslkey"),
+        })
+    }
+
     fn resolve_policy(
         config: &Config,
         destination: &Destination,
@@ -286,6 +364,46 @@ impl HttpSettings {
         {
             return Err(HttpError::Limit("trust roots"));
         }
+        // Only presence matters here: the application may have replaced a setting with its
+        // environment variable, so the setting's value is not validated.
+        let paths = Self::configured_tls_paths(config, destination)?;
+        if (paths.certificate.is_some() && environment.ssl_cert.is_none())
+            || (paths.key.is_some() && environment.ssl_key.is_none())
+        {
+            return Err(HttpError::Configuration(
+                "TLS client certificate requires application input",
+            ));
+        }
+        let password_protected = http_value(config, &target, "sslcertpasswordprotected")
+            .map(|value| boolean(value).ok_or(HttpError::Configuration("TLS certificate password")))
+            .transpose()?;
+        if password_protected == Some(true) {
+            return Err(HttpError::Configuration(
+                "password-protected TLS client certificates are unsupported",
+            ));
+        }
+        let client_identity = match (&environment.ssl_cert, &environment.ssl_key) {
+            (None, None) => None,
+            (None, Some(_)) => {
+                return Err(HttpError::Configuration(
+                    "TLS client key without certificate",
+                ));
+            }
+            (Some(certificate), key) => {
+                let length = certificate
+                    .len()
+                    .saturating_add(key.as_ref().map_or(0, Vec::len));
+                if length > 1024 * 1024 {
+                    return Err(HttpError::Limit("TLS client certificate"));
+                }
+                let mut identity = certificate.clone();
+                if let Some(key) = key {
+                    identity.push(b'\n');
+                    identity.extend_from_slice(key);
+                }
+                Some(identity)
+            }
+        };
         let roots = environment.ssl_ca_info.iter().cloned().collect();
         let follow_initial_redirect = match http_value(config, &target, "followredirects") {
             None | Some(Some(b"initial")) => true,
@@ -345,6 +463,7 @@ impl HttpSettings {
         Ok(Self {
             url,
             roots,
+            client_identity,
             proxy,
             no_proxy: environment.no_proxy.clone(),
             proxy_credentials: environment.proxy_credentials.clone(),
@@ -482,6 +601,9 @@ fn reject_unsupported(config: &Config, target: &Url) -> Result<(), HttpError> {
             "followredirects",
             "extraheader",
             "useragent",
+            "sslcert",
+            "sslkey",
+            "sslcertpasswordprotected",
         ]
         .iter()
         .any(|supported| name.eq_ignore_ascii_case(supported))
