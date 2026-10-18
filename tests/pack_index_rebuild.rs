@@ -27,6 +27,29 @@ fn rebuild(
     .map(|rebuilt| rebuilt.outcome)
 }
 
+/// Reads a published index the way girt's pack reader opens one: Windows may briefly refuse to
+/// open a name while a rename replaces it, so retry those errors within the same bound.
+fn read_published(path: &Path) -> Vec<u8> {
+    #[cfg(windows)]
+    {
+        let mut delay = std::time::Duration::from_millis(1);
+        for _ in 0..7 {
+            match fs::read(path) {
+                Err(error)
+                    if error
+                        .raw_os_error()
+                        .is_some_and(|code| [5, 32, 303].contains(&code)) =>
+                {
+                    thread::sleep(delay);
+                    delay *= 2;
+                }
+                result => return result.unwrap(),
+            }
+        }
+    }
+    fs::read(path).unwrap()
+}
+
 fn count(index: &[u8]) -> usize {
     u32::from_be_bytes(index[1028..1032].try_into().unwrap()) as usize
 }
@@ -326,7 +349,7 @@ fn concurrent_readers_never_see_a_partial_index() {
         let reader = scope.spawn(|| {
             let mut reads = 0;
             while !done.load(Ordering::Relaxed) {
-                let seen = fs::read(&fixture.index_path).unwrap();
+                let seen = read_published(&fixture.index_path);
                 assert!(
                     seen == original || seen == damaged,
                     "partial index observed"
