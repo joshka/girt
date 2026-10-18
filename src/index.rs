@@ -46,6 +46,7 @@
 //! );
 //! # Ok::<(), girt::index::Error>(())
 //! ```
+mod cache_tree;
 mod codec;
 mod entries;
 mod sparse;

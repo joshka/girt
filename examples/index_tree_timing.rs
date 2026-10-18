@@ -38,6 +38,15 @@ fn main() -> girt::Result<()> {
         return Ok(());
     }
     let repo = Repository::open(path)?;
+    if mode == "decode" {
+        // Index reading alone, repeated for sampling profilers.
+        let start = Instant::now();
+        for _ in 0..100 {
+            repo.read_index(Limits::default())?.unwrap();
+        }
+        eprintln!("decode_ns={}", start.elapsed().as_nanos() / 100);
+        return Ok(());
+    }
     let index = repo.read_index(Limits::default())?.unwrap();
     let start = Instant::now();
     let id = match mode.as_str() {
@@ -50,7 +59,7 @@ fn main() -> girt::Result<()> {
             }
             id
         }
-        _ => panic!("expected fixture, tree-id, checked or profile"),
+        _ => panic!("expected fixture, decode, tree-id, checked or profile"),
     };
     eprintln!("api_ns={}", start.elapsed().as_nanos());
     println!("{id}");
