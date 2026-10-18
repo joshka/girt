@@ -281,20 +281,12 @@ pub(crate) fn clone_finish(error: &crate::clone::CloneError, span: &tracing::Spa
 }
 
 /// Keeps the caller's dispatch and parent together across an owned download handoff.
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 #[derive(Clone)]
 pub(crate) struct DownloadContext {
     span: Option<tracing::Span>,
     dispatch: tracing::Dispatch,
 }
 
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 impl DownloadContext {
     pub(crate) fn capture() -> Self {
         Self {
@@ -315,10 +307,6 @@ impl DownloadContext {
 
 // Some subscribers close retained parents through the current dispatch. Release the final span
 // under its owning dispatch too, including when a download is abandoned on another worker.
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 impl Drop for DownloadContext {
     fn drop(&mut self) {
         let span = self.span.take();

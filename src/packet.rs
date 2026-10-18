@@ -110,11 +110,6 @@ impl<R: Read> Wire<'_, R> {
 /// Decodes a complete header, including flush, using the shared pkt-line length bounds.
 ///
 /// Only the live sideband scanners need a bare header decoder; readers use [`Wire`].
-#[cfg(any(
-    test,
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 pub(crate) fn packet_length(header: &[u8; 4]) -> Result<usize, Error> {
     match frame_length(header)? {
         1 | 2 => Err(Error::Protocol("pkt-line length")),

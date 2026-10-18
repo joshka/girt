@@ -193,33 +193,14 @@
 //! assert_eq!(destination.references()?.read(&tracking)?, Some(Target::Direct(commit)));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
-//!
-//! <!-- Feature-dependent link targets: the item when it is compiled, docs.rs otherwise. -->
-#![cfg_attr(
-    any(
-        feature = "http",
-        all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-    ),
-    doc = "[`FetchDownload`]: FetchDownload"
-)]
-#![cfg_attr(
-    not(any(
-        feature = "http",
-        all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-    )),
-    doc = "[`FetchDownload`]: https://docs.rs/girt/latest/girt/fetch/struct.FetchDownload.html"
-)]
 
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 pub use ssh::{receive_ssh, receive_ssh_with_depth, receive_ssh_with_progress};
 
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 mod live_progress;
+pub(crate) mod stream;
 
 #[cfg(feature = "http")]
 mod http;
@@ -229,26 +210,10 @@ pub use http::{
     receive_http_with_progress,
 };
 
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 mod download;
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 pub use download::DownloadedFetch;
 
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 mod workflow_network;
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 pub use workflow_network::FetchDownload;
 mod update;
 mod verified;

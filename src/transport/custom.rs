@@ -65,6 +65,19 @@ pub trait Transport: Send + Sync {
 /// Reads return what the service writes; writes go to its input. girt reads and writes in turn,
 /// so a blocking implementation works.
 pub trait Connection: Read + Write + Send {
+    /// Tells the service that girt has sent everything, as closing standard input does.
+    ///
+    /// girt calls it after a fetch or push request, then reads the rest of the response until the
+    /// end of the stream. `git upload-pack` speaking protocol v2 waits for further commands until
+    /// its input closes, so a transport to it must implement this. The default does nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the stream cannot be closed.
+    fn close_write(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
     /// Ends the connection after girt is done with it, and reports whether the service ended
     /// cleanly, as an SSH client reports the remote command's exit status.
     ///
@@ -207,6 +220,11 @@ impl Write for ChildConnection {
 }
 
 impl Connection for ChildConnection {
+    fn close_write(&mut self) -> std::io::Result<()> {
+        drop(self.input.take());
+        Ok(())
+    }
+
     fn finish(mut self: Box<Self>) -> Result<(), ConnectError> {
         drop(self.input.take());
         let status = self.child.wait().map_err(ConnectError::new)?;
