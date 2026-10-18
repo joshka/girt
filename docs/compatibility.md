@@ -4209,3 +4209,10 @@ in-memory fixtures. Coverage includes envelope-shaped boundaries, bare input, in
 escaped body lines, CRLF preservation/normalization, binary bytes and missing final newlines. The
 API returns bytes without filesystem traversal or MIME decoding; malformed input, cancellation and
 independent admission limits return no partial message list.
+
+Single-part mailinfo extraction is compared with the isolated Git executable using original mail
+fixtures and generated UTF-8 format-patch messages. Tests compare decoded metadata, log bytes and
+patch bytes for RFC 2047 Q/B words, folding, Latin-1 headers, subject policies, Message-ID trailers,
+in-body metadata, standard scissors and base64/quoted-printable bodies. The structured API exposes
+one unfolded subject value rather than the Git CLI's repeated empty Subject line for an in-body
+subject under `-k`. Multipart MIME and broader scissors forms are explicit refusals in this layer.
