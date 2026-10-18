@@ -7,7 +7,8 @@ export interface CliCalls {
   command?: string;
   /** The nearest Git command, when there is one. */
   git?: string;
-  /** Library items as `[label, path]`. */
+  /** Library items as `[label, path]`; a full `https://` URL is used as is, as for an
+   * unreleased item linked to its issue. */
   api: [string, string][];
 }
 
@@ -27,6 +28,11 @@ const method = (type: string, path: string, name: string): [string, string] => [
 const resolver = (name: string) => method('Resolver', 'revision/struct.Resolver.html', name);
 const references = (name: string) => method('References', 'refs/struct.References.html', name);
 const remote = (name: string) => method('Remote', 'remote/struct.Remote.html', name);
+// Items not yet in a release link the issue that tracks their area until docs.rs has them.
+const unreleased = (label: string, issue: number): [string, string] => [
+  label,
+  `https://github.com/joshka/girt/issues/${issue}`,
+];
 const configEdit = (name: string) => method('Document', 'config/struct.Document.html', name);
 
 export const calls: Record<string, CliCalls> = {
@@ -131,9 +137,9 @@ export const calls: Record<string, CliCalls> = {
   'history describe': {
     git: 'git describe',
     api: [
-      repository('describe'),
-      method('DescribeOptions', 'describe/struct.DescribeOptions.html', 'with_lightweight_tags'),
-      method('Description', 'describe/struct.Description.html', 'format'),
+      unreleased('Repository::describe', 511),
+      unreleased('DescribeOptions::with_lightweight_tags', 511),
+      unreleased('Description::format', 511),
     ],
   },
   'history contains': {
@@ -169,8 +175,8 @@ export const calls: Record<string, CliCalls> = {
       repository('status'),
       ['status::Baseline', 'status/enum.Baseline.html'],
       ['status::UntrackedFiles', 'status/enum.UntrackedFiles.html'],
-      objects('ahead_behind'),
-      resolver('upstream_name'),
+      unreleased('Objects::ahead_behind', 513),
+      unreleased('Resolver::upstream_name', 513),
     ],
   },
   'ignore check': {
@@ -184,9 +190,9 @@ export const calls: Record<string, CliCalls> = {
   reset: {
     git: 'git reset',
     api: [
-      repository('reset'),
-      repository('reset_paths'),
-      ['reset::ResetMode', 'reset/enum.ResetMode.html'],
+      unreleased('Repository::reset', 514),
+      unreleased('Repository::reset_paths', 514),
+      unreleased('reset::ResetMode', 514),
     ],
   },
   worktree: {

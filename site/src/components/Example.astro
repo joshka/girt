@@ -80,7 +80,7 @@ const gitForms = (git ?? '').split(', ').filter(Boolean).map((text) => {
               {
                 api.map(([label, path]) => (
                   <li>
-                    <a href={docs + path}>
+                    <a href={path.startsWith('https://') ? path : docs + path}>
                       <code>{label}</code>
                       <span aria-hidden="true"> ↗</span>
                       <span class="sr-only"> (external)</span>
