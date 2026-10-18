@@ -43,7 +43,7 @@ impl Options {
     }
 }
 
-/// Independent byte bounds; work is linear in admitted input, excluding allocator failure.
+/// Independent byte bounds; MIME scanning and decoding work are linear in admitted input.
 ///
 /// Decoded-output bounds govern artifacts, not peak scratch allocation: transfer decoding may
 /// temporarily retain input-sized buffers before checking the decoded bound. Raw input/header
@@ -53,12 +53,16 @@ impl Options {
 pub struct Limits {
     /// Supplied message bytes (default 64 MiB).
     pub max_input_bytes: usize,
-    /// Raw outer and in-body header bytes, combined (default 1 MiB).
+    /// Raw outer, MIME part and in-body header bytes, combined (default 1 MiB).
     pub max_header_bytes: usize,
-    /// Outer and in-body fields, combined (default 1000).
+    /// Outer, MIME part and in-body fields, combined (default 1000).
     pub max_headers: usize,
-    /// Transfer-decoded body plus decoded metadata bytes (default 64 MiB).
+    /// Transfer-decoded body (including closing-boundary LF) plus metadata bytes (default 64 MiB).
     pub max_decoded_bytes: usize,
+    /// MIME entities including the outer message (default 1000).
+    pub max_mime_parts: usize,
+    /// Nested multipart containers; zero admits only single-part mail (default 8).
+    pub max_mime_depth: usize,
     /// Returned log bytes, including Message-ID trailer (default 16 MiB).
     pub max_message_bytes: usize,
     /// Returned patch bytes (default 64 MiB).
@@ -71,6 +75,8 @@ impl Default for Limits {
             max_header_bytes: 1 << 20,
             max_headers: 1000,
             max_decoded_bytes: 64 << 20,
+            max_mime_parts: 1000,
+            max_mime_depth: 8,
             max_message_bytes: 16 << 20,
             max_patch_bytes: 64 << 20,
         }
@@ -99,6 +105,18 @@ impl Limits {
     #[must_use]
     pub fn with_max_decoded_bytes(mut self, value: usize) -> Self {
         self.max_decoded_bytes = value;
+        self
+    }
+    /// Sets [`Self::max_mime_parts`].
+    #[must_use]
+    pub fn with_max_mime_parts(mut self, value: usize) -> Self {
+        self.max_mime_parts = value;
+        self
+    }
+    /// Sets [`Self::max_mime_depth`].
+    #[must_use]
+    pub fn with_max_mime_depth(mut self, value: usize) -> Self {
+        self.max_mime_depth = value;
         self
     }
     /// Sets [`Self::max_message_bytes`].

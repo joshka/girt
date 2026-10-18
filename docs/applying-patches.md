@@ -282,13 +282,23 @@ trailer is charged to the log-byte bound and added only when a patch is found. I
 subject and date fields override outer metadata when a patch is found. Dates remain unfolded text
 for the caller to interpret.
 
-Single-part text mail supports UTF-8/ASCII, RFC 2047 Q/B headers (also Latin-1 metadata), and 7bit,
-8bit, binary, base64 and quoted-printable transfer encodings. Multipart MIME and other character
-sets are explicitly refused. Scissors recognizes the structural cut-line forms used by Git,
-including `-- >8 --`, `-- 8< --`, `-- >% --` and `-- %< --`. Marker-bearing text that does not
-qualify stays in the log message. Multipart extraction remains tracked before `am` integration.
+Plain and multipart mail supports 7bit, 8bit, binary, base64 and quoted-printable transfer
+encodings. RFC 2047 Q/B headers support UTF-8/ASCII and Latin-1 metadata; declared body character
+sets support UTF-8/ASCII. Leaf content stays ordered, including HTML and opaque patch attachments.
+Logical part boundaries remain separate even if a decoded part has no final LF, without adding
+separator bytes between returned artifacts.
 
-Input, raw headers, field count, decoded content, log output and patch output are independently
-bounded. Any metadata, decoding, cancellation or limit error returns no partial result. Unknown
-outer headers still consume the header limits, and output limits include an optional Message-ID
-trailer. The parser consults no environment or mail configuration.
+MIME traversal has explicit part-count and nesting bounds and uses no recursive call stack. Outer
+preambles and epilogues are skipped; nested preambles remain body content, matching Git. A closing
+boundary after leaf content contributes an LF, while consecutive enclosing closures do not add more.
+EOF without a closing delimiter is tolerated; unclosed nested content retains enclosing
+boundary-looking lines as body text. Other character sets, encoded multipart containers and
+[`message/rfc822` containers](https://github.com/joshka/girt/issues/791) are explicit refusals.
+
+Scissors recognizes Git's structural cut-line forms, including `-- >8 --`, `-- 8< --`, `-- >% --`
+and `-- %< --`. Marker-bearing text that does not qualify stays in the log message.
+
+Input, raw headers, field count, MIME part count/depth, decoded content, log output and patch output
+are independently bounded. Any metadata, decoding, cancellation or limit error returns no partial
+result. Unknown outer headers still consume the header limits, and output limits include an optional
+Message-ID trailer. The parser consults no environment or mail configuration.
