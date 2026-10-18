@@ -89,6 +89,7 @@ mod file;
 pub(crate) use file::is_damage_io;
 pub(crate) use file::{DamageHistory, ReadFailure};
 pub(crate) mod index;
+pub(crate) mod publish;
 pub(crate) mod reader;
 mod rebuild;
 mod reuse;
