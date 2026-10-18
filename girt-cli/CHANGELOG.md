@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/joshka/girt/compare/girt-cli-v0.2.5...girt-cli-v0.2.6) - 2026-10-18
+
+### Other
+
+- updated the following local packages: girt
+
 ## [0.2.5](https://github.com/joshka/girt/compare/girt-cli-v0.2.4...girt-cli-v0.2.5) - 2026-10-17
 
 ### Other
