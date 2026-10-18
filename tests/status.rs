@@ -339,6 +339,9 @@ fn raw_policy_exposes_ignored_files_and_normalization_difference() {
     fs::write(root.join("ignored"), b"private").unwrap();
     fs::write(root.join("file"), b"line\r\n").unwrap();
     git(root, &["add", "file", ".gitignore", ".gitattributes"]);
+    // Git cached the stat words of the CRLF file but stored the converted blob. A trusted entry
+    // would compare equal, as in `git status`, so force a read to observe the raw bytes.
+    make_racy(&repo);
     let result = status(&repo);
     assert_eq!(result.untracked_policy, Untracked::RawFilesWithoutIgnores);
     assert_eq!(result.raw_untracked, [b"ignored".to_vec()]);

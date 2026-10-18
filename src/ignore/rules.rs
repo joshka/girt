@@ -266,6 +266,7 @@ pub struct Ignore {
     patterns: usize,
 }
 /// Counts from [`Ignore::usage`].
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy)]
 pub(crate) struct Usage {
     pub(crate) sources: usize,
@@ -304,6 +305,7 @@ impl Ignore {
 
     /// Sources and patterns added so far, counted against [`Limits::sources`] and
     /// [`Limits::patterns`].
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn usage(&self) -> Usage {
         Usage {
             sources: self.sources.len(),

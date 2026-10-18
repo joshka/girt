@@ -1,5 +1,4 @@
 //! Canonical nested trees from validated index entries, with optional immutable publication.
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{Index, Mode, Stage};
@@ -108,8 +107,12 @@ impl Index {
     /// Each identity is the hash of its own tree, so a lookup can stand in for reading that tree
     /// from object storage. Returns `None` where [`Self::tree_id`] does.
     /// Cancellation also returns `None`; the caller checks `cancel` afterwards.
-    pub(crate) fn trees(&self, cancel: &AtomicBool) -> Option<(ObjectId, HashMap<ObjectId, Tree>)> {
-        let mut trees = HashMap::new();
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn trees(
+        &self,
+        cancel: &AtomicBool,
+    ) -> Option<(ObjectId, std::collections::HashMap<ObjectId, Tree>)> {
+        let mut trees = std::collections::HashMap::new();
         let root = self
             .build_tree(cancel, |tree| {
                 let id = tree.id();
