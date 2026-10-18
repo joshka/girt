@@ -902,6 +902,13 @@ pub trait TransferCallbacks {
         None
     }
 
+    /// Returns which `git-remote-<name>` programs transfers may run. See [`RemoteHelpers`].
+    ///
+    /// The default refuses all of them.
+    fn remote_helpers(&self) -> RemoteHelpers {
+        RemoteHelpers::Refuse
+    }
+
     /// Returns the application's transport for a URL scheme girt does not handle itself.
     ///
     /// Called with the scheme of a `<scheme>::<address>` or unrecognized `<scheme>://` URL, such
@@ -1327,9 +1334,9 @@ pub enum TransferError {
     /// The URL's transport is not available in this build or not supported at all.
     ///
     /// `http(s)://` URLs need the `http` feature and SSH URLs need the `ssh` feature on macOS or
-    /// Linux. Other schemes need an application transport from [`TransferCallbacks::transport`].
-    /// girt never runs `git-remote-<helper>` programs, and `git://` is not supported. Holds the
-    /// remote name.
+    /// Linux. Other schemes need an application transport from [`TransferCallbacks::transport`]
+    /// or a remote helper approved by [`TransferCallbacks::remote_helpers`]. `git://` is not
+    /// supported. Holds the remote name.
     #[error("unsupported transport for remote {0}")]
     UnsupportedTransport(String),
     /// The application's [`Transport`](crate::transport::Transport) could not connect, or its
@@ -1639,15 +1646,80 @@ fn shell_quote(value: &str) -> String {
 }
 
 /// Finds `program` in the environment's `PATH`.
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 fn find_program(environment: &Environment, program: &str) -> Option<PathBuf> {
     let path = environment.get("PATH")?;
     std::env::split_paths(path)
         .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())
+}
+
+/// Whether workflow transfers may run `git-remote-<name>` programs for `<name>::<address>` and
+/// unrecognized `<name>://` URLs.
+///
+/// A remote helper is a program named by the URL, found on `PATH` or in `GIT_EXEC_PATH`, that runs
+/// with the permissions of the current process. Git runs any helper a URL names. girt refuses by
+/// default and runs only helpers whose names the application approved, such as
+/// `RemoteHelpers::Run(vec!["mem".into()])` for `mem://` URLs. The URL must also be allowed by
+/// `protocol.<name>.allow`, as Git requires; `ext::` URLs therefore also need
+/// `protocol.ext.allow`.
+///
+/// girt speaks the `connect` part of the remote-helper protocol: it asks for `capabilities`, then
+/// `connect git-upload-pack` or `connect git-receive-pack`, and speaks the Git protocol over the
+/// helper's standard input and output. Helpers that offer only `fetch`, `push`, `import` or
+/// `export`, such as Mercurial bridges, fail with [`TransferError::Transport`]. An application
+/// [`Transport`](crate::transport::Transport) for the same scheme takes precedence.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RemoteHelpers {
+    /// Run no remote helpers; their URLs are [`TransferError::UnsupportedTransport`].
+    #[default]
+    Refuse,
+    /// Run `git-remote-<name>` only for these names.
+    Run(Vec<String>),
+}
+
+// An approved remote helper for `scheme`, or `None` when the policy does not allow it.
+fn remote_helper(
+    policy: &RemoteHelpers,
+    scheme: &[u8],
+    remote_name: &str,
+    git_dir: Option<&Path>,
+    environment: &Environment,
+) -> Result<Option<std::sync::Arc<dyn crate::transport::Transport>>, TransferError> {
+    let RemoteHelpers::Run(names) = policy else {
+        return Ok(None);
+    };
+    let Some(name) = std::str::from_utf8(scheme)
+        .ok()
+        .filter(|name| names.iter().any(|approved| approved == name))
+    else {
+        return Ok(None);
+    };
+    let program = format!("git-remote-{name}");
+    let path = find_program(environment, &program)
+        .or_else(|| {
+            let exec = environment.get("GIT_EXEC_PATH")?;
+            Some(Path::new(exec).join(&program)).filter(|path| path.is_file())
+        })
+        .ok_or_else(|| {
+            TransferError::Configuration(format!("remote helper {program} not found"))
+        })?;
+    let mut variables: Vec<_> = environment
+        .vars
+        .iter()
+        .filter(|(name, _)| name.as_os_str() != "GIT_DIR")
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    if let Some(git_dir) = git_dir {
+        variables.push(("GIT_DIR".into(), git_dir.as_os_str().to_owned()));
+    }
+    Ok(Some(std::sync::Arc::new(
+        crate::transport::helper::RemoteHelper {
+            program: path,
+            remote: remote_name.to_owned(),
+            environment: variables,
+        },
+    )))
 }
 
 /// Maps configured `credential.helper` values to helpers, following Git's rules: `!cmd` is a
@@ -1963,15 +2035,24 @@ fn ssh_endpoint(
     .map_err(|error| TransferError::Configuration(error.to_string()))
 }
 
+// Where a transfer runs locally: relative local URLs resolve against `base`, and remote helpers
+// get `git_dir` as `GIT_DIR`.
+#[derive(Clone, Copy)]
+struct LocalPaths<'a> {
+    base: &'a Path,
+    git_dir: Option<&'a Path>,
+}
+
 fn configured_endpoint(
     config: &crate::Config,
     remote: &Remote,
     remote_name: &str,
     direction: Direction,
-    base: &Path,
+    paths: LocalPaths<'_>,
     environment: &Environment,
     callbacks: &dyn TransferCallbacks,
 ) -> Result<(Endpoint, Destination), TransferError> {
+    let LocalPaths { base, git_dir } = paths;
     let protocol_environment =
         ProtocolEnvironment::from_environment(|name| environment.bytes(name))
             .map_err(|error| TransferError::Configuration(error.to_string()))?;
@@ -2031,10 +2112,18 @@ fn configured_endpoint(
             Endpoint::Ssh(Box::new(ssh))
         }
         Protocol::Helper => {
-            let transport = destination
-                .helper_scheme()
-                .and_then(|scheme| callbacks.transport(scheme))
-                .ok_or_else(|| TransferError::UnsupportedTransport(remote_name.to_owned()))?;
+            let scheme = destination.helper_scheme().unwrap_or_default();
+            let transport = match callbacks.transport(scheme) {
+                Some(transport) => transport,
+                None => remote_helper(
+                    &callbacks.remote_helpers(),
+                    scheme,
+                    remote_name,
+                    git_dir,
+                    environment,
+                )?
+                .ok_or_else(|| TransferError::UnsupportedTransport(remote_name.to_owned()))?,
+            };
             Endpoint::Custom(Box::new(Custom {
                 transport,
                 destination: destination.clone(),
@@ -2063,7 +2152,10 @@ impl Repository {
             &remote,
             remote_name,
             direction,
-            self.worktree().unwrap_or(self.git_dir()),
+            LocalPaths {
+                base: self.worktree().unwrap_or(self.git_dir()),
+                git_dir: Some(self.git_dir()),
+            },
             environment,
             callbacks,
         )

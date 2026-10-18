@@ -34,8 +34,10 @@
 //!
 //! **Application transports** carry the protocol for any other scheme, such as `mem://` in tests
 //! or `vault::team/project`: implement [`Transport`] and return it from
-//! [`TransferCallbacks::transport`](crate::workflow::TransferCallbacks::transport). girt does not
-//! run `git-remote-<helper>` programs, and `git://` is not supported.
+//! [`TransferCallbacks::transport`](crate::workflow::TransferCallbacks::transport). `workflow`
+//! can also run `git-remote-<name>` programs that offer `connect`, but only those the application
+//! approves with [`RemoteHelpers::Run`](crate::workflow::RemoteHelpers::Run). `git://` is not
+//! supported.
 //!
 //! # Async network, synchronous validation
 //!
@@ -275,6 +277,7 @@ pub mod ssh;
 
 mod control;
 mod custom;
+pub(crate) mod helper;
 mod protocol;
 pub use custom::{ChildConnection, ConnectError, ConnectRequest, Connection, Service, Transport};
 pub use protocol::RequestedProtocol;
