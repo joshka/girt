@@ -1,7 +1,10 @@
 ---
 title: Configuration and remotes
 description: Inspect configuration provenance and remote endpoints.
+tableOfContents: false
 ---
+
+import CommandExample from '../../../components/CommandExample.astro';
 
 `config get` reads the effective value; `list --show-origin` explains its source. `set` and `unset`
 edit local configuration. `remote list`, `add` and `show` manage endpoint configuration;
@@ -15,6 +18,14 @@ may change; the library is the core deliverable.
 :::
 
 ## Read an effective value
+
+<CommandExample
+  command="girt config get core.bare"
+  api="Config::value"
+  apiPath="config/struct.Config.html#method.value"
+  git="git config --get core.bare"
+  note="Reads the effective value after combining configuration sources."
+>
 
 Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
@@ -31,6 +42,8 @@ The corresponding Git commands are `git config --get`, `git config --list`,
 `git config --local <key> <value>`, `git config --local --unset-all <key>`, `git remote -v`,
 `git remote add` and `git ls-remote`. `remote show` prints configured URLs and refspecs; it does not
 perform all the queries of `git remote show`.
+
+</CommandExample>
 
 ## Library API and limits
 

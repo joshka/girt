@@ -1,7 +1,10 @@
 ---
 title: References
 description: Read names and reflogs and make guarded reference updates.
+tableOfContents: false
 ---
+
+import CommandExample from '../../../components/CommandExample.astro';
 
 `ref list` lists names, `show` follows symbolic references, and `log` reads reflogs. `set` and
 `delete` change references; use `--expect` or `--create-only` where applicable to guard against a
@@ -14,6 +17,14 @@ may change; the library is the core deliverable.
 :::
 
 ## Inspect branch names
+
+<CommandExample
+  command="girt ref list"
+  api="Repository::references"
+  apiPath="repository/struct.Repository.html#method.references"
+  git="git for-each-ref"
+  note="Same operation; the default record formats differ."
+>
 
 Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
@@ -28,6 +39,8 @@ the latest commit. `ref show HEAD` also shows the symbolic chain from HEAD to th
 The Git equivalents are `git for-each-ref` for listing, `git rev-parse` for resolving a name,
 `git update-ref` for setting a value, `git update-ref -d` for deleting it and `git reflog show` for
 reading its log.
+
+</CommandExample>
 
 ## Library API and limits
 

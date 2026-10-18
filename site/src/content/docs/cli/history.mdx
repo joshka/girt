@@ -1,7 +1,10 @@
 ---
 title: History and blame
 description: Walk commits, test ancestry and attribute file lines.
+tableOfContents: false
 ---
+
+import CommandExample from '../../../components/CommandExample.astro';
 
 `log` shows commits, with `--limit` and `--oneline` for shorter listings. `history count` counts
 reachable commits; `merge-base` finds common ancestors and `contains` tests ancestry. `blame`
@@ -15,6 +18,14 @@ may change; the library is the core deliverable.
 :::
 
 ## Count commits and attribute lines
+
+<CommandExample
+  command="girt blame notes.txt"
+  api="Repo::blame"
+  apiPath="repo/struct.Repo.html#method.blame"
+  git="git blame --line-porcelain notes.txt"
+  note="girt returns ranges rather than Git’s per-line metadata."
+>
 
 Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
@@ -34,6 +45,8 @@ line 3. Starts are one-based. Blame prints ranges rather than file contents or p
 `history contains` prints `yes` or `no` and exits 0 or 1; `--git` suppresses its text. The
 corresponding Git operations are `git log`, `git rev-list --count`, `git merge-base`,
 `git merge-base --is-ancestor` and `git blame --line-porcelain`.
+
+</CommandExample>
 
 ## Library API and limits
 

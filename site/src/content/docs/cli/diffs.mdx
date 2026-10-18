@@ -1,7 +1,10 @@
 ---
 title: Diffs
 description: Compare trees, detect renames and copies and print patches.
+tableOfContents: false
 ---
+
+import CommandExample from '../../../components/CommandExample.astro';
 
 `diff A B` compares two commit or tree revisions. `--names` is the default; `--renames` detects
 renames, `--copies` also considers copies from modified files, and `--patch` writes a unified diff.
@@ -14,6 +17,14 @@ may change; the library is the core deliverable.
 :::
 
 ## Find changed paths
+
+<CommandExample
+  command="girt diff HEAD~1 HEAD"
+  api="Objects::compare_trees"
+  apiPath="objects/struct.Objects.html#method.compare_trees"
+  git="git diff-tree --no-commit-id -r --name-status HEAD~1 HEAD"
+  note="Use --patch to see changed lines, or --renames to detect renamed paths."
+>
 
 Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
@@ -28,6 +39,8 @@ additions and deletions.
 
 The corresponding Git operations are `git diff-tree --no-commit-id -r --name-status HEAD~1 HEAD` for
 names, its `-M` option for rename detection, and `git diff HEAD~1 HEAD` for patches.
+
+</CommandExample>
 
 ## Library API and limits
 

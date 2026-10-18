@@ -1,7 +1,10 @@
 ---
 title: Objects and trees
 description: Resolve revisions and inspect stored Git objects.
+tableOfContents: false
 ---
+
+import CommandExample from '../../../components/CommandExample.astro';
 
 `object id` resolves a revision; `hash` computes an ID and optionally writes the object. `show`,
 `info`, `cat` and `exists` inspect an object; `batch` reads revisions from stdin. `list` enumerates
@@ -16,9 +19,17 @@ may change; the library is the core deliverable.
 
 ## Inspect a committed file
 
+<CommandExample
+  command="girt object info HEAD:notes.txt"
+  api="Objects::read_with"
+  apiPath="objects/struct.Objects.html#method.read_with"
+  git="git cat-file -t HEAD:notes.txt; git cat-file -s HEAD:notes.txt"
+  note="Git’s -t and -s forms query kind and size separately; --batch-check returns both in one record."
+>
+
 Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
-<!-- markdownlint-disable MD010 -->
+{/*<!-- markdownlint-disable MD010 -->*/}
 
 ```text
 $ girt tree list HEAD
@@ -27,12 +38,14 @@ $ girt object info HEAD:notes.txt
 4cb29ea38f70d7c61b2a3a25b02e3bdf44905402 blob 14
 ```
 
-<!-- markdownlint-enable MD010 -->
+{/*<!-- markdownlint-enable MD010 -->*/}
 
 The tree record contains the mode, kind, blob ID and path. `object info` adds the payload size in
 bytes; Git splits kind and size into `cat-file -t` and `cat-file -s`. `object show` corresponds to
 `git cat-file -p`, `object hash` to `git hash-object`, and `object exists` to `git cat-file -e`.
 `object batch --check` corresponds to `git cat-file --batch-check`.
+
+</CommandExample>
 
 ## Library API and limits
 

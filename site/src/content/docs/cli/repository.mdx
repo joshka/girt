@@ -1,7 +1,10 @@
 ---
 title: Repository
 description: Inspect repository layout and initialize Git storage.
+tableOfContents: false
 ---
+
+import CommandExample from '../../../components/CommandExample.astro';
 
 `repo info` reports object format, reference backend, paths, shallow state and ongoing operations.
 `init` creates a new directory containing a bare or working-tree repository; it refuses an existing
@@ -14,6 +17,17 @@ may change; the library is the core deliverable.
 :::
 
 ## Inspect the layout
+
+<CommandExample
+  command="girt repo info"
+  api="Repository"
+  apiPath="repository/struct.Repository.html"
+  git={
+    'git rev-parse --git-dir --git-common-dir --show-toplevel' +
+    ' --is-bare-repository --show-object-format'
+  }
+  note="Git queries corresponding layout fields; girt also reports backend and operation state."
+>
 
 Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
@@ -41,6 +55,8 @@ Git's
 `rev-parse --git-dir --git-common-dir --show-toplevel --is-bare-repository --show-object-format`
 queries corresponding layout fields. Initialization corresponds to `git init`; girt exposes its own
 options for the object format, reference backend and initial branch.
+
+</CommandExample>
 
 ## Library API
 

@@ -1,7 +1,10 @@
 ---
 title: Fetch, push and clone
 description: Exercise the library transfer workflows on disposable repositories.
+tableOfContents: false
 ---
+
+import CommandExample from '../../../components/CommandExample.astro';
 
 `clone` creates a repository and normally checks out HEAD. `fetch` updates configured refspecs;
 `push` publishes explicit refspecs with a lease based on remote-tracking state. Use disposable
@@ -15,6 +18,14 @@ may change; the library is the core deliverable.
 :::
 
 ## Clone locally
+
+<CommandExample
+  command="girt clone . ../cli-example-clone"
+  api="workflow::clone_with"
+  apiPath="workflow/fn.clone_with.html"
+  git="git clone . ../cli-example-clone"
+  note="Transfers perform real writes. girt prints its own result format."
+>
 
 Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
@@ -35,6 +46,8 @@ working tree unless you pass `--bare` or `--no-checkout`.
 the configured refspecs. `girt push origin main:main` corresponds to
 `git push --force-with-lease origin main:main` for the CLI's lease check, though a non-fast-forward
 update also needs girt's `+` refspec prefix. Fetch first if the lease rejects stale state.
+
+</CommandExample>
 
 ## Library API and limits
 

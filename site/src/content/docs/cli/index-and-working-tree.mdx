@@ -1,7 +1,10 @@
 ---
 title: Index and working tree
 description: Inspect tracked state, ignore decisions and checkout effects.
+tableOfContents: false
 ---
+
+import CommandExample from '../../../components/CommandExample.astro';
 
 `index list` reads tracked paths, `status` reports staged and unstaged changes (`--untracked` also
 lists untracked files), and `ignore check` explains ignore rules. `checkout` replaces the index and
@@ -16,6 +19,14 @@ may change; the library is the core deliverable.
 :::
 
 ## List tracked paths
+
+<CommandExample
+  command="girt status --untracked"
+  api="Repository::status"
+  apiPath="repository/struct.Repository.html#method.status"
+  git="git status --porcelain --untracked-files=all"
+  note="Default girt status omits untracked files; add --untracked to include them."
+>
 
 Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
@@ -38,10 +49,12 @@ prints its source and pattern when one does. `worktree list` prints each checkou
 and branch or state. `checkout <tree>` replaces files and the index without moving HEAD or switching
 branches; use a disposable copy for checkout experiments.
 
-The corresponding Git operations are `git ls-files`, `git status --porcelain`,
+The corresponding Git operations are `git ls-files`, `git status --porcelain --untracked-files=all`,
 `git check-ignore -v`, `git worktree list` and `git read-tree -um <tree>`. girt's default status
 omits untracked files, like `git status --porcelain -uno`; its flags and record formatting follow
 its own CLI conventions.
+
+</CommandExample>
 
 ## Library API and limits
 

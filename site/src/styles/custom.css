@@ -733,3 +733,12 @@ h1#_top {
   color: var(--sl-color-gray-3);
   font: 0.78rem/1.6 var(--__sl-font-mono) !important;
 }
+
+/* CLI examples use the right column for a contextual command reference instead of a fixed TOC. */
+:root:has(.command-example) {
+  --sl-content-width: 72rem;
+}
+
+.sl-markdown-content:has(.command-example) > :is(p, .starlight-aside) {
+  max-width: 48rem;
+}
