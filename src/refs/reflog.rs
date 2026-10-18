@@ -218,7 +218,7 @@ impl ReflogEntry {
         parse(format, bytes, &std::path::PathBuf::from("<reflog>"))
     }
 
-    pub(super) fn encode(&self) -> Result<Vec<u8>, ReferenceError> {
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, ReferenceError> {
         self.new.require_format(self.old.format())?;
         validate(&self.committer, &self.message)?;
         let mut bytes = format!("{} {}", self.old, self.new).into_bytes();

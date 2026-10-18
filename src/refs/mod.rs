@@ -203,3 +203,6 @@ pub(crate) fn fuzz_files(format: crate::ObjectFormat, kind: u8, bytes: &[u8]) {
 #[cfg(doctest)]
 #[doc = include_str!("../../site/src/content/docs/guides/refs.md")]
 mod website_refs_guide {}
+
+// Share the existing Git lock protocol with stash log publication.
+pub(crate) use store::Lock as FileLock;

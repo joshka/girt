@@ -207,3 +207,280 @@ fn clean_selection_creates_no_stash_and_malformed_shape_is_refused() {
         Err(girt::stash::Error::Shape)
     ));
 }
+
+fn stash_id(path: &std::path::Path) -> ObjectId {
+    std::str::from_utf8(&success(path, &["rev-parse", "refs/stash"]))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+fn install_result(repo: &Repository, result: &girt::merge::TreeMerge) {
+    let loose = repo.loose_objects();
+    for (_, bytes) in &result.blobs {
+        loose.write_blob(bytes).unwrap();
+    }
+    for tree in &result.trees {
+        loose.write_tree(tree).unwrap();
+    }
+}
+
+#[rstest]
+#[case::ordinary(false, false)]
+#[case::index(true, false)]
+#[case::untracked(false, true)]
+#[case::untracked_index(true, true)]
+fn apply_working_and_index_trees_match_git(#[case] restore_index: bool, #[case] untracked: bool) {
+    let fixture = SavedFixture::new("sha1", untracked);
+    let path = fixture.fixture.root.path();
+    // Include a staged new file: ordinary apply stages additions but leaves existing paths
+    // unstaged.
+    std::fs::write(path.join("added"), b"new file\n").unwrap();
+    success(path, &["add", "added"]);
+    let args = if untracked {
+        vec!["stash", "push", "-u"]
+    } else {
+        vec!["stash", "push"]
+    };
+    success(path, &args);
+    let repo = Repository::open(path).unwrap();
+    let objects = repo.objects().unwrap();
+    let saved = Snapshot::read(&objects, stash_id(path)).unwrap();
+    let input = girt::stash::ApplyInput {
+        index: tree_id(path),
+        occupied: vec![],
+    };
+    let mut options = girt::stash::ApplyOptions::default();
+    options.restore_index = restore_index;
+    let apply = objects
+        .apply_stash(&saved, input, options, &AtomicBool::new(false))
+        .unwrap();
+    assert!(apply.is_clean());
+    if restore_index {
+        success(path, &["stash", "apply", "--index"]);
+    } else {
+        success(path, &["stash", "apply"]);
+    }
+    assert_eq!(
+        apply.index.as_ref().unwrap().tree_id().unwrap(),
+        tree_id(path)
+    );
+    success(path, &["add", "-A"]);
+    assert_eq!(apply.working().tree.id(), tree_id(path));
+    install_result(&repo, &apply.tracked);
+    if let Some(result) = &apply.with_untracked {
+        install_result(&repo, result);
+    }
+    repo.objects()
+        .unwrap()
+        .read_tree(apply.working().tree.id())
+        .unwrap();
+}
+
+#[test]
+fn apply_conflicts_preserve_original_sides_and_saved_entry() {
+    let fixture = SavedFixture::new("sha1", false);
+    let path = fixture.fixture.root.path();
+    success(path, &["stash", "push"]);
+    let saved_id = stash_id(path);
+    std::fs::write(path.join("file"), b"different\ntwo\nthree\n").unwrap();
+    success(path, &["add", "file"]);
+    let repo = Repository::open(path).unwrap();
+    let objects = repo.objects().unwrap();
+    let saved = Snapshot::read(&objects, saved_id).unwrap();
+    let input = girt::stash::ApplyInput {
+        index: tree_id(path),
+        occupied: vec![],
+    };
+    let apply = objects
+        .apply_stash(
+            &saved,
+            input,
+            girt::stash::ApplyOptions::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(!apply.is_clean());
+    let conflict = &apply.tracked.conflicts[0];
+    assert!(conflict.base.is_some() && conflict.ours.is_some() && conflict.theirs.is_some());
+    assert!(!support::git(path, &["stash", "pop"]).status.success());
+    assert_eq!(stash_id(path), saved_id);
+    let expected = success(path, &["ls-files", "--stage"]);
+    let actual = apply.index.as_ref().unwrap();
+    for stage in [
+        girt::index::Stage::Base,
+        girt::index::Stage::Ours,
+        girt::index::Stage::Theirs,
+    ] {
+        let entry = actual
+            .entries()
+            .iter()
+            .find(|entry| entry.stage == stage)
+            .unwrap();
+        assert!(
+            expected
+                .windows(entry.id.to_string().len())
+                .any(|bytes| bytes == entry.id.to_string().as_bytes())
+        );
+    }
+}
+
+#[test]
+fn restore_index_conflict_stops_before_working_merge() {
+    let fixture = SavedFixture::new("sha1", false);
+    let path = fixture.fixture.root.path();
+    success(path, &["stash", "push"]);
+    std::fs::write(path.join("file"), b"different\ntwo\nthree\n").unwrap();
+    success(path, &["add", "file"]);
+    let repo = Repository::open(path).unwrap();
+    let objects = repo.objects().unwrap();
+    let saved = Snapshot::read(&objects, stash_id(path)).unwrap();
+    let input = girt::stash::ApplyInput {
+        index: tree_id(path),
+        occupied: vec![],
+    };
+    let mut options = girt::stash::ApplyOptions::default();
+    options.restore_index = true;
+    let apply = objects
+        .apply_stash(&saved, input.clone(), options, &AtomicBool::new(false))
+        .unwrap();
+    assert!(!apply.is_clean());
+    assert!(
+        apply
+            .index_merge
+            .as_ref()
+            .is_some_and(|result| !result.is_clean())
+    );
+    assert!(apply.index.is_none());
+    assert_eq!(apply.working().tree.id(), input.index);
+    assert!(
+        !support::git(path, &["stash", "apply", "--index"])
+            .status
+            .success()
+    );
+    assert_eq!(tree_id(path), input.index);
+}
+
+#[rstest]
+#[case::identical(b"untracked".as_slice())]
+#[case::parent(b"untracked/child".as_slice())]
+fn untracked_occupied_paths_are_refused_before_publication(#[case] occupied: &[u8]) {
+    let fixture = SavedFixture::new("sha1", true);
+    let path = fixture.fixture.root.path();
+    success(path, &["stash", "push", "-u"]);
+    let repo = Repository::open(path).unwrap();
+    let objects = repo.objects().unwrap();
+    let saved = Snapshot::read(&objects, stash_id(path)).unwrap();
+    let input = girt::stash::ApplyInput {
+        index: tree_id(path),
+        occupied: vec![occupied.to_vec()],
+    };
+    assert!(matches!(
+        objects.apply_stash(
+            &saved,
+            input,
+            girt::stash::ApplyOptions::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::stash::Error::UntrackedCollision(_))
+    ));
+    if occupied == b"untracked" {
+        std::fs::write(path.join("untracked"), b"saved\n").unwrap();
+        assert!(!support::git(path, &["stash", "apply"]).status.success());
+        assert_eq!(std::fs::read(path.join("untracked")).unwrap(), b"saved\n");
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[rstest]
+#[case::ordinary(false)]
+#[case::index(true)]
+fn guarded_apply_then_drop_completes_pop(#[case] restore_index: bool) {
+    let fixture = SavedFixture::new("sha1", true);
+    let path = fixture.fixture.root.path();
+    success(path, &["stash", "push", "-u"]);
+    let repo = Repository::open(path).unwrap();
+    let history = girt::stash::History::read(&repo, girt::stash::LogLimits::default()).unwrap();
+    let objects = repo.objects().unwrap();
+    let saved = Snapshot::read(&objects, history.entries().next().unwrap().new).unwrap();
+    let baseline = tree_id(path);
+    let input = girt::stash::ApplyInput {
+        index: baseline,
+        occupied: vec![],
+    };
+    let mut options = girt::stash::ApplyOptions::default();
+    options.restore_index = restore_index;
+    let apply = objects
+        .apply_stash(&saved, input, options, &AtomicBool::new(false))
+        .unwrap();
+    let plan = apply
+        .prepare_checkout(&objects, &girt::merge::MarkerOptions::default())
+        .unwrap();
+    let report = repo.checkout_merge(Some(baseline), &plan).unwrap();
+    assert!(report.index_published);
+    assert_eq!(
+        repo.read_index(Default::default())
+            .unwrap()
+            .unwrap()
+            .tree_id(),
+        apply.index.as_ref().unwrap().tree_id()
+    );
+    assert_eq!(
+        std::fs::read(path.join("file")).unwrap(),
+        b"ONE\ntwo\nTHREE\n"
+    );
+    assert_eq!(std::fs::read(path.join("untracked")).unwrap(), b"saved\n");
+    // Drop is separate and follows only a successful working-file/index publication.
+    history.drop(0).unwrap().publish(&repo).unwrap();
+    assert!(success(path, &["stash", "list"]).is_empty());
+    assert_eq!(head(path), fixture.input.head);
+}
+
+#[rstest]
+#[case::file_to_directory(true)]
+#[case::directory_to_file(false)]
+fn ordinary_apply_displaces_index_parent_child_clashes(#[case] file_to_directory: bool) {
+    let fixture = Fixture::new("sha1");
+    let path = fixture.root.path();
+    if !file_to_directory {
+        success(path, &["rm", "file"]);
+        std::fs::create_dir(path.join("file")).unwrap();
+        std::fs::write(path.join("file/child"), b"old child\n").unwrap();
+        success(path, &["add", "-A"]);
+        success(path, &["commit", "-m", "directory base"]);
+    }
+    success(path, &["rm", "-r", "file"]);
+    if file_to_directory {
+        std::fs::create_dir(path.join("file")).unwrap();
+        std::fs::write(path.join("file/child"), b"new child\n").unwrap();
+    } else {
+        std::fs::write(path.join("file"), b"replacement file\n").unwrap();
+    }
+    success(path, &["add", "-A"]);
+    success(path, &["stash", "push"]);
+    std::fs::write(path.join("other"), b"preserved staged edit\n").unwrap();
+    success(path, &["add", "other"]);
+    let repo = Repository::open(path).unwrap();
+    let objects = repo.objects().unwrap();
+    let saved = Snapshot::read(&objects, stash_id(path)).unwrap();
+    let input = girt::stash::ApplyInput {
+        index: tree_id(path),
+        occupied: vec![],
+    };
+    let apply = objects
+        .apply_stash(
+            &saved,
+            input,
+            girt::stash::ApplyOptions::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(apply.is_clean());
+    success(path, &["stash", "apply"]);
+    assert_eq!(
+        apply.index.as_ref().unwrap().tree_id().unwrap(),
+        tree_id(path)
+    );
+    success(path, &["add", "-A"]);
+    assert_eq!(apply.working().tree.id(), tree_id(path));
+}
