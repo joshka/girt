@@ -206,6 +206,7 @@ from_domain_errors! {
     crate::fsck::LostFoundCause,
     crate::fsck::LostFoundError,
     crate::fsck::PolicyError,
+    crate::fsck::TransferError,
     crate::fsmonitor::Error,
     crate::index::Error,
     crate::index::SparseError,

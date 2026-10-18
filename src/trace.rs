@@ -159,6 +159,7 @@ pub(crate) fn push_failure(error: &crate::push::PushFailure) -> &'static str {
         Destination(_) => "invalid_input",
         QuarantineCleanup { source, .. } => io(source),
         Install(error) => fetch(error),
+        Integrity(error) => integrity(error),
         Reference(error) => reference(error),
         ObjectFormat(_) | Unsupported(_) => "unsupported",
         #[cfg(feature = "http")]
@@ -248,6 +249,7 @@ pub(crate) fn fetch_finish(
     span.record("effects", "possibly_partial");
     match error.source.as_ref() {
         Installation(e) | BeforePublication(e) => fetch(e),
+        Integrity(error) => integrity(error),
         Publication(e) => transaction(e, span),
         Safety(_) => "precondition",
         Shallow(e) => match e {
@@ -349,6 +351,19 @@ pub(crate) fn peel(error: &crate::PeelError) -> &'static str {
         Tag(_) | Commit(_) | Cycle => "corrupt",
         Kind { .. } => "wrong_kind",
         Depth | Bytes => "limit",
+        Cancelled => "cancelled",
+    }
+}
+
+pub(crate) fn integrity(error: &crate::fsck::TransferError) -> &'static str {
+    use crate::fsck::TransferError::*;
+    match error {
+        Config(_) | Policy(_) => "invalid_input",
+        Read(error) => object(error),
+        Artifact(error) => fetch(error),
+        Io(error) => io(error),
+        Rejected(_) => "corrupt",
+        Limit(_) => "limit",
         Cancelled => "cancelled",
     }
 }

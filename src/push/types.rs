@@ -508,6 +508,8 @@ pub struct PushReport {
     pub progress: Vec<Vec<u8>>,
     /// Native receive warnings that did not reject a reference.
     pub warnings: Vec<Vec<u8>>,
+    /// Optional native received-pack integrity report, completed before installation or hooks.
+    pub integrity: Option<crate::fsck::TransferReport>,
 }
 impl PushReport {
     pub(super) fn pending(commands: &[PushCommand]) -> Self {
@@ -515,6 +517,7 @@ impl PushReport {
             unpack: None,
             progress: vec![],
             warnings: vec![],
+            integrity: None,
             refs: commands
                 .iter()
                 .cloned()
@@ -700,6 +703,9 @@ pub enum PushFailure {
         failure: Option<Box<PushError>>,
     },
 
+    /// Native receive integrity policy refused the pack before hooks or installation.
+    #[error("receive integrity policy")]
+    Integrity(#[source] Box<crate::fsck::TransferError>),
     /// Native local destination could not be opened.
     #[error("local destination")]
     Destination(#[source] Box<crate::OpenError>),

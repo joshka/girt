@@ -950,7 +950,19 @@ impl FetchReady {
         cancel: &AtomicBool,
     ) -> Result<RetainedFetchReady, RetainedFetchFinishError> {
         let mut report = self.take_report();
-        let prepare = || {
+        let mut prepare = || {
+            report.integrity = self
+                .received
+                .enforce_fsck(
+                    self.request.repository.config(),
+                    crate::fsck::Scope::Fetch,
+                    self.request
+                        .repository
+                        .worktree()
+                        .unwrap_or(self.request.repository.git_dir()),
+                    cancel,
+                )
+                .map_err(|error| FetchFinishFailure::Integrity(Box::new(error)))?;
             let checksum = self
                 .received
                 .retention_checksum(&self.request.repository, cancel)
@@ -1063,6 +1075,18 @@ impl FetchReady {
         cancel: &AtomicBool,
         report: &mut FetchReport,
     ) -> Result<(), Box<FetchFinishFailure>> {
+        report.integrity = self
+            .received
+            .enforce_fsck(
+                self.request.repository.config(),
+                crate::fsck::Scope::Fetch,
+                self.request
+                    .repository
+                    .worktree()
+                    .unwrap_or(self.request.repository.git_dir()),
+                cancel,
+            )
+            .map_err(|error| FetchFinishFailure::Integrity(Box::new(error)))?;
         let mut shallow_lock = self.lock_shallow(false, cancel)?;
         report.installed = Some(
             self.received
@@ -1083,6 +1107,7 @@ impl FetchReady {
             pack_bytes: self.received.pack_bytes(),
             objects: self.received.object_count(),
             installed: None,
+            integrity: None,
             references: Vec::new(),
             shallow_published: false,
             missing: self
@@ -1573,6 +1598,9 @@ pub struct FetchReport {
     /// Successful installation/reuse, including known-only installation with no pack.
     /// `None` on failure does not exclude an unindexed residual pack.
     pub installed: Option<FetchInstalled>,
+    /// Optional accepted received-pack check, completed before installation.
+    /// Rejected findings are retained in the failure's [`crate::fsck::TransferError::Rejected`].
+    pub integrity: Option<crate::fsck::TransferReport>,
     /// Shallow metadata was replaced after object installation, before reference publication.
     pub shallow_published: bool,
     /// Successful transaction effects for changed entries only. On transaction failure, consult
@@ -1722,6 +1750,9 @@ pub struct FetchFinishError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FetchFinishFailure {
+    /// Configured received-pack integrity policy refused the pack before installation.
+    #[error("fetch integrity policy")]
+    Integrity(#[from] Box<crate::fsck::TransferError>),
     /// Installation failed; refs unchanged, possibly leaving an unindexed pack.
     #[error("fetch installation")]
     Installation(#[source] FetchError),
