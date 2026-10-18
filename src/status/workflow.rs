@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use super::{Baseline, Error, Limits, Report, Untracked, UntrackedFiles};
 use crate::Repository;
 use crate::ignore::WorktreeRules;
+use crate::pathspec::Pathspec;
 
 impl Repository {
     /// Compares a baseline tree with the index, then verifies literal working-tree content.
@@ -25,6 +26,11 @@ impl Repository {
     /// index's.
     ///
     /// Intent-to-add and skip-worktree entries are refused pending explicit consumer policy.
+    ///
+    /// `paths` limits the report to paths the [`Pathspec`] selects, as `git status -- <pathspec>`
+    /// does; pass [`Pathspec::all`] for the whole worktree. Directories the pathspec cannot reach
+    /// are not entered and unselected files are not read. A pathspec with `attr:` magic is
+    /// refused with [`Error::Unsupported`].
     ///
     /// macOS/Linux traversal opens components relative to directory descriptors with no-follow
     /// flags. It never follows symlink ancestors, enters `.git` components or descends into
@@ -66,6 +72,7 @@ impl Repository {
     /// use std::sync::atomic::AtomicBool;
     ///
     /// use girt::Repository;
+    /// use girt::pathspec::Pathspec;
     /// use girt::status::{Baseline, Limits, Untracked};
     ///
     /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
@@ -79,6 +86,7 @@ impl Repository {
     /// let report = repository.raw_status_with(
     ///     Baseline::Head,
     ///     Untracked::Omit,
+    ///     &Pathspec::all(),
     ///     Limits::default(),
     ///     &AtomicBool::new(false),
     /// )?;
@@ -94,6 +102,7 @@ impl Repository {
         &self,
         baseline: Baseline,
         untracked: Untracked,
+        paths: &Pathspec,
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Report, Error> {
@@ -103,12 +112,13 @@ impl Repository {
             self,
             baseline,
             super::worktree::Listing::Raw(untracked),
+            paths,
             limits,
             cancel,
         );
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let _ = (baseline, untracked, limits);
+            let _ = (baseline, untracked, paths, limits);
             Err(Error::Unsupported {
                 path: vec![],
                 reason: "descriptor-relative worktree traversal requires macOS/Linux",
@@ -118,9 +128,10 @@ impl Repository {
 
     /// Reports raw status with [`Limits::default`] and no cancellation.
     ///
-    /// Equivalent to `self.raw_status_with(baseline, untracked, Limits::default(), &never)` with a
-    /// flag that is never set; see [`Self::raw_status_with`] for the raw-content policy, platform
-    /// support and concurrency checks. `baseline` and `untracked` remain the caller's choice.
+    /// Equivalent to `self.raw_status_with(baseline, untracked, &Pathspec::all(),
+    /// Limits::default(), &never)` with a flag that is never set; see [`Self::raw_status_with`] for
+    /// the raw-content policy, platform support and concurrency checks. `baseline` and
+    /// `untracked` remain the caller's choice.
     ///
     /// # Errors
     ///
@@ -129,6 +140,7 @@ impl Repository {
         self.raw_status_with(
             baseline,
             untracked,
+            &Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false),
         )
@@ -148,6 +160,11 @@ impl Repository {
     /// `.gitignore` overrides a shallower one, and `.gitignore` overrides `info/exclude`, which
     /// overrides the global file; the last matching line within a file wins.
     ///
+    /// Under a pathspec, an untracked directory is listed as one
+    /// [`UntrackedKind::Directory`](super::UntrackedKind::Directory) entry only when the
+    /// pathspec matches the directory itself (its path with a trailing `/`), as Git does:
+    /// `new`, `new/` and `n*` list `new`, while `*.txt` lists the matching files inside it.
+    ///
     /// A tracked path is never ignored. An ignored directory is not entered unless it holds tracked
     /// paths, and then only to inspect them: its untracked contents stay ignored, as in Git.
     /// Ignored directories therefore cost nothing beyond one directory entry. A `.gitignore`
@@ -165,6 +182,7 @@ impl Repository {
     ///
     /// use girt::Repository;
     /// use girt::config::ConfigInputs;
+    /// use girt::pathspec::Pathspec;
     /// use girt::status::{Baseline, Limits, UntrackedFiles, UntrackedKind};
     /// use girt::workflow::Environment;
     ///
@@ -194,6 +212,7 @@ impl Repository {
     ///     Baseline::Head,
     ///     UntrackedFiles::All,
     ///     &rules,
+    ///     &Pathspec::all(),
     ///     Limits::default(),
     ///     &AtomicBool::new(false),
     /// )?;
@@ -217,6 +236,7 @@ impl Repository {
         baseline: Baseline,
         untracked: UntrackedFiles,
         ignore: &WorktreeRules,
+        paths: &Pathspec,
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Report, Error> {
@@ -226,12 +246,13 @@ impl Repository {
             self,
             baseline,
             super::worktree::Listing::Ignoring(Box::new(ignore.base().clone()), untracked),
+            paths,
             limits,
             cancel,
         );
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let _ = (baseline, untracked, ignore, limits);
+            let _ = (baseline, untracked, ignore, paths, limits);
             Err(Error::Unsupported {
                 path: vec![],
                 reason: "descriptor-relative worktree traversal requires macOS/Linux",
@@ -241,7 +262,8 @@ impl Repository {
 
     /// Reports ignore-aware status with [`Limits::default`] and no cancellation.
     ///
-    /// Equivalent to `self.status_with(baseline, untracked, ignore, Limits::default(), &never)`
+    /// Equivalent to `self.status_with(baseline, untracked, ignore, &Pathspec::all(),
+    /// Limits::default(), &never)`
     /// with a flag that is never set; see [`Self::status_with`] for how ignore rules apply.
     /// Load `ignore` with [`Self::ignore_rules`].
     ///
@@ -258,6 +280,7 @@ impl Repository {
             baseline,
             untracked,
             ignore,
+            &Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false),
         )
@@ -277,20 +300,28 @@ mod supported {
         repo: &Repository,
         baseline: Baseline,
         listing: Listing,
+        paths: &Pathspec,
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Report, Error> {
-        run_with_checkpoint(repo, baseline, listing, limits, cancel, || {})
+        run_with_checkpoint(repo, baseline, listing, paths, limits, cancel, || {})
     }
 
     fn run_with_checkpoint(
         repo: &Repository,
         baseline: Baseline,
         listing: Listing,
+        paths: &Pathspec,
         mut limits: Limits,
         cancel: &AtomicBool,
         before_recheck: impl FnOnce(),
     ) -> Result<Report, Error> {
+        if paths.uses_attributes() {
+            return Err(Error::Unsupported {
+                path: vec![],
+                reason: "attr: pathspec magic in status",
+            });
+        }
         let root = repo.worktree().ok_or_else(|| Error::Unsupported {
             path: vec![],
             reason: if repo.is_bare() {
@@ -346,6 +377,9 @@ mod supported {
         let mut gitlinks = Vec::new();
         for entry in entries {
             check(cancel)?;
+            if !paths.matches(&entry.path) {
+                continue;
+            }
             if entry.stage != index::Stage::Normal {
                 unmerged.push(entry.clone());
             } else if entry.mode == index::Mode::Gitlink {
@@ -354,9 +388,12 @@ mod supported {
         }
         // Without conflicts the index has trees of its own, so the comparison skips every
         // baseline subtree whose identity equals the index's and reads only the rest.
+        let conflicted = entries
+            .iter()
+            .any(|entry| entry.stage != index::Stage::Normal);
         let trees = index
             .as_ref()
-            .filter(|_| unmerged.is_empty())
+            .filter(|_| !conflicted)
             .and_then(|index| index.trees(cancel));
         check(cancel)?;
         let staged = match trees {
@@ -365,6 +402,8 @@ mod supported {
             }
             None => flattened_staged(&objects, tree, entries, limits, cancel)?,
         };
+        let mut staged = staged;
+        staged.retain(|change| paths.matches(&change.path));
         let (untracked_policy, untracked_files) = match &listing {
             Listing::Raw(policy) => (*policy, None),
             Listing::Ignoring(_, files) => (Untracked::Omit, Some(*files)),
@@ -375,6 +414,7 @@ mod supported {
             entries,
             index_written,
             listing,
+            paths,
             limits,
             cancel,
         )?;
@@ -394,7 +434,11 @@ mod supported {
             baseline_tree: tree,
             index_missing: index.is_none(),
             staged,
-            unstaged: observed.changes,
+            unstaged: observed
+                .changes
+                .into_iter()
+                .filter(|change| paths.matches(&change.path))
+                .collect(),
             unmerged,
             unchecked_gitlinks: gitlinks,
             untracked_policy,
@@ -506,6 +550,7 @@ mod supported {
                 &repo,
                 Baseline::Head,
                 Listing::Raw(Untracked::Omit),
+                &Pathspec::all(),
                 Limits::default(),
                 &AtomicBool::new(false),
                 || {

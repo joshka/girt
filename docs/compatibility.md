@@ -3198,4 +3198,13 @@ the same way against a `.gitattributes` file, through `Pathspec::matches_with` a
 `girt::attributes`. Git's errors for an empty list, a second `attr:`, an invalid name and a trailing
 escape are matched.
 
-Limitations: absolute paths are rejected even when they name a path inside the worktree.
+`Repository::status_with` and `raw_status_with` take a `Pathspec`. `tests/status_pathspec.rs`
+compares `git status --porcelain -- <pathspec>` with girt's report for 31 spec lists, in both
+`-unormal` (collapsed untracked directories) and `-uall` modes, and from a subdirectory. Git lists
+an untracked directory as `dir/` only when the pathspec matches `dir/` itself; otherwise it lists
+the matching files inside, and girt does the same. With only exclude specs, `git status` starts from
+the whole repository while `git ls-files` starts from the current directory;
+`Context::with_excludes_from_root` selects between them.
+
+Limitations: absolute paths are rejected even when they name a path inside the worktree, and status
+refuses `attr:` magic.

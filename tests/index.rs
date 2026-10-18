@@ -642,6 +642,7 @@ fn raw_workflows_refuse_extended_flags_without_mutation(
         repo.raw_status_with(
             girt::status::Baseline::Tree(Some(tree)),
             girt::status::Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             girt::status::Limits::default(),
             &cancel
         ),
@@ -1780,6 +1781,7 @@ fn sparse_pattern_modes_preserve_git_skip_flags(
         repo.raw_status_with(
             girt::status::Baseline::Head,
             girt::status::Untracked::RawFilesWithoutIgnores,
+            &girt::pathspec::Pathspec::all(),
             girt::status::Limits::default(),
             &std::sync::atomic::AtomicBool::new(false),
         ),

@@ -581,6 +581,7 @@ fn packed_history_checkout_and_status_use_repository_format(#[case] format: Obje
         .raw_status_with(
             Baseline::Head,
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Default::default(),
             &AtomicBool::new(false),
         )
@@ -594,6 +595,7 @@ fn packed_history_checkout_and_status_use_repository_format(#[case] format: Obje
         .raw_status_with(
             Baseline::Head,
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Default::default(),
             &AtomicBool::new(false),
         )

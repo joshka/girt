@@ -86,6 +86,7 @@ fn status(repo: &Repository) -> Report {
     repo.raw_status_with(
         Baseline::Head,
         Untracked::RawFilesWithoutIgnores,
+        &girt::pathspec::Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
     )
@@ -265,6 +266,7 @@ fn detached_head_and_explicit_tree_use_verified_storage(
         .raw_status_with(
             Baseline::Tree(head.baseline_tree),
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false),
         )
@@ -350,6 +352,7 @@ fn raw_policy_exposes_ignored_files_and_normalization_difference() {
         .raw_status_with(
             Baseline::Head,
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false),
         )
@@ -437,6 +440,7 @@ fn invalid_index_is_an_error_without_writes() {
     let result = repo.raw_status_with(
         Baseline::Head,
         Untracked::Omit,
+        &girt::pathspec::Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
     );
@@ -453,6 +457,7 @@ fn missing_index_blob_is_not_read_when_working_file_is_missing() {
         .raw_status_with(
             Baseline::Tree(None),
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false),
         )
@@ -477,6 +482,7 @@ fn cancellation_precedes_any_storage_read() {
         repo.raw_status_with(
             Baseline::Head,
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(true)
         ),
@@ -533,6 +539,7 @@ fn index_identity_is_compared_without_reading_its_object() {
         .raw_status_with(
             Baseline::Tree(None),
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false),
         )
@@ -656,6 +663,7 @@ fn matching_stat_words_are_trusted_unless_racy(
         .raw_status_with(
             Baseline::Tree(None),
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false),
         )
@@ -693,6 +701,7 @@ fn missing_baseline_tree_is_not_an_empty_tree() {
                 b"absent"
             ))),
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false)
         ),
@@ -712,6 +721,7 @@ fn workflow_enforces_composed_resource_bounds(#[case] limits: Limits) {
         repo.raw_status_with(
             Baseline::Head,
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             limits,
             &AtomicBool::new(false)
         )
@@ -741,6 +751,7 @@ fn unsafe_index_bytes_do_not_reach_filesystem_traversal() {
         repo.raw_status_with(
             Baseline::Head,
             Untracked::Omit,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false)
         ),
@@ -815,6 +826,7 @@ fn distinguishes_worktree_and_file_byte_limits(
     let result = repo.raw_status_with(
         Baseline::Head,
         Untracked::Omit,
+        &girt::pathspec::Pathspec::all(),
         Limits::default()
             .with_max_file_bytes(file_bytes)
             .with_max_worktree_bytes(total_bytes),
@@ -842,6 +854,7 @@ fn macos_unicode_worktree_paths_are_explicitly_refused() {
     let result = repo.raw_status_with(
         Baseline::Head,
         Untracked::RawFilesWithoutIgnores,
+        &girt::pathspec::Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
     );
@@ -882,6 +895,7 @@ fn intent_to_add_status_is_explicitly_refused() {
         repo.raw_status_with(
             Baseline::Head,
             Untracked::RawFilesWithoutIgnores,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false)
         ),
@@ -973,6 +987,7 @@ fn case_alias_status_requires_git_policy() {
     let observation = repo.raw_status_with(
         Baseline::Head,
         Untracked::RawFilesWithoutIgnores,
+        &girt::pathspec::Pathspec::all(),
         Limits::default(),
         &AtomicBool::new(false),
     );
@@ -996,6 +1011,7 @@ fn valid_posix_path_characters_are_explicitly_refused(#[case] path: &str) {
         repo.raw_status_with(
             Baseline::Head,
             Untracked::RawFilesWithoutIgnores,
+            &girt::pathspec::Pathspec::all(),
             Limits::default(),
             &AtomicBool::new(false)
         ),

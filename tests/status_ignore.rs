@@ -367,6 +367,7 @@ fn ignored_directories_are_not_traversed() {
             Baseline::Head,
             UntrackedFiles::All,
             &rules,
+            &girt::pathspec::Pathspec::all(),
             limits,
             &std::sync::atomic::AtomicBool::new(false),
         )
@@ -375,6 +376,7 @@ fn ignored_directories_are_not_traversed() {
     let raw = repo.raw_status_with(
         Baseline::Head,
         girt::status::Untracked::RawFilesWithoutIgnores,
+        &girt::pathspec::Pathspec::all(),
         limits,
         &std::sync::atomic::AtomicBool::new(false),
     );
