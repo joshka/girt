@@ -58,6 +58,10 @@
 //! operations remain applied; inspect the report and actual files before recovery, rather than
 //! blindly retrying.
 //!
+//! [`crate::Repository::checkout_merge`] uses the same guarded execution with a prepared marker
+//! tree and original conflict stages. It validates the separate staged replacement before
+//! working-file mutation and publishes it under the held index guard. See [`crate::merge`].
+//!
 //! # Example
 //!
 //! Materialize a tree into a new working tree whose index is still absent, as after a no-checkout
@@ -109,3 +113,5 @@ mod workflow;
 mod worktree;
 
 pub use types::*;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use worktree::run_with_index;

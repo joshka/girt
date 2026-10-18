@@ -27,10 +27,14 @@
 //! [`crate::Objects::merge_commits`] discovers ancestors and recursively synthesizes clean
 //! virtual bases, retaining all generated objects without publication. Conflicted virtual bases
 //! return an explicit error with the intermediate result.
+//! [`TreeMerge::prepare_checkout`] prepares marker working bytes and original conflict stages.
+//! [`crate::Repository::checkout_merge`] publishes them through guarded checkout; computation
+//! remains separate from mutable working-file and index publication.
 mod commits;
 mod content;
 mod driver;
 mod memory;
+mod publication;
 mod renames;
 mod render;
 mod tree;
@@ -39,6 +43,7 @@ mod types;
 pub use commits::{CommitError, CommitMerge, CommitOptions};
 pub use content::{content, content_with};
 pub use driver::{Driver, DriverError};
+pub use publication::{MergeCheckout, PreparationLimits, PublicationError};
 pub use renames::{RenameError, TreeMergeOptions};
 pub use tree::{ConflictKind, TreeConflict, TreeError, TreeMerge, TreeOptions};
 pub use types::{

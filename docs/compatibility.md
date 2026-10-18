@@ -2995,3 +2995,20 @@ Unresolved virtual bases remain an explicit typed error with their intermediate 
 conflict-bearing recursive-base compatibility is a separate increment. The rename-layout and
 content-refinement limitations above still apply. No reference or merge commit is implicitly
 published.
+
+## Merge Conflict Publication
+
+`tests/merge_publication.rs` generates original trees in disposable Git repositories, writes
+conflict files through guarded checkout and compares `git ls-files -u` with the prepared original
+stage paths, modes and IDs. Marker bytes are checked exactly. Preservation cases cover dirty tracked
+content/index bytes, untracked obstructions and foreign index locks. Pre-publication cancellation
+preserves objects and working content; edited generated blob identities and marker output exhaustion
+are refused during preparation.
+
+Publication reuses the checkout mutation engine and its no-follow paths, baseline/target
+verification, held index guard, cancellation and partial reports. The staged replacement is
+validated under that guard before working-file mutation and published last. Existing checkout
+fault/race tests cover the shared engine. The same Linux/macOS/path/gitlink restrictions and
+caller-owned writer exclusion apply; no batch rollback or crash durability is added. Directory
+conflicts require explicit leaf expansion before publication. Resolve-undo remains index codec data;
+this increment does not add rerere or automatic conflict resolution.

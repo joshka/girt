@@ -42,6 +42,46 @@ pub(super) fn run_observed(
     hook: &mut Hook<'_>,
     progress: &mut impl FnMut(u64, u64),
 ) -> Result<Report, Failure> {
+    run_inner(
+        repo,
+        [baseline, target],
+        None,
+        limits,
+        cancel,
+        hook,
+        progress,
+    )
+}
+
+pub(crate) fn run_with_index(
+    repo: &Repository,
+    baseline: Option<ObjectId>,
+    target: ObjectId,
+    entries: &[index::Entry],
+    limits: Limits,
+    cancel: &AtomicBool,
+) -> Result<Report, Failure> {
+    run_inner(
+        repo,
+        [baseline, Some(target)],
+        Some(entries),
+        limits,
+        cancel,
+        &mut |_, _| Ok(()),
+        &mut |_, _| {},
+    )
+}
+
+fn run_inner(
+    repo: &Repository,
+    roots: [Option<ObjectId>; 2],
+    replacement: Option<&[index::Entry]>,
+    limits: Limits,
+    cancel: &AtomicBool,
+    hook: &mut Hook<'_>,
+    progress: &mut impl FnMut(u64, u64),
+) -> Result<Report, Failure> {
+    let [baseline, target] = roots;
     let mut report = Report::default();
     let mut cleanup = Vec::new();
     let mut lock = None;
@@ -61,6 +101,9 @@ pub(super) fn run_observed(
         lock = Some(edit);
         let edit = lock.as_mut().unwrap();
         let mut plan = Plan::prepare(repo, root, baseline, target, edit, limits, cancel)?;
+        if let Some(entries) = replacement {
+            edit.replace_entries(entries.to_vec())?;
+        }
         hook("prepared", b"")?;
         check(cancel)?;
         let total = plan.operations.len() as u64;
