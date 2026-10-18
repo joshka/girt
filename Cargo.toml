@@ -18,7 +18,7 @@ members = [".", "girt-cli"]
 [features]
 tracing = ["dep:tracing"]
 ssh = ["dep:tokio", "tokio/net", "dep:libc", "rustix/termios"]
-http = ["dep:reqwest", "dep:tokio", "dep:futures-util"]
+http = ["dep:reqwest", "dep:tokio", "dep:futures-util", "dep:rustls", "dep:rustls-platform-verifier"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -28,6 +28,9 @@ jiff = "0.2"
 tracing = { version = "0.1.40", optional = true, default-features = false, features = ["std"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", optional = true, default-features = false, features = ["rustls", "stream"] }
+# The versions reqwest uses, for the certificate-check hook's own TLS configuration.
+rustls = { version = "0.23.46", optional = true, default-features = false, features = ["aws_lc_rs", "std"] }
+rustls-platform-verifier = { version = "0.7", optional = true }
 tokio = { version = "1.4", optional = true, features = ["rt", "time", "macros", "fs", "io-util"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 crc32fast = "1"

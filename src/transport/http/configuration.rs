@@ -2,7 +2,7 @@
 
 use reqwest::Url;
 
-use super::HttpError;
+use super::{CertificateCheck, HttpError};
 use crate::Config;
 use crate::config::boolean;
 use crate::remote::{Destination, Protocol};
@@ -54,6 +54,10 @@ pub struct HttpEnvironment {
     pub proxy_credentials: Option<(String, String)>,
     /// Explicit application authorization for disabling certificate and hostname checks.
     pub allow_insecure_tls: bool,
+    /// The application's decision about each server certificate, see [`CertificateCheck`].
+    ///
+    /// Without one, girt's own verification decides.
+    pub certificate_check: Option<std::sync::Arc<dyn CertificateCheck>>,
     /// `GIT_HTTP_USER_AGENT` selected by the application. It takes precedence over
     /// `http.userAgent`.
     pub user_agent: Option<String>,
@@ -104,6 +108,16 @@ impl HttpEnvironment {
     #[must_use]
     pub fn with_proxy_credentials(mut self, proxy_credentials: Option<(String, String)>) -> Self {
         self.proxy_credentials = proxy_credentials;
+        self
+    }
+
+    /// Sets [`Self::certificate_check`].
+    #[must_use]
+    pub fn with_certificate_check(
+        mut self,
+        certificate_check: Option<std::sync::Arc<dyn CertificateCheck>>,
+    ) -> Self {
+        self.certificate_check = certificate_check;
         self
     }
 
@@ -184,6 +198,7 @@ pub struct HttpSettings {
     pub(super) url: String,
     pub(super) roots: Vec<Vec<u8>>,
     pub(super) client_identity: Option<Vec<u8>>,
+    pub(super) certificate_check: Option<std::sync::Arc<dyn CertificateCheck>>,
     pub(super) proxy: Option<String>,
     pub(super) no_proxy: Option<String>,
     pub(super) proxy_credentials: Option<(String, String)>,
@@ -464,6 +479,7 @@ impl HttpSettings {
             url,
             roots,
             client_identity,
+            certificate_check: environment.certificate_check.clone(),
             proxy,
             no_proxy: environment.no_proxy.clone(),
             proxy_credentials: environment.proxy_credentials.clone(),

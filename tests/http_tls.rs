@@ -1,6 +1,7 @@
 //! TLS file settings compared with the Git CLI against a loopback HTTPS server that requires a
-//! client certificate. OpenSSL generates disposable CAs, a localhost server leaf and a client leaf;
-//! no system trust store or real remote is used or modified.
+//! client certificate, and the application's certificate check, which Git has no equivalent of.
+//! OpenSSL generates disposable CAs, a localhost server leaf and a client leaf; no system trust
+//! store or real remote is used or modified.
 #![cfg(feature = "http")]
 #[allow(dead_code)]
 #[path = "support/http_git.rs"]
@@ -11,9 +12,11 @@ mod pack_git;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 use girt::Repository;
-use girt::workflow::{Environment, NoCallbacks};
+use girt::transport::http::{CertificateCheck, CertificateDecision, ServerCertificate};
+use girt::workflow::{Environment, NoCallbacks, TransferCallbacks};
 use http_git::Server;
 use pack_git::{Fixture, git};
 use rstest::rstest;
@@ -205,4 +208,209 @@ fn password_protected_certificates_are_refused() {
         resolved,
         Err(girt::transport::http::HttpError::Configuration(_))
     ));
+}
+
+// Records what the check saw and answers with a fixed decision.
+struct Checking {
+    decision: fn(&ServerCertificate<'_>, &[u8]) -> CertificateDecision,
+    pinned: Vec<u8>,
+    seen: Arc<Mutex<Vec<(String, usize, bool)>>>,
+}
+
+impl TransferCallbacks for Checking {
+    fn certificate_check(&self) -> Option<Arc<dyn CertificateCheck>> {
+        let decision = self.decision;
+        let pinned = self.pinned.clone();
+        let seen = self.seen.clone();
+        Some(Arc::new(move |server: &ServerCertificate<'_>| {
+            seen.lock().unwrap().push((
+                server.host().to_owned(),
+                server.intermediates().len(),
+                server.verification().is_ok(),
+            ));
+            decision(server, &pinned)
+        }))
+    }
+}
+
+fn accept_pinned(server: &ServerCertificate<'_>, pinned: &[u8]) -> CertificateDecision {
+    if server.end_entity() == pinned {
+        CertificateDecision::Accept
+    } else {
+        CertificateDecision::UseDefault
+    }
+}
+
+// `trusted` configures the fixture CA with `http.sslCAInfo`; otherwise girt's own verification
+// fails with an unknown issuer.
+#[rstest]
+#[case::pinned_untrusted_certificate(false, accept_pinned, true, true)]
+#[case::pin_mismatch_keeps_failure(false, |_: &ServerCertificate<'_>, _: &[u8]| CertificateDecision::UseDefault, false, true)]
+#[case::reject_trusted_certificate(true, |_: &ServerCertificate<'_>, _: &[u8]| CertificateDecision::Reject, false, true)]
+#[case::default_keeps_trust(true, |_: &ServerCertificate<'_>, _: &[u8]| CertificateDecision::UseDefault, true, true)]
+#[case::accept_overrides_unknown_issuer(false, |_: &ServerCertificate<'_>, _: &[u8]| CertificateDecision::Accept, true, true)]
+fn certificate_check_decides_server_trust(
+    #[case] trusted: bool,
+    #[case] decision: fn(&ServerCertificate<'_>, &[u8]) -> CertificateDecision,
+    #[case] succeeds: bool,
+    #[case] checked: bool,
+) {
+    let certs = tempfile::tempdir().unwrap();
+    certificates(certs.path());
+    openssl(
+        certs.path(),
+        &[
+            "x509",
+            "-in",
+            "server.pem",
+            "-outform",
+            "der",
+            "-out",
+            "server.der",
+        ],
+    );
+    let pinned = if trusted {
+        Vec::new()
+    } else {
+        std::fs::read(certs.path().join("server.der")).unwrap()
+    };
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let server = Server::new(
+        source.root.path(),
+        "",
+        "",
+        Some((
+            &certs.path().join("server.pem"),
+            &certs.path().join("server.key"),
+        )),
+    );
+    let local = tempfile::tempdir().unwrap();
+    git(local.path(), &["init", "--quiet", "."], b"");
+    let url = server.url.replace("127.0.0.1", "localhost");
+    git(local.path(), &["remote", "add", "origin", &url], b"");
+    if trusted {
+        let ca = certs.path().join("ca.pem");
+        git(
+            local.path(),
+            &["config", "http.sslCAInfo", ca.to_str().unwrap()],
+            b"",
+        );
+    }
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut callbacks = Checking {
+        decision,
+        pinned,
+        seen: seen.clone(),
+    };
+    let repository = Repository::open(local.path()).unwrap();
+    let environment = Environment::default().with("HOME", local.path());
+    let result = girt::workflow::remote_head(&repository, "origin", &environment, &mut callbacks);
+    assert_eq!(result.is_ok(), succeeds, "{:?}", result.err());
+    let seen = seen.lock().unwrap();
+    assert_eq!(!seen.is_empty(), checked);
+    for (host, intermediates, verified) in seen.iter() {
+        assert_eq!(host, "localhost");
+        assert_eq!(*intermediates, 0);
+        assert_eq!(*verified, trusted);
+    }
+}
+
+// With a check installed girt builds the TLS configuration itself, so client certificates and
+// disabled verification must behave as without one.
+#[rstest]
+#[case::client_certificate(true, false, |_: &ServerCertificate<'_>, _: &[u8]| CertificateDecision::UseDefault, true)]
+#[case::verification_off(false, true, |_: &ServerCertificate<'_>, _: &[u8]| CertificateDecision::UseDefault, true)]
+#[case::verification_off_rejected(false, true, |_: &ServerCertificate<'_>, _: &[u8]| CertificateDecision::Reject, false)]
+fn certificate_check_keeps_tls_settings(
+    #[case] client_certificate: bool,
+    #[case] no_verify: bool,
+    #[case] decision: fn(&ServerCertificate<'_>, &[u8]) -> CertificateDecision,
+    #[case] succeeds: bool,
+) {
+    let certs = tempfile::tempdir().unwrap();
+    certificates(certs.path());
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let tls = (
+        &*certs.path().join("server.pem"),
+        &*certs.path().join("server.key"),
+    );
+    let ca = certs.path().join("ca.pem");
+    let server = if client_certificate {
+        Server::requiring_client_certificate(source.root.path(), tls, &ca)
+    } else {
+        Server::new(source.root.path(), "", "", Some(tls))
+    };
+    let local = tempfile::tempdir().unwrap();
+    git(local.path(), &["init", "--quiet", "."], b"");
+    let url = server.url.replace("127.0.0.1", "localhost");
+    git(local.path(), &["remote", "add", "origin", &url], b"");
+    let mut environment = Environment::default().with("HOME", local.path());
+    if client_certificate {
+        let combined = certs.path().join("combined.pem");
+        for (name, value) in [("http.sslCAInfo", &ca), ("http.sslCert", &combined)] {
+            git(
+                local.path(),
+                &["config", name, value.to_str().unwrap()],
+                b"",
+            );
+        }
+    }
+    if no_verify {
+        environment = environment.with("GIT_SSL_NO_VERIFY", "1");
+    }
+    let mut callbacks = Checking {
+        decision,
+        pinned: Vec::new(),
+        seen: Arc::new(Mutex::new(Vec::new())),
+    };
+    let repository = Repository::open(local.path()).unwrap();
+    let result = girt::workflow::remote_head(&repository, "origin", &environment, &mut callbacks);
+    assert_eq!(result.is_ok(), succeeds, "{:?}", result.err());
+}
+
+// Fetching opens one connection per request; a resumed session would skip the check on the later
+// ones.
+#[test]
+fn certificate_check_runs_for_every_connection() {
+    let certs = tempfile::tempdir().unwrap();
+    certificates(certs.path());
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let server = Server::new(
+        source.root.path(),
+        "",
+        "",
+        Some((
+            &certs.path().join("server.pem"),
+            &certs.path().join("server.key"),
+        )),
+    );
+    let local = tempfile::tempdir().unwrap();
+    git(local.path(), &["init", "--quiet", "."], b"");
+    let url = server.url.replace("127.0.0.1", "localhost");
+    git(local.path(), &["remote", "add", "origin", &url], b"");
+    let ca = certs.path().join("ca.pem");
+    git(
+        local.path(),
+        &["config", "http.sslCAInfo", ca.to_str().unwrap()],
+        b"",
+    );
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut callbacks = Checking {
+        decision: |_, _| CertificateDecision::UseDefault,
+        pinned: Vec::new(),
+        seen: seen.clone(),
+    };
+    let repository = Repository::open(local.path()).unwrap();
+    let environment = Environment::default().with("HOME", local.path());
+    girt::workflow::fetch(
+        &repository,
+        "origin",
+        &girt::workflow::FetchOptions::new(["refs/heads/*:refs/remotes/origin/*"]),
+        &environment,
+        &mut callbacks,
+    )
+    .unwrap();
+    let requests = server.requests().len();
+    assert!(requests >= 2, "{requests}");
+    assert_eq!(seen.lock().unwrap().len(), requests);
 }

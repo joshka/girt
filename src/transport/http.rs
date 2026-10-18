@@ -60,7 +60,9 @@ use reqwest::{Client, Url};
 use super::TransportControl;
 use crate::remote::CredentialSession;
 
+mod certificate;
 mod configuration;
+pub use certificate::{CertificateCheck, CertificateDecision, CertificateError, ServerCertificate};
 pub use configuration::{HttpEnvironment, HttpSettings, TlsPaths};
 
 /// One repository endpoint and explicit headers, usable with [`crate::fetch::receive_http`] and
@@ -211,6 +213,7 @@ struct Tls<'a> {
     // Client certificate and key PEM.
     identity: Option<&'a [u8]>,
     verify: bool,
+    check: Option<Arc<dyn CertificateCheck>>,
 }
 
 enum TrustRoots<'a> {
@@ -248,6 +251,29 @@ impl TrustRoots<'_> {
             Self::Additional(_) => builder.tls_certs_merge(certificates),
         })
     }
+}
+
+// PEM bundles as DER certificates, with the same limits as `TrustRoots::configure`.
+fn pem_certificates(
+    bundles: &[&[u8]],
+) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, HttpError> {
+    use rustls::pki_types::pem::PemObject;
+    let mut certificates = Vec::new();
+    let mut bytes = 0usize;
+    for bundle in bundles {
+        bytes = bytes.saturating_add(bundle.len());
+        if bytes > 1024 * 1024 {
+            return Err(HttpError::Limit("trust roots"));
+        }
+        let parsed = rustls::pki_types::CertificateDer::pem_slice_iter(bundle)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| HttpError::Configuration("trust roots"))?;
+        if parsed.is_empty() {
+            return Err(HttpError::Configuration("empty trust roots"));
+        }
+        certificates.extend(parsed);
+    }
+    Ok(certificates)
 }
 
 // Git sends `http.userAgent` (or its default) first, then `http.extraHeader` fields in order; an
@@ -357,6 +383,7 @@ impl HttpRemote {
                 roots: TrustRoots::Configured(&roots),
                 identity: settings.client_identity.as_deref(),
                 verify: settings.verify_tls,
+                check: settings.certificate_check.clone(),
             },
             settings.proxy.as_deref(),
             settings.no_proxy.as_deref(),
@@ -469,6 +496,7 @@ impl HttpRemote {
                 roots: TrustRoots::Additional(roots),
                 identity: None,
                 verify: true,
+                check: None,
             },
             None,
             None,
@@ -543,16 +571,15 @@ impl HttpRemote {
             }
             builder = builder.proxy(configured);
         }
-        if !tls.verify {
-            builder = builder
-                .danger_accept_invalid_certs(true)
-                .danger_accept_invalid_hostnames(true);
-        }
-        builder = tls.roots.configure(builder)?;
-        if let Some(identity) = tls.identity {
-            let identity = reqwest::Identity::from_pem(identity)
-                .map_err(|_| HttpError::Configuration("TLS client certificate"))?;
-            builder = builder.identity(identity);
+        if let Some(check) = tls.check {
+            builder = builder.tls_backend_preconfigured(certificate::client_config(
+                &tls.roots,
+                tls.identity,
+                tls.verify,
+                check,
+            )?);
+        } else {
+            builder = Self::configure_tls(builder, tls)?;
         }
         let client = builder
             .build()
@@ -567,6 +594,25 @@ impl HttpRemote {
             redirected_base: Mutex::new(None),
             protocol: super::RequestedProtocol::V0,
         })
+    }
+
+    // reqwest's own TLS setup, used when no certificate check is installed.
+    fn configure_tls(
+        mut builder: reqwest::ClientBuilder,
+        tls: Tls<'_>,
+    ) -> Result<reqwest::ClientBuilder, HttpError> {
+        if !tls.verify {
+            builder = builder
+                .danger_accept_invalid_certs(true)
+                .danger_accept_invalid_hostnames(true);
+        }
+        builder = tls.roots.configure(builder)?;
+        if let Some(identity) = tls.identity {
+            let identity = reqwest::Identity::from_pem(identity)
+                .map_err(|_| HttpError::Configuration("TLS client certificate"))?;
+            builder = builder.identity(identity);
+        }
+        Ok(builder)
     }
 
     pub(crate) async fn discover(

@@ -276,6 +276,7 @@ pub fn clone_with(
         Direction::Fetch,
         &base,
         environment,
+        &*callbacks,
     )?;
     let stored_url = if resolved.bytes() != url.as_bytes() || Path::new(url).is_absolute() {
         url.as_bytes().to_vec()
