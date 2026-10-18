@@ -104,8 +104,8 @@
 //!    and `https://` need the `http` feature; `ssh://` and `user@host:path` need the `ssh` feature
 //!    on macOS or Linux. Any other scheme, such as `mem://repo` or `vault::team/project`, uses the
 //!    application's [`Transport`](crate::transport::Transport) from
-//!    [`TransferCallbacks::transport`], for listing, fetch and clone (not yet push); without one,
-//!    and for `git://`, the result is [`TransferError::UnsupportedTransport`].
+//!    [`TransferCallbacks::transport`], for listing, fetch, clone and push; without one, and for
+//!    `git://`, the result is [`TransferError::UnsupportedTransport`].
 //! 3. **Authenticate if asked.** An HTTP server that answers `401 Unauthorized` gets one retry with
 //!    a credential. Configured `credential.helper` programs are asked first; Git's `store` helper
 //!    is answered natively by [`crate::remote::CredentialStore`]. If no helper supplies a value,
@@ -1327,8 +1327,7 @@ pub enum TransferError {
     /// The URL's transport is not available in this build or not supported at all.
     ///
     /// `http(s)://` URLs need the `http` feature and SSH URLs need the `ssh` feature on macOS or
-    /// Linux. Other schemes need an application transport from [`TransferCallbacks::transport`],
-    /// which supports listing, fetch and clone so far; push over one returns this too.
+    /// Linux. Other schemes need an application transport from [`TransferCallbacks::transport`].
     /// girt never runs `git-remote-<helper>` programs, and `git://` is not supported. Holds the
     /// remote name.
     #[error("unsupported transport for remote {0}")]
@@ -2487,15 +2486,38 @@ impl Repository {
             };
             Ok(prepared.with_progress())
         };
-        #[cfg(any(
-            feature = "http",
-            all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-        ))]
         let names: Vec<RefName> = commands.iter().map(|c| c.name.clone()).collect();
         let result = match endpoint {
-            // Push over application transports comes later.
-            Endpoint::Custom(_) => {
-                return Err(TransferError::UnsupportedTransport(remote_name.to_owned()));
+            Endpoint::Custom(custom) => {
+                let connection = custom.connect(crate::transport::Service::ReceivePack)?;
+                let advertised = std::cell::RefCell::new(BTreeMap::new());
+                let result = crate::push::send_preparing(
+                    &mut Half(&connection),
+                    &mut Half(&connection),
+                    format,
+                    limits,
+                    &cancel,
+                    |advertisement| {
+                        record_targets(advertisement, &names, &advertised);
+                        prepare(&advertisement.receiver_roots())
+                    },
+                );
+                // The service's failure explains an exchange that broke before anything was sent;
+                // a local failure stays girt's own, and after a status report the report counts.
+                let finished = connection.into_inner().finish();
+                if let (
+                    Err(crate::push::PushError::NotSent(
+                        crate::push::PushFailure::Io(_) | crate::push::PushFailure::Protocol(_),
+                    )),
+                    Err(error),
+                ) = (&result, finished)
+                {
+                    return Err(error.into());
+                }
+                result.map(|mut report| {
+                    mark_up_to_date(&mut report, &advertised.into_inner());
+                    report
+                })
             }
             Endpoint::Local(path) => {
                 let send = || {
@@ -2672,10 +2694,6 @@ fn tracking_ref(refspecs: &[crate::remote::ConfiguredRefspec], name: &[u8]) -> O
 }
 
 /// Records the advertised values of the pushed references.
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 fn record_targets(
     advertisement: &crate::push::PushAdvertisement,
     names: &[RefName],
@@ -2689,10 +2707,6 @@ fn record_targets(
 
 /// Like Git, treats a rejected reference whose remote value already equals the requested value as
 /// up to date.
-#[cfg(any(
-    feature = "http",
-    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-))]
 fn mark_up_to_date(report: &mut PushReport, advertised: &BTreeMap<RefName, Option<ObjectId>>) {
     for status in &mut report.refs {
         let Some(current) = advertised.get(&status.command.name) else {

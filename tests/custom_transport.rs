@@ -8,9 +8,7 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use girt::Repository;
-use girt::transport::{
-    ChildConnection, ConnectError, ConnectRequest, Connection, Service, Transport,
-};
+use girt::transport::{ChildConnection, ConnectError, ConnectRequest, Connection, Transport};
 use girt::workflow::{Environment, TransferCallbacks, TransferError};
 use pack_git::{Fixture, git};
 use rstest::rstest;
@@ -21,7 +19,6 @@ struct GitService;
 impl Transport for GitService {
     fn connect(&self, request: &ConnectRequest<'_>) -> Result<Box<dyn Connection>, ConnectError> {
         assert_eq!(request.scheme(), b"mem");
-        assert_eq!(request.service(), Service::UploadPack);
         let path = String::from_utf8(request.address().to_vec()).unwrap();
         let mut command = Command::new("git");
         for (key, _) in std::env::vars_os() {
@@ -35,7 +32,7 @@ impl Transport for GitService {
         let child = command
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/nonexistent/girt-test-config")
-            .args(["upload-pack", "--strict", &path])
+            .args([request.service().name().trim_start_matches("git-"), &path])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // A v2 service reports the session girt closes after listing as a hang-up.
@@ -298,4 +295,79 @@ fn failed_service_explains_missing_listing() {
     let error = result.unwrap_err();
     assert!(matches!(error, TransferError::Transport(_)), "{error:?}");
     assert!(error.to_string().contains("exit"), "{error}");
+}
+
+#[test]
+fn push_publishes_like_git_push() {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let scratch = tempfile::tempdir().unwrap();
+    let source = fixture.root.path().to_str().unwrap();
+    git(scratch.path(), &["clone", "--quiet", source, "local"], b"");
+    let local = scratch.path().join("local");
+    git(
+        &local,
+        &[
+            "-c",
+            "user.name=Push",
+            "-c",
+            "user.email=push@example.com",
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "pushed",
+        ],
+        b"",
+    );
+    let pushed = String::from_utf8(git(&local, &["rev-parse", "HEAD"], b""))
+        .unwrap()
+        .trim()
+        .to_owned();
+    let url = format!("mem::{source}");
+    git(&local, &["remote", "set-url", "origin", &url], b"");
+    git(&local, &["config", "protocol.mem.allow", "always"], b"");
+    let repository = Repository::open(&local).unwrap();
+    let report = girt::workflow::push(
+        &repository,
+        "origin",
+        vec![girt::push::PushCommand::new(
+            girt::refs::RefName::new("refs/heads/pushed").unwrap(),
+            None,
+            pushed.parse().unwrap(),
+        )],
+        &girt::workflow::PushOptions::default(),
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(GitService))),
+    )
+    .unwrap();
+    assert!(report.all_succeeded(), "{report:?}");
+    let published = git(
+        fixture.root.path(),
+        &["rev-parse", "refs/heads/pushed"],
+        b"",
+    );
+    assert_eq!(String::from_utf8(published).unwrap().trim(), pushed);
+    git(fixture.root.path(), &["fsck", "--strict"], b"");
+}
+
+// The service exits when girt ends the session without sending; girt's own reason stands.
+#[test]
+fn local_push_failure_is_not_masked_by_the_service() {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let (_directory, repository) = local(&fixture, &[("protocol.mem.allow", "always")]);
+    let main = String::from_utf8(git(fixture.root.path(), &["rev-parse", "HEAD"], b"")).unwrap();
+    // The new, empty repository does not have the object it is asked to push.
+    let result = girt::workflow::push(
+        &repository,
+        "origin",
+        vec![girt::push::PushCommand::new(
+            girt::refs::RefName::new("refs/heads/copy").unwrap(),
+            None,
+            main.trim().parse().unwrap(),
+        )],
+        &girt::workflow::PushOptions::default(),
+        &Environment::default(),
+        &mut Registered(Some(Arc::new(GitService))),
+    );
+    assert!(matches!(result, Err(TransferError::Push(_))), "{result:?}");
 }

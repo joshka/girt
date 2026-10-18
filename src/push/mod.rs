@@ -162,6 +162,7 @@ pub use prepared::PreparedPush;
 pub use progress::PreparationProgress;
 #[cfg(any(fuzzing, test))]
 pub(crate) use protocol::fuzz_exchange;
+pub(crate) use protocol::send_preparing;
 pub use protocol::{PushAdvertisement, send};
 pub use types::{
     ForcePolicy, PushCommand, PushError, PushFailure, PushLimits, PushReport, RefRewrite,
