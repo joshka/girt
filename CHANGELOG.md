@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/joshka/girt/compare/girt-v0.13.0...girt-v0.13.1) - 2026-10-18
+
+### Other
+
+- Reuse validated cache-tree subtrees in write_tree ([#458](https://github.com/joshka/girt/pull/458))
+- Speed up checkout and local clone validation ([#457](https://github.com/joshka/girt/pull/457))
+- Gate macOS/Linux-only status helpers so Windows builds stay warning-free ([#465](https://github.com/joshka/girt/pull/465))
+- Make status trust index stat data and walk the tree in parallel ([#452](https://github.com/joshka/girt/pull/452))
+- Compact ambiguous content diff boundaries ([#451](https://github.com/joshka/girt/pull/451))
+
 ### Changed
 
 - Compact ambiguous content changes and enable indent-aware placement in content diffs, patches and

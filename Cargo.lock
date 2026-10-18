@@ -706,7 +706,7 @@ checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
 name = "girt"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "aws-lc-rs",
  "clap",
@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "girt-cli"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "anstream",
  "clap",
