@@ -243,6 +243,94 @@ impl TrustRoots<'_> {
     }
 }
 
+// Git sends `http.userAgent` (or its default) first, then `http.extraHeader` fields in order; an
+// extra `User-Agent` replaces the agent. Fields that frame or route the request are refused.
+fn configured_headers(settings: &HttpSettings) -> Result<HeaderMap, HttpError> {
+    let mut headers = HeaderMap::new();
+    let agent = settings
+        .user_agent
+        .clone()
+        .unwrap_or_else(|| format!("girt/{}", env!("CARGO_PKG_VERSION")));
+    let mut bytes = "user-agent".len().saturating_add(agent.len());
+    if bytes > 16 * 1024 {
+        return Err(HttpError::Limit("request headers"));
+    }
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        HeaderValue::from_str(&agent).map_err(|_| HttpError::Configuration("user agent"))?,
+    );
+    let mut replaced_agent = false;
+    for (name, value) in &settings.extra_headers {
+        bytes = bytes.saturating_add(name.len()).saturating_add(value.len());
+        if bytes > 16 * 1024 {
+            return Err(HttpError::Limit("request headers"));
+        }
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| HttpError::Configuration("extra header name"))?;
+        if RESERVED_HEADERS.contains(&name.as_str()) {
+            return Err(HttpError::Configuration(
+                "extra header overrides protocol header",
+            ));
+        }
+        let mut value = HeaderValue::from_str(value)
+            .map_err(|_| HttpError::Configuration("extra header value"))?;
+        value.set_sensitive(true);
+        if name == reqwest::header::USER_AGENT && !replaced_agent {
+            replaced_agent = true;
+            headers.insert(name, value);
+        } else {
+            headers.append(name, value);
+        }
+    }
+    Ok(headers)
+}
+
+// Fields girt sets itself or that change how the request is framed or routed.
+const RESERVED_HEADERS: &[&str] = &[
+    "accept",
+    "accept-encoding",
+    "connection",
+    "content-encoding",
+    "content-length",
+    "content-type",
+    "expect",
+    "git-protocol",
+    "host",
+    "keep-alive",
+    "proxy-authorization",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
+
+// Explicit `HttpRemote::new` headers are limited to fields with no protocol meaning.
+fn explicit_headers(headers: &[(&str, &str)]) -> Result<HeaderMap, HttpError> {
+    let mut supplied = HeaderMap::new();
+    let mut bytes = 0usize;
+    for &(name, value) in headers {
+        bytes = bytes.saturating_add(name.len()).saturating_add(value.len());
+        if bytes > 16 * 1024 {
+            return Err(HttpError::Limit("request headers"));
+        }
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| HttpError::Configuration("header name"))?;
+        if name != "authorization" && name != "user-agent" && !name.as_str().starts_with("x-") {
+            return Err(HttpError::Configuration(
+                "header is not Authorization, User-Agent or X-*",
+            ));
+        }
+        let mut value =
+            HeaderValue::from_str(value).map_err(|_| HttpError::Configuration("header value"))?;
+        value.set_sensitive(true);
+        if supplied.insert(name, value).is_some() {
+            return Err(HttpError::Configuration("duplicate header"));
+        }
+    }
+    Ok(supplied)
+}
+
 impl HttpRemote {
     /// Builds an HTTP connection from a resolved destination and explicit policy inputs.
     ///
@@ -257,7 +345,7 @@ impl HttpRemote {
         let roots: Vec<_> = settings.roots.iter().map(Vec::as_slice).collect();
         let mut remote = Self::build(
             &settings.url,
-            &[],
+            configured_headers(&settings)?,
             TrustRoots::Configured(&roots),
             settings.proxy.as_deref(),
             settings.no_proxy.as_deref(),
@@ -366,7 +454,7 @@ impl HttpRemote {
     pub fn new(url: &str, headers: &[(&str, &str)], roots: &[&[u8]]) -> Result<Self, HttpError> {
         Self::build(
             url,
-            headers,
+            explicit_headers(headers)?,
             TrustRoots::Additional(roots),
             None,
             None,
@@ -377,7 +465,7 @@ impl HttpRemote {
 
     fn build(
         url: &str,
-        headers: &[(&str, &str)],
+        supplied: HeaderMap,
         roots: TrustRoots<'_>,
         proxy: Option<&str>,
         no_proxy: Option<&str>,
@@ -411,27 +499,6 @@ impl HttpRemote {
         }
         if !base.path().ends_with('/') {
             base.set_path(&format!("{}/", base.path()));
-        }
-        let mut supplied = HeaderMap::new();
-        let mut bytes = 0usize;
-        for &(name, value) in headers {
-            bytes = bytes.saturating_add(name.len()).saturating_add(value.len());
-            if bytes > 16 * 1024 {
-                return Err(HttpError::Limit("request headers"));
-            }
-            let name = HeaderName::from_bytes(name.as_bytes())
-                .map_err(|_| HttpError::Configuration("header name"))?;
-            if name != "authorization" && name != "user-agent" && !name.as_str().starts_with("x-") {
-                return Err(HttpError::Configuration(
-                    "header is not Authorization, User-Agent or X-*",
-                ));
-            }
-            let mut value = HeaderValue::from_str(value)
-                .map_err(|_| HttpError::Configuration("header value"))?;
-            value.set_sensitive(true);
-            if supplied.insert(name, value).is_some() {
-                return Err(HttpError::Configuration("duplicate header"));
-            }
         }
         let mut builder = Client::builder()
             .tls_backend_rustls()
@@ -939,6 +1006,30 @@ mod tests {
         )
         .unwrap();
         assert!(!format!("{remote:?}").contains("secret"));
+    }
+
+    #[test]
+    fn oversized_user_agent_exceeds_header_budget() {
+        let config = Config::parse(b"[remote \"r\"]\nurl = https://example.test/repo\n").unwrap();
+        let environment = HttpEnvironment::default().with_user_agent(Some("a".repeat(16 * 1024)));
+        let settings = HttpSettings::resolve(&config, &destination(&config), &environment).unwrap();
+        assert!(matches!(
+            configured_headers(&settings),
+            Err(HttpError::Limit("request headers"))
+        ));
+    }
+
+    #[test]
+    fn configured_user_agent_defaults_to_girt_version() {
+        let config = Config::parse(b"[remote \"r\"]\nurl = https://example.test/repo\n").unwrap();
+        let settings =
+            HttpSettings::resolve(&config, &destination(&config), &HttpEnvironment::default())
+                .unwrap();
+        let headers = configured_headers(&settings).unwrap();
+        assert_eq!(
+            headers[reqwest::header::USER_AGENT],
+            concat!("girt/", env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]

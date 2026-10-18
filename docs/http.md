@@ -108,11 +108,20 @@ construct `HttpRemote::configured(settings)`. For a named remote, use
 participates. Resolution performs no file or network I/O.
 
 Supported settings are `http.sslVerify`, `http.sslCAInfo`, `http.proxy`,
-`http.proxyAuthMethod=basic` and `http.followRedirects`. URL scopes match scheme, host (including
-whole-label `*`), effective port and component-bounded path. More specific hosts, then longer paths,
-then later entries win; unreserved percent escapes are normalized. Selected unsupported HTTP
-settings fail explicitly, including client certificates, pins, CA directories, alternate TLS
-backends and proxy TLS policy.
+`http.proxyAuthMethod=basic`, `http.followRedirects`, `http.extraHeader` and `http.userAgent`. URL
+scopes match scheme, host (including whole-label `*`), effective port and component-bounded path.
+More specific hosts, then longer paths, then later entries win; unreserved percent escapes are
+normalized. Selected unsupported HTTP settings fail explicitly, including client certificates, pins,
+CA directories, alternate TLS backends and proxy TLS policy.
+
+`http.extraHeader` is multi-valued, as in Git. Entries are taken in configuration order while their
+URL scope matches at least as well as the best entry so far, so a global entry after a scoped one is
+dropped. An empty value clears the fields collected before it, and a value without a colon is
+ignored. Fields that girt sets itself or that frame or route the request (`Host`, `Git-Protocol`,
+`Content-*`, `Transfer-Encoding`, `Connection`, `Proxy-Authorization` and similar) are refused when
+the connection is built; Git sends them as given. The user agent is `GIT_HTTP_USER_AGENT` (passed as
+`HttpEnvironment::user_agent`), then `http.userAgent`, then `girt/<version>`. An extra `User-Agent`
+field replaces it.
 
 Certificate-chain and hostname verification are enabled by default. With no CA bytes, reqwest's
 rustls platform verifier uses native trust. Native trust can depend on OS configuration and

@@ -47,6 +47,9 @@ pub struct HttpEnvironment {
     pub proxy_credentials: Option<(String, String)>,
     /// Explicit application authorization for disabling certificate and hostname checks.
     pub allow_insecure_tls: bool,
+    /// `GIT_HTTP_USER_AGENT` selected by the application. It takes precedence over
+    /// `http.userAgent`.
+    pub user_agent: Option<String>,
 }
 
 impl HttpEnvironment {
@@ -82,6 +85,13 @@ impl HttpEnvironment {
     #[must_use]
     pub fn with_proxy_credentials(mut self, proxy_credentials: Option<(String, String)>) -> Self {
         self.proxy_credentials = proxy_credentials;
+        self
+    }
+
+    /// Sets [`Self::user_agent`].
+    #[must_use]
+    pub fn with_user_agent(mut self, user_agent: Option<String>) -> Self {
+        self.user_agent = user_agent;
         self
     }
 
@@ -140,6 +150,8 @@ pub struct HttpSettings {
     pub(super) proxy_credentials: Option<(String, String)>,
     pub(super) verify_tls: bool,
     pub(super) follow_initial_redirect: bool,
+    pub(super) user_agent: Option<String>,
+    pub(super) extra_headers: Vec<(String, String)>,
 }
 
 impl std::fmt::Debug for HttpSettings {
@@ -318,6 +330,18 @@ impl HttpSettings {
                 return Err(HttpError::Configuration("proxy URL"));
             }
         }
+        let user_agent = match (
+            &environment.user_agent,
+            http_value(config, &target, "useragent"),
+        ) {
+            (Some(agent), _) => Some(agent.clone()),
+            (None, Some(value)) => Some(
+                std::str::from_utf8(value.ok_or(HttpError::Configuration("user agent"))?)
+                    .map_err(|_| HttpError::Configuration("user agent encoding"))?
+                    .to_owned(),
+            ),
+            (None, None) => None,
+        };
         Ok(Self {
             url,
             roots,
@@ -326,6 +350,8 @@ impl HttpSettings {
             proxy_credentials: environment.proxy_credentials.clone(),
             verify_tls,
             follow_initial_redirect,
+            user_agent,
+            extra_headers: extra_headers(config, &target)?,
         })
     }
 }
@@ -346,35 +372,75 @@ fn http_value<'a>(config: &'a Config, target: &Url, name: &str) -> Option<Option
             }
             continue;
         };
-        let Ok(scope) = std::str::from_utf8(scope) else {
+        let Some(score) = scope_score(scope, target) else {
             continue;
         };
-        let Ok(scope) = Url::parse(scope) else {
-            continue;
-        };
-        let Some(host_score) = host_match(scope.host_str(), target.host_str()) else {
-            continue;
-        };
-        let scope_path = normalized_path(scope.path());
-        let target_path = normalized_path(target.path());
-        let path = scope_path.strip_suffix('/').unwrap_or(&scope_path);
-        let score = (host_score, path.len());
-        if scope.scheme() == target.scheme()
-            && scope.port_or_known_default() == target.port_or_known_default()
-            && scope.username().is_empty()
-            && scope.query().is_none()
-            && scope.fragment().is_none()
-            && target_path.starts_with(path)
-            && (target_path.len() == path.len()
-                || target_path.as_bytes().get(path.len()) == Some(&b'/'))
-            && score >= best
-        {
+        if score >= best {
             selected = Some(entry.value.as_deref());
             best = score;
             scoped = true;
         }
     }
     selected
+}
+
+// `http.extraHeader` is multi-valued: an entry counts when its URL scope matches at least as well
+// as the best one seen so far, and an empty value clears the fields collected before it. Git
+// ignores a field without a colon; girt does too.
+fn extra_headers(config: &Config, target: &Url) -> Result<Vec<(String, String)>, HttpError> {
+    let mut headers = Vec::new();
+    let mut best = None;
+    for entry in config.entries() {
+        if !entry.section.eq_ignore_ascii_case(b"http")
+            || !entry.name.eq_ignore_ascii_case(b"extraheader")
+        {
+            continue;
+        }
+        let score = match entry.subsection.as_deref() {
+            None => Some((0, 0)),
+            Some(scope) => scope_score(scope, target),
+        };
+        let Some(score) = score else {
+            continue;
+        };
+        if best.is_some_and(|best| score < best) {
+            continue;
+        }
+        best = Some(score);
+        let value = entry
+            .value
+            .as_deref()
+            .ok_or(HttpError::Configuration("extra header"))?;
+        if value.is_empty() {
+            headers.clear();
+            continue;
+        }
+        let value = std::str::from_utf8(value)
+            .map_err(|_| HttpError::Configuration("extra header encoding"))?;
+        if let Some((name, field)) = value.split_once(':') {
+            headers.push((name.to_owned(), field.trim_start().to_owned()));
+        }
+    }
+    Ok(headers)
+}
+
+// Scores a `http.<url>` scope against the target: host specificity, then path length. `None` when
+// the scope does not apply.
+fn scope_score(scope: &[u8], target: &Url) -> Option<(usize, usize)> {
+    let scope = Url::parse(std::str::from_utf8(scope).ok()?).ok()?;
+    let host_score = host_match(scope.host_str(), target.host_str())?;
+    let scope_path = normalized_path(scope.path());
+    let target_path = normalized_path(target.path());
+    let path = scope_path.strip_suffix('/').unwrap_or(&scope_path);
+    (scope.scheme() == target.scheme()
+        && scope.port_or_known_default() == target.port_or_known_default()
+        && scope.username().is_empty()
+        && scope.query().is_none()
+        && scope.fragment().is_none()
+        && target_path.starts_with(path)
+        && (target_path.len() == path.len()
+            || target_path.as_bytes().get(path.len()) == Some(&b'/')))
+    .then_some((host_score, path.len()))
 }
 
 fn destination_url(destination: &Destination) -> Result<Url, HttpError> {
@@ -414,6 +480,8 @@ fn reject_unsupported(config: &Config, target: &Url) -> Result<(), HttpError> {
             "proxy",
             "proxyauthmethod",
             "followredirects",
+            "extraheader",
+            "useragent",
         ]
         .iter()
         .any(|supported| name.eq_ignore_ascii_case(supported))
@@ -540,7 +608,7 @@ mod tests {
     #[case::client_certificate("sslCert=secret")]
     #[case::backend("sslBackend=secret")]
     #[case::proxy_ca("proxySSLCAInfo=secret")]
-    #[case::headers("extraHeader=secret")]
+    #[case::low_speed("lowSpeedLimit=1")]
     #[case::auth("proxyAuthMethod=negotiate")]
     fn unsupported_settings_fail_without_values(#[case] setting: &str) {
         let (config, destination) = configuration(&format!("[http]\n{setting}\n"));

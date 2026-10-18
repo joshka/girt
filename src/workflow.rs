@@ -1594,6 +1594,7 @@ fn http_environment(
         no_proxy: proxy_var(&["no_proxy", "NO_PROXY"]),
         proxy_credentials: None,
         allow_insecure_tls: true,
+        user_agent: environment.string("GIT_HTTP_USER_AGENT"),
     })
 }
 
