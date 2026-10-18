@@ -67,6 +67,17 @@ EWAH records, lookup tables and reverse indexes; MIDX output includes RIDX/BTMP 
 pathname-hash hints. This establishes format and graph compatibility, not identical compression or
 selection to Git.
 
+Bitmap publication is covered by idempotent pack/MIDX writes, shared writer-lock exclusion,
+pre-publication failure preservation and cancellation. The CLI accepts `multi-pack-index write
+--bitmap`. Repack configuration matches Git's bare/nonbare defaults and last-assignment precedence
+across `repack.writeBitmaps` and deprecated `pack.writeBitmaps`, including both source orders.
+Bare-repository replacement repacks/gc now write bitmaps by default, adding time and disk cost;
+explicit false disables writing. Configured/default resource exhaustion skips optional output
+without blocking old-pack retirement; explicit strict caller/standalone writes still return limits.
+Other errors after complete pack publication retain that pair's report,
+and retirement stops before deletion. Exact replacement sidecars are allowed in both retirement
+input-generation comparisons. No-op gc and automatic MIDX writing remain separate policy.
+
 ## Multi-pack indexes
 
 The MIDX fixtures in `tests/multi_pack_index.rs` use isolated Git configuration and original pack

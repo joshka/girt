@@ -26,6 +26,7 @@
 
 mod install;
 mod verify;
+pub(crate) use install::WriterLock;
 pub use install::{IndexWritten, InstallError};
 
 mod write;

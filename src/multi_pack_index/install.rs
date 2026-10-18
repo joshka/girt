@@ -170,14 +170,14 @@ impl Repository {
     }
 }
 
-struct WriterLock {
+pub(crate) struct WriterLock {
     path: PathBuf,
     file: Option<crate::locks::SharedFile>,
     registration: crate::locks::Guard,
 }
 
 impl WriterLock {
-    fn acquire(path: PathBuf) -> io::Result<Self> {
+    pub(crate) fn acquire(path: PathBuf) -> io::Result<Self> {
         let file =
             crate::locks::SharedFile::from(crate::locks::unreplaceable_lock_options().open(&path)?);
         let identity = crate::locks::capture_identity(&path, &file)?;
@@ -189,7 +189,11 @@ impl WriterLock {
         })
     }
 
-    fn release(mut self) -> io::Result<()> {
+    pub(crate) fn check(&self) -> io::Result<()> {
+        self.registration.check_path()
+    }
+
+    pub(crate) fn release(mut self) -> io::Result<()> {
         self.registration.check_path()?;
         drop(self.file.take());
         fs::remove_file(&self.path)

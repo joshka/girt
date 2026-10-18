@@ -55,19 +55,30 @@ fn sha256_write_and_verify() {
 }
 
 #[test]
-fn unsupported_bitmap_does_not_publish_index() {
-    let fixture = pack_git::Fixture::new(girt::ObjectFormat::Sha1, true, 4);
-    let output = girt(
-        fixture.root.path(),
-        &["multi-pack-index", "write", "--bitmap"],
-    );
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("bitmap writing is not implemented"));
-    assert!(
-        !fixture
-            .root
-            .path()
-            .join("objects/pack/multi-pack-index")
-            .exists()
-    );
+fn bitmap_write_is_accepted_by_git() {
+    for format in [girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256] {
+        let fixture = pack_git::Fixture::new(format, true, 4);
+        let output = girt(
+            fixture.root.path(),
+            &["--git", "multi-pack-index", "write", "--bitmap"],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        pack_git::git(fixture.root.path(), &["multi-pack-index", "verify"], b"");
+        let commit = fixture
+            .records
+            .iter()
+            .find(|(_, kind, _)| *kind == girt::ObjectKind::Commit)
+            .unwrap()
+            .0;
+        pack_git::git(
+            fixture.root.path(),
+            &["rev-list", "--test-bitmap", &commit.to_string()],
+            b"",
+        );
+    }
 }

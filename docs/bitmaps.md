@@ -46,7 +46,7 @@ cancellation. Treat missing, malformed, unsupported, or stale bitmap metadata as
 optimization and walk the graph instead. Parsing verifies derived metadata, not graph reachability;
 a caller who does not trust the producer must independently walk and compare the claimed sets.
 
-Bitmap writing and remaining acceleration work are tracked in
+Remaining bitmap acceleration and pseudo-merge work are tracked in
 [the bitmap issue](https://github.com/joshka/girt/issues/518).
 
 ## Query a want/have difference
@@ -140,3 +140,41 @@ performed. MIDX output includes zero pathname-hash hints for unknown names; thos
 heuristics only. Both artifact types carry the inventory checksum and their own checksums.
 `WriteLimits` separately bounds input objects/packs, decoded graph bytes/edges, repeated selected
 reachability work, per-object reads and combined output bytes. No partial artifacts are returned.
+
+## Publish bitmaps and configure repacks
+
+`Repository::write_pack_bitmap` publishes sidecars for an existing primary pack.
+`write_multi_pack_bitmap` publishes bitmap and reverse-index sidecars before replacing the
+monolithic MIDX. Both require caller-owned `MaintenanceIsolation`; their `_with` variants accept
+writer bounds and cancellation. All private files are synchronized first. Replacement is atomic per
+file, with Unix directory synchronization afterwards. A failed pre-MIDX publication can leave unused
+checksum-named sidecars; the old MIDX remains usable. `InstallError::published` distinguishes
+failures after the bitmap (pack) or MIDX (multi-pack) visibility marker was replaced.
+
+The CLI composes the same operation:
+
+```sh
+girt -C repo.git multi-pack-index write --bitmap
+girt -C repo.git multi-pack-index verify
+```
+
+Repacking uses the last resolved assignment of `repack.writeBitmaps` or its deprecated synonym
+`pack.writeBitmaps`. The default is true for bare repositories and false for nonbare repositories,
+as in Git.
+**Bare-repository repack and gc operations that publish a replacement now write bitmaps by default**,
+adding graph verification, traversal time and sidecar disk space. Set either config key to false, or
+set `RepackLimits::write_bitmaps = Some(false)`, to disable it. Explicit caller settings override
+configuration; `RepackLimits::bitmap` controls the writer's independent bounds.
+
+`RepackPublished::bitmap` reports written, disabled, shallow, protected-survivor or limit-skip
+outcomes. Configured/default bitmap resource exhaustion reports `SkippedLimit` and allows
+maintenance to continue. `write_bitmaps = Some(true)` and standalone bitmap publication remain
+strict, returning their typed limit errors. A shallow graph or a replacement that omits protected
+copies skips bitmap writing. A no-op gc that does not publish a replacement does not retrofit a
+bitmap. No automatic MIDX writing is added.
+
+Pack sidecars follow complete pair publication. A bitmap error leaves that pair visible and returns
+`RepackError::Bitmap` with its published report and the concrete cause. Retirement retains that
+report and stops before deleting old packs. Its generation checks allow only the exact replacement's
+own sidecars, and continue rejecting independent directory changes. Retained old packs and existing
+MIDX artifacts are still invalidated by the established retirement rules.

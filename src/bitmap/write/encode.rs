@@ -135,7 +135,10 @@ fn ewah(output: &mut Output, input: &[u64], cancel: &AtomicBool) -> Result<(), W
             check(cancel)?;
             position += 1;
         }
-        let literals = (position - first) as u32;
+        let literals = u32::try_from(position - first)
+            .ok()
+            .filter(|&count| count <= 0x7fff_ffff)
+            .ok_or(WriteError::Limit("EWAH literals"))?;
         last = compressed;
         output.long(u64::from(bit) | (u64::from(run) << 1) | (u64::from(literals) << 33))?;
         compressed = compressed

@@ -203,7 +203,7 @@ fn bound_objects(count: usize, limits: WriteLimits) -> Result<(), WriteError> {
     }
     Ok(())
 }
-fn check(cancel: &AtomicBool) -> Result<(), WriteError> {
+pub(super) fn check(cancel: &AtomicBool) -> Result<(), WriteError> {
     if super::check(cancel).is_err() {
         Err(WriteError::Cancelled)
     } else {

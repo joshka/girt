@@ -355,7 +355,7 @@ pub enum MultiPackIndexCommand {
         /// Prefer this pack checksum when an object appears in multiple packs.
         #[arg(long)]
         preferred_pack: Option<ObjectId>,
-        /// Also write reachability bitmaps (not implemented yet).
+        /// Also write a reachability bitmap and reverse index for the complete packed graph.
         #[arg(long)]
         bitmap: bool,
     },
@@ -372,22 +372,21 @@ pub fn multi_pack_index(command: MultiPackIndexCommand, context: &Context) -> Re
             preferred_pack,
             bitmap,
         } => {
-            if bitmap {
-                bail!(
-                    "bitmap writing is not implemented; see https://github.com/joshka/girt/issues/518"
-                );
-            }
             let mut options = girt::multi_pack_index::WriteOptions::default();
             options.preferred_pack = preferred_pack;
-            let report = repository.write_multi_pack_index(&mut UserAsserted, options)?;
-            if !context.git {
-                writeln!(
-                    stdout(),
-                    "{} {} {}",
-                    report.checksum,
-                    report.objects,
-                    report.packs
+            let (checksum, objects, packs) = if bitmap {
+                let report = repository.write_multi_pack_bitmap(
+                    &mut UserAsserted,
+                    options,
+                    Default::default(),
                 )?;
+                (report.anchor, report.objects, report.packs)
+            } else {
+                let report = repository.write_multi_pack_index(&mut UserAsserted, options)?;
+                (report.checksum, report.objects, report.packs)
+            };
+            if !context.git {
+                writeln!(stdout(), "{} {} {}", checksum, objects, packs)?;
             }
         }
         MultiPackIndexCommand::Verify => {

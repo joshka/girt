@@ -48,7 +48,7 @@ object lookup checks each pack's index in turn. A **multi-pack index**
 (`.git/objects/pack/multi-pack-index`) is one index across all packs, so a lookup is a single binary
 search however many packs there are.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/517" />
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/517">Single/incremental reading, standalone writing with bitmaps, and verification; automatic maintenance and existence-path acceleration remain.</GirtStatus>
 
 ## Reachability bitmaps
 
@@ -57,7 +57,7 @@ it is reachable from that commit. "Which objects does this client need?" becomes
 (reachable from the wants, minus reachable from the haves) instead of a graph walk. Bitmaps make
 serving clones and fetches fast, and speed up counting objects and repacking.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/518">Pack/MIDX bitmap readers and exact want/have object differences with graph-walk fallback; bitmap writing remains.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/518">Pack/MIDX bitmap reading and writing, explicit publication, repack configuration, and exact want/have differences; incremental bitmap acceleration, pseudo-merges and cache reuse remain.</GirtStatus>
 
 ## fsmonitor and the untracked cache
 
