@@ -1,6 +1,6 @@
 ---
 title: References
-description: List, resolve, move and delete references, and read reflogs, with girt.
+description: List, resolve, move and delete references, read reflogs and replace objects with girt.
 ---
 
 import CliNotice from '../../../components/CliNotice.astro';
@@ -119,3 +119,36 @@ e896f1ed22a211bd58c4b542fba2323ad09a52b0 000000000000000000000000000000000000000
 
 With `--git` it prints Git's `<abbrev> main@{N}: <message>` form, with abbreviations as long as
 `core.abbrev` and the repository's size require.
+
+## Replace an object (`girt replace`)
+
+<Example cmd="replace graft">
+
+A replace reference, `refs/replace/<id>`, makes `girt log`, `girt history` and `girt object` read
+another object wherever `<id>` is read, as Git does. Stored objects and IDs don't change.
+`girt replace graft <commit> <parent>...` stores a copy of the commit with new parents and points
+the replace reference at it. Here the root of a new history is stitched onto an imported old one:
+
+```console
+$ girt log --oneline --git
+17b5858 Add feature
+d08138f Start new history
+$ girt replace graft new~1 old
+c8d4ca296c2753f9c88242b66181eaf130c4804c
+$ girt log --oneline --git
+17b5858 Add feature
+d08138f Start new history
+d752ff1 Import old history
+$ girt replace list
+d08138fbe341633b0912179cc92d9df398f315aa c8d4ca296c2753f9c88242b66181eaf130c4804c
+```
+
+</Example>
+
+The global `--no-replace-objects` reads stored objects as they are, as do
+`core.useReplaceRefs=false` and `GIT_NO_REPLACE_OBJECTS`.
+`girt replace set <original> <replacement>` replaces one object with another of the same kind
+(`--force` allows another kind or overwrites an existing reference), and
+`girt replace delete <object>` removes the reference. Grafts in `.git/info/grafts`, the older form,
+are read too. In the library, reads substitute only through `ReplacedObjects`
+([#529](https://github.com/joshka/girt/issues/529)).

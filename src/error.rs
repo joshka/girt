@@ -112,6 +112,7 @@ impl<E: StdError + Send + Sync + 'static> From<crate::signing::SignTagError<E>> 
 from_domain_errors! {
     crate::replace::LoadError,
     crate::replace::SettingsError,
+    crate::replace::WriteError,
     crate::bitmap::Error,
     crate::bitmap::WriteError,
     crate::bitmap::InstallError,

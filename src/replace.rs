@@ -102,7 +102,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::config::InvalidValue;
-use crate::refs::{RefName, ReferenceError, Target};
+use crate::refs::{Expected, RefName, ReferenceError, Target};
 use crate::{
     AheadBehind, Commit, Config, HistoryError, HistoryLimits, IdMap, Object, ObjectFormat,
     ObjectId, ObjectKind, ObjectReadError, Objects, ReadCommitError, ReadLimits, Repository,
@@ -405,6 +405,320 @@ impl Repository {
     pub fn replacements(&self, settings: &Settings) -> Result<Replacements, LoadError> {
         Replacements::load(self, settings)
     }
+}
+
+/// Whether [`Repository::replace`] and [`Repository::replace_graft`] may overwrite or mix kinds,
+/// like `git replace -f`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum Force {
+    /// Refuse an existing replace reference and, for [`Repository::replace`], a replacement of a
+    /// different kind.
+    #[default]
+    No,
+    /// Overwrite an existing replace reference and allow a replacement of another kind.
+    Yes,
+}
+
+/// Failure to create or delete a replace reference.
+///
+/// Errors found before writing leave the repository unchanged. Two later failures keep partial
+/// effects:
+///
+/// - [`Repository::replace_graft`] stores the replacement commit before writing the reference. When
+///   that write then fails, including [`WriteError::Exists`] because another writer created the
+///   reference first, the unreferenced commit is left for garbage collection.
+/// - [`Repository::delete_replacement`] can fail with [`WriteError::Reference`] after removing a
+///   packed copy of the reference but not its loose file. Read the reference again before retrying.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum WriteError {
+    /// An object named by the request is absent.
+    #[error("object {0} not found")]
+    Missing(ObjectId),
+    /// The replacement's kind differs from the original's and [`Force::Yes`] was not given.
+    #[error(
+        "{original} is a {}, but replacement {replacement} is a {}",
+        original_kind.as_str(),
+        replacement_kind.as_str()
+    )]
+    KindMismatch {
+        /// The object to replace.
+        original: ObjectId,
+        /// Its kind.
+        original_kind: ObjectKind,
+        /// The requested replacement.
+        replacement: ObjectId,
+        /// Its kind.
+        replacement_kind: ObjectKind,
+    },
+    /// The object would replace itself, which makes every read of it fail.
+    ///
+    /// Git creates such a reference; girt refuses it.
+    #[error("{0} cannot replace itself")]
+    SelfReplacement(ObjectId),
+    /// A replace reference for the object exists and [`Force::Yes`] was not given.
+    #[error("replace reference for {0} already exists")]
+    Exists(ObjectId),
+    /// No replace reference exists for the object being deleted.
+    #[error("replace reference for {0} not found")]
+    NotFound(ObjectId),
+    /// A graft names an object that is not a commit, or grafts a non-commit.
+    #[error("{id} is a {}, not a commit", kind.as_str())]
+    NotCommit {
+        /// The object.
+        id: ObjectId,
+        /// Its kind.
+        kind: ObjectKind,
+    },
+    /// The grafted commit would equal the original.
+    #[error("new commit is the same as the old one: {0}")]
+    Unchanged(ObjectId),
+    /// The commit carries a `mergetag` header, whose handling under a graft is unsupported.
+    #[error("commit {0} has a mergetag header; grafting it is unsupported")]
+    MergeTag(ObjectId),
+    /// The commit bytes are malformed.
+    #[error("malformed commit {id}")]
+    Commit {
+        /// The commit.
+        id: ObjectId,
+        /// The parse failure.
+        #[source]
+        source: crate::CommitError,
+    },
+    /// Reading objects failed.
+    #[error("cannot read objects")]
+    Read(#[from] ObjectReadError),
+    /// Writing the replacement commit failed.
+    #[error("cannot write replacement commit")]
+    Write(#[from] crate::loose::Error),
+    /// Reading or updating the replace reference failed.
+    #[error("cannot update replace reference")]
+    Reference(#[from] ReferenceError),
+}
+
+/// The outcome of [`Repository::replace_graft`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct Grafted {
+    /// The stored replacement commit.
+    pub replacement: ObjectId,
+    /// Whether a `gpgsig` or `gpgsig-sha256` signature was dropped; Git warns when it drops one.
+    pub dropped_signature: bool,
+}
+
+impl Repository {
+    /// Makes `replacement` stand for `original` by writing `refs/replace/<original>`, like
+    /// `git replace <original> <replacement>`.
+    ///
+    /// Both objects must exist. Their kinds must match unless `force` is [`Force::Yes`], which
+    /// also overwrites an existing replace reference. Replace references have no reflog, as in
+    /// Git. The reference is written under `refs/replace/`, regardless of any
+    /// `GIT_REPLACE_REF_BASE` a reader uses.
+    ///
+    /// ```
+    /// use girt::replace::{Force, ReplacedObjects, Settings};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let original = repo.loose_objects().write_blob(b"typo\n")?;
+    /// let fixed = repo.loose_objects().write_blob(b"fixed\n")?;
+    ///
+    /// repo.replace(original, fixed, Force::No)?;
+    /// let view = ReplacedObjects::new(repo.objects()?, repo.replacements(&Settings::default())?);
+    /// assert_eq!(view.read(original)?.ok_or("absent")?.data(), b"fixed\n");
+    ///
+    /// assert_eq!(repo.delete_replacement(original)?, fixed);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WriteError::Missing`], [`WriteError::SelfReplacement`],
+    /// [`WriteError::KindMismatch`], [`WriteError::Exists`], or a read or reference failure.
+    pub fn replace(
+        &self,
+        original: ObjectId,
+        replacement: ObjectId,
+        force: Force,
+    ) -> Result<(), WriteError> {
+        if original == replacement {
+            return Err(WriteError::SelfReplacement(original));
+        }
+        let objects = self.objects()?;
+        let original_kind = kind(&objects, original)?;
+        let replacement_kind = kind(&objects, replacement)?;
+        if original_kind != replacement_kind && force == Force::No {
+            return Err(WriteError::KindMismatch {
+                original,
+                original_kind,
+                replacement,
+                replacement_kind,
+            });
+        }
+        self.write_replace_ref(original, replacement, force)
+    }
+
+    /// Replaces `commit` with a copy whose parents are `parents`, like
+    /// `git replace --graft <commit> <parent>...`.
+    ///
+    /// The copy keeps every byte of the original except its `parent` lines and any `gpgsig` or
+    /// `gpgsig-sha256` signature, which no longer matches. Duplicate parents are kept. Every
+    /// parent must be a commit. The copy is stored as a loose object, then the replace reference
+    /// is written as by [`Self::replace`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WriteError::Missing`] or [`WriteError::NotCommit`] for `commit` or a parent,
+    /// [`WriteError::Unchanged`] when the parents already match, [`WriteError::MergeTag`] for a
+    /// commit with a `mergetag` header, [`WriteError::Exists`] without [`Force::Yes`], and read,
+    /// write or reference failures.
+    pub fn replace_graft(
+        &self,
+        commit: ObjectId,
+        parents: &[ObjectId],
+        force: Force,
+    ) -> Result<Grafted, WriteError> {
+        let objects = self.objects()?;
+        for &id in std::iter::once(&commit).chain(parents) {
+            let kind = kind(&objects, id)?;
+            if kind != ObjectKind::Commit {
+                return Err(WriteError::NotCommit { id, kind });
+            }
+        }
+        if force == Force::No && self.replace_ref_target(commit)?.is_some() {
+            return Err(WriteError::Exists(commit));
+        }
+        let object = objects
+            .read_with(commit, ReadLimits::default())?
+            .ok_or(WriteError::Missing(commit))?;
+        Commit::parse(self.object_format(), object.data())
+            .map_err(|source| WriteError::Commit { id: commit, source })?;
+        let (bytes, dropped_signature) = graft_bytes(commit, object.data(), parents)?;
+        if self.object_format().hash_object(ObjectKind::Commit, &bytes) == commit {
+            return Err(WriteError::Unchanged(commit));
+        }
+        let replacement =
+            self.loose_objects()
+                .write_object(self.object_format(), ObjectKind::Commit, &bytes)?;
+        self.write_replace_ref(commit, replacement, force)?;
+        Ok(Grafted {
+            replacement,
+            dropped_signature,
+        })
+    }
+
+    /// Deletes `refs/replace/<original>`, like `git replace -d`, returning its former target.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WriteError::NotFound`] when no replace reference exists for `original`, and
+    /// reference failures.
+    pub fn delete_replacement(&self, original: ObjectId) -> Result<ObjectId, WriteError> {
+        let name = replace_ref_name(original);
+        let target = self
+            .replace_ref_target(original)?
+            .ok_or(WriteError::NotFound(original))?;
+        self.references()?
+            .delete_without_reflog(&name, Expected::Value(Target::Direct(target)))?;
+        Ok(target)
+    }
+
+    fn replace_ref_target(&self, original: ObjectId) -> Result<Option<ObjectId>, WriteError> {
+        Ok(
+            match self.references()?.read(&replace_ref_name(original))? {
+                Some(Target::Direct(id)) => Some(id),
+                Some(Target::Symbolic(_)) | None => None,
+            },
+        )
+    }
+
+    fn write_replace_ref(
+        &self,
+        original: ObjectId,
+        replacement: ObjectId,
+        force: Force,
+    ) -> Result<(), WriteError> {
+        let expected = match force {
+            Force::No => Expected::Absent,
+            Force::Yes => Expected::Any,
+        };
+        let result = self.references()?.update_without_reflog(
+            &replace_ref_name(original),
+            Target::Direct(replacement),
+            expected,
+        );
+        match result {
+            Err(ReferenceError::Mismatch { .. }) => Err(WriteError::Exists(original)),
+            other => Ok(other?),
+        }
+    }
+}
+
+fn replace_ref_name(original: ObjectId) -> RefName {
+    RefName::new(format!("refs/replace/{original}")).expect("hex IDs form valid names")
+}
+
+fn kind(objects: &Objects, id: ObjectId) -> Result<ObjectKind, WriteError> {
+    Ok(objects
+        .header(id, ReadLimits::default())?
+        .ok_or(WriteError::Missing(id))?
+        .kind())
+}
+
+/// Rewrites a commit's graph records, the leading `tree` line and the `parent` lines directly
+/// after it, and drops signature headers, keeping every other byte.
+///
+/// Later lines named `tree` or `parent` are opaque headers or message text and are kept, as Git
+/// keeps them.
+fn graft_bytes(
+    id: ObjectId,
+    data: &[u8],
+    parents: &[ObjectId],
+) -> Result<(Vec<u8>, bool), WriteError> {
+    let end = data
+        .windows(2)
+        .position(|pair| pair == b"\n\n")
+        .map_or(data.len(), |position| position + 1);
+    let (header, body) = data.split_at(end);
+    let mut lines = header.split_inclusive(|&byte| byte == b'\n').peekable();
+    let mut out = Vec::with_capacity(data.len());
+    // `Commit::parse` succeeded, so the first line is the tree.
+    out.extend_from_slice(lines.next().unwrap_or_default());
+    while lines.next_if(|line| line.starts_with(b"parent ")).is_some() {}
+    for parent in parents {
+        out.extend_from_slice(format!("parent {parent}\n").as_bytes());
+    }
+    let mut dropped_signature = false;
+    let mut skipping = false;
+    for line in lines {
+        if line.starts_with(b" ") {
+            if !skipping {
+                out.extend_from_slice(line);
+            }
+            continue;
+        }
+        skipping = false;
+        let name = line
+            .split(|&byte| byte == b' ' || byte == b'\n')
+            .next()
+            .unwrap_or_default();
+        match name {
+            b"gpgsig" | b"gpgsig-sha256" => {
+                dropped_signature = true;
+                skipping = true;
+            }
+            b"mergetag" => return Err(WriteError::MergeTag(id)),
+            _ => out.extend_from_slice(line),
+        }
+    }
+    out.extend_from_slice(body);
+    Ok((out, dropped_signature))
 }
 
 /// An object reader that substitutes replacements and grafts, as Git's history commands do.

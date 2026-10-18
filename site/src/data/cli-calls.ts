@@ -116,6 +116,14 @@ export const calls: Record<string, CliCalls> = {
     git: 'git update-ref -d',
     api: [references('transaction'), method('RefEdit', 'refs/struct.RefEdit.html', 'new'), ['Reflog', 'refs/enum.Reflog.html']],
   },
+  'replace graft': {
+    git: 'git replace --graft',
+    api: [
+      unreleased('Repository::replace_graft', 529),
+      unreleased('Repository::replacements', 529),
+      unreleased('ReplacedObjects::walk', 529),
+    ],
+  },
   'ref log': {
     git: 'git reflog show',
     api: [references('reflog'), objects('abbreviate')],

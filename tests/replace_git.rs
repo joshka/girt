@@ -411,6 +411,132 @@ fn malformed_and_duplicate_replace_ref_names() {
     assert!(!run(fixture.path(), &["log", "-1", "main"]).status.success());
 }
 
+fn replace_target(fixture: &Fixture, original: ObjectId) -> String {
+    git(
+        fixture.path(),
+        &["rev-parse", &format!("refs/replace/{original}")],
+    )
+}
+
+#[test]
+fn graft_writes_the_commit_git_replace_graft_writes() {
+    use girt::replace::Force;
+    let fixture = Fixture::new();
+    let [c1, c2, c3, c4] = fixture.main[..] else {
+        panic!()
+    };
+    // A signed-looking commit with an encoding and a custom header.
+    let payload = format!(
+        "tree {}\nparent {c3}\nauthor A <a@x> 1700000000 +0130\ncommitter A <a@x> 1700000000 +0130\nencoding ISO-8859-1\ngpgsig -----BEGIN PGP SIGNATURE-----\n abc\n -----END PGP SIGNATURE-----\nx-custom v\n\nmsg\n",
+        git(fixture.path(), &["rev-parse", "main^{tree}"])
+    );
+    let signed: ObjectId = {
+        let path = fixture.path().join("payload");
+        std::fs::write(&path, payload).unwrap();
+        git(
+            fixture.path(),
+            &[
+                "hash-object",
+                "-t",
+                "commit",
+                "-w",
+                "--literally",
+                "payload",
+            ],
+        )
+        .parse()
+        .unwrap()
+    };
+    let repo = Repository::open(fixture.path()).unwrap();
+    let cases: [(ObjectId, Vec<ObjectId>); 4] = [
+        (signed, vec![c1]),
+        (c4, vec![c2, c2]),
+        (c2, vec![]),
+        (c3, vec![c1, fixture.old[1]]),
+    ];
+    for (commit, parents) in cases {
+        let grafted = repo.replace_graft(commit, &parents, Force::No).unwrap();
+        assert_eq!(grafted.dropped_signature, commit == signed);
+        repo.delete_replacement(commit).unwrap();
+        let mut args = vec![
+            "replace".to_owned(),
+            "--graft".to_owned(),
+            commit.to_string(),
+        ];
+        args.extend(parents.iter().map(ToString::to_string));
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        git(fixture.path(), &args);
+        assert_eq!(
+            replace_target(&fixture, commit),
+            grafted.replacement.to_string()
+        );
+        git(fixture.path(), &["replace", "-d", &commit.to_string()]);
+    }
+
+    let unchanged = repo.replace_graft(c2, &[c1], Force::No);
+    assert!(matches!(unchanged, Err(girt::replace::WriteError::Unchanged(id)) if id == c2));
+    assert!(
+        !run(
+            fixture.path(),
+            &["replace", "--graft", &c2.to_string(), &c1.to_string()]
+        )
+        .status
+        .success()
+    );
+    let tree: ObjectId = git(fixture.path(), &["rev-parse", "main^{tree}"])
+        .parse()
+        .unwrap();
+    assert!(matches!(
+        repo.replace_graft(c2, &[tree], Force::No),
+        Err(girt::replace::WriteError::NotCommit { id, .. }) if id == tree
+    ));
+}
+
+#[test]
+fn replace_and_delete_follow_git_replace_rules() {
+    use girt::replace::{Force, WriteError};
+    let fixture = Fixture::new();
+    let [c1, c2, c3, c4] = fixture.main[..] else {
+        panic!()
+    };
+    let blob: ObjectId = git(fixture.path(), &["rev-parse", "main:f"])
+        .parse()
+        .unwrap();
+    let repo = Repository::open(fixture.path()).unwrap();
+
+    repo.replace(c3, c1, Force::No).unwrap();
+    assert_eq!(replace_target(&fixture, c3), c1.to_string());
+    assert_eq!(
+        ids(&git(fixture.path(), &["rev-list", "main"])),
+        sorted(vec![c4, c3])
+    );
+    assert!(matches!(repo.replace(c3, c2, Force::No), Err(WriteError::Exists(id)) if id == c3));
+    repo.replace(c3, c2, Force::Yes).unwrap();
+    assert_eq!(replace_target(&fixture, c3), c2.to_string());
+
+    assert!(matches!(
+        repo.replace(blob, c1, Force::No),
+        Err(WriteError::KindMismatch { .. })
+    ));
+    repo.replace(blob, c1, Force::Yes).unwrap();
+    assert!(matches!(
+        repo.replace(c1, c1, Force::Yes),
+        Err(WriteError::SelfReplacement(_))
+    ));
+    let absent: ObjectId = "1111111111111111111111111111111111111111".parse().unwrap();
+    assert!(
+        matches!(repo.replace(c1, absent, Force::No), Err(WriteError::Missing(id)) if id == absent)
+    );
+
+    assert_eq!(repo.delete_replacement(c3).unwrap(), c2);
+    assert!(matches!(
+        repo.delete_replacement(c3),
+        Err(WriteError::NotFound(_))
+    ));
+    git(fixture.path(), &["replace", "-d", &blob.to_string()]);
+    assert!(!fixture.path().join(".git/logs/refs/replace").exists());
+}
+
 #[test]
 fn revision_syntax_resolves_through_replacements_and_grafts() {
     use girt::revision::{Range, Resolver, Revision};
@@ -475,4 +601,52 @@ fn revision_syntax_resolves_through_replacements_and_grafts() {
             .status
             .success()
     );
+}
+
+#[test]
+fn graft_keeps_late_tree_and_parent_lines_as_git_does() {
+    use girt::replace::Force;
+    let fixture = Fixture::new();
+    let [c1, c2, ..] = fixture.main[..] else {
+        panic!()
+    };
+    let tree = git(fixture.path(), &["rev-parse", "main^{tree}"]);
+    let head = format!(
+        "tree {tree}\nparent {c2}\nauthor A <a@x> 1700000000 +0000\ncommitter A <a@x> 1700000000 +0000\n"
+    );
+    let payloads = [
+        format!("{head}parent {c1}\n continued\n\nmsg\n"),
+        format!("{head}tree {tree}\n\nmsg\n"),
+        format!("{head}x-late v\nparent text"),
+    ];
+    let repo = Repository::open(fixture.path()).unwrap();
+    for (index, payload) in payloads.iter().enumerate() {
+        let path = fixture.path().join("payload");
+        std::fs::write(&path, payload).unwrap();
+        let commit: ObjectId = git(
+            fixture.path(),
+            &[
+                "hash-object",
+                "-t",
+                "commit",
+                "-w",
+                "--literally",
+                "payload",
+            ],
+        )
+        .parse()
+        .unwrap();
+        let grafted = repo.replace_graft(commit, &[c1], Force::No).unwrap();
+        repo.delete_replacement(commit).unwrap();
+        git(
+            fixture.path(),
+            &["replace", "--graft", &commit.to_string(), &c1.to_string()],
+        );
+        assert_eq!(
+            replace_target(&fixture, commit),
+            grafted.replacement.to_string(),
+            "payload {index}"
+        );
+        git(fixture.path(), &["replace", "-d", &commit.to_string()]);
+    }
 }

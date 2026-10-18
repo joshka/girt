@@ -25,6 +25,7 @@ mod maintenance;
 mod object;
 mod progress;
 mod refs;
+mod replace;
 mod repo;
 mod transfer;
 mod tree;
@@ -89,6 +90,9 @@ enum Command {
     /// List, read and change references.
     #[command(subcommand, name = "ref")]
     Ref(refs::Command),
+    /// Make one object stand for another when history and objects are read.
+    #[command(subcommand)]
+    Replace(replace::Command),
 
     /// Attribute file lines (commit, final start, count, original start, path).
     Blame(blame::Args),
@@ -283,6 +287,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Ref(command) => refs::run(command, context),
         Command::Blame(args) => blame::run(args, context),
         Command::Log(args) => history::log(args, context),
+        Command::Replace(command) => replace::run(command, context),
         Command::History(command) => history::run(command, context),
         Command::Diff(args) => diff::run(args, context),
         Command::Index(command) => worktree::index(command, context),
