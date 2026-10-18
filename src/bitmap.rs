@@ -36,12 +36,14 @@ mod ewah;
 mod inventory;
 mod query;
 mod reverse;
+mod write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ewah::{Ewah, long, word};
 pub use query::{QueryLimits, Reachability};
 pub use reverse::ReverseIndex;
+pub use write::{MultiPackWritten, WriteError, WriteLimits, WriteOptions, Written};
 
 use crate::{ObjectId, ObjectKind};
 
