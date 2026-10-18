@@ -171,7 +171,10 @@ impl Repository {
     }
 }
 
-fn read_optional(path: &Path, max_bytes: usize) -> Result<Option<Vec<u8>>, GraphLoadError> {
+pub(super) fn read_optional(
+    path: &Path,
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>, GraphLoadError> {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),

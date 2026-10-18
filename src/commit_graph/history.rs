@@ -17,11 +17,7 @@ impl Objects {
     ///
     /// Rejects a different hash format, missing parent records or cyclic indexed ancestry.
     pub fn with_commit_graph(mut self, mut graph: CommitGraph) -> Result<Self, GraphError> {
-        if graph
-            .commits()
-            .iter()
-            .any(|c| c.id.format() != self.object_format())
-        {
+        if graph.format != self.object_format() {
             return Err(GraphError::HashFormat);
         }
         graph.check_ancestry()?;

@@ -35,6 +35,55 @@ fn history(c: &mut Criterion) {
                     .unwrap()
             })
         });
+        history_git::git(
+            h.root.path(),
+            &["commit-graph", "write", "--reachable"],
+            b"",
+        );
+        let graph = girt::commit_graph::CommitGraph::open(
+            &h.root.path().join("objects"),
+            girt::ObjectFormat::Sha1,
+        )
+        .unwrap()
+        .unwrap();
+        let indexed = objects.clone().with_commit_graph(graph).unwrap();
+        c.bench_function(&format!("history/{shape}/walk-indexed-256"), |b| {
+            b.iter(|| {
+                indexed
+                    .walk_with(black_box(&[h.ids[255]]), HistoryLimits::default())
+                    .unwrap()
+            })
+        });
+        c.bench_function(
+            &format!("history/{shape}/near-tip-range-objects-256"),
+            |b| {
+                b.iter(|| {
+                    objects
+                        .walk_range(black_box(&[h.ids[255]]), black_box(&[h.ids[254]]))
+                        .unwrap()
+                })
+            },
+        );
+        c.bench_function(
+            &format!("history/{shape}/near-tip-range-indexed-256"),
+            |b| {
+                b.iter(|| {
+                    indexed
+                        .walk_range(black_box(&[h.ids[255]]), black_box(&[h.ids[254]]))
+                        .unwrap()
+                })
+            },
+        );
+        c.bench_function(
+            &format!("history/{shape}/near-tip-ancestry-indexed-256"),
+            |b| {
+                b.iter(|| {
+                    indexed
+                        .is_ancestor(black_box(h.ids[254]), black_box(h.ids[255]))
+                        .unwrap()
+                })
+            },
+        );
         c.bench_function(
             &format!("history/{shape}/fetch-finish-one-commit-packed-256"),
             |b| {
