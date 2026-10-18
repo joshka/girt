@@ -17,9 +17,10 @@
 //! index. [`IndexEdit::make_standalone`] explicitly removes that dependency without changing
 //! entries or version, while retaining both storage snapshots for publication checks. Sparse
 //! directories retain tree identities; explicit expansion reads their trees without materializing
-//! files. Unknown mandatory extensions are refused. Optional extensions are opaque and round-trip
-//! unchanged. Editing discards derived caches, retains resolve-undo records and refuses unknown
-//! optional extensions. See [`Index::replace_entries`]. Explicit
+//! files. Unknown mandatory extensions are refused. Optional extensions round-trip unchanged.
+//! [`Index::untracked_cache`] and [`Index::fsmonitor_cache`] explicitly decode status-cache claims
+//! without trusting freshness. Editing discards derived caches, retains resolve-undo records and
+//! refuses unknown optional extensions. See [`Index::replace_entries`]. Explicit
 //! [`IndexEdit::discard_optional_extensions`] permits caller-selected optional data loss, and
 //! [`IndexEdit::replace_index`] installs a complete standalone draft without releasing its guards.
 //! [`crate::Repository::edit_index_at_with_options`] separately opts into alternate split storage
@@ -48,6 +49,7 @@
 //! );
 //! # Ok::<(), girt::index::Error>(())
 //! ```
+mod acceleration;
 mod cache_tree;
 mod codec;
 mod entries;
@@ -55,6 +57,7 @@ mod sparse;
 mod split;
 mod store;
 mod tree;
+pub use acceleration::{FsmonitorCache, MonitorToken, UntrackedCache, UntrackedDirectory};
 pub use codec::{Error, Extension, Index, Limits, Version};
 pub use entries::{Entry, Mode, Stage, Stat, Timestamp};
 pub use sparse::{SparseError, SparseLimits};

@@ -1,4 +1,7 @@
 //! Original fixtures generated through Git's public CLI; no upstream implementation/test source.
+#[path = "index/acceleration.rs"]
+mod acceleration;
+
 use std::fs;
 use std::io::Write;
 use std::path::Path;

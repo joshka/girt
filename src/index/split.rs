@@ -122,7 +122,11 @@ fn invalid(reason: &'static str) -> Error {
 
 // Decode only set positions. Runs are checked before expansion; work and allocations are bounded
 // by the shared entry count, even when a tiny hostile encoding describes billions of set bits.
-fn bitmap(bytes: &[u8], cursor: &mut usize, maximum: usize) -> Result<Vec<usize>, Error> {
+pub(super) fn bitmap(
+    bytes: &[u8],
+    cursor: &mut usize,
+    maximum: usize,
+) -> Result<Vec<usize>, Error> {
     let bits = read_u32(bytes, cursor)? as usize;
     if bits > maximum {
         return Err(invalid("bitmap exceeds shared entries"));
