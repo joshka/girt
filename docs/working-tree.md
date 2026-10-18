@@ -4,7 +4,8 @@ Use these operations when the application owns literal byte and POSIX-mode polic
 macOS/Linux; Windows status traversal and tree materialization are unsupported. Raw status and
 checkout apply no Git attributes, filters, EOL conversion, or configuration normalization;
 `Repository::status_with_filters` compares working files after the conversions of a
-`filter::Pipeline`. Only `Repository::status` applies ignore rules, and only to untracked paths.
+`filter::Pipeline`, and `Repository::checkout_tree_with_filters` writes them converted. Only
+`Repository::status` applies ignore rules, and only to untracked paths.
 
 ## Inspect Raw Status
 

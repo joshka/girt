@@ -104,6 +104,7 @@ impl Repository {
                 self,
                 baseline,
                 target,
+                None,
                 limits,
                 cancel,
                 &mut |_, _| Ok(()),
@@ -113,6 +114,80 @@ impl Repository {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (baseline, target, limits, progress);
+            let cause = if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                super::Error::Cancelled
+            } else {
+                super::types::refused(b"", "checkout requires Linux/macOS")
+            };
+            Err(Failure {
+                cause: Box::new(cause),
+                report: Report::default(),
+                cleanup: vec![],
+            })
+        }
+    }
+
+    /// Checks out a tree as [`Self::checkout_tree_with`] does, converting files through `filters`.
+    ///
+    /// Each regular file of the target is written as `target_filters` converts its blob with
+    /// [`Pipeline::to_worktree`]: line endings, `ident` and filter drivers such as Git LFS. Each
+    /// baseline file must equal what `baseline_filters` converts its blob to, to count as clean.
+    /// Load `baseline_filters` with [`Self::filters`], which reads the `.gitattributes` files
+    /// currently in the working tree, and `target_filters` with [`Self::filters_with_source`] and
+    /// [`DirectorySource::Tree`](crate::attributes::DirectorySource::Tree) of the target, as Git
+    /// reads the attributes of the index it checks out. Publication verifies the converted
+    /// bytes. Symlinks are never converted. All conversion happens during
+    /// preparation, before any working-tree change, so a failing required filter changes nothing;
+    /// converted contents of the target are held in memory until publication. Paths written
+    /// unconverted because a non-required driver failed are listed in
+    /// [`Report::unfiltered`](super::Report::unfiltered).
+    ///
+    /// Index entries keep zero cached stat words, so a later status reads and converts each file.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failures of [`Self::checkout_tree_with`], plus
+    /// [`Error::Filter`](super::Error::Filter) when converting a blob fails, including a command
+    /// refused under [`Commands::Refuse`](crate::filter::Commands::Refuse).
+    ///
+    /// [`Pipeline::to_worktree`]: crate::filter::Pipeline::to_worktree
+    pub fn checkout_tree_with_filters(
+        &self,
+        baseline: Option<ObjectId>,
+        target: Option<ObjectId>,
+        baseline_filters: &mut crate::filter::Pipeline,
+        target_filters: &mut crate::filter::Pipeline,
+        limits: Limits,
+        cancel: &AtomicBool,
+    ) -> Result<Report, Failure> {
+        let _lock_operation = crate::locks::operation();
+        for id in baseline.into_iter().chain(target) {
+            id.require_format(self.object_format())
+                .map_err(|error| Failure {
+                    cause: Box::new(error.into()),
+                    report: Report::default(),
+                    cleanup: vec![],
+                })?;
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            super::worktree::run_observed(
+                self,
+                baseline,
+                target,
+                Some(super::worktree::Filters {
+                    baseline: baseline_filters,
+                    target: target_filters,
+                }),
+                limits,
+                cancel,
+                &mut |_, _| Ok(()),
+                &mut |_, _| {},
+            )
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (baseline, target, baseline_filters, target_filters, limits);
             let cause = if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 super::Error::Cancelled
             } else {

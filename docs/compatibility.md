@@ -2566,6 +2566,17 @@ when its converted content matches the index (observed: changing only line endin
 `core.autocrlf=input` makes `git status` report `M` while `git diff` is empty). Workers read files
 in parallel and convert them one at a time through the shared pipeline.
 
+`Repository::checkout_tree_with_filters` converts every regular file of the baseline and target with
+`Pipeline::to_worktree` during preparation, before any working-tree change, so a failing required
+filter or a refused command changes nothing. The baseline is clean only when each file equals its
+converted form, and publication verifies the converted bytes; symlinks are not converted. Paths a
+failing non-required driver left unconverted are listed in `checkout::Report::unfiltered`. It takes
+two pipelines: the baseline is verified with the attributes in the working tree
+(`Repository::filters`), and the target is written with the target's
+(`Repository::filters_with_source` with `DirectorySource::Tree`), as Git reads them from the index
+it checks out. A file whose attributes change between the trees, such as `eol=lf` to `eol=crlf`, is
+accepted as clean and rewritten.
+
 ### Content Filters Evidence
 
 `tests/filter_eol.rs` compares `Pipeline::to_repository` with the blobs `git add` stores and its
@@ -2590,7 +2601,12 @@ development machine). `tests/filter_status.rs` compares `status_with_filters` wi
 checked out under `core.autocrlf=true` (clean, while raw status reports them), a line-ending-only
 change (modified), `ident`, `text` added after a CRLF commit (modified), same-size edits through a
 clean filter (clean when the cleaned content matches), refusal of filter commands, and Git LFS
-files.
+files. `tests/filter_checkout.rs` checks out two commits with girt and with `git checkout` in twin
+clones and compares every file byte for byte under four `core.autocrlf`/`core.eol` settings, with
+`text`, `eol=crlf`, `text=auto`, `-text`, `ident`, a clean/smudge driver, a symlink and a removed
+file; `git status` then reports girt's checkout clean. It also checks an attribute change between
+the trees, refusal of a locally changed converted file, that refused commands leave the working tree
+empty, and a Git LFS checkout.
 
 ## Working-Tree Index
 

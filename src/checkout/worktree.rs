@@ -30,13 +30,24 @@ pub(super) fn run(
     cancel: &AtomicBool,
     hook: &mut Hook<'_>,
 ) -> Result<Report, Failure> {
-    run_observed(repo, baseline, target, limits, cancel, hook, &mut |_, _| {})
+    run_observed(
+        repo,
+        baseline,
+        target,
+        None,
+        limits,
+        cancel,
+        hook,
+        &mut |_, _| {},
+    )
 }
 
+#[expect(clippy::too_many_arguments, reason = "one checkout's inputs")]
 pub(super) fn run_observed(
     repo: &Repository,
     baseline: Option<ObjectId>,
     target: Option<ObjectId>,
+    filters: Option<Filters<'_>>,
     limits: Limits,
     cancel: &AtomicBool,
     hook: &mut Hook<'_>,
@@ -46,6 +57,7 @@ pub(super) fn run_observed(
         repo,
         [baseline, target],
         None,
+        filters,
         limits,
         cancel,
         hook,
@@ -65,6 +77,7 @@ pub(crate) fn run_with_index(
         repo,
         [baseline, Some(target)],
         Some(entries),
+        None,
         limits,
         cancel,
         &mut |_, _| Ok(()),
@@ -72,10 +85,12 @@ pub(crate) fn run_with_index(
     )
 }
 
+#[expect(clippy::too_many_arguments, reason = "one checkout's inputs")]
 fn run_inner(
     repo: &Repository,
     roots: [Option<ObjectId>; 2],
     replacement: Option<&[index::Entry]>,
+    filters: Option<Filters<'_>>,
     limits: Limits,
     cancel: &AtomicBool,
     hook: &mut Hook<'_>,
@@ -100,10 +115,11 @@ fn run_inner(
         let edit = repo.edit_index(limits.index)?;
         lock = Some(edit);
         let edit = lock.as_mut().unwrap();
-        let mut plan = Plan::prepare(repo, root, baseline, target, edit, limits, cancel)?;
+        let mut plan = Plan::prepare(repo, root, baseline, target, edit, filters, limits, cancel)?;
         if let Some(entries) = replacement {
             edit.replace_entries(entries.to_vec())?;
         }
+        report.unfiltered = std::mem::take(&mut plan.unfiltered);
         hook("prepared", b"")?;
         check(cancel)?;
         let total = plan.operations.len() as u64;
@@ -148,6 +164,22 @@ fn run_inner(
     Ok(report)
 }
 
+/// The conversions for each side of a filtered checkout.
+pub(super) struct Filters<'a> {
+    pub(super) baseline: &'a mut crate::filter::Pipeline,
+    pub(super) target: &'a mut crate::filter::Pipeline,
+}
+
+/// Working-tree bytes by path and blob, for leaves whose converted form differs from the blob.
+type Converted = BTreeMap<(Vec<u8>, ObjectId), Vec<u8>>;
+
+/// Which tree a leaf belongs to.
+#[derive(Clone, Copy, PartialEq)]
+enum Side {
+    Baseline = 0,
+    Target = 1,
+}
+
 // One bounded plan owns verified payloads and the expected namespace after each operation.
 // Directory identity is stable across our own child mutations; leaf metadata/content is not.
 struct Plan<'a> {
@@ -158,6 +190,9 @@ struct Plan<'a> {
     old: Leaves,
     target: Leaves,
     blobs: BTreeMap<ObjectId, Vec<u8>>,
+    /// Working-tree bytes of regular files whose filtered form differs from their blob.
+    converted: [Converted; 2],
+    unfiltered: Vec<Vec<u8>>,
     operations: Vec<Applied>,
     limits: Limits,
     // Verified descriptors for the most recently traversed directory, root first. Each entry was
@@ -170,12 +205,14 @@ struct Plan<'a> {
 }
 
 impl<'a> Plan<'a> {
+    #[expect(clippy::too_many_arguments, reason = "one checkout's inputs")]
     fn prepare(
         repo: &Repository,
         root: &'a Path,
         baseline: Option<ObjectId>,
         target: Option<ObjectId>,
         edit: &mut index::IndexEdit,
+        filters: Option<Filters<'_>>,
         mut limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
@@ -266,13 +303,43 @@ impl<'a> Plan<'a> {
                 ));
             }
         }
+        let mut converted = [BTreeMap::new(), BTreeMap::new()];
+        let mut unfiltered = Vec::new();
+        if let Some(filters) = filters {
+            let sides = [
+                (Side::Baseline, &old, filters.baseline),
+                (Side::Target, &target, filters.target),
+            ];
+            for (side, leaves, pipeline) in sides {
+                for (path, leaf) in leaves {
+                    check(cancel)?;
+                    if leaf.mode == EntryMode::Symlink {
+                        continue;
+                    }
+                    let written = pipeline
+                        .to_worktree(path, &blobs[&leaf.id], leaf.id)
+                        .map_err(|source| Error::Filter {
+                            path: path.clone(),
+                            source: Box::new(source),
+                        })?;
+                    if written.skipped.is_some() && side == Side::Target {
+                        unfiltered.push(path.clone());
+                    }
+                    if let std::borrow::Cow::Owned(bytes) = written.bytes {
+                        if bytes.len() > limits.max_file_bytes {
+                            return Err(Error::Limit("file bytes"));
+                        }
+                        converted[side as usize].insert((path.clone(), leaf.id), bytes);
+                    }
+                }
+            }
+        }
         let mut target_budget = limits.max_worktree_bytes;
-        for leaf in target.values() {
-            charge(
-                &mut target_budget,
-                blobs[&leaf.id].len(),
-                "target verification bytes",
-            )?;
+        for (path, leaf) in &target {
+            let length = converted[Side::Target as usize]
+                .get(&(path.clone(), leaf.id))
+                .map_or(blobs[&leaf.id].len(), Vec::len);
+            charge(&mut target_budget, length, "target verification bytes")?;
         }
         // Validate the complete index before any working-tree side effects.
         let replacement = target
@@ -295,6 +362,8 @@ impl<'a> Plan<'a> {
             old,
             target,
             blobs,
+            converted,
+            unfiltered,
             operations: vec![],
             limits,
             chain: RefCell::default(),
@@ -308,12 +377,19 @@ impl<'a> Plan<'a> {
         let mut budget = plan.limits.max_worktree_bytes;
         for (path, leaf) in &plan.old {
             let parent = plan.parent(path, cancel)?;
-            plan.verify_leaf(&parent, path, *leaf, &mut budget, cancel)?;
+            plan.verify_leaf(Side::Baseline, &parent, path, *leaf, &mut budget, cancel)?;
         }
         plan.build_operations(cancel)?;
         plan.check_planned_markers(cancel)?;
         plan.begin_phase(false);
         Ok(plan)
+    }
+
+    /// The bytes `leaf` has in the working tree at `path` on `side` of the checkout.
+    fn content(&self, side: Side, path: &[u8], leaf: TreeValue) -> &[u8] {
+        self.converted[side as usize]
+            .get(&(path.to_vec(), leaf.id))
+            .unwrap_or(&self.blobs[&leaf.id])
     }
 
     // Each phase reopens the root from `/`, so root substitution between phases is detected.
@@ -568,6 +644,7 @@ impl<'a> Plan<'a> {
 
     fn verify_leaf(
         &self,
+        side: Side,
         fd: &OwnedFd,
         path: &[u8],
         leaf: TreeValue,
@@ -586,7 +663,7 @@ impl<'a> Plan<'a> {
             FileType::Symlink => EntryMode::Symlink,
             _ => return Err(refused(path, "tracked path is not a file or symlink")),
         };
-        if mode != leaf.mode || bytes != self.blobs[&leaf.id] {
+        if mode != leaf.mode || bytes != self.content(side, path, leaf) {
             return Err(refused(path, "local tracked modification"));
         }
         Ok(())
@@ -606,7 +683,14 @@ impl<'a> Plan<'a> {
         match operation.action {
             Action::Remove => {
                 let mut budget = self.limits.max_worktree_bytes;
-                self.verify_leaf(&fd, path, self.old[path], &mut budget, cancel)?;
+                self.verify_leaf(
+                    Side::Baseline,
+                    &fd,
+                    path,
+                    self.old[path],
+                    &mut budget,
+                    cancel,
+                )?;
                 hook("before delete", path)?;
                 self.recheck_boundary(&fd, path, cancel)?;
                 rustix::fs::unlinkat(&*fd, OsStr::from_bytes(name(path)), AtFlags::empty())
@@ -702,7 +786,7 @@ impl<'a> Plan<'a> {
         report: &mut Report,
     ) -> Result<Stat, Error> {
         let leaf = self.target[path];
-        let bytes = &self.blobs[&leaf.id];
+        let bytes = self.content(Side::Target, path, leaf);
         hook("before create", path)?;
         self.recheck_boundary(fd, path, cancel)?;
         let (owned, file) = create_leaf(fd, path, leaf.mode, bytes)?;
@@ -744,7 +828,7 @@ impl<'a> Plan<'a> {
             check(cancel)?;
             let fd = self.parent(path, cancel)?;
             self.check_name(&fd, path, cancel)?;
-            self.verify_leaf(&fd, path, *leaf, &mut budget, cancel)?;
+            self.verify_leaf(Side::Target, &fd, path, *leaf, &mut budget, cancel)?;
         }
         // Removed paths not reused as directories/leaves must still be absent.
         for (path, stat) in &self.expected {

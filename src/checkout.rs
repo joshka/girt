@@ -28,9 +28,11 @@
 //! extensions other than `TREE`, `FSMN`, `UNTR`, `EOIE` and `IEOT`. Intent-to-add and skip-worktree
 //! entries require caller policy and are refused. Path components are limited to 255 bytes. Windows
 //! returns unsupported. Raw checkout preserves blob bytes without attributes, filters, EOL
-//! conversion, ignores or config overrides. Symlink blobs must be nonempty, NUL-free and at most
-//! 1024 bytes. Mode changes replace files, with permissions 0644/0755; ownership, ACLs and other
-//! metadata are not preserved.
+//! conversion, ignores or config overrides;
+//! [`Repository::checkout_tree_with_filters`](crate::Repository::checkout_tree_with_filters)
+//! writes regular files through a [`filter::Pipeline`](crate::filter::Pipeline) instead. Symlink
+//! blobs must be nonempty, NUL-free and at most 1024 bytes. Mode changes replace files, with
+//! permissions 0644/0755; ownership, ACLs and other metadata are not preserved.
 //!
 //! Preparation also projects the nested-repository marker policy across the planned operations,
 //! including retained siblings and directories. A non-root directory containing `HEAD`, `objects`
