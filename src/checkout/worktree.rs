@@ -12,11 +12,11 @@ use rustix::fd::OwnedFd;
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat, fstat, openat};
 
 use super::types::{check, refused};
-use super::{Action, Applied, Error, Failure, Limits, Report, Stage};
+use super::{Action, Applied, Collision, Error, Failure, Limits, Report, Stage};
 use crate::status::worktree::{
     directory_flags, open_root, optional_stat, repository_marker, same, validate_path,
 };
-use crate::worktree_names::Protection;
+use crate::worktree_names::{NamePolicy, Protection};
 use crate::{EntryMode, ObjectId, ObjectKind, Repository, TreeValue, index};
 
 type Leaves = BTreeMap<Vec<u8>, TreeValue>;
@@ -121,6 +121,7 @@ fn run_inner(
             edit.replace_entries(entries.to_vec())?;
         }
         report.unfiltered = std::mem::take(&mut plan.unfiltered);
+        report.collisions = std::mem::take(&mut plan.collisions);
         hook("prepared", b"")?;
         check(cancel)?;
         let total = plan.operations.len() as u64;
@@ -203,6 +204,9 @@ struct Plan<'a> {
     // `None` while mutating: exclusive creation and exact-name identity checks guard each
     // operation, and publication enumerates every target directory again.
     listings: RefCell<Option<BTreeMap<Vec<u8>, Listing>>>,
+    /// Target paths sharing one name on the volume; `old` and `target` hold one path per set.
+    collisions: Vec<Collision>,
+    policy: NamePolicy,
 }
 
 impl<'a> Plan<'a> {
@@ -246,8 +250,12 @@ impl<'a> Plan<'a> {
         }
         let protection = Protection::from_config(repo)
             .map_err(|_| refused(b"", "core.protectNTFS or core.protectHFS is not a boolean"))?;
-        let mut paths = BTreeSet::new();
-        let mut aliases = BTreeMap::new();
+        let policy = NamePolicy::from_config(repo).map_err(|_| {
+            refused(
+                b"",
+                "core.ignoreCase or core.precomposeUnicode is not a boolean",
+            )
+        })?;
         for path in old.keys().chain(target.keys()) {
             validate_path(path)?;
             if protection.refuses(path) {
@@ -259,14 +267,33 @@ impl<'a> Plan<'a> {
             if path.split(|b| *b == b'/').count() > limits.max_depth.min(128) {
                 return Err(Error::Limit("directory depth"));
             }
+        }
+        // The working tree holds what the volume can store: one path per set of names it
+        // merges. The index keeps every target path.
+        let collide =
+            |path: Vec<u8>| refused(&path, "file and directory share one name on this volume");
+        let old_resolved = policy.resolve(&old).map_err(collide)?;
+        let resolved = policy.resolve(&target).map_err(collide)?;
+        let collisions = resolved.collisions;
+        let old_disk = old_resolved.disk;
+        let target_disk = resolved.disk;
+        let sources = [old_resolved.sources, resolved.sources];
+        let mut paths = BTreeSet::new();
+        let mut aliases = BTreeMap::new();
+        for path in old_disk.keys().chain(target_disk.keys()) {
             for prefix in prefixes(path) {
                 if paths.insert(prefix.to_vec()) {
                     charge(&mut limits.max_path_bytes, prefix.len(), "path bytes")?;
-                    let folded = prefix.to_ascii_lowercase();
+                    // A spelling change between baseline and target, such as a case-only
+                    // rename, is refused rather than ordered through the shared name.
+                    let folded: Vec<Vec<u8>> = prefix
+                        .split(|b| *b == b'/')
+                        .map(|part| policy.key(part))
+                        .collect();
                     if let Some(previous) = aliases.insert(folded, prefix.to_vec())
                         && previous != prefix
                     {
-                        return Err(refused(prefix, "case-colliding paths"));
+                        return Err(refused(prefix, "paths share one name on this volume"));
                     }
                 }
             }
@@ -340,8 +367,22 @@ impl<'a> Plan<'a> {
                 }
             }
         }
+        // Filters and attributes see planned paths, as in Git; the plan writes disk paths.
+        for (side, sources) in sources.iter().enumerate() {
+            for (disk, planned) in sources {
+                let leaves = if side == Side::Target as usize {
+                    &target_disk
+                } else {
+                    &old_disk
+                };
+                let id = leaves[disk].id;
+                if let Some(bytes) = converted[side].remove(&(planned.clone(), id)) {
+                    converted[side].insert((disk.clone(), id), bytes);
+                }
+            }
+        }
         let mut target_budget = limits.max_worktree_bytes;
-        for (path, leaf) in &target {
+        for (path, leaf) in &target_disk {
             let length = converted[Side::Target as usize]
                 .get(&(path.clone(), leaf.id))
                 .map_or(blobs[&leaf.id].len(), Vec::len);
@@ -365,8 +406,10 @@ impl<'a> Plan<'a> {
             root_stat,
             metadata,
             expected: BTreeMap::new(),
-            old,
-            target,
+            old: old_disk,
+            target: target_disk,
+            collisions,
+            policy,
             blobs,
             converted,
             unfiltered,
@@ -630,7 +673,7 @@ impl<'a> Plan<'a> {
         let directory = parent_path(path);
         if !listings.contains_key(directory) {
             let mut budget = self.limits.max_directory_entries;
-            let listing = Listing::new(names(fd, directory, &mut budget, cancel)?);
+            let listing = Listing::new(names(fd, directory, &mut budget, cancel)?, self.policy);
             listings.insert(directory.to_vec(), listing);
         }
         listings[directory].check(fd, path)
@@ -858,27 +901,26 @@ impl<'a> Plan<'a> {
     }
 }
 
-// Name policy for one enumerated directory: exact names grouped by ASCII case folding, plus
+// Name policy for one enumerated directory: exact names grouped by the volume's name key, plus
 // refusals that apply to every name checked in it.
 struct Listing {
+    policy: NamePolicy,
     folded: BTreeMap<Vec<u8>, Vec<Vec<u8>>>,
-    non_ascii: bool,
     metadata_marker: bool,
 }
 
 impl Listing {
-    fn new(names: Vec<Vec<u8>>) -> Self {
+    fn new(names: Vec<Vec<u8>>, policy: NamePolicy) -> Self {
         let mut listing = Self {
+            policy,
             folded: BTreeMap::new(),
-            non_ascii: false,
             metadata_marker: false,
         };
         for actual in names {
-            listing.non_ascii |= !actual.is_ascii();
             listing.metadata_marker |= actual.eq_ignore_ascii_case(b".git") && actual != b".git";
             listing
                 .folded
-                .entry(actual.to_ascii_lowercase())
+                .entry(policy.key(&actual))
                 .or_default()
                 .push(actual);
         }
@@ -886,19 +928,23 @@ impl Listing {
     }
 
     fn check(&self, fd: &OwnedFd, path: &[u8]) -> Result<(), Error> {
-        if cfg!(target_os = "macos") && self.non_ascii {
-            return Err(refused(path, "non-ASCII directory names on macOS"));
-        }
         let wanted = name(path);
-        let same_fold = self.folded.get(&wanted.to_ascii_lowercase());
-        if same_fold.is_some_and(|names| names.iter().any(|actual| actual != wanted)) {
-            return Err(refused(path, "filesystem case alias"));
+        let same_name = self.folded.get(&self.policy.key(wanted));
+        if same_name.is_some_and(|names| names.iter().any(|actual| actual != wanted)) {
+            return Err(refused(
+                path,
+                "existing entry shares this name on the volume",
+            ));
         }
-        let git = self.folded.get(b".git".as_slice());
-        if self.metadata_marker || (git.is_some() && !parent_path(path).is_empty()) {
+        let git = self
+            .folded
+            .get(&self.policy.key(b".git"))
+            .is_some_and(|names| names.iter().any(|actual| actual == b".git"));
+        if self.metadata_marker || (git && !parent_path(path).is_empty()) {
             return Err(refused(path, "repository metadata marker"));
         }
-        let exact = same_fold.is_some_and(|names| names.iter().any(|actual| actual == wanted));
+        // The volume may merge names the policy keeps apart; its own lookup is the authority.
+        let exact = same_name.is_some_and(|names| names.iter().any(|actual| actual == wanted));
         if !exact && optional_stat(fd, wanted, path)?.is_some() {
             return Err(refused(path, "filesystem name alias"));
         }
