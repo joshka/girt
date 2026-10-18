@@ -87,6 +87,23 @@ impl Repository {
         limits: WriteLimits,
         cancel: &AtomicBool,
     ) -> Result<IndexWritten, InstallError> {
+        self.write_multi_pack_index_controlled(
+            isolation,
+            options,
+            limits,
+            crate::PackLimits::default(),
+            cancel,
+        )
+    }
+
+    pub(super) fn write_multi_pack_index_controlled<I: MaintenanceIsolation>(
+        &self,
+        isolation: &mut I,
+        options: WriteOptions,
+        limits: WriteLimits,
+        packs: crate::PackLimits,
+        cancel: &AtomicBool,
+    ) -> Result<IndexWritten, InstallError> {
         let mut operation = "acquire maintenance exclusion";
         let mut published = false;
         let result = (|| -> crate::Result<IndexWritten> {
@@ -111,11 +128,8 @@ impl Repository {
                 }
             })?;
             operation = "open primary snapshot";
-            let objects = self.objects_controlled(
-                crate::PackLimits::default(),
-                crate::AlternateLimits::default(),
-                cancel,
-            )?;
+            let objects =
+                self.objects_controlled(packs, crate::AlternateLimits::default(), cancel)?;
             operation = "encode index";
             let bytes = objects.encode_multi_pack_index_with(options, limits, cancel)?;
             let parsed = MultiPackIndex::parse_with(

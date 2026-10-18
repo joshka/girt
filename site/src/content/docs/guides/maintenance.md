@@ -56,6 +56,14 @@ selects none. The report explains protected and omitted packs. Promisor and cruf
 these batches. Execution must repeat selection under isolation; the returned paths do not authorize
 retirement. Incremental-chain selection is currently refused.
 
+`repack_incremental_batch` performs that selection under caller isolation and publishes one ordinary
+pack before updating the MIDX. It verifies selected payloads and the replacement pair. Existing
+packs, loose objects and markers remain intact; selected IDs also present in protected primary packs
+are verified there and excluded from output. Reports distinguish no publication, a pack-only
+boundary, a complete pair and MIDX visibility, so a later error never hides an installed pair. This
+operation does not retire data or create bitmaps. It is an explicit caller request, with no implicit
+consolidation or network access.
+
 ## Prepare prefetch mappings
 
 `PrefetchRefspecs::parse` prepares configured fetch refspec values for a prefetch cache. A
