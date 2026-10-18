@@ -22,9 +22,13 @@
 //! assert_eq!(decision, AutoGc::NotDue);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+mod lock;
+
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, io};
+
+pub use lock::{LockError, MaintenanceLock};
 
 use crate::{Config, Repository};
 
