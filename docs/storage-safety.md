@@ -40,11 +40,13 @@ and delete files.
 Retention operations share one 256 KiB positioned-read header window across all packs on the calling
 thread. Nested phases share that allocation; the outermost operation drops it. Pack size and pack
 count do not increase window memory. Large read-ahead is restricted to offset-ordered blob locating,
-raw reuse and survivor verification; scattered requests use small positioned reads. Ordinary content
-reads outside retention operations use a 16 KiB window per reading thread, filled only when a read
-lands shortly after the previous one in the same pack, as history walks do. Its hits make the same
-immutable-pack assumption as the header window. Entry prefixes and decoder scratch retain their
-existing bounds.
+raw reuse and survivor verification; scattered requests use small positioned reads. Survivor
+verification decodes on up to `RetentionPolicy::max_threads` workers, each with its own 256 KiB
+window and a private delta base cache; the workers' caches split the shared cache's 96 MiB between
+them. Ordinary content reads outside retention operations, including the retention walk's read-ahead
+workers, use a 16 KiB window per reading thread, filled only when a read lands shortly after the
+previous one in the same pack, as history walks do. Its hits make the same immutable-pack assumption
+as the header window. Entry prefixes and decoder scratch retain their existing bounds.
 
 Each pinned artifact records its handle's size, modification time and file identity (device/inode on
 Unix, volume/file index on Windows) at opening. Before pack/index publication, retirement unlinks,
@@ -127,6 +129,23 @@ Retention planning, `repack_retained`, retirement, prune and gc therefore read g
 the hash. Retirement then decodes every retained object from the replacement or protected copy
 before unlinking, as [Last readable copy](#last-readable-copy) requires. Measured on a 131k-object
 history, these hashes were under 3 % of the plan walk; reading entries was the cost.
+
+Both costs run on up to `RetentionPolicy::max_threads` workers without changing what they check. The
+plan walk's workers read and parse objects already in its breadth-first queue; the calling thread
+consumes their results in queue order and alone applies every limit, kind and edge check, so the
+reachable set and the first error are the same on any thread count. Retirement's workers decode the
+replacement's survivors in offset-ordered runs, each read keeping its CRC, zlib, identity, limit and
+cancellation checks, while the whole-pack checksum and CRC pass streams the file on its own thread;
+both finish before the freshness checks and the first unlink. The first failure stops the other
+workers and refuses retirement.
+
+Workers share the delta base cache, so they find different bases cached than one thread would. A
+cache hit therefore charges the read what decoding that base from the pack cost: its delta depth,
+compressed input bytes and decoded bytes. Whether a read fits its `ReadLimits` doesn't depend on
+what earlier reads left in the cache. The walk's workers also stop parsing an object whose payload
+alone exceeds `max_bytes`, or collecting edges past `max_edges`, since the walk refuses at that
+object either way. With `max_threads` at 0 or 1, every read, including the checksum pass, runs on
+the calling thread.
 
 Native local push can establish additional complete commit boundaries by following identity-checked
 parent edges from existing reference roots. Discovery targets external commit dependencies in the

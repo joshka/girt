@@ -120,8 +120,15 @@ pub(crate) trait Source {
 /// opening more stores does not multiply the memory it can hold. Each reader still sees only the
 /// entries it decoded from its own pinned files, and dropping it releases them. A receive-owned
 /// source keeps a private cache.
+///
+/// Entries are split by offset across shards, each with its own lock and an equal share of the
+/// limit, so threads reading one pack in parallel rarely wait for each other. Each shard evicts
+/// its own oldest entries.
 pub(crate) struct BaseCache {
-    inner: Mutex<CacheInner>,
+    shards: Box<[Mutex<CacheInner>]>,
+    /// Decoded bytes each shard retains before its oldest entries are evicted.
+    shard_limit: usize,
+    next_scope: std::sync::atomic::AtomicU64,
 }
 
 impl std::fmt::Debug for BaseCache {
@@ -138,7 +145,6 @@ struct CacheInner {
     entries: HashMap<(Scope, usize), Cached>,
     order: VecDeque<(Scope, usize)>,
     bytes: usize,
-    next_scope: Scope,
 }
 
 #[derive(Clone)]
@@ -146,6 +152,34 @@ struct Cached {
     kind: ObjectKind,
     data: Arc<Vec<u8>>,
     proof: Proof,
+    cost: Cost,
+}
+
+/// What decoding a cached entry from its pack cost a read's limits, from the entry down to its
+/// chain's whole base.
+///
+/// A stored pack reader's hit charges this to the reading request, so a read fits its
+/// [`ReadLimits`] or not whatever the cache holds: reads in another order, or on other threads,
+/// reach the same outcome.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Cost {
+    /// Delta edges from the entry to its whole base.
+    pub depth: usize,
+    /// Compressed entry bytes read.
+    pub input: usize,
+    /// Inflated and reconstructed bytes.
+    pub decode: usize,
+}
+
+impl Cost {
+    /// The cost of an entry decoded on top of `base`.
+    fn above(base: Self, delta: bool, input: usize, decode: usize) -> Self {
+        Self {
+            depth: base.depth + usize::from(delta),
+            input: base.input.saturating_add(input),
+            decode: base.decode.saturating_add(decode),
+        }
+    }
 }
 
 /// What a cached payload was checked against when it was decoded.
@@ -173,6 +207,9 @@ impl Proof {
 pub(crate) struct CacheView<'a> {
     cache: &'a BaseCache,
     scope: Scope,
+    /// Whether a hit charges the read its entry's [`Cost`]. A receive-owned source's reads share
+    /// one budget that already paid for each entry once, so its hits charge nothing.
+    charged: bool,
 }
 
 /// A stored pack reader's entries in the process-wide cache, released when it is dropped.
@@ -203,9 +240,7 @@ impl CacheScope {
         let cache: &'static BaseCache = &SHARED;
         #[cfg(test)]
         let cache = SHARED.with(|cache| *cache);
-        let mut inner = cache.lock();
-        inner.next_scope += 1;
-        let scope = inner.next_scope;
+        let scope = cache.next_scope.fetch_add(1, Ordering::Relaxed) + 1;
         Self { cache, scope }
     }
 
@@ -213,6 +248,7 @@ impl CacheScope {
         CacheView {
             cache: self.cache,
             scope: self.scope,
+            charged: true,
         }
     }
 }
@@ -220,36 +256,62 @@ impl CacheScope {
 impl Drop for CacheScope {
     fn drop(&mut self) {
         let scope = self.scope;
-        let mut inner = self.cache.lock();
-        let CacheInner {
-            entries,
-            order,
-            bytes,
-            ..
-        } = &mut *inner;
-        entries.retain(|&(owner, _), cached| {
-            let keep = owner != scope;
-            if !keep {
-                *bytes -= cached.data.len();
-            }
-            keep
-        });
-        order.retain(|&(owner, _)| owner != scope);
+        for shard in &self.cache.shards {
+            let mut inner = lock(shard);
+            let CacheInner {
+                entries,
+                order,
+                bytes,
+            } = &mut *inner;
+            entries.retain(|&(owner, _), cached| {
+                let keep = owner != scope;
+                if !keep {
+                    *bytes -= cached.data.len();
+                }
+                keep
+            });
+            order.retain(|&(owner, _)| owner != scope);
+        }
     }
 }
 
 impl BaseCache {
     /// Total decoded bytes retained, matching Git's default `core.deltaBaseCacheLimit`.
-    const LIMIT: usize = 96 * 1024 * 1024;
+    pub(crate) const LIMIT: usize = 96 * 1024 * 1024;
+
+    /// Shards of a cache shared between threads. Each holds an eighth of the limit, the largest
+    /// payload any cache admits, so sharding admits the same payloads.
+    const SHARDS: usize = 8;
 
     pub(crate) fn new() -> Self {
+        Self::sharded(Self::SHARDS, Self::LIMIT / Self::SHARDS)
+    }
+
+    /// An unsharded private cache retaining at most `limit` decoded bytes, for one worker that
+    /// shares the process budget with others.
+    pub(crate) fn with_limit(limit: usize) -> Self {
+        Self::sharded(1, limit)
+    }
+
+    fn sharded(shards: usize, shard_limit: usize) -> Self {
         Self {
-            inner: Mutex::new(CacheInner::default()),
+            shards: (0..shards).map(|_| Mutex::default()).collect(),
+            shard_limit,
+            next_scope: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, CacheInner> {
-        self.inner.lock().unwrap_or_else(|error| error.into_inner())
+    /// Payloads larger than this are never cached, so one large object can't evict every base.
+    fn max_payload(&self) -> usize {
+        (self.shard_limit * self.shards.len() / 8).min(self.shard_limit)
+    }
+
+    fn shard(&self, offset: usize) -> &Mutex<CacheInner> {
+        // Entry offsets are arbitrary byte positions; multiplying spreads neighbours evenly.
+        let mixed = (offset as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 32;
+        let index = usize::try_from(mixed).unwrap_or(0) % self.shards.len();
+        #[expect(clippy::indexing_slicing, reason = "index is below the shard count")]
+        &self.shards[index]
     }
 
     /// This cache as a receive-owned source's private view.
@@ -257,6 +319,16 @@ impl BaseCache {
         CacheView {
             cache: self,
             scope: 0,
+            charged: false,
+        }
+    }
+
+    /// This cache as one stored-pack reader's private view, whose hits charge their [`Cost`] as
+    /// the shared cache's do.
+    pub(crate) fn charged_view(&self) -> CacheView<'_> {
+        CacheView {
+            charged: true,
+            ..self.view()
         }
     }
 
@@ -265,14 +337,16 @@ impl BaseCache {
         self.view().get(offset)
     }
 
+    /// Caches an object a receive-owned source resolved.
     pub(crate) fn insert(&self, offset: usize, object: &Object, proof: Proof) {
         self.view()
-            .insert_shared(offset, object.kind, &object.data, proof);
+            .insert_shared(offset, object.kind, &object.data, proof, Cost::default());
     }
 
     #[cfg(test)]
     fn insert_shared(&self, offset: usize, kind: ObjectKind, data: &Arc<Vec<u8>>, proof: Proof) {
-        self.view().insert_shared(offset, kind, data, proof);
+        self.view()
+            .insert_shared(offset, kind, data, proof, Cost::default());
     }
 
     #[cfg(test)]
@@ -283,24 +357,31 @@ impl BaseCache {
 
 impl CacheView<'_> {
     fn get(&self, offset: usize) -> Option<Cached> {
-        let inner = self.cache.lock();
+        let inner = lock(self.cache.shard(offset));
         inner.entries.get(&(self.scope, offset)).cloned()
     }
 
     /// Shares a decoded payload with the cache without copying it.
-    fn insert_shared(&self, offset: usize, kind: ObjectKind, data: &Arc<Vec<u8>>, proof: Proof) {
+    fn insert_shared(
+        &self,
+        offset: usize,
+        kind: ObjectKind,
+        data: &Arc<Vec<u8>>,
+        proof: Proof,
+        cost: Cost,
+    ) {
         let size = data.len();
         // One large object shouldn't evict every shared base.
-        if size > BaseCache::LIMIT / 8 {
+        if size > self.cache.max_payload() {
             return;
         }
         let key = (self.scope, offset);
-        let mut inner = self.cache.lock();
+        let mut inner = lock(self.cache.shard(offset));
         if let Some(existing) = inner.entries.get_mut(&key) {
             existing.proof.merge(proof);
             return;
         }
-        while inner.bytes + size > BaseCache::LIMIT {
+        while inner.bytes + size > self.cache.shard_limit {
             let Some(oldest) = inner.order.pop_front() else {
                 break;
             };
@@ -316,16 +397,21 @@ impl CacheView<'_> {
                 kind,
                 data: Arc::clone(data),
                 proof,
+                cost,
             },
         );
     }
 
     fn mark_verified(&self, offset: usize, id: ObjectId) {
-        let mut inner = self.cache.lock();
+        let mut inner = lock(self.cache.shard(offset));
         if let Some(entry) = inner.entries.get_mut(&(self.scope, offset)) {
             entry.proof.identity = Some(id);
         }
     }
+}
+
+fn lock(shard: &Mutex<CacheInner>) -> std::sync::MutexGuard<'_, CacheInner> {
+    shard.lock().unwrap_or_else(|error| error.into_inner())
 }
 
 #[cfg(test)]
@@ -445,7 +531,7 @@ pub(crate) fn decode_checked(
     // since walks often read their delta children next.
     let retain = |offset: usize, kind: ObjectKind| offset != requested || kind != ObjectKind::Blob;
     // Payloads are shared with the cache, never copied out of it.
-    let (kind, mut data) = loop {
+    let (kind, mut data, mut cost) = loop {
         let offset = span.offset;
         if seen.contains(&offset) {
             return Err(Error::DeltaCycle);
@@ -457,9 +543,19 @@ pub(crate) fn decode_checked(
                 .get(offset)
                 .filter(|hit| offset != requested || hit.proof.crc || span.crc.is_none())
         {
-            // A payload cached under looser limits must still fit this read's.
+            // A payload cached under looser limits must still fit this read's, and the hit
+            // charges what decoding it from the pack would have.
             if hit.data.len() > limits.max_object_bytes {
                 return Err(Error::Limit("object bytes"));
+            }
+            if cache.charged {
+                if pending.len() + hit.cost.depth > limits.max_delta_depth {
+                    return Err(Error::Limit("delta depth"));
+                }
+                if hit.cost.input > input_remaining {
+                    return Err(Error::Limit("compressed entry bytes"));
+                }
+                charge(remaining, hit.cost.decode)?;
             }
             if verify && offset == requested {
                 let id = source.identity(position)?;
@@ -468,7 +564,7 @@ pub(crate) fn decode_checked(
                     cache.mark_verified(offset, id);
                 }
             }
-            break (hit.kind, hit.data);
+            break (hit.kind, hit.data, hit.cost);
         }
         // An entry without an exact end ends with its zlib stream; a stream that runs past the
         // remaining input budget exceeds the limit.
@@ -520,8 +616,10 @@ pub(crate) fn decode_checked(
             // The stream ended within the span, which the budget capped.
             input_remaining -= end - offset;
         }
+        // An exact span ends where its stream does, so this is what either branch charged.
+        let consumed = end - offset;
         if let Some(base) = header.base {
-            pending.push((offset, proof_at(&span)?, data));
+            pending.push((offset, proof_at(&span)?, data, consumed, length));
             span = base;
         } else {
             let kind = match kind {
@@ -540,22 +638,24 @@ pub(crate) fn decode_checked(
                 proof.identity = Some(id);
             }
             let data = Arc::new(data);
+            let cost = Cost::above(Cost::default(), false, consumed, length);
             if let Some(cache) = cache.filter(|_| retain(offset, kind)) {
-                cache.insert_shared(offset, kind, &data, proof);
+                cache.insert_shared(offset, kind, &data, proof, cost);
             }
-            break (kind, data);
+            break (kind, data, cost);
         }
     };
-    while let Some((offset, mut proof, program)) = pending.pop() {
+    while let Some((offset, mut proof, program, consumed, length)) = pending.pop() {
         check_cancelled(cancelled)?;
         data = Arc::new(apply(&data, &program, limits.max_object_bytes, remaining)?);
+        cost = Cost::above(cost, true, consumed, length + data.len());
         if verify && offset == requested {
             let id = source.identity(position)?;
             verify_identity(format, kind, &data, id)?;
             proof.identity = Some(id);
         }
         if let Some(cache) = cache.filter(|_| retain(offset, kind)) {
-            cache.insert_shared(offset, kind, &data, proof);
+            cache.insert_shared(offset, kind, &data, proof, cost);
         }
     }
     // The payload stays shared with the cache; callers copy it only to take ownership.
@@ -708,6 +808,39 @@ mod cache_tests {
         }
     }
 
+    /// Offsets other than 0 and 3 that between them reach every shard of `cache`.
+    fn fill_every_shard(cache: &BaseCache) -> Vec<usize> {
+        let mut reached = vec![false; cache.shards.len()];
+        let mut offsets = Vec::new();
+        for offset in 4..4096 {
+            let shard = cache.shard(offset);
+            let index = cache
+                .shards
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, shard))
+                .unwrap();
+            if !reached[index] {
+                reached[index] = true;
+                offsets.push(offset);
+            }
+        }
+        assert!(
+            reached.iter().all(|&reached| reached),
+            "every shard is reachable"
+        );
+        offsets
+    }
+
+    /// Threads reading at different offsets take different shard locks.
+    #[test]
+    fn neighbouring_offsets_spread_across_shards() {
+        let cache = BaseCache::new();
+        let used: std::collections::HashSet<_> = (0..64)
+            .map(|entry| std::ptr::from_ref(cache.shard(12 + entry * 200)))
+            .collect();
+        assert_eq!(used.len(), BaseCache::SHARDS);
+    }
+
     /// Eviction drops only the cache's share: payloads held by callers stay intact, and taking
     /// one copies rather than aliasing another holder.
     #[test]
@@ -717,17 +850,21 @@ mod cache_tests {
         let clone = held.clone();
         cache.insert(0, &held, CHECKED);
         let filler = Arc::new(vec![0; BaseCache::LIMIT / 8]);
-        for position in 1..=8 {
+        for position in fill_every_shard(&cache) {
             cache.insert_shared(position, ObjectKind::Blob, &filler, CHECKED);
         }
         assert!(cache.get(0).is_none(), "the oldest entry is evicted");
-        let inner = cache.inner.lock().unwrap();
-        assert!(inner.bytes <= BaseCache::LIMIT);
-        assert_eq!(
-            inner.bytes,
-            inner.entries.values().map(|e| e.data.len()).sum::<usize>()
-        );
-        drop(inner);
+        let mut total = 0;
+        for shard in &cache.shards {
+            let inner = shard.lock().unwrap();
+            assert!(inner.bytes <= cache.shard_limit);
+            assert_eq!(
+                inner.bytes,
+                inner.entries.values().map(|e| e.data.len()).sum::<usize>()
+            );
+            total += inner.bytes;
+        }
+        assert!(total <= BaseCache::LIMIT);
         let mut taken = held.into_data();
         taken.fill(0);
         assert_eq!(clone.data(), &[7; 1024][..]);
@@ -743,14 +880,18 @@ mod cache_tests {
         let data = Arc::new(b"cached".to_vec());
         first
             .view()
-            .insert_shared(3, ObjectKind::Blob, &data, CHECKED);
+            .insert_shared(3, ObjectKind::Blob, &data, CHECKED, Cost::default());
         assert!(first.view().get(3).is_some_and(|hit| hit.proof.crc));
         assert!(second.view().get(3).is_none(), "another reader misses");
         let filler = Arc::new(vec![0; BaseCache::LIMIT / 8]);
-        for position in 0..8 {
-            second
-                .view()
-                .insert_shared(position, ObjectKind::Blob, &filler, CHECKED);
+        for position in fill_every_shard(first.cache) {
+            second.view().insert_shared(
+                position,
+                ObjectKind::Blob,
+                &filler,
+                CHECKED,
+                Cost::default(),
+            );
         }
         assert!(
             first.view().get(3).is_none(),
@@ -758,9 +899,11 @@ mod cache_tests {
         );
         let cache = first.cache;
         drop(second);
-        let inner = cache.lock();
-        assert_eq!(inner.bytes, 0);
-        assert!(inner.entries.is_empty());
+        for shard in &cache.shards {
+            let inner = lock(shard);
+            assert_eq!(inner.bytes, 0);
+            assert!(inner.entries.is_empty());
+        }
     }
 
     /// Payloads up to an eighth of the limit are admitted; larger ones are not.
