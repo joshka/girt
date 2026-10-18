@@ -120,7 +120,7 @@ def render(rows, meta):
     older = sorted({r['girt_version'] for r in rows
                     if r.get('girt_version') and release and r['girt_version'] != release})
     if older:
-        lines += ['', 'Cells marked `(girt X)` were measured on that older release rather than',
+        lines += ['', 'Cells marked `(girt X)` were measured on that release rather than',
                   f'girt {release}; each row records its own `girt_commit` and `measured_on` date.']
     lines += [
         '', '## Limits and interpretation', '',
@@ -159,7 +159,7 @@ def render(rows, meta):
         f'- Build: {meta["build"]}.', '',
         *[line for note in meta.get('notes', []) for line in ('Note: ' + note, '')],
         ('Every cell was measured on girt ' + release + '.' if release and not older
-         else 'Most cells were measured on girt ' + str(release) + '; marked cells are older.'),
+         else 'Most cells were measured on girt ' + str(release) + '; marked cells name their own release.'),
         'Each row records the girt release, girt commit, jj adapter commit, and date it was',
         'measured, so cells can be re-measured selectively after a change. Binary fingerprints',
         'are per row; [the JSON provenance block](benchmarks/jj-matrix.json) also holds',
