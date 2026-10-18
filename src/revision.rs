@@ -17,6 +17,7 @@
 //! | full object ID | that ID; existence is not checked, as Git does not check it |
 //! | abbreviated object ID | the one stored object with that prefix of at least four digits; a following `~`, `^`, `^{kind}` or `:path` picks among objects sharing it by kind |
 //! | `name` | a reference, expanded in Git's order: `HEAD` or `refs/...` as given, `refs/name`, `refs/tags/name`, `refs/heads/name`, `refs/remotes/name`, `refs/remotes/name/HEAD` |
+//! | `name-N-ghex` | `git describe` output such as `v1.0-14-gabc1234`: the commit the abbreviated ID after `-g` names (preferred when the prefix is ambiguous), when no reference has that name and `name` is a valid branch name |
 //! | `@` | `HEAD` |
 //! | `rev~N`, `rev~` | the Nth first-parent ancestor |
 //! | `rev^N`, `rev^` | the Nth parent; `^0` is the commit itself |
@@ -43,7 +44,6 @@
 //! - dated reflog entries `name@{yesterday}` and previous checkouts `@{-N}`;
 //! - `rev^@`, `rev^!` and `rev^-`;
 //! - `@{push}` with configured `remote.<name>.push` refspecs;
-//! - `git describe` output such as `v1.0-3-gabc1234`;
 //! - paths relative to the working directory (`rev:./path`).
 //!
 //! # Examples

@@ -354,3 +354,80 @@ fn ambiguous_abbreviations_are_reported_or_disambiguated_by_kind() {
         assert_eq!(actual, expected, "{text}");
     }
 }
+
+/// `git describe` output resolves to the commit its `-g<hex>` names, as `git rev-parse` reads it.
+#[test]
+fn describe_output_matches_git_rev_parse() {
+    let root = fixture();
+    let path = root.path();
+    let repository = Repository::discover(path).unwrap();
+    let described = must(path, &["describe", "--tags", "HEAD"]);
+    let short = must(path, &["rev-parse", "--short", "HEAD~1"]);
+    let full = must(path, &["rev-parse", "HEAD~1"]);
+    // A branch whose name has the describe shape wins over the abbreviated ID, as in Git.
+    let shaped = format!("x-1-g{short}");
+    must(path, &["branch", &shaped, "HEAD~2"]);
+    for text in [
+        described.clone(),
+        format!("{described}~1"),
+        format!("{described}^{{tree}}"),
+        format!("anything-0-g{short}"),
+        format!("a/b-12-g{short}"),
+        format!("a-b-01-g{}", &short[..4]),
+        format!("a-1-g{full}"),
+        shaped,
+        // Failures Git and girt must agree on.
+        format!("anything-g{short}"),
+        format!("a-1-g{}", &short[..3]),
+        format!("a-12x-g{short}"),
+        format!("-1-g{short}"),
+        format!("a-1-G{short}"),
+        format!("a-1-g{short}-dirty"),
+        "a-1-gdeadbeef".to_owned(),
+        // Names that are not valid branch names.
+        format!("foo?-1-g{short}"),
+        format!("a[-1-g{short}"),
+        format!("a\\b-1-g{short}"),
+        format!("a.lock/x-1-g{short}"),
+        // A full ID extended with zeros, which Git accepts.
+        format!("a-1-g{full}0"),
+        format!("a-1-g{full}00000"),
+        format!("a-1-g{full}1"),
+    ] {
+        let expected = git(path, &["rev-parse", "--verify", "-q", &text]);
+        let actual = resolve(&repository, &text).ok().map(|id| id.to_string());
+        assert_eq!(actual, expected, "{text}");
+    }
+}
+
+/// An abbreviation in describe output that also prefixes a blob still names the commit, as in Git.
+#[test]
+fn describe_output_prefers_the_commit_for_ambiguous_ids() {
+    let root = fixture();
+    let path = root.path();
+    let repository = Repository::discover(path).unwrap();
+    let head = must(path, &["rev-parse", "HEAD"]);
+    let prefix = &head[..4];
+    let format = repository.object_format();
+    let content = (0u64..)
+        .map(|n| format!("collision {n}\n"))
+        .find(|content| {
+            girt::ObjectId::for_blob(format, content.as_bytes())
+                .to_string()
+                .starts_with(prefix)
+        })
+        .unwrap();
+    let file = path.join("collision.txt");
+    std::fs::write(&file, &content).unwrap();
+    must(path, &["hash-object", "-w", file.to_str().unwrap()]);
+    for text in [
+        format!("x-1-g{prefix}"),
+        format!("x-1-g{prefix}^{{object}}"),
+        format!("x-1-g{prefix}^{{tree}}"),
+        prefix.to_owned(),
+    ] {
+        let expected = git(path, &["rev-parse", "--verify", "-q", &text]);
+        let actual = resolve(&repository, &text).ok().map(|id| id.to_string());
+        assert_eq!(actual, expected, "{text}");
+    }
+}
