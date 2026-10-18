@@ -286,8 +286,7 @@ pub mod http;
 pub use control::TransportControl;
 pub(crate) use control::{Interruption, interruption};
 
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod process;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-#[cfg(test)]
 pub(crate) use process::Server;

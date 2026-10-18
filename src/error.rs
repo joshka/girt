@@ -191,6 +191,7 @@ from_domain_errors! {
     crate::history::PathHistoryError,
     crate::ignore::Error,
     crate::ignore::LoadError,
+    crate::fsmonitor::Error,
     crate::index::Error,
     crate::index::SparseError,
     crate::index::StorageError,

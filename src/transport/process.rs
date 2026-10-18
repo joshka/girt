@@ -62,6 +62,7 @@ impl<'a> Server<'a> {
 
     /// Upload while draining bounded output, so an early rejecting peer cannot fill both pipes.
     /// Return retained bytes even on interruption for protocol-level acknowledgement recovery.
+    #[cfg(test)]
     pub(crate) fn exchange(
         mut reader: Pipe<'_, ChildStdout>,
         writer: Pipe<'_, ChildStdin>,
@@ -124,6 +125,7 @@ impl Drop for Server<'_> {
     }
 }
 
+#[cfg(test)]
 fn exchange(
     reader: &mut Pipe<'_, ChildStdout>,
     writer: Pipe<'_, ChildStdin>,
