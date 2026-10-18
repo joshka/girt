@@ -106,8 +106,10 @@ impl AppliedTree {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct AppliedFile {
-    /// Mapped repository-relative path, never a filesystem path.
+    /// Mapped destination path, or source for a deletion; never a filesystem path.
     pub path: Vec<u8>,
+    /// Original source path, absent for additions; copies retain this entry.
+    pub source_path: Option<Vec<u8>>,
     /// Original entry, absent for an addition.
     pub old: Option<TreeValue>,
     /// Replacement entry, absent for a deletion.
@@ -144,7 +146,7 @@ pub enum TreeError {
     /// A path is invalid, changes its name, traverses a leaf, or violates presence preconditions.
     #[error("patch path precondition failed")]
     Path(Vec<u8>),
-    /// Existing entry is neither a regular file nor a symbolic link.
+    /// Existing entry has an unsupported mode or differs from the declared source mode.
     #[error("patch entry mode is unsupported")]
     Mode,
     /// Computation exceeded a bound without returning a partial artifact.
@@ -203,13 +205,15 @@ impl Patch {
 
     /// Computes a tree replacement without writing objects, index entries or working files.
     ///
-    /// Reads only affected directories and preimage blobs; unrelated subtrees, including stored
-    /// empty directories, remain opaque. All mapped paths must be distinct, relative, nonempty,
-    /// NUL-free and free of dot components. Renaming through differing `---`/`+++` paths is
-    /// refused. Existing executable/symlink modes are preserved; additions use regular-file
-    /// mode. An edit cannot traverse or replace a directory or gitlink. Removed empty parent
-    /// directories are pruned. Duplicate mapped paths are refused rather than applying edits
-    /// sequentially.
+    /// Reads affected directories and preimage blobs, keeping unrelated subtrees opaque. All
+    /// mapped paths must be relative, nonempty, NUL-free and free of dot or `.git` components
+    /// (ignoring ASCII case for `.git`). Differing names require rename/copy metadata. Declared
+    /// modes are checked and applied; otherwise existing modes are preserved and additions use
+    /// regular-file mode. Directories and gitlinks cannot be replaced or traversed as files.
+    /// Empty parent directories are pruned after deletion. Duplicate destinations, repeated
+    /// non-copy sources and replacing an emptied directory are refused. All sources are read
+    /// before path edits, so rename cycles use original preimages and copies retain their sources.
+    /// Filesystem-specific metadata aliases remain the responsibility of later checkout.
     ///
     /// Cancellation is checked between files, directory reads and generated trees. Individual
     /// bounded reads and exact content application cannot be interrupted. Callers publishing the
@@ -237,85 +241,114 @@ impl Patch {
             path_bytes: 0,
         };
 
-        let mut files = Vec::new();
-        let mut blobs = Vec::new();
-        let mut seen = std::collections::BTreeSet::new();
         if self.files().len() > limits.content.max_files {
             return Err(TreeError::Limit("files"));
         }
+        let (mappings, removals) = map_files(self, &options, &mut state)?;
         state.load(Vec::new(), base)?;
-        for file in self.files() {
+        let mut files = Vec::new();
+        let mut blobs = Vec::new();
+        let mut replacements = Vec::new();
+        for mapping in &mappings {
             state.check()?;
-            let old_path = file
-                .old_path()
-                .map(|path| state.map_path(path, &options))
-                .transpose()?;
-            let new_path = file
-                .new_path()
-                .map(|path| state.map_path(path, &options))
-                .transpose()?;
-            let path = old_path.as_ref().or(new_path.as_ref()).unwrap();
-            if (old_path.is_some() && new_path.is_some() && old_path != new_path)
-                || !seen.insert(path.clone())
+            if mapping
+                .file
+                .binary
+                .as_ref()
+                .is_some_and(|binary| binary.old.format() != objects.object_format())
             {
-                return Err(TreeError::Path(path.clone()));
+                return Err(TreeError::ObjectFormat);
             }
-            let (parent, name) = split(path);
-            state.ensure_directory(parent, old_path.is_none())?;
-            if state.directories.contains_key(path) {
-                return Err(TreeError::Path(path.clone()));
+            let path = mapping.new.as_ref().or(mapping.old.as_ref()).unwrap();
+            let old = if let Some(source) = &mapping.old {
+                let (parent, name) = split(source);
+                state.ensure_directory(parent, None)?;
+                Some(
+                    *state.directories[parent]
+                        .get(name)
+                        .ok_or_else(|| TreeError::Path(source.clone()))?,
+                )
+            } else {
+                None
+            };
+            if let Some(destination) = &mapping.new {
+                let (parent, name) = split(destination);
+                state.ensure_directory(parent, Some(&removals))?;
+                let existing = state.directories[parent].get(name);
+                if state.directories.contains_key(destination)
+                    || existing.is_some_and(|value| value.mode == EntryMode::Tree)
+                    || (existing.is_some()
+                        && mapping.old.as_ref() != Some(destination)
+                        && !removals.contains(destination))
+                {
+                    return Err(TreeError::Path(destination.clone()));
+                }
             }
-            let old = state.directories[parent].get(name).copied();
-            if old_path.is_some() != old.is_some() {
-                return Err(TreeError::Path(path.clone()));
+            if mapping
+                .file
+                .old_mode
+                .is_some_and(|mode| old.is_none_or(|value| value.mode != mode))
+            {
+                return Err(TreeError::Mode);
             }
             let (preimage, mode) = state.preimage(old)?;
             let mut content_limits = limits.content;
             let remaining = limits.max_generated_bytes.saturating_sub(state.generated);
             content_limits.max_output_bytes = content_limits.max_output_bytes.min(remaining);
-            let Applied { content, hunks } =
-                file.apply_with(&preimage, content_limits)
-                    .map_err(|source| {
-                        if source == super::Error::Limit(super::text::OUTPUT_BYTES)
-                            && remaining < limits.content.max_output_bytes
-                        {
-                            TreeError::Limit("generated bytes")
-                        } else {
-                            TreeError::Content {
-                                path: path.clone(),
-                                source,
-                            }
+            let Applied { content, hunks } = mapping
+                .file
+                .apply_with(&preimage, content_limits)
+                .map_err(|source| {
+                    if source == super::Error::Limit(super::text::OUTPUT_BYTES)
+                        && remaining < limits.content.max_output_bytes
+                    {
+                        TreeError::Limit("generated bytes")
+                    } else {
+                        TreeError::Content {
+                            path: path.clone(),
+                            source,
                         }
-                    })?;
-            let new = if new_path.is_some() {
+                    }
+                })?;
+            let new = if mapping.new.is_some() {
                 state.charge(content.len())?;
                 let id = ObjectId::for_blob(objects.object_format(), &content);
                 blobs.push(content);
-                Some(TreeValue { mode, id })
+                Some(TreeValue {
+                    mode: mapping.file.new_mode.unwrap_or(mode),
+                    id,
+                })
             } else {
                 None
             };
-            let directory = state.directories.get_mut(parent).unwrap();
-            if old.is_none() {
-                state.entries = state
-                    .entries
-                    .checked_add(1)
-                    .ok_or(TreeError::Limit("directory entries"))?;
-                if state.entries > limits.max_entries {
-                    return Err(TreeError::Limit("directory entries"));
-                }
-            }
-            if let Some(value) = new {
-                directory.insert(name.to_vec(), value);
-            } else {
-                directory.remove(name);
-            }
+            replacements.push(new);
             files.push(AppliedFile {
                 path: path.clone(),
+                source_path: mapping.old.clone(),
                 old,
                 new,
                 hunks,
             });
+        }
+        for path in &removals {
+            let (parent, name) = split(path);
+            state.directories.get_mut(parent).unwrap().remove(name);
+        }
+        for (mapping, value) in mappings.iter().zip(replacements) {
+            if let (Some(path), Some(value)) = (&mapping.new, value) {
+                let (parent, name) = split(path);
+                let directory = state.directories.get_mut(parent).unwrap();
+                if !directory.contains_key(name) {
+                    state.entries = state
+                        .entries
+                        .checked_add(1)
+                        .ok_or(TreeError::Limit("directory entries"))?;
+                    if state.entries > limits.max_entries {
+                        return Err(TreeError::Limit("directory entries"));
+                    }
+                }
+                directory.insert(name.to_vec(), value);
+            }
         }
         let trees = state.build()?;
         let tree = trees.last().unwrap().clone();
@@ -326,6 +359,73 @@ impl Patch {
             files,
         })
     }
+}
+
+struct MappedFile<'a> {
+    file: &'a super::FilePatch,
+    old: Option<Vec<u8>>,
+    new: Option<Vec<u8>>,
+}
+
+type Paths = std::collections::BTreeSet<Vec<u8>>;
+
+fn map_files<'a>(
+    patch: &'a Patch,
+    options: &TreeOptions,
+    state: &mut State<'_>,
+) -> Result<(Vec<MappedFile<'a>>, Paths), TreeError> {
+    let mut mappings = Vec::new();
+    let mut removals = Paths::new();
+    let mut destinations = Paths::new();
+    let mut sources = Paths::new();
+    for file in patch.files() {
+        state.check()?;
+        let old = file
+            .old_path()
+            .map(|path| state.map_path(path, options))
+            .transpose()?;
+        let new = file
+            .new_path()
+            .map(|path| state.map_path(path, options))
+            .transpose()?;
+        let path = new.as_ref().or(old.as_ref()).unwrap();
+        if file.operation == super::FileOperation::Edit
+            && old.is_some()
+            && new.is_some()
+            && old != new
+        {
+            return Err(TreeError::Path(path.clone()));
+        }
+        if file.operation != super::FileOperation::Edit && old == new {
+            return Err(TreeError::Path(path.clone()));
+        }
+        if let Some(destination) = &new
+            && !destinations.insert(destination.clone())
+        {
+            return Err(TreeError::Path(destination.clone()));
+        }
+        if file.operation != super::FileOperation::Copy
+            && let Some(source) = &old
+        {
+            if !sources.insert(source.clone()) {
+                return Err(TreeError::Path(source.clone()));
+            }
+            if old != new {
+                removals.insert(source.clone());
+            }
+        }
+        mappings.push(MappedFile { file, old, new });
+    }
+    for path in &destinations {
+        let mut parent = split(path).0;
+        while !parent.is_empty() {
+            if destinations.contains(parent) {
+                return Err(TreeError::Path(path.clone()));
+            }
+            parent = split(parent).0;
+        }
+    }
+    Ok((mappings, removals))
 }
 
 type Directory = BTreeMap<Vec<u8>, TreeValue>;
@@ -399,7 +499,7 @@ impl State<'_> {
         Ok(())
     }
 
-    fn ensure_directory(&mut self, path: &[u8], create: bool) -> Result<(), TreeError> {
+    fn ensure_directory(&mut self, path: &[u8], removals: Option<&Paths>) -> Result<(), TreeError> {
         let mut parent = Vec::new();
         for name in path.split(|b| *b == b'/').filter(|name| !name.is_empty()) {
             let value = self.directories[&parent].get(name).copied();
@@ -417,7 +517,9 @@ impl State<'_> {
                     Some(value) if value.mode == EntryMode::Tree => {
                         self.load(child.clone(), value.id)?
                     }
-                    None if create => {
+                    _ if removals
+                        .is_some_and(|removed| value.is_none() || removed.contains(&child)) =>
+                    {
                         self.entries = self
                             .entries
                             .checked_add(1)

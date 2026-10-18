@@ -474,6 +474,7 @@ pub fn apply(data: &[u8]) {
         max_files: MAX_VISITS,
         max_hunks: MAX_VISITS,
         max_lines: MAX_VISITS,
+        max_binary_bytes: MAX_BYTES,
     };
     if let Ok(patch) = crate::apply::Patch::parse_with(input.rest(), limits) {
         for file in patch.files() {

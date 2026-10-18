@@ -314,9 +314,9 @@ The Windows integration selection follows implemented operations, not just file 
   unborn v2 `ls-refs`; no network transfer is claimed by this portable suite.
 - `packs`, `history`, `commit_graph`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph
   queries, structural tree comparison and byte-preserving content diff.
-- `apply`, `apply_tree`: Bounded text parsing, exact content application and unpublished tree
-  composition against isolated Git CLI fixtures. Both-format tree-ID comparisons and explicit
-  additive object installation need no native checkout backend.
+- `apply`, `apply_tree`, `apply_extended`: Bounded text parsing, exact content application and
+  unpublished tree composition against isolated Git CLI fixtures. Both-format tree-ID comparisons
+  and explicit additive object installation need no native checkout backend.
 - `builders`: Both-format index-to-tree, nested path construction, commit payload signing and
   combined rename results checked against Git CLI in disposable repositories. No native checkout
   operations are required. The SSH signing-oracle cases run on Unix with an isolated temporary key;
