@@ -89,7 +89,7 @@ collided, so Git also supports SHA-256 repositories, with 64-digit IDs
 `extensions.objectFormat` in `.git/config`, and the same content gets a different ID in each, so a
 SHA-1 repository and a SHA-256 repository can't share objects directly.
 
-<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/object/enum.ObjectFormat.html">Reads and writes both formats; doesn't convert between them.</GirtStatus>
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/object/enum.ObjectFormat.html">Git-verified reads and writes in both formats; no conversion between them.</GirtStatus>
 
 ## Writing packs with deltas
 
@@ -103,7 +103,7 @@ next to each other. It then tries each object against a sliding window of nearby
 This search is most of the work in `git push`, `git repack` and serving a fetch, and it's where
 speed trades off against pack size: a wider window finds smaller deltas but takes longer.
 
-<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/pack/index.html">Delta search is opt-in.</GirtStatus>
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/pack/index.html">Git verifies the written packs and indexes; delta search is opt-in.</GirtStatus>
 
 ## Repacking and pruning
 
@@ -117,7 +117,7 @@ expire. Pruning waits for a grace period (`gc.pruneExpire`, two weeks by default
 was last written, because another Git process may have just written that object and be about to
 point a branch at it. Deleting it in that window would corrupt the repository.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/499">The caller supplies the prune cutoff; `gc.pruneExpire` isn't read. Partial clones are refused.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/499">Git comparisons confirm explicit-cutoff pruning. The caller supplies the cutoff; `gc.pruneExpire` isn't read. Partial clones are refused.</GirtStatus>
 
 ## Alternates
 
