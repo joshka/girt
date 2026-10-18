@@ -38,6 +38,33 @@ pass. Apply it to changed prose and enough surrounding text to judge continuity.
 - Compare terminology, formality, heading style, and formatting with nearby accepted prose. Remove
   chat residue, placeholder citations, and commentary addressed to the drafting requester.
 
+## Examples From Site Pages
+
+These examples come from a published draft of the CLI pages and the revision that replaced it.
+Quotations are exact; `…` marks an omission.
+
+- **Restating self-describing output.** "`bare: false` means this repository has a working tree.
+  `shallow: false` means no shallow boundary is recorded, and `operation: none` means no in-progress
+  operation was found." Cut it; spend the words on the field a reader would misread.
+- **Implementation vocabulary.** "inspect policy and endpoints", describing the configuration and
+  remotes page, became "Read and edit configuration and manage remotes with girt." "These workflows
+  compose discovery, transfer, publication and checkout" names internal phases, not anything the
+  reader controls.
+- **Weak correspondence verbs.** "Git's `rev-parse …` queries corresponding layout fields." Say
+  which Git command prints the same thing, or what differs.
+- **Deferring to help.** "Use `girt help init` for format and backend choices." became "`--bare`
+  leaves out the worktree, `--sha256` uses SHA-256 object IDs, `--reftable` stores references in
+  reftables instead of loose files, and `-b` names the unborn first branch."
+- **Catalogue openings.** "`pack list` describes packs, `verify` checks their checksums and objects,
+  and `reindex` rebuilds a pack index." lists verbs without telling the reader when to use any of
+  them. Open with what the commands are for, and give each task its own section.
+- **Self-justifying tails.** "the remaining comparison still has useful path changes" and "it lets
+  you inspect retention before selecting maintenance phases" assert value instead of stating
+  behavior. Say what is printed, or cut the clause.
+- **One scaffold on every page.** A summary, a notice, one example, a Git paragraph and a library
+  paragraph on every page makes different commands read alike. Let each command's behavior decide
+  the section's shape.
+
 ## Review Judgment
 
 These patterns prompt inspection; they are neither a banned-word list nor evidence of authorship.

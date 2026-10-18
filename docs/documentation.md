@@ -59,6 +59,33 @@ Module pages own shared mental models and API choices. Item pages own precise co
 examples. Website guides compose tasks across modules and link to the reference. This division keeps
 essential explanations available on docs.rs while giving longer tasks room to develop.
 
+## Command and Task Pages
+
+Site pages that teach commands or tasks, such as the
+[CLI section](https://www.joshka.net/girt/cli/), are read by someone trying to do one thing, often
+arriving from search. Each page should let that reader find the command and finish the task without
+leaving it.
+
+- Give each distinct task its own section, and name the task and the command or commands that do it
+  in the heading: "Move a reference safely (`girt ref set`)". Readers scan headings and the table of
+  contents for the command they already know. Closely related commands, such as `object id`, `info`
+  and `show`, can share a section.
+- Show every command with an example whose output came from running it. Build examples on a fixture
+  the pages show how to recreate, with fixed identities, dates and configuration so that IDs match,
+  and show setup steps even when they use `git`. Rerun the examples in page order after editing.
+- Document the command instead of pointing at `--help`: what it prints, the options that change
+  that, its exit status, and what it refuses and why. `--help` output exists only in a terminal, so
+  a reader can't reach it from a search or a link.
+- Explain output only where a field is not self-describing. `bare: false` needs no sentence;
+  `retained`, which applies reflog expiry, does.
+- Put library calls and Git equivalents beside the example they belong to, not in a closing
+  paragraph. Check every Git equivalence and `--git` claim against the source or the executable, and
+  name the exceptions where they apply.
+- Write in the reader's vocabulary. Words from the implementation, such as "candidates",
+  "capabilities", "publication" or "retention inputs", need translating into what the reader sees or
+  does.
+- Keep one copy of any notice repeated across pages, as a shared component.
+
 ## Evidence and Pull Requests
 
 Put the evidence for a change in its pull request description or commit messages: exact revisions,
