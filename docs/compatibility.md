@@ -294,11 +294,14 @@ Git 2.56.0 CLI fixtures show `git gc` writing a standalone graph by default and
 explicit publication independently of maintenance scheduling; it does not yet automatically write
 graphs during retention/GC.
 
-The [commit-graph timing evidence](evidence/commit-graph.md) records five quiet-window G/A/B/B/A/G
-blocks on 82,500 commits. For a 351-commit range, process medians are 913 ms using objects, 111 ms
-indexed and 16 ms for Git log. Ancestry medians are 907 ms, 114 ms and 10.5 ms. Indexed query phases
-are 1.37 ms and 0.075 ms; approximately 102–106 ms of opening dominates these short queries. Raw
-wall-time, RSS, phase and per-slot load measurements accompany the report.
+The [commit-graph timing evidence](evidence/commit-graph.md) records quiet-window G/A/B/B/A/G blocks
+on 82,500 commits. The initial indexed process medians were 111 ms for a 351-commit range and 114 ms
+for ancestry, versus Git's 16 ms and 10.5 ms. Profiling identified repeated ancestry and generation
+parent lookups. Prefix-narrowed lookups and combined structural validation reduce indexed process
+medians to 28.7 ms and 27.0 ms in a before/after window, versus Git's 16.1 ms and 9.54 ms (1.78 and
+2.83 times Git). Opening still dominates at approximately 19–20 ms; indexed query phases take 1.46
+ms and 0.074 ms. Raw wall-time, RSS, phase and per-slot load measurements accompany both
+comparisons. This does not establish Git parity.
 
 ## Imported Object Decoding and Tag Peeling
 

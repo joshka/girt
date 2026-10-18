@@ -24,6 +24,7 @@ def main():
     parser.add_argument("tip")
     parser.add_argument("base")
     parser.add_argument("--rounds", type=int, default=5)
+    parser.add_argument("--before", type=Path, help="compare indexed before/after harnesses")
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error("rounds must be positive")
@@ -45,6 +46,10 @@ def main():
             "B": [str(harness), str(repo), args.tip, args.base, "indexed", "ancestor"],
         },
     }
+    if args.before:
+        before = args.before.resolve()
+        for operation in commands:
+            commands[operation]["A"] = [str(before), str(repo), args.tip, args.base, "indexed", operation]
     # Metadata and correctness controls are collected before the timed block.
     version = subprocess.check_output(git + ["--version"], env=env, text=True).strip()
     expected_count = int(subprocess.check_output(
@@ -60,6 +65,10 @@ def main():
         "graph_sha256": hashlib.sha256(graph.read_bytes()).hexdigest(),
         "range_count": expected_count, "ancestor": expected_ancestor == 0,
     }
+    if args.before:
+        metadata["before_harness_sha256"] = hashlib.sha256(args.before.read_bytes()).hexdigest()
+        metadata["A"] = "indexed before"
+        metadata["B"] = "indexed after"
     if os.getloadavg()[0] >= 12:
         raise SystemExit("one-minute load is not below 12; no lock taken")
     lock = Path("/tmp/girt-timing.lock")

@@ -62,3 +62,39 @@ python3 benches/commit_graph.py /path/to/git.git \
 Fixture setup used a shared bare clone referencing an existing local object store; no packs were
 copied during the measured window. Both girt modes and Git see the same packs and graph. Automatic
 graph writing during GC/maintenance remains separate from explicit index APIs.
+
+## Reduce Opening Validation Work
+
+The follow-up for [issue 625](https://github.com/joshka/girt/issues/625) profiles the release
+harness with `samply record --save-only --iteration-count 10 --main-thread-only`. Samples identify
+repeated parent-ID binary searches in `CommitGraph::check_ancestry` and `generation_order` as
+dominant work. The fix narrows parent searches through a 16-bit prefix table, checks both generation
+orders in one edge pass, and recognizes that a strict decreasing order already proves acyclicity.
+Graphs without such an order still run explicit cycle detection. Prefix collisions retain bounded
+binary search.
+
+The second quiet window compares the saved prior indexed binary (A) with the new indexed binary (B),
+against the same Git controls and graph. Five G/A/B/B/A/G blocks per operation ran under the shared
+timing lock. One-minute load was 11.296 at entry and 11.112 at exit, with recorded slots between
+those values. All 351-commit counts and ancestry results matched. The
+[before/after raw samples](commit-graph/opening-timings.jsonl) include both binary hashes and all
+commands, wall/RSS measurements, phase timings and per-slot load. RSS is the maximum across samples.
+
+| Operation | Variant            | Median process time | Peak RSS  |
+| --------- | ------------------ | ------------------- | --------- |
+| Range     | Git log            | 16.14 ms            | 21.52 MiB |
+| Range     | Git rev-list count | 9.70 ms             | 13.58 MiB |
+| Range     | Prior indexed girt | 113.82 ms           | 38.84 MiB |
+| Range     | New indexed girt   | 28.67 ms            | 38.70 MiB |
+| Ancestry  | Git merge-base     | 9.54 ms             | 10.97 MiB |
+| Ancestry  | Prior indexed girt | 118.80 ms           | 38.77 MiB |
+| Ancestry  | New indexed girt   | 26.96 ms            | 38.64 MiB |
+
+Opening falls from 105.601 to 19.845 ms for the range and from 111.717 to 19.257 ms for ancestry.
+The new query phases remain small: 1.465 ms and 0.074 ms. Process times improve by 3.97 and 4.41
+times respectively, reaching 1.78 times Git log and 2.83 times Git ancestry. The range meets the
+roughly twice-Git target; ancestry remains above it, with opening still dominating. This is not a
+claim of Git parity. Output differences and warm-cache limitations from the baseline still apply.
+
+To reproduce with a saved prior release binary, use the same command with
+`--before /path/to/prior/commit_graph_profile`. Both A and B then retain their default graph.
