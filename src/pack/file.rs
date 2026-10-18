@@ -1008,6 +1008,7 @@ impl FilePack {
     /// [`Self::read`] makes. The first failure stops the other workers; the reported error is the
     /// earliest one found in `positions` order, which need not be the earliest entry that is
     /// damaged.
+    #[cfg(any(unix, test))]
     pub(crate) fn read_each(
         &self,
         positions: &[usize],
@@ -1337,11 +1338,13 @@ impl FilePack {
 }
 
 /// A pinned pack read through a private delta base cache, for one verification worker.
+#[cfg(any(unix, test))]
 struct PrivateCache<'a> {
     pack: &'a FilePack,
     cache: super::reader::BaseCache,
 }
 
+#[cfg(any(unix, test))]
 impl Source for PrivateCache<'_> {
     fn format(&self) -> ObjectFormat {
         self.pack.format

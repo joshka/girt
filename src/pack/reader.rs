@@ -289,6 +289,7 @@ impl BaseCache {
 
     /// An unsharded private cache retaining at most `limit` decoded bytes, for one worker that
     /// shares the process budget with others.
+    #[cfg(any(unix, test))]
     pub(crate) fn with_limit(limit: usize) -> Self {
         Self::sharded(1, limit)
     }
@@ -325,6 +326,7 @@ impl BaseCache {
 
     /// This cache as one stored-pack reader's private view, whose hits charge their [`Cost`] as
     /// the shared cache's do.
+    #[cfg(any(unix, test))]
     pub(crate) fn charged_view(&self) -> CacheView<'_> {
         CacheView {
             charged: true,
