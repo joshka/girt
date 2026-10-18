@@ -320,3 +320,64 @@ fn filters_apply_to_paths_written_through_merged_directories() {
         git(&theirs, &["status", "--porcelain=v1", "-z"], b"")
     );
 }
+
+#[test]
+fn configured_symlink_placeholders_bypass_smudge_filters() {
+    for format in [girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256] {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        git(
+            &source,
+            &["init", "-q", &format!("--object-format={format}"), "."],
+            b"",
+        );
+        std::fs::write(
+            source.join(".gitattributes"),
+            b"link filter=reject text eol=crlf\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("target", source.join("link")).unwrap();
+        git(&source, &["add", "."], b"");
+        git(
+            &source,
+            &[
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "symlink fixture",
+            ],
+            b"",
+        );
+        let tree = rev(&source, "HEAD^{tree}");
+        let destination = temp.path().join("destination");
+        clone(
+            &source,
+            &destination,
+            &[
+                ("core.symlinks", "false"),
+                ("filter.reject.required", "true"),
+                ("filter.reject.smudge", "exit 1"),
+                ("filter.reject.clean", "cat"),
+            ],
+        );
+
+        girt_checkout(&destination, None, tree, Commands::Refuse).unwrap();
+        assert_eq!(std::fs::read(destination.join("link")).unwrap(), b"target");
+        assert!(
+            !std::fs::symlink_metadata(destination.join("link"))
+                .unwrap()
+                .is_symlink()
+        );
+        assert!(git(&destination, &["status", "--porcelain=v1"], b"").is_empty());
+        girt_checkout(&destination, Some(tree), tree, Commands::Refuse).unwrap();
+        std::fs::write(destination.join("link"), b"edited target").unwrap();
+        let failure = girt_checkout(&destination, Some(tree), tree, Commands::Refuse).unwrap_err();
+        assert!(failure.report.applied.is_empty());
+        assert_eq!(
+            std::fs::read(destination.join("link")).unwrap(),
+            b"edited target"
+        );
+    }
+}

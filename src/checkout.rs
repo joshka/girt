@@ -7,6 +7,11 @@
 //! index publication; [`Failure`] preserves that report and cleanup failures when a later phase
 //! stops. Inspect the actual worktree before recovery because mutations are not rolled back.
 //!
+//! [`Repository::checkout_tree_configured`](crate::Repository::checkout_tree_configured) uses
+//! `core.symlinks` from the repository configuration: false writes symlink target bytes as regular
+//! files while preserving symlink entries in the index. Baseline content is still verified,
+//! including assume-unchanged entries. Raw checkout always writes native symlinks.
+//!
 //! The selected tree replaces a clean baseline and index without changing HEAD or references.
 //! Pass the tree represented by the current index as the baseline, or `None` for an empty index
 //! (including a no-checkout clone). A nonempty baseline with a missing index is rejected. An unborn

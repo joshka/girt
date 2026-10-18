@@ -336,7 +336,7 @@ pub enum Comparison {
     /// Working files converted by a [`filter::Pipeline`](crate::filter::Pipeline) before hashing,
     /// with repository configuration and index flag policy.
     ConvertedContent,
-    /// Repository configuration and index flags, with literal content bytes.
+    /// Repository index flags, file-mode and symlink representation policy, with literal bytes.
     Configured,
 }
 

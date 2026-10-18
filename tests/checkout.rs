@@ -698,3 +698,151 @@ fn colliding_paths_check_out_like_git() {
         assert!(!report.collisions.is_empty());
     }
 }
+
+#[rstest]
+#[case(ObjectFormat::Sha1, false)]
+#[case(ObjectFormat::Sha256, false)]
+#[case(ObjectFormat::Sha1, true)]
+#[case(ObjectFormat::Sha256, true)]
+fn configured_checkout_symlinks_match_git(#[case] format: ObjectFormat, #[case] native: bool) {
+    let temp = tempfile::tempdir().unwrap();
+    let source = source_in(temp.path(), format);
+    let source_root = source.worktree().unwrap();
+    let target = tree(source_root);
+    let destination = temp.path().join("configured");
+    clone_without_checkout(source_root, &destination, false);
+    let setting = if native { "true" } else { "false" };
+    git(&destination, &["config", "core.symlinks", setting]);
+    let repo = Repository::open(&destination).unwrap();
+
+    let report = repo.checkout_tree_configured(None, Some(target)).unwrap();
+    assert!(report.index_published);
+    assert_eq!(
+        fs::symlink_metadata(destination.join("link"))
+            .unwrap()
+            .is_symlink(),
+        native
+    );
+    if native {
+        assert_eq!(
+            fs::read_link(destination.join("link")).unwrap(),
+            Path::new("dir/raw")
+        );
+    } else {
+        assert_eq!(fs::read(destination.join("link")).unwrap(), b"dir/raw");
+    }
+    let override_setting = format!("core.symlinks={setting}");
+    assert!(
+        git(
+            &destination,
+            &["-c", &override_setting, "status", "--porcelain=v1", "-z"]
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        git(&destination, &["ls-files", "--stage", "-z"]),
+        git(source_root, &["ls-files", "--stage", "-z"])
+    );
+    repo.checkout_tree_configured(Some(target), Some(target))
+        .unwrap();
+
+    let oracle = temp.path().join("oracle");
+    clone_without_checkout(source_root, &oracle, false);
+    git(
+        &oracle,
+        &[
+            "-c",
+            &override_setting,
+            "read-tree",
+            "--reset",
+            "-u",
+            "HEAD",
+        ],
+    );
+    assert_eq!(
+        fs::symlink_metadata(oracle.join("link"))
+            .unwrap()
+            .is_symlink(),
+        native
+    );
+    if !native {
+        assert_eq!(
+            fs::read(oracle.join("link")).unwrap(),
+            fs::read(destination.join("link")).unwrap()
+        );
+        fs::write(destination.join("link"), b"local target").unwrap();
+        git(
+            &destination,
+            &["update-index", "--assume-unchanged", "link"],
+        );
+        let index = fs::read(repo.git_dir().join("index")).unwrap();
+        let failure = repo
+            .checkout_tree_configured(Some(target), None)
+            .unwrap_err();
+        assert!(failure.report.applied.is_empty());
+        assert_eq!(fs::read(destination.join("link")).unwrap(), b"local target");
+        assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), index);
+    }
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn configured_checkout_type_transitions_and_layered_config(#[case] format: ObjectFormat) {
+    use girt::config::{Config, ConfigInputs};
+    let temp = tempfile::tempdir().unwrap();
+    let source = source_in(temp.path(), format);
+    let root = source.worktree().unwrap();
+    let link_tree = tree(root);
+    fs::remove_file(root.join("link")).unwrap();
+    fs::write(root.join("link"), b"ordinary file").unwrap();
+    git(root, &["add", "link"]);
+    git(root, &["commit", "-qm", "replace link with file"]);
+    let file_tree = tree(root);
+    let destination = temp.path().join("transitions");
+    clone_without_checkout(root, &destination, false);
+    let default_repo = Repository::open(&destination).unwrap();
+    default_repo
+        .checkout_tree_configured(None, Some(link_tree))
+        .unwrap();
+    assert!(
+        fs::symlink_metadata(destination.join("link"))
+            .unwrap()
+            .is_symlink()
+    );
+    default_repo
+        .checkout_tree_configured(Some(link_tree), None)
+        .unwrap();
+
+    let inputs = ConfigInputs::default()
+        .with_command(Some(Config::parse(b"[core]\nsymlinks=false\n").unwrap()));
+    let repo = Repository::open_with_config(&destination, &inputs).unwrap();
+
+    repo.checkout_tree_configured(None, Some(link_tree))
+        .unwrap();
+    assert!(
+        !fs::symlink_metadata(destination.join("link"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(fs::read(destination.join("link")).unwrap(), b"dir/raw");
+    repo.checkout_tree_configured(Some(link_tree), Some(file_tree))
+        .unwrap();
+    assert_eq!(
+        fs::read(destination.join("link")).unwrap(),
+        b"ordinary file"
+    );
+    repo.checkout_tree_configured(Some(file_tree), Some(link_tree))
+        .unwrap();
+    assert_eq!(fs::read(destination.join("link")).unwrap(), b"dir/raw");
+    assert!(
+        git(
+            &destination,
+            &["-c", "core.symlinks=false", "diff", "--exit-code"]
+        )
+        .is_empty()
+    );
+    repo.checkout_tree_configured(Some(link_tree), None)
+        .unwrap();
+    assert!(!destination.join("link").exists());
+}

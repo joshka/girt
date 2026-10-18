@@ -2,9 +2,9 @@
 
 Use status to inspect staged and working changes, and checkout to materialize a tree. They run on
 macOS/Linux; Windows status traversal and tree materialization are unsupported. Raw operations
-compare literal bytes and POSIX modes. `Repository::status` applies index flags, `core.fileMode` and
-ignore rules. `Repository::status_with_filters` also converts content through a `filter::Pipeline`;
-`Repository::checkout_tree_with_filters` writes converted files.
+compare literal bytes and POSIX modes. `Repository::status` applies index flags, `core.fileMode`,
+`core.symlinks` and ignore rules. `Repository::status_with_filters` also converts content through a
+`filter::Pipeline`; `Repository::checkout_tree_with_filters` writes converted files.
 
 ## Inspect Raw Status
 
@@ -32,11 +32,23 @@ Intent-to-add entries contribute no staged content. Their existing working files
 and skip-worktree entries suppress working differences but retain staged differences. These flags
 are promises status trusts, so a clean report does not prove their content unchanged.
 `core.fileMode=false` ignores executable-bit-only changes on regular files. Content changes and
-changes between regular files and symlinks remain visible. Inspect `Report::comparison` when
-consuming reports produced by different entry points. Use raw status when the application needs to
-verify assume-unchanged files or compare literal modes.
+changes between regular files and symlinks remain visible, except that `core.symlinks=false` treats
+a regular file containing the indexed symlink target as its working representation. Inspect
+`Report::comparison` when consuming reports produced by different entry points. Use raw status when
+the application needs to verify assume-unchanged files or compare literal modes.
 
 ## Check Out a Tree
+
+Use `Repository::checkout_tree_configured` when the repository's `core.symlinks` setting should
+control representation. With `false`, a symlink blob becomes a regular file containing the target
+bytes; the index retains symlink mode. Both native links and placeholders are checked against the
+baseline target before mutation. A modified placeholder is refused even if assume-unchanged hides it
+from configured status. The raw `checkout_tree` form always creates native symlinks.
+`checkout_tree_with_filters` applies the configured symlink representation too, and bypasses smudge
+conversion for indexed symlinks. Filtered status applies clean/EOL conversion to regular-file
+placeholders, including required-filter failures; native links bypass conversion. Configured
+checkout still verifies executable bits literally, even under `core.fileMode=false`; that extension
+is tracked in [configured checkout file-mode policy](https://github.com/joshka/girt/issues/652).
 
 Run `cargo run --example checkout` for a disposable create-and-remove lifecycle. The example owns
 its repository exclusively and passes `None` as the initial clean baseline. For an existing index,

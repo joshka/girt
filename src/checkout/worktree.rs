@@ -57,6 +57,7 @@ pub(super) fn run_observed(
     run_inner(
         repo,
         [baseline, target],
+        filters.is_none() || configured_symlinks(repo)?,
         None,
         filters,
         limits,
@@ -77,6 +78,7 @@ pub(crate) fn run_with_index(
     run_inner(
         repo,
         [baseline, Some(target)],
+        true,
         Some(entries),
         None,
         limits,
@@ -86,10 +88,46 @@ pub(crate) fn run_with_index(
     )
 }
 
-#[expect(clippy::too_many_arguments, reason = "one checkout's inputs")]
+pub(super) fn run_configured(
+    repo: &Repository,
+    baseline: Option<ObjectId>,
+    target: Option<ObjectId>,
+    limits: Limits,
+    cancel: &AtomicBool,
+) -> Result<Report, Failure> {
+    let symlinks = configured_symlinks(repo)?;
+    run_inner(
+        repo,
+        [baseline, target],
+        symlinks,
+        None,
+        None,
+        limits,
+        cancel,
+        &mut |_, _| Ok(()),
+        &mut |_, _| {},
+    )
+}
+
+fn configured_symlinks(repo: &Repository) -> Result<bool, Failure> {
+    repo.config()
+        .boolean("core", None, "symlinks")
+        .map_err(|_| Failure {
+            cause: Box::new(refused(b"", "invalid core.symlinks boolean")),
+            report: Report::default(),
+            cleanup: vec![],
+        })
+        .map(|setting| setting.unwrap_or(true))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one checkout's inputs and observers"
+)]
 fn run_inner(
     repo: &Repository,
     roots: [Option<ObjectId>; 2],
+    symlinks: bool,
     replacement: Option<&[index::Entry]>,
     filters: Option<Filters<'_>>,
     limits: Limits,
@@ -116,7 +154,16 @@ fn run_inner(
         let edit = repo.edit_index(limits.index)?;
         lock = Some(edit);
         let edit = lock.as_mut().unwrap();
-        let mut plan = Plan::prepare(repo, root, baseline, target, edit, filters, limits, cancel)?;
+        let mut plan = Plan::prepare(
+            repo,
+            root,
+            [baseline, target],
+            symlinks,
+            edit,
+            filters,
+            limits,
+            cancel,
+        )?;
         if let Some(entries) = replacement {
             edit.replace_entries(entries.to_vec())?;
         }
@@ -186,6 +233,7 @@ enum Side {
 // Directory identity is stable across our own child mutations; leaf metadata/content is not.
 struct Plan<'a> {
     root: &'a Path,
+    symlinks: bool,
     root_stat: Stat,
     metadata: Vec<Stat>,
     expected: BTreeMap<Vec<u8>, Option<Stat>>,
@@ -214,13 +262,14 @@ impl<'a> Plan<'a> {
     fn prepare(
         repo: &Repository,
         root: &'a Path,
-        baseline: Option<ObjectId>,
-        target: Option<ObjectId>,
+        roots: [Option<ObjectId>; 2],
+        symlinks: bool,
         edit: &mut index::IndexEdit,
         filters: Option<Filters<'_>>,
         mut limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
+        let [baseline, target] = roots;
         let objects = repo.objects_with(limits.packs)?;
         let old = flatten(&objects, baseline, limits, cancel)?;
         let target = flatten(&objects, target, limits, cancel)?;
@@ -403,6 +452,7 @@ impl<'a> Plan<'a> {
             .collect::<Result<_, _>>()?;
         let mut plan = Self {
             root,
+            symlinks,
             root_stat,
             metadata,
             expected: BTreeMap::new(),
@@ -707,6 +757,9 @@ impl<'a> Plan<'a> {
         let bytes = read_leaf(fd, path, &stat, max, cancel)?;
         charge(budget, bytes.len(), "worktree bytes")?;
         let mode = match kind(&stat) {
+            FileType::RegularFile if !self.symlinks && leaf.mode == EntryMode::Symlink => {
+                EntryMode::Symlink
+            }
             FileType::RegularFile if stat.st_mode & 0o100 != 0 => EntryMode::Executable,
             FileType::RegularFile => EntryMode::Blob,
             FileType::Symlink => EntryMode::Symlink,
@@ -838,7 +891,16 @@ impl<'a> Plan<'a> {
         let bytes = self.content(Side::Target, path, leaf);
         hook("before create", path)?;
         self.recheck_boundary(fd, path, cancel)?;
-        let (owned, file) = create_leaf(fd, path, leaf.mode, bytes)?;
+        let (owned, file) = create_leaf(
+            fd,
+            path,
+            if !self.symlinks && leaf.mode == EntryMode::Symlink {
+                EntryMode::Blob
+            } else {
+                leaf.mode
+            },
+            bytes,
+        )?;
         let result: Result<Stat, Error> = (|| {
             let Some(mut file) = file else {
                 return Ok(owned);
