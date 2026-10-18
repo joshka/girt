@@ -161,7 +161,16 @@ class Lock:
     held = False
 
     def acquire(self):
-        while subprocess.run(["shlock", "-f", LOCK, "-p", str(os.getpid())]).returncode:
+        while True:
+            # Other work inflates every tool's time; wait for a quieter machine before timing.
+            waited = 0
+            while MAX_LOAD is not None and (load := os.getloadavg()[0]) > MAX_LOAD:
+                if waited % 300 == 0:
+                    print(f'LOADWAIT load {load:.1f} > {MAX_LOAD:g}; waited {waited}s', flush=True)
+                time.sleep(30)
+                waited += 30
+            if not subprocess.run(["shlock", "-f", LOCK, "-p", str(os.getpid())]).returncode:
+                break
             time.sleep(15)
         self.held = True
 
@@ -175,6 +184,8 @@ class Lock:
 
 
 LOCK_STATE = Lock()
+# One-minute load average above which timing waits; None disables the gate.
+MAX_LOAD = None
 atexit.register(LOCK_STATE.release)
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
 
@@ -703,6 +714,8 @@ def matrix_main():
                     help='calibrate Git/stock/girt; 6/3/1 samples at <=10/>10/>60 seconds; bounded timeouts')
     ap.add_argument('--bounded-disk', action='store_true',
                     help='use one per-run copy at a time; save and delete outputs after validation')
+    ap.add_argument('--max-load', type=float, default=None,
+                    help='before each timing-lock acquisition, wait until the one-minute load average is at or below this')
     ap.add_argument('--fresh-read-copies', action='store_true',
                     help='time read-only cells on a fresh copy per sample, like mutations')
     ap.add_argument('--work', default=str(BENCH_HOME / 'matrix-run'))
@@ -712,8 +725,12 @@ def matrix_main():
     ap.add_argument('--jj-rev', required=True)
     ap.add_argument('--stock-rev', required=True)
     args = ap.parse_args()
+    global MAX_LOAD
+    MAX_LOAD = args.max_load
     if args.profile_only and (not args.resume or not args.ops):
         ap.error('--profile-only requires --resume and an explicit --ops list')
+    if args.max_load is not None and args.max_load < 0:
+        ap.error('--max-load must not be negative')
     if args.adaptive and not args.bounded_disk:
         ap.error('--adaptive requires --bounded-disk')
     if args.runs < 5:
@@ -740,7 +757,7 @@ def matrix_main():
                 automatic_git_maintenance='disabled; explicit GC operations still measured',
                 adaptive=args.adaptive,
                 adaptive_method='Git, stock, girt calibration; slowest first sample >60s:1, >10s:3, otherwise6; girt cap max(2*first stock,5s); stock/Git cap600s',
-                fsck_scope=args.fsck_scope,
+                fsck_scope=args.fsck_scope, max_load=args.max_load,
                 large_disk_policy=('one fresh copy at a time; save timing/validation then rm -rf outside lock'
                                    if args.bounded_disk else 'retain complete GAB BAG block under timing lock'),
                 harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())

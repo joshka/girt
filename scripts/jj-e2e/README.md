@@ -21,6 +21,12 @@ Resume preserves completed measurements, including older six-sample cells and pa
 partial cell can already satisfy the adaptive target. Refusals remain explicit failures with no
 successful girt ratio. Record the reason and issue link rather than fabricating samples.
 
+Pass `--max-load N` to wait, before each timing-lock acquisition, until the one-minute load average
+is at most `N`. With `--bounded-disk` that is before every sample; otherwise before each six-sample
+block. It is an admission check: load can still rise once timing starts, so each sample keeps its
+recorded load and the run's provenance records the threshold. While waiting, the harness logs the
+load every five minutes.
+
 Pass `--fresh-read-copies` to time read-only cells, such as `log`, on a fresh copy per sample
 instead of a reused baseline, when an earlier build may have left objects behind.
 
