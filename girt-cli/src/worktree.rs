@@ -124,6 +124,81 @@ pub struct CheckoutArgs {
     filters: FilterArgs,
 }
 
+/// Move the current branch, or unstage paths (like `git reset`).
+///
+/// Without paths, moves the branch HEAD names (or a detached HEAD) to the revision, records the old
+/// commit in `ORIG_HEAD` and appends `reset: moving to <revision>` to the reflogs. `--soft` keeps
+/// the index; the default, `--mixed`, replaces it with the revision's tree. Working files are never
+/// changed. With paths after `--`, only those index entries are reset from the revision, which
+/// unstages them; no reference moves.
+#[derive(Debug, clap::Args)]
+pub struct ResetArgs {
+    /// Move the branch only; keep the index.
+    #[arg(long, conflicts_with = "mixed")]
+    soft: bool,
+    /// Also replace the index with the revision's tree (the default).
+    #[arg(long)]
+    mixed: bool,
+    /// Revision to reset to; `HEAD` when omitted.
+    #[arg(add = ArgValueCompleter::new(complete::revisions))]
+    revision: Option<String>,
+    /// Reset only these index entries, relative to the current directory.
+    #[arg(last = true, value_name = "PATHSPEC")]
+    pathspecs: Vec<std::ffi::OsString>,
+}
+
+pub fn reset(args: ResetArgs, context: &Context) -> Result<ExitCode> {
+    use girt::reset::{ResetMode, ResetOptions};
+    let repository = context.repository()?;
+    let objects = repository.objects()?;
+    let revision = args.revision.as_deref().unwrap_or("HEAD");
+    // `git reset` on an unborn branch empties the index instead of moving anything.
+    let unborn =
+        args.revision.is_none() && repository.head().wrap_err("reading HEAD")?.id.is_none();
+    if unborn && args.soft && args.pathspecs.is_empty() {
+        // Nothing to move and the index stays, as with `git reset --soft`.
+        return Ok(ExitCode::SUCCESS);
+    }
+    if !args.pathspecs.is_empty() || unborn {
+        if args.soft {
+            bail!("--soft cannot reset paths");
+        }
+        let paths = if args.pathspecs.is_empty() {
+            girt::pathspec::Pathspec::all()
+        } else {
+            context.pathspec(&repository, &args.pathspecs)?
+        };
+        // Like Git, a path reset takes any tree-ish, not only a commit.
+        let tree = if unborn {
+            None
+        } else {
+            Some(crate::common::resolve_tree(
+                &repository,
+                &objects,
+                revision,
+            )?)
+        };
+        repository
+            .reset_paths(tree, &paths, &Default::default())
+            .wrap_err("resetting paths")?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let commit = crate::common::resolve_commit(&repository, &objects, revision)?;
+    let committer = girt::Signature::committer(repository.config(), &context.environment)
+        .wrap_err(
+            "building reflog committer: set user.name/user.email or GIT_COMMITTER_NAME/EMAIL",
+        )?;
+    let mode = if args.soft {
+        ResetMode::Soft
+    } else {
+        ResetMode::Mixed
+    };
+    repository
+        .reset(commit, mode, &ResetOptions::new(committer, revision))
+        .wrap_err("resetting")?;
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Manage linked worktrees.
 #[derive(Debug, clap::Subcommand)]
 pub enum WorktreeCommand {

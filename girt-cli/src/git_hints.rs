@@ -106,6 +106,10 @@ const ENTRIES: &[Entry] = &[
     commands(&["reflog"], use_(&[("reflog show", "ref log")])),
     commands(&["refs"], use_(&[("refs list", "ref list")])),
     commands(&["repack"], use_(&[("repack -a", "maintenance repack")])),
+    commands(&["reset"], use_(&[
+        ("reset --soft / --mixed", "reset --soft / reset"),
+        ("reset -- <paths>", "reset -- <paths>"),
+    ])),
     commands(&["rev-list"], use_(&[("rev-list --count", "history count"), ("rev-list", "log")])),
     commands(&["rev-parse"], use_(&[("rev-parse --verify", "object id"), ("rev-parse <ref>", "ref show")])),
     commands(&["send-pack"], use_(&[("send-pack", "push")])),
@@ -116,7 +120,7 @@ const ENTRIES: &[Entry] = &[
     commands(&["version"], use_(&[("version", "--version")])),
     commands(&[
         "add", "checkout-index", "clean", "commit", "commit-tree", "interpret-trailers", "mktag",
-        "mktree", "mv", "read-tree", "reset", "restore", "rm", "stripspace", "update-index",
+        "mktree", "mv", "read-tree", "restore", "rm", "stripspace", "update-index",
         "write-tree",
     ], STAGING),
     commands(&[

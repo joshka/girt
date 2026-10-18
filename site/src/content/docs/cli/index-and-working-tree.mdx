@@ -107,6 +107,33 @@ index yet, the baseline is empty. Files are converted as in status, with the sam
 and sparse indexes, resolve-undo data and unknown index extensions are refused; the derived caches
 (`TREE`, `FSMN`, `UNTR`, `EOIE`, `IEOT`) are dropped for Git to rebuild.
 
+## Move the branch or unstage files (`girt reset`)
+
+<Example cmd="reset">
+
+`girt reset <revision>` moves the current branch, or a detached HEAD, to a commit and replaces the
+index with that commit's tree, so the commits you stepped back over show up as unstaged changes.
+`--soft` moves only the branch and keeps those changes staged. Working files never change. Both
+record the old commit in `ORIG_HEAD` and append `reset: moving to <revision>` to the reflogs, as
+`git reset` does. With paths after `--`, only those index entries are reset, which unstages them
+without moving anything.
+
+```console
+$ printf 'draft\n' >> README.md && git add README.md
+$ girt reset -- README.md
+$ girt status
+ M README.md
+$ girt reset --soft main~1
+$ girt status
+A  .gitignore
+ M README.md
+```
+
+</Example>
+
+`--hard`, `--keep` and `--merge`, which also rewrite working files, are not available yet, and an
+index from a sparse checkout is refused.
+
 ## Manage linked worktrees (`girt worktree`)
 
 <Example cmd="worktree">
