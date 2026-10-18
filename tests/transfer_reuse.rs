@@ -414,8 +414,15 @@ fn source_index_identity_is_not_trusted_for_a_reused_whole_object() {
         TransportControl::new(&AtomicBool::new(false)),
         girt::fetch::LocalFetchObserver::default().with_construction(&mut |_| {}),
     );
+    // Git writes a bitmap for this bare source. Selecting through it reaches the false identity
+    // without a walk, and reading its entry for the transfer pack then fails the identity check.
     assert!(
-        matches!(result, Err(girt::fetch::FetchError::Missing(missing)) if missing == false_id)
+        matches!(
+            result,
+            Err(girt::fetch::FetchError::Missing(missing)
+                | girt::fetch::FetchError::LocalRead { id: missing, .. }) if missing == false_id
+        ),
+        "{result:?}"
     );
 }
 

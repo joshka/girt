@@ -1474,3 +1474,115 @@ fn workflow_fetch_reflogs_follow_core_log_all_ref_updates_like_git(
     assert!(expected.contains("refs/remotes/origin/main") == (setting != Some("false")));
     assert_eq!(reflog_names(with_girt.git_dir()), expected);
 }
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(plain_local_path(dir))
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["-c", "user.name=T", "-c", "user.email=t@example.invalid"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn object_ids(dir: &std::path::Path) -> std::collections::BTreeSet<String> {
+    git(
+        dir,
+        &[
+            "cat-file",
+            "--batch-all-objects",
+            "--batch-check=%(objectname)",
+        ],
+    )
+    .lines()
+    .map(str::to_owned)
+    .collect()
+}
+
+/// A clone from a source with a bitmap selects through it. The destination receives the same
+/// objects as from a walk, including when it already holds one of them and the walk must run.
+#[rstest]
+#[case::sha1_bitmap(ObjectFormat::Sha1, true, false)]
+#[case::sha1_walk(ObjectFormat::Sha1, false, false)]
+#[case::sha1_bitmap_stored(ObjectFormat::Sha1, true, true)]
+#[case::sha256_bitmap(ObjectFormat::Sha256, true, false)]
+fn native_fetch_with_source_bitmap_receives_every_reachable_object(
+    #[case] format: ObjectFormat,
+    #[case] bitmap: bool,
+    #[case] stored: bool,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let work = root.path().join("work");
+    let format_name = match format {
+        ObjectFormat::Sha1 => "sha1",
+        _ => "sha256",
+    };
+    std::fs::create_dir(&work).unwrap();
+    git(
+        &work,
+        &["init", "-q", "-b", "main", "--object-format", format_name],
+    );
+    for round in 0..4 {
+        std::fs::create_dir_all(work.join("dir")).unwrap();
+        std::fs::write(work.join("shared"), b"shared\n").unwrap();
+        std::fs::write(work.join("dir/file"), format!("round {round}\n")).unwrap();
+        git(&work, &["add", "-A"]);
+        git(&work, &["commit", "-q", "-m", &format!("round {round}")]);
+        if round == 1 {
+            git(&work, &["tag", "-a", "-m", "tag", "v1"]);
+            git(&work, &["branch", "old"]);
+        }
+    }
+    git(&work, &["repack", "-adq", "--write-bitmap-index"]);
+    let source = work.join(".git");
+    let packs = source.join("objects/pack");
+    let has_bitmap = std::fs::read_dir(&packs)
+        .unwrap()
+        .any(|entry| entry.unwrap().path().extension() == Some("bitmap".as_ref()));
+    assert!(has_bitmap);
+    if !bitmap {
+        for entry in std::fs::read_dir(&packs).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension() == Some("bitmap".as_ref()) {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+    }
+    let destination = repository(&root, "destination", format, Backend::Files);
+    if stored {
+        destination.loose_objects().write_blob(b"shared\n").unwrap();
+    }
+    let known = girt::fetch::KnownHistory::from_store(
+        destination.objects().unwrap(),
+        &[],
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let received = receive_local(
+        &source,
+        |advertisement| {
+            advertisement
+                .refs
+                .iter()
+                .map(|reference| reference.id)
+                .collect()
+        },
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()).with_known(&known),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
+    )
+    .unwrap();
+    received
+        .install(&destination, PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(object_ids(destination.git_dir()), object_ids(&source));
+}
