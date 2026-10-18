@@ -1,6 +1,7 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
-use super::{Error, Limits, Message, Options, Subject, encoding};
+use super::headers::HeaderBudget;
+use super::{Error, Limits, Message, Options, Subject, check, headers, mime};
 
 /// Extracts one message with default policy and bounds; wraps [`parse_with`].
 ///
@@ -27,7 +28,8 @@ pub fn parse(input: &[u8]) -> Result<Message, Error> {
 ///
 /// # Errors
 ///
-/// Returns [`Error::Unsupported`] for multipart/non-text MIME and unsupported character sets,
+/// Returns [`Error::Unsupported`] for encapsulated/encoded multipart containers or unsupported
+/// character sets/transfer encodings,
 /// [`Error::Malformed`] for invalid headers or encodings, [`Error::Limit`] for exceeded bounds,
 /// or [`Error::Cancelled`]. Every failure returns no partial result.
 pub fn parse_with(
@@ -50,29 +52,31 @@ pub fn parse_with(
         bytes: limits.max_header_bytes,
         fields: limits.max_headers,
     };
-    let (outer, body) = headers(input, &mut budget, false, cancel)?;
-    let body = decode_body(&outer, body, limits.max_decoded_bytes, cancel)?;
-    let decoded_body_bytes = body.len();
-    let body = if options.scissors {
+    let (outer, body) = headers::read(input, &mut budget, false, cancel)?;
+    let body = mime::decode(&outer, body, &mut budget, limits, cancel)?;
+    let decoded_body_bytes = body.bytes.len();
+    let start = if options.scissors {
         after_scissors(&body, cancel)?
     } else {
-        &body
+        0
     };
-    let body = trim_blank_start(body);
-    let (inner, body) = headers(body, &mut budget, true, cancel)?;
-    let body = trim_blank_start(body);
+    let start = trim_blank_start(&body, start);
+    let (inner, remaining) = headers::read_lines(
+        &body.bytes[start..],
+        body.lines(start).map(|(_, line)| line),
+        &mut budget,
+        true,
+        cancel,
+    )?;
+    let start = trim_blank_start(&body, body.bytes.len() - remaining.len());
     let patch_start = body
-        .split_inclusive(|&byte| byte == b'\n')
-        .try_fold((0, None), |(offset, found), line| {
+        .lines(start)
+        .try_fold(None, |found, (offset, line)| {
             check(cancel)?;
-            Ok::<_, Error>((
-                offset + line.len(),
-                found.or_else(|| patch_line(line).then_some(offset)),
-            ))
+            Ok::<_, Error>(found.or_else(|| patch_line(line).then_some(offset)))
         })?
-        .1
-        .unwrap_or(body.len());
-    let (log, patch) = body.split_at(patch_start);
+        .unwrap_or(body.bytes.len());
+    let (log, patch) = (&body.bytes[start..patch_start], &body.bytes[patch_start..]);
     if patch.len() > limits.max_patch_bytes {
         return Err(Error::Limit("patch bytes"));
     }
@@ -129,13 +133,6 @@ pub fn parse_with(
     })
 }
 
-pub(super) fn check(cancel: &AtomicBool) -> Result<(), Error> {
-    if cancel.load(Ordering::Relaxed) {
-        Err(Error::Cancelled)
-    } else {
-        Ok(())
-    }
-}
 fn append(out: &mut Vec<u8>, bytes: &[u8], limit: usize, name: &'static str) -> Result<(), Error> {
     if bytes.len() > limit.saturating_sub(out.len()) {
         return Err(Error::Limit(name));
@@ -157,165 +154,17 @@ fn normalize(input: &[u8], cancel: &AtomicBool) -> Result<Vec<u8>, Error> {
     Ok(out)
 }
 
-#[derive(Clone, Default)]
-struct Headers(Vec<(Vec<u8>, Vec<u8>)>);
-struct HeaderBudget {
-    bytes: usize,
-    fields: usize,
-}
-impl Headers {
-    fn get(&self, name: &[u8]) -> Option<&[u8]> {
-        self.0
-            .iter()
-            .rev()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_slice())
-    }
-    fn decode(
-        &self,
-        name: &[u8],
-        budget: &mut usize,
-        cancel: &AtomicBool,
-    ) -> Result<Option<String>, Error> {
-        self.get(name)
-            .map(|value| {
-                let text = encoding::header(value, cancel)?;
-                if text.len() > *budget {
-                    return Err(Error::Limit("decoded bytes"));
-                }
-                *budget -= text.len();
-                Ok(text)
-            })
-            .transpose()
-    }
-    fn overridden(mut self, inner: Self) -> Self {
-        for name in [b"from".as_slice(), b"subject", b"date"] {
-            if let Some(value) = inner.get(name) {
-                self.0.retain(|(key, _)| !key.eq_ignore_ascii_case(name));
-                self.0.push((name.to_vec(), value.to_vec()));
-            }
-        }
-        self
-    }
-}
-fn headers<'a>(
-    input: &'a [u8],
-    budget: &mut HeaderBudget,
-    in_body: bool,
-    cancel: &AtomicBool,
-) -> Result<(Headers, &'a [u8]), Error> {
-    let mut result = Headers::default();
-    let mut offset = 0;
-    for line in input.split_inclusive(|&byte| byte == b'\n') {
-        check(cancel)?;
-        let value = line.strip_suffix(b"\n").unwrap_or(line);
-        if value.is_empty() {
-            offset += line.len();
+fn trim_blank_start(body: &mime::Body, mut start: usize) -> usize {
+    for (offset, line) in body.lines(start) {
+        let Some(line) = line.strip_suffix(b"\n") else {
             break;
-        }
-        let continuation = value.starts_with(b" ") || value.starts_with(b"\t");
-        let field = crate::bytes::split_once(value, b':');
-        if !continuation && field.is_none() {
-            break;
-        }
-        if in_body
-            && !continuation
-            && !field.is_some_and(|(key, _)| {
-                [b"from".as_slice(), b"subject", b"date"]
-                    .iter()
-                    .any(|name| key.eq_ignore_ascii_case(name))
-            })
-        {
-            break;
-        }
-        if line.len() > budget.bytes {
-            return Err(Error::Limit("header bytes"));
-        }
-        budget.bytes -= line.len();
-        if value.contains(&0) {
-            return Err(Error::Malformed("header NUL"));
-        }
-        if continuation {
-            let (_, previous) = result
-                .0
-                .last_mut()
-                .ok_or(Error::Malformed("header continuation"))?;
-            previous.push(b' ');
-            previous.extend_from_slice(value.trim_ascii());
-        } else if let Some((name, value)) = field {
-            if budget.fields == 0 {
-                return Err(Error::Limit("headers"));
-            }
-            budget.fields -= 1;
-            let mut value = value.trim_ascii().to_vec();
-            if in_body && !name.eq_ignore_ascii_case(b"subject") {
-                value.push(b' ');
-            }
-            result.0.push((name.to_ascii_lowercase(), value));
-        }
-        offset += line.len();
-    }
-    Ok((result, &input[offset..]))
-}
-
-fn decode_body(
-    headers: &Headers,
-    body: &[u8],
-    limit: usize,
-    cancel: &AtomicBool,
-) -> Result<Vec<u8>, Error> {
-    if let Some(content_type) = headers.get(b"content-type") {
-        let text =
-            std::str::from_utf8(content_type).map_err(|_| Error::Malformed("content type"))?;
-        let mut parts = text.split(';');
-        if !parts
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .eq_ignore_ascii_case("text/plain")
-        {
-            return Err(Error::Unsupported("MIME content type"));
-        }
-        for part in parts {
-            if let Some((key, value)) = part.split_once('=')
-                && key.trim().eq_ignore_ascii_case("charset")
-            {
-                let charset = value.trim().trim_matches('"');
-                if !["utf-8", "utf8", "us-ascii", "ascii"]
-                    .iter()
-                    .any(|value| charset.eq_ignore_ascii_case(value))
-                {
-                    return Err(Error::Unsupported("body character set"));
-                }
-            }
-        }
-    }
-    let transfer = headers.get(b"content-transfer-encoding").unwrap_or(b"8bit");
-    let out = if transfer.eq_ignore_ascii_case(b"base64") {
-        encoding::base64(body)?
-    } else if transfer.eq_ignore_ascii_case(b"quoted-printable") {
-        encoding::quoted(body, false, cancel)?
-    } else if [b"8bit".as_slice(), b"7bit", b"binary"]
-        .iter()
-        .any(|value| transfer.eq_ignore_ascii_case(value))
-    {
-        body.to_vec()
-    } else {
-        return Err(Error::Unsupported("transfer encoding"));
-    };
-    if out.len() > limit {
-        return Err(Error::Limit("decoded bytes"));
-    }
-    Ok(out)
-}
-fn trim_blank_start(mut body: &[u8]) -> &[u8] {
-    while let Some((line, rest)) = crate::bytes::split_once(body, b'\n') {
+        };
         if !line.trim_ascii().is_empty() {
             break;
         }
-        body = rest;
+        start = offset + line.len() + 1;
     }
-    body
+    start
 }
 fn patch_line(line: &[u8]) -> bool {
     line.starts_with(b"diff -")
@@ -324,20 +173,18 @@ fn patch_line(line: &[u8]) -> bool {
             .strip_prefix(b"---")
             .is_some_and(|rest| rest.is_empty() || rest[0].is_ascii_whitespace())
 }
-fn after_scissors<'a>(body: &'a [u8], cancel: &AtomicBool) -> Result<&'a [u8], Error> {
+fn after_scissors(body: &mime::Body, cancel: &AtomicBool) -> Result<usize, Error> {
     let mut start = 0;
-    let mut offset = 0;
-    for line in body.split_inclusive(|&byte| byte == b'\n') {
+    for (offset, line) in body.lines(0) {
         check(cancel)?;
         if patch_line(line) {
             break;
         }
-        offset += line.len();
         if scissors_line(line) {
-            start = offset;
+            start = offset + line.len();
         }
     }
-    Ok(&body[start..])
+    Ok(start)
 }
 // Original CLI observations: a dash or cut marker starts a perforation run. Whitespace
 // extends that run and counts as a gap; plain text ends it. In particular, trailing blanks

@@ -1,73 +1,15 @@
 //! Original mail fixtures compared with isolated Git's mailinfo metadata and both output files.
+#[path = "support/mailinfo_git.rs"]
+mod mail_oracle;
 #[path = "support/apply_git.rs"]
 mod oracle;
-
 use std::sync::atomic::AtomicBool;
 
-use girt::mailinfo::{Error, Limits, Message, Options, Subject};
+use girt::mailinfo::{Error, Limits, Options, Subject};
+use mail_oracle::compare;
 use rstest::rstest;
 
 const HEADERS: &[u8] = b"From: A. Writer <a@example.com>\nDate: Mon, 17 Sep 2001 00:00:00 +0000\nSubject: [PATCH v2 1/2] [topic] title\nMessage-ID: <id@example.com>\n\n";
-
-fn metadata(info: &Message) -> Vec<u8> {
-    let mut out = Vec::new();
-    for (name, value) in [
-        ("Author", &info.author),
-        ("Email", &info.email),
-        ("Subject", &info.subject),
-        ("Date", &info.date),
-    ] {
-        if let Some(value) = value {
-            out.extend_from_slice(format!("{name}: {value}\n").as_bytes());
-        }
-    }
-    out.push(b'\n');
-    out
-}
-fn compare(input: &[u8], options: Options) {
-    let temporary = tempfile::tempdir().unwrap();
-    let root = temporary.path();
-    let mut args = vec!["mailinfo"];
-    match options.subject {
-        Subject::Keep => args.push("-k"),
-        Subject::KeepNonPatch => args.push("-b"),
-        _ => {}
-    }
-    if options.scissors {
-        args.push("--scissors");
-    }
-    if options.message_id {
-        args.push("--message-id");
-    }
-    args.extend_from_slice(&["message", "patch"]);
-    let expected = oracle::git(root, &args, input);
-    // Git's CLI repeats an empty Subject: line for the terminal newline of an in-body
-    // subject under -k. The structured API exposes the single unfolded subject value.
-    let mut seen_subject = false;
-    let expected: Vec<u8> = expected
-        .split_inclusive(|&byte| byte == b'\n')
-        .filter(|line| {
-            if line.starts_with(b"Subject: ") {
-                if seen_subject && *line == b"Subject: \n" {
-                    return false;
-                }
-                seen_subject = true;
-            }
-            true
-        })
-        .flatten()
-        .copied()
-        .collect();
-    let actual =
-        girt::mailinfo::parse_with(input, options, Limits::default(), &AtomicBool::new(false))
-            .unwrap();
-    assert_eq!(
-        String::from_utf8_lossy(&metadata(&actual)),
-        String::from_utf8_lossy(&expected)
-    );
-    assert_eq!(actual.message, std::fs::read(root.join("message")).unwrap());
-    assert_eq!(actual.patch, std::fs::read(root.join("patch")).unwrap());
-}
 
 #[rstest]
 #[case::plain(b"body\n\n---\nstat\n\ndiff --git a/f b/f\npatch\n-- \nsignature\n")]
@@ -188,7 +130,6 @@ fn malformed_metadata_is_refused(#[case] input: &[u8]) {
     ));
 }
 #[rstest]
-#[case(b"Content-Type: multipart/mixed; boundary=x\n\n--x\nbody\n")]
 #[case(b"Subject: =?X-UNKNOWN?Q?word?=\n\nbody\n")]
 #[case(b"Content-Type: text/plain; charset=shift-jis\n\nbody\n")]
 fn unsupported_mime_and_charsets_are_explicit(#[case] input: &[u8]) {

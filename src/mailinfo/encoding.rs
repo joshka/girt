@@ -4,8 +4,7 @@ use std::sync::atomic::AtomicBool;
 use base64::Engine;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 
-use super::Error;
-use super::extract::check;
+use super::{Error, check};
 
 pub(super) fn base64(input: &[u8]) -> Result<Vec<u8>, Error> {
     let input: Vec<_> = input

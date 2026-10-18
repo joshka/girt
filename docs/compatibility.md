@@ -4210,11 +4210,14 @@ escaped body lines, CRLF preservation/normalization, binary bytes and missing fi
 API returns bytes without filesystem traversal or MIME decoding; malformed input, cancellation and
 independent admission limits return no partial message list.
 
-Single-part mailinfo extraction is compared with the isolated Git executable using original mail
-fixtures and generated UTF-8 format-patch messages. Tests compare decoded metadata, log bytes and
-patch bytes for RFC 2047 Q/B words, folding, Latin-1 headers, subject policies, Message-ID trailers,
-in-body metadata, standard scissors and base64/quoted-printable bodies. The structured API exposes
-one unfolded subject value rather than the Git CLI's repeated empty Subject line for an in-body
-subject under `-k`. Generated scissors shapes additionally cover prefix/interior/suffix text,
-whitespace and all four marker forms, including lines retained in the body. Multipart MIME remains
-an explicit refusal.
+Mailinfo extraction is compared with the isolated Git executable using original mail fixtures and
+generated UTF-8 format-patch messages. Tests compare decoded metadata, log bytes and patch bytes for
+RFC 2047 Q/B words, folding, Latin-1 headers, subject policies, Message-ID trailers, in-body
+metadata, standard scissors and base64/quoted-printable bodies. The structured API exposes one
+unfolded subject value rather than the Git CLI's repeated empty Subject line for an in-body subject
+under `-k`. Generated scissors shapes additionally cover prefix/interior/suffix text, whitespace and
+all four marker forms, including lines retained in the body. Multipart fixtures cover nested
+boundaries, preambles, transfer encodings, opaque attachments, missing final newlines and truncated
+containers. Part-count, nesting and shared header/decoded-output limits are checked at their
+boundaries. Encapsulated `message/rfc822` containers, encoded multipart containers and body
+character sets beyond UTF-8/ASCII remain explicit refusals.
