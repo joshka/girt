@@ -118,6 +118,24 @@ girt man --out ~/.local/share/man/man1
 man girt-diff
 ```
 
+## Coming from Git
+
+Typing a Git command or flag that girt spells differently, or lacks, adds a `tip:` to the error
+instead of running anything, because girt's commands often behave differently from Git's:
+
+```text
+$ girt rev-parse HEAD
+error: unrecognized subcommand 'rev-parse'
+
+  tip: for 'git rev-parse --verify', use 'girt object id'
+  tip: for 'git rev-parse <ref>', use 'girt ref show'
+```
+
+A command or flag girt does not have links the issue that tracks it, or, for workflows girt leaves
+to tools built on it (such as `rebase` or `merge`), a closed issue that explains why. Every command
+listed by `git help -a` has an entry. Names that are not Git's keep clap's "similar subcommand"
+suggestion.
+
 ## Errors and logging
 
 Errors print as [color-eyre](https://docs.rs/color-eyre) reports. `-v`, `-vv` and `-vvv` log girt's
