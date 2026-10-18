@@ -68,7 +68,7 @@ const AM_FILES: &[&str] = &[
     "utf8",
 ];
 
-fn am_range(files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<(usize, usize), Error> {
+pub(super) fn am_range(files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<(usize, usize), Error> {
     crate::am::mail_range(
         files.get(Path::new("rebase-apply/next")).map(Vec::as_slice),
         files.get(Path::new("rebase-apply/last")).map(Vec::as_slice),
@@ -378,6 +378,15 @@ impl State {
     /// Returns [`Error`] for unsupported flags/topology, absent abort identity, stale abort-safety
     /// or malformed state. Preparing the plan changes no repository data.
     pub fn prepare(&self, action: Action, head: ObjectId) -> Result<Recovery, Error> {
+        self.prepare_inner(action, head, false)
+    }
+
+    pub(super) fn prepare_inner(
+        &self,
+        action: Action,
+        head: ObjectId,
+        queued_am: bool,
+    ) -> Result<Recovery, Error> {
         if head.format() != self.format
             || matches!(action, Action::Continue(id) if id.format() != self.format)
         {
@@ -385,7 +394,7 @@ impl State {
         }
         if self.kind == Kind::Am {
             let (next, last) = am_range(&self.files)?;
-            if matches!(action, Action::Continue(_) | Action::Skip) && next != last {
+            if matches!(action, Action::Continue(_) | Action::Skip) && next != last && !queued_am {
                 return Err(Error::Unsupported(PathBuf::from("rebase-apply/next")));
             }
             if matches!(action, Action::Abort) && self.original_head.is_none_or(|id| id.is_null()) {
