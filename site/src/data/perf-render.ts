@@ -22,6 +22,9 @@ export interface CellData {
   version: string | null;
   /** Whether that release differs from the release most cells were measured on. */
   stale: boolean;
+  /** False when girt and the comparison do different work; such cells have no extra time. */
+  comparable: boolean;
+  comparabilityNote: string | null;
   notes: string[];
 }
 
@@ -106,7 +109,7 @@ export const baseOf = (cell: CellData, base: ViewState['base']) => (base === 'gi
 
 /** Extra wall-clock time jj on girt takes over the comparison, or null when either is missing. */
 export function extraOf(cell: CellData | undefined, base: ViewState['base']): number | null {
-  if (!cell || cell.status !== 'ok' || cell.g == null) return null;
+  if (!cell || cell.status !== 'ok' || cell.g == null || !cell.comparable) return null;
   const other = baseOf(cell, base);
   return other == null ? null : cell.g - other;
 }
@@ -155,6 +158,7 @@ const RATIO_SHADES: [number, string][] = [
 export function shadeOf(cell: CellData | undefined, state: ViewState): string {
   if (!cell) return '0';
   if (cell.status !== 'ok') return '4';
+  if (!cell.comparable) return '0';
   const other = baseOf(cell, state.base);
   if (cell.g == null || other == null) return '0';
   if (state.colour === 'extra') {
@@ -200,7 +204,8 @@ function cellHtml(row: RowData, column: ColumnData, state: ViewState): string {
   }
   const ratio = other ? ` · ${(cell.g! / other).toFixed(2)}×` : '';
   const stale = cell.stale ? `<span class="jjp-sub">measured on girt ${escape(cell.version!)}</span>` : '';
-  return `<td><div ${attrs}><span class="jjp-time">${formatMs(cell.g!)}</span><span class="jjp-sub">${otherText}${ratio}</span>${stale}</div></td>`;
+  const unlike = cell.comparable ? '' : '<span class="jjp-sub">not like-for-like</span>';
+  return `<td><div ${attrs}><span class="jjp-time">${formatMs(cell.g!)}</span><span class="jjp-sub">${otherText}${ratio}</span>${unlike}${stale}</div></td>`;
 }
 
 /** "64–66 ms", or "2 min 7 s – 2 min 13 s" when the units differ. */
@@ -244,7 +249,9 @@ function detailHtml(payload: Payload, row: RowData): string {
         .map(([name, value]) => `<code>&lt;${name}&gt;</code> = <code>${escape(name === 'commit' ? value.slice(0, 12) : value)}</code>`)
         .join(', ');
       const extra = extraOf(cell, 'stock');
-      const notes = [inputs, ...cell.notes.map(escape)].filter(Boolean).join('; ');
+      const notes = [inputs, cell.comparabilityNote && escape(cell.comparabilityNote), ...cell.notes.map(escape)]
+        .filter(Boolean)
+        .join('; ');
       return `<tr>
         <th scope="row">${column.size}<span class="jjp-muted">${escape(column.name)}</span><span class="jjp-muted">${escape(cell.when)}${cell.version ? `, girt ${escape(cell.version)}` : ''}</span></th>
         <td>${timeOf(cell, 'girt')}</td>
@@ -322,6 +329,7 @@ export function tooltipHtml(row: RowData, size: Size, state: ViewState): string 
     stock jj&nbsp;&nbsp; ${timeOf(cell, 'stock')}<br>
     git&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ${timeOf(cell, 'git')}<br>
     ${extra == null ? '' : `extra wait <b>${formatExtra(extra)}</b> vs ${baseName(state)}<br>`}
+    ${cell.comparabilityNote ? `${escape(cell.comparabilityNote)}<br>` : ''}
     ${cell.issues.length ? `tracking ${cell.issues.map((n) => `#${n}`).join(', ')}<br>` : ''}
     <span class="jjp-muted">measured ${escape(cell.when)}${cell.version ? ` on girt ${escape(cell.version)}` : ''}; click the command for details</span>`;
 }

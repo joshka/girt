@@ -32,6 +32,9 @@ export interface Row {
   girt_version?: string;
   girt_commit?: string;
   measured_on?: string;
+  /** False when girt and stock jj do different work, so the times are not a speed comparison. */
+  comparable?: boolean;
+  comparability_note?: string;
 }
 
 export interface Fixture {
@@ -62,7 +65,29 @@ export interface Provenance {
 }
 
 export const provenance = provenanceJson as unknown as Provenance;
+
+const versionKey = (version: string) => version.split(/[.+]/).map((part) => Number.parseInt(part, 36));
+const compareVersions = (a: string, b: string) => {
+  const [x, y] = [versionKey(a), versionKey(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const diff = (x[i] ?? -1) - (y[i] ?? -1);
+    if (diff) return diff;
+  }
+  return 0;
+};
+
+/** The girt releases and measurement dates the rows span, oldest first. */
+export function spanOf(rows: Pick<Row, 'girt_version' | 'measured_on'>[]) {
+  const versions = [...new Set(rows.flatMap((row) => (row.girt_version ? [row.girt_version] : [])))].sort(compareVersions);
+  const dates = [...new Set(rows.flatMap((row) => (row.measured_on ? [row.measured_on] : [])))].sort();
+  const range = (values: string[]) =>
+    values.length === 0 ? null : values.length === 1 ? values[0] : `${values[0]}–${values[values.length - 1]}`;
+  return { versions: range(versions), dates: range(dates) };
+}
 const committedRows = rows as unknown as Row[];
+
+/** The girt releases and dates the committed matrix spans. */
+export const matrixSpan = spanOf(committedRows);
 
 /** girt is responsible for a slow cell when it is at least this much slower than stock jj. */
 export const GIRT_RESPONSIBLE_RATIO = 1.2;
@@ -184,6 +209,8 @@ function cellOf(row: Row): CellData {
     timeoutS: row.timeout_limits_s?.girt ?? null,
     when: datesOf(row.run_epochs ?? []),
     version: row.girt_version ?? null,
+    comparable: row.comparable !== false,
+    comparabilityNote: row.comparability_note ?? null,
     stale: Boolean(row.girt_version && provenance.girt_release && row.girt_version !== provenance.girt_release),
     notes: workloadNotes(row.notes),
   };

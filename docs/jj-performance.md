@@ -6,16 +6,15 @@ Compare jj on girt with stock jj at the same base revision. Lower ratios are bet
 missing results sort first, followed by the worst measured ratio across sizes. These are warm-cache
 measurements; provenance below names the release of each cell.
 
-🟢 ≤1.20×; 🟠 >1.20–2.00×; 🔴 >2.00×; ❌ failure/refusal; ⏳ pending. `n` is the number of
-successful girt samples; JSON records each tool separately.
+🟢 ≤1.20×; 🟠 >1.20–2.00×; 🔴 >2.00×; ⚪ not like-for-like; ❌ failure/refusal; ⏳ pending. `n` is
+the number of successful girt samples; JSON records each tool separately.
 
 | Operation / workload                 | Small                                                                          | Medium                                                                          | Large                                                                                                              |
 | ------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `log` / ancestry                     | 🟢 1.11× (n=6)                                                                 | 🔴 2.26× (n=6) [#221](https://github.com/joshka/girt/issues/221)                | ❌ timeout [#221](https://github.com/joshka/girt/issues/221)                                                       |
-| `git init` / colocate                | 🟢 1.00× (n=6) (girt 0.13.1)                                                   | 🟢 1.17× (n=6) (girt 0.13.1)                                                    | ❌ timeout [#217](https://github.com/joshka/girt/issues/217)                                                       |
+| `log` / ancestry                     | 🟢 1.11× (n=6)                                                                 | 🟠 1.33× (n=1) (girt 0.14.0) [#221](https://github.com/joshka/girt/issues/221)  | ❌ timeout [#221](https://github.com/joshka/girt/issues/221)                                                       |
+| `git init` / colocate                | 🟢 1.00× (n=6) (girt 0.13.1)                                                   | 🟢 1.16× (n=6) (girt 0.14.0)                                                    | ❌ timeout [#217](https://github.com/joshka/girt/issues/217)                                                       |
 | `workspace add` / full-checkout      | 🟢 0.96× (n=6) (girt 0.13.1)                                                   | 🟢 1.04× (n=6) (girt 0.13.1)                                                    | ❌ timeout [#66](https://github.com/joshka/girt/issues/66)                                                         |
 | `git export` / 100-pending-bookmarks | 🟠 1.51× (n=6) [#216](https://github.com/joshka/girt/issues/216)               | 🔴 2.77× (n=6) [#216](https://github.com/joshka/girt/issues/216)                | 🔴 2.69× (n=6) [#216](https://github.com/joshka/girt/issues/216)                                                   |
-| `bookmark` / list                    | 🟢 1.02× (n=6)                                                                 | 🔴 2.13× (n=6) [#221](https://github.com/joshka/girt/issues/221)                | 🟢 0.98× (n=6)                                                                                                     |
 | `commit` / default                   | 🟢 1.03× (n=6) (girt 0.13.1)                                                   | 🟢 1.11× (n=6) (girt 0.13.1)                                                    | 🟠 1.88× (n=3) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `duplicate` / default                | 🟢 1.15× (n=6) (girt 0.13.1)                                                   | 🟢 1.17× (n=6) (girt 0.13.1)                                                    | 🟠 1.86× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `log` / limited                      | 🟢 1.07× (n=6)                                                                 | 🟠 1.80× (n=6) [#221](https://github.com/joshka/girt/issues/221)                | 🟢 1.13× (n=6)                                                                                                     |
@@ -28,7 +27,6 @@ successful girt samples; JSON records each tool separately.
 | `undo` / default                     | 🟢 1.13× (n=6) (girt 0.13.1)                                                   | 🟠 1.202× (n=6) (girt 0.13.1) [#453](https://github.com/joshka/girt/issues/453) | 🟠 1.63× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `new` / default                      | 🟢 1.06× (n=6) (girt 0.13.1)                                                   | 🟢 1.18× (n=6) (girt 0.13.1)                                                    | 🟠 1.61× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `status` / untracked                 | 🟢 0.22× (n=6) (girt 0.13.1)                                                   | 🟢 0.29× (n=6) (girt 0.13.1)                                                    | 🟠 1.60× (n=3) [#66](https://github.com/joshka/girt/issues/66)                                                     |
-| `util gc` / garbage                  | 🟢 0.56× (n=6)                                                                 | 🟠 1.59× (n=6) [#66](https://github.com/joshka/girt/issues/66)                  | 🟠 1.54× (n=1) [#66](https://github.com/joshka/girt/issues/66)                                                     |
 | `restore` / default                  | 🟢 1.10× (n=6) (girt 0.13.1)                                                   | 🟢 1.04× (n=6) (girt 0.13.1)                                                    | 🟠 1.59× (n=3) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `rebase` / 1                         | 🟢 1.15× (n=6) (girt 0.13.1)                                                   | 🟢 1.16× (n=6) (girt 0.13.1)                                                    | 🟠 1.59× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `split` / default                    | 🟢 1.12× (n=6) (girt 0.13.1)                                                   | 🟢 1.14× (n=6) (girt 0.13.1)                                                    | 🟠 1.58× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
@@ -46,7 +44,7 @@ successful girt samples; JSON records each tool separately.
 | `bookmark` / move                    | 🟢 1.07× (n=6) (girt 0.13.1)                                                   | 🟢 1.14× (n=6) (girt 0.13.1)                                                    | 🟠 1.35× (n=6) [#453](https://github.com/joshka/girt/issues/453)                                                   |
 | `log` / large                        | 🟢 1.16× (n=6)                                                                 | 🟠 1.33× (n=6) [#222](https://github.com/joshka/girt/issues/222)                | 🟠 1.34× (n=3) [#222](https://github.com/joshka/girt/issues/222)                                                   |
 | `status` / small-edit                | 🟢 1.18× (n=6) (girt 0.13.1)                                                   | 🟢 1.03× (n=6) (girt 0.13.1)                                                    | 🟠 1.33× (n=6) [#66](https://github.com/joshka/girt/issues/66)                                                     |
-| `git clone` / local-full-checkout    | 🟢 0.91× (n=6) (girt 0.13.1)                                                   | 🟠 1.30× (n=6) (girt 0.13.1) [#218](https://github.com/joshka/girt/issues/218)  | 🟢 1.10× (n=1)                                                                                                     |
+| `git clone` / local-full-checkout    | 🟢 0.91× (n=6) (girt 0.13.1)                                                   | 🟠 1.30× (n=3) (girt 0.14.0) [#218](https://github.com/joshka/girt/issues/218)  | 🟢 1.10× (n=1)                                                                                                     |
 | `rebase` / bookmark                  | 🟢 1.09× (n=6) (girt 0.13.1)                                                   | 🟢 1.18× (n=6) (girt 0.13.1)                                                    | 🟠 1.27× (n=6) [#216](https://github.com/joshka/girt/issues/216) [#453](https://github.com/joshka/girt/issues/453) |
 | `file annotate` / large-old-file     | 🟢 0.96× (n=6)                                                                 | 🟢 0.86× (n=6)                                                                  | 🟠 1.22× (n=1) [#66](https://github.com/joshka/girt/issues/66)                                                     |
 | `file show` / large-old-file         | 🟢 1.18× (n=6)                                                                 | 🟢 1.06× (n=6)                                                                  | 🟢 0.94× (n=6)                                                                                                     |
@@ -60,10 +58,12 @@ successful girt samples; JSON records each tool separately.
 | `git push` / new                     | 🟢 0.29× (n=6)                                                                 | 🟢 0.53× (n=6)                                                                  | 🟢 1.07× (n=6)                                                                                                     |
 | `op log` / default                   | 🟢 1.05× (n=6)                                                                 | 🟢 0.97× (n=6)                                                                  | 🟢 0.98× (n=6)                                                                                                     |
 | `git push` / update                  | 🟢 0.35× (n=6)                                                                 | 🟢 0.75× (n=6)                                                                  | 🟢 1.02× (n=6)                                                                                                     |
+| `bookmark` / list                    | 🟢 1.02× (n=6)                                                                 | 🟢 0.91× (n=6) (girt 0.14.0)                                                    | 🟢 0.98× (n=6)                                                                                                     |
 | `git fetch` / 100                    | 🟢 0.80× (n=6)                                                                 | 🟢 0.70× (n=6)                                                                  | 🟢 0.92× (n=6)                                                                                                     |
 | `git push` / stale                   | 🟢 0.62× (n=6)                                                                 | 🟢 0.91× (n=6)                                                                  | 🟢 0.66× (n=6)                                                                                                     |
 | `git fetch` / 1                      | 🟢 0.76× (n=6)                                                                 | 🟢 0.53× (n=6)                                                                  | 🟢 0.86× (n=6)                                                                                                     |
-| `util gc` / clean                    | 🟢 0.18× (n=6)                                                                 | 🟢 0.07× (n=6)                                                                  | 🟢 0.01× (n=1)                                                                                                     |
+| `util gc` / clean                    | ⚪ 0.18× (n=6) not like-for-like                                               | ⚪ 0.07× (n=6) not like-for-like                                                | ⚪ 0.01× (n=1) not like-for-like                                                                                   |
+| `util gc` / garbage                  | ⚪ 0.56× (n=6) not like-for-like                                               | ⚪ 1.18× (n=3) (girt 0.14.0) not like-for-like                                  | ⚪ 1.54× (n=1) not like-for-like [#66](https://github.com/joshka/girt/issues/66)                                   |
 
 Cells marked `(girt X)` were measured on that release rather than girt 0.11.1; each row records its
 own `girt_commit` and `measured_on` date.
@@ -77,10 +77,11 @@ workload notes. Git has no timed counterpart for colocated initialization (the i
 Git repository), import (Git already sees its own refs), or jj undo/operation restore (Git has no
 equivalent repository-wide operation restoration). Reflogs approximate jj evolution and operation
 history but contain different records. Ranges, peak RSS, sample counts, per-row load, issue
-mappings, and limitations are in [the results JSON](benchmarks/jj-matrix.json). Clean GC measures
-backend policy as well as speed: the backends can choose different packing work when nothing needs
-collection. Its ratio is not equal-work repack throughput. Peak RSS counts resident pages of
-memory-mapped pack and index files, so it is not heap use alone.
+mappings, and limitations are in [the results JSON](benchmarks/jj-matrix.json). `util gc` rows are
+not like-for-like: girt's gc packs loose objects and prunes, but doesn't rewrite existing packs as
+`git gc` does. They stay timed as a collection-cost signal but are marked ⚪, are never shown as a
+girt win, and carry `comparable: false`. Peak RSS counts resident pages of memory-mapped pack and
+index files, so it is not heap use alone.
 
 Machine load was not controlled. The one-minute load average at sample start ranged from 3.4 to 88.4
 (median 21.5) on 12 cores, so other work competed with many samples. Tool order alternates within
@@ -127,11 +128,12 @@ that every unstaged path is such an alias and marks only those paths assume-unch
 Other unstaged edits fail setup. This platform limitation means the checkout cannot represent both
 versions of those files faithfully.
 
-Small and medium cells take six samples per tool in Git, girt, stock, stock, girt, Git blocks. Linux
-cells use adaptive calibration in Git, stock, girt order: if the slowest first sample exceeds 60
-seconds, take one sample per tool; if it exceeds 10 seconds, take three; otherwise take six. Further
-samples alternate girt and stock positions, so slow-cell ratios have lower precision. Counts in the
-JSON describe the samples retained.
+Full runs take six samples per tool on small and medium cells in Git, girt, stock, stock, girt, Git
+blocks. Linux cells, and targeted refreshes that release the timing lock between samples, use
+adaptive calibration in Git, stock, girt order: if the slowest first sample exceeds 60 seconds, take
+one sample per tool; if it exceeds 10 seconds, take three; otherwise take six. Further samples
+alternate girt and stock positions, so slow-cell ratios have lower precision. Counts in the JSON
+describe the samples retained.
 
 Kill each timed girt process group at `max(2 × first stock-jj seconds, 5 seconds)`. Stock jj and Git
 each have a 600-second cap. Timeouts fail the cell and record the limit. Report medians, full

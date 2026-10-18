@@ -5,7 +5,10 @@ import { extraOf, formatExtra, formatMs, rowLabel, worstOf } from '../data/perf-
 
 const { rows, issuesUrl } = payload;
 
-const large = rows.map((row) => row.cells.large).filter((cell) => cell != null);
+// Cells where girt and stock jj do different work are timed but not compared.
+const large = rows
+  .map((row) => row.cells.large)
+  .filter((cell): cell is NonNullable<typeof cell> => cell != null && cell.comparable);
 const largeClose = large.filter(
   (cell) => cell.status === 'ok' && (cell.g! <= cell.s! * GIRT_RESPONSIBLE_RATIO || cell.g! - cell.s! < 100),
 ).length;
