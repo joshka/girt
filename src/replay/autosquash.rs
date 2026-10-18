@@ -22,7 +22,7 @@ impl Objects {
     /// Targets must precede the marked input in the supplied sequence. Exact subject or identity
     /// prefix matches take precedence over subject-prefix matches. Unmatched markers remain picks.
     /// Fixups attach after the target's existing fixup group in input order; `amend!` selects fixup
-    /// message replacement. The caller executes or edits the returned plan separately.
+    /// message replacement. The caller executes the returned plan separately.
     ///
     /// # Errors
     ///
@@ -128,10 +128,10 @@ impl TodoRun {
             if checked_out.contains(name) {
                 continue;
             }
-            if let Some(&new) = self.rewritten.get(old) {
-                if new != *old {
-                    updates.insert(name.clone(), new);
-                }
+            if let Some(&new) = self.rewritten.get(old)
+                && new != *old
+            {
+                updates.insert(name.clone(), new);
             }
         }
         Ok(updates)

@@ -104,6 +104,12 @@ impl<E: StdError + Send + Sync + 'static> From<crate::commit::SignError<E>> for 
 
 // Keep this list in step with the public error types; `lists_every_public_error_type` checks it.
 from_domain_errors! {
+    crate::replay::Error,
+    crate::replay::RebaseError,
+    crate::replay::AutosquashError,
+    crate::replay::TodoExecutionError,
+    crate::replay::todo::TodoError,
+    crate::sequencer::Error,
     crate::merge::Error,
     crate::merge::TreeError,
     crate::merge::DriverError,

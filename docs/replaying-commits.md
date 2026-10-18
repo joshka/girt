@@ -8,8 +8,11 @@ repository.
 
 Supply the new committer explicitly. Cherry-pick retains the source author, including the author
 date. Revert uses the supplied identity for both author and committer. Neither copies signatures or
-opaque source headers. Enable `Options::record_origin` for the full source identity in a cherry-pick
-provenance paragraph. Revert creates the conventional title and explanation automatically.
+opaque source headers. To choose a distinct revert author, change the proposed commit's
+`to_fields()?.author` and rebuild with `Commit::new` before installation. Enable
+`Options::record_origin` for the full source identity in a cherry-pick provenance paragraph. Revert
+creates the conventional title and explanation automatically; reverting a revert uses a `Reapply`
+title.
 
 For merge sources, set `Options::mainline` to a one-based parent number. Root commits compare
 against an empty tree. Originally empty sources and sources made redundant by the destination have
@@ -77,3 +80,45 @@ Use `Objects::autosquash` to order `fixup!`, `squash!` and `amend!` subjects aft
 `TodoRun::plan_updates` maps an observed reference snapshot through completed rewrites, excluding
 branches checked out in any working tree supplied by the caller. Validate old identities again in a
 reference transaction before publication. Neither planning operation updates references.
+
+## Recover a Git-started operation
+
+Read `sequencer::State` from the repository's worktree-specific Git directory. It recognizes single
+cherry-pick/revert pseudo-refs, multi-commit `sequencer` state and merge-backend `rebase-merge`
+state. Author scripts remain opaque data; girt never evaluates them. Todo and file-size bounds apply
+while reading. Unknown files, symlinks, apply-backend rebase and unsupported continuation metadata
+are refused before publication.
+
+Prepare `Continue(new_commit)`, `Skip` or `Abort` with the observed current HEAD. A recovery plan
+names the required checkout and HEAD destination; it does not perform those mutations. For
+continuation, create the resolved commit with the operation's chosen author, committer and message.
+For skip/abort, explicitly discard the unresolved index/working-file changes through a caller-owned
+checkout. Publish objects, perform the guarded checkout and expected-value HEAD transaction, then
+call `publish_metadata`.
+
+Metadata publication checks the destination HEAD and original state bytes, stages changed files
+under create-new locks, then replaces/removes files individually. The caller must own the operation
+exclusively throughout this sequence: Git does not honor a girt-wide sequencer lock. Publication is
+not a cross-file crash transaction. Completed operation directories are renamed out of Git's active
+namespace before their files are removed. A partial failure reports changed paths; re-read disk
+state before choosing recovery. If retired-directory cleanup failed, no active operation may remain;
+the reported path identifies inert metadata rather than an interrupted active sequencer. Original
+`ORIG_HEAD` is retained, and unrelated/unknown state files cause refusal rather than deletion.
+
+After rebase continuation metadata is published, Git can run the remaining todo and finish branch
+reattachment. To finish in girt, use `Finish` only after the todo is exhausted and no source remains
+unresolved. Publish the original branch conditionally using `expected_branch_tip`, reattach HEAD,
+and publish completed `reference_updates` before removing metadata. Pending update-ref placeholders
+prevent finishing. `reflog_for` adds the resolved commit subject to Git's operation prefix; finish
+plans provide the conventional returning-to-branch message.
+
+`Recovery::start_single` prepares a Git-readable cherry-pick/revert stop after explicit conflict
+checkout. `Recovery::start_rebase` prepares a linear todo after the caller detaches and checks out
+the destination, preserving the original branch until finish. Both require explicit metadata
+publication; Git can then continue the operation. Squash/fixup persistent continuation,
+apply-backend rebase and recreated merge topology remain unsupported.
+
+For attribute-selected or custom content policy, use the single-commit and rebase `with_driver`
+variants, or return a `TreeDriver` from `TodoHooks::content_driver`. The same operation retains
+structured conflict sides independently of marker rendering. Attribute/configuration snapshots and
+custom-process authorization belong to the caller, as in the merge module.

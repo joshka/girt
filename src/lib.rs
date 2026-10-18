@@ -83,6 +83,8 @@
 //! | Read or produce pack artifacts | [`pack`] |
 //! | Walk ancestry, test reachability, find merge bases | [`history`] |
 //! | Combine content, trees or commits and publish conflicts | [`merge`] |
+//! | Cherry-pick, revert or rebase explicit commits in memory | [`replay`] |
+//! | Read Git operation state and prepare explicit recovery | [`sequencer`] |
 //! | Resolve names, conditionally update refs, inspect reflogs | [`refs`] |
 //! | Parse, resolve, interpret, or edit configuration | [`config`] |
 //! | Interpret named remotes and refspecs | [`remote`] |
@@ -205,6 +207,7 @@ pub mod repository;
 pub mod retention;
 pub mod revision;
 pub mod rewrites;
+pub mod sequencer;
 mod source_files;
 pub mod status;
 pub mod tag;

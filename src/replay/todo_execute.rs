@@ -103,12 +103,11 @@ pub enum TodoExecutionError {
 impl Objects {
     /// Executes a linear todo plan in memory, with explicit caller message and command hooks.
     ///
-    /// Supports pick/reword/edit/squash/fixup/drop/exec/break/label/reset/update-ref. Merge
-    /// commands are refused before any hook runs because this engine cannot resolve generated
-    /// ancestry for recursive merge bases. Labels retain proposed commits, including unstored
-    /// commits. Fixup and squash replace the preceding commit's tree/message while preserving
-    /// its author and parents. A reset begins a new squash group. Drop records no rewrite
-    /// mapping.
+    /// Supports noop/pick/reword/edit/squash/fixup/drop/exec/break/label/update-ref. Merge and
+    /// reset commands are refused before any hook runs because this engine cannot resolve generated
+    /// ancestry for recursive merge bases. Labels are checked for duplicates; topology execution
+    /// remains unsupported. Fixup and squash replace the preceding commit's tree/message while
+    /// preserving its author and parents. Drop records no rewrite mapping.
     ///
     /// No object, index, working file, state file or reference is installed by the executor. Hooks
     /// are explicitly caller-owned and may have side effects. For a stop, callers retain this
@@ -163,6 +162,7 @@ impl Objects {
             }
             let instruction = &line.instruction;
             match instruction {
+                Instruction::Noop => {}
                 Instruction::Pick(token)
                 | Instruction::Revert(token)
                 | Instruction::Reword(token)
@@ -233,14 +233,6 @@ impl Objects {
                             }
                         }
                         let commit = Commit::new(fields)?;
-                        if combine {
-                            let previous = run.tip.id();
-                            for target in run.updates.values_mut() {
-                                if *target == previous {
-                                    *target = commit.id();
-                                }
-                            }
-                        }
                         run.tip = commit.clone();
                         run.commits.push(commit.clone());
                         group.push(source);
