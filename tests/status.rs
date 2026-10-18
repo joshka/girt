@@ -996,25 +996,42 @@ fn case_alias_status_requires_git_policy() {
     assert_eq!(observation.raw_untracked, [b"FILE".to_vec()]);
 }
 
-/// These names are valid POSIX/Git paths but raw traversal refuses their portable ambiguity.
+/// Colons and backslashes are ordinary name bytes on macOS and Linux, as they are to Git.
 #[rstest]
 #[case::colon("colon:name")]
 #[case::backslash("back\\slash")]
-fn valid_posix_path_characters_are_explicitly_refused(#[case] path: &str) {
+#[case::nested("dir:x/a\\b")]
+fn valid_posix_path_characters_match_git_status(#[case] path: &str) {
     let (_root, repo) = fixture_in(ObjectFormat::Sha1);
     let root = repo.worktree().unwrap();
+    if let Some(parent) = Path::new(path).parent() {
+        fs::create_dir_all(root.join(parent)).unwrap();
+    }
     fs::write(root.join(path), b"path audit\n").unwrap();
     git(root, &["add", "--", path]);
     git(root, &["commit", "-m", "path audit"]);
     assert!(git(root, &["status", "--porcelain=v1", "-z"]).is_empty());
-    assert!(matches!(
-        repo.raw_status_with(
+    let report = repo
+        .raw_status_with(
             Baseline::Head,
             Untracked::RawFilesWithoutIgnores,
             &girt::pathspec::Pathspec::all(),
             Limits::default(),
-            &AtomicBool::new(false)
-        ),
-        Err(girt::status::Error::Unsupported { .. })
-    ));
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(report.staged.is_empty());
+    assert!(report.unstaged.is_empty());
+    assert!(report.raw_untracked.is_empty());
+
+    fs::write(root.join(path), b"changed\n").unwrap();
+    assert_eq!(
+        git(root, &["status", "--porcelain=v1", "-z"]),
+        format!(" M {path}\0").as_bytes()
+    );
+    let report = repo
+        .raw_status(Baseline::Head, Untracked::RawFilesWithoutIgnores)
+        .unwrap();
+    assert_eq!(report.unstaged.len(), 1);
+    assert_eq!(report.unstaged[0].path, path.as_bytes());
 }

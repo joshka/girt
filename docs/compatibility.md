@@ -134,10 +134,11 @@ comparison also verifies Git writing a regular placeholder where girt writes a r
 `case_alias_status_requires_git_policy` records a clean Git result under `core.ignoreCase=true`
 where girt reports a deletion and untracked case alias on the same case-insensitive filesystem
 ([issue 584](https://github.com/joshka/girt/issues/584)).
-`valid_posix_path_characters_are_explicitly_refused` records clean Git status for colon/backslash
-names where girt refuses traversal ([issue 583](https://github.com/joshka/girt/issues/583)). These
-comparisons distinguish the raw API's documented policy from a future Git-compatible workflow; they
-do not authorize changing its existing contract implicitly.
+`valid_posix_path_characters_match_git_status` compares clean and modified Git status for colon and
+backslash names, including a nested `dir:x/a\b`; girt matches
+([issue 583](https://github.com/joshka/girt/issues/583)). These comparisons distinguish the raw
+API's documented policy from a future Git-compatible workflow; they do not authorize changing its
+existing contract implicitly.
 
 Two additional comparisons use Git 2.56.0 on macOS.
 `existing_user_home_excludes_are_a_git_compatibility_gap` shows that Git expands a real named user's
@@ -2779,10 +2780,11 @@ no dependency was added. Unsafe index components and metadata aliases are reject
 path conversion. Symlink leaves are compared using target bytes, never followed. Symlink or file
 ancestors, directories replacing files and special tracked files are explicit obstructions. Exact
 name matching prevents case-insensitive lookup from making a differently spelled index path clean.
-Linux preserves non-UTF-8 filename bytes. Both platforms reject NUL, backslashes, colons,
-empty/dot/parent components and case-insensitive `.git` components. macOS non-ASCII relative names
-are explicitly unsupported because normalization aliases are not implemented. Other platforms reject
-traversal before storage access; no Windows worktree-status support is claimed.
+Linux preserves non-UTF-8 filename bytes. Colons and backslashes are ordinary name bytes, as they
+are to Git on these platforms. Both platforms reject NUL, empty/dot/parent components and
+case-insensitive `.git` components. macOS non-ASCII relative names are explicitly unsupported
+because normalization aliases are not implemented. Other platforms reject traversal before storage
+access; no Windows worktree-status support is claimed.
 
 Limits cover index reads, baseline tree flattening, pack snapshots, object reconstruction and total
 index/HEAD payload bytes, worktree file/total bytes, visited directory entries, generated paths and
@@ -2878,22 +2880,29 @@ observed changes but cannot prevent an arbitrary writer racing the last unlink c
 rename or ABA replacement. Hostile hardlink/mount manipulation is outside the contract.
 
 Linux preserves non-UTF-8 names. macOS requires ASCII target paths and names in traversed
-directories. Both reject case-colliding selected paths, filesystem name aliases, NUL, backslashes,
-colons, empty/dot/parent components, case-insensitive `.git` components and components longer than
-255 bytes. Nested ordinary/bare repositories and metadata-directory identities block traversal.
-Preparation projects marker-name presence through the actual planned operation order, including
-retained siblings and directories left empty by tracked deletions. It refuses any planned non-root
-directory with all three `HEAD`, `objects` and `refs` names, conservatively including ASCII case
-aliases. Entry types do not narrow this predicate: even three ordinary files are unsupported,
-although Git accepts that tree. This preflight prevents checkout from activating its own live guard
-midway through mutation; it does not disable guards on existing or newly created directories.
-Gitlinks, submodule recursion, sparse/split indexes, intent-to-add/skip-worktree entries and
-resolve-undo and unknown extensions are unsupported. Derived `TREE`, `FSMN`, `UNTR`, `EOIE` and
-`IEOT` caches are discarded even on unchanged checkouts; Git can rebuild them. Full v2/v3/v4 framing
-is accepted. Windows and other platforms refuse checkout before locking or reading the index;
-portable tests cover that boundary without claiming Windows materialization support. Native hard
-links, symlinks and POSIX modes are required; filesystem emulation and shared-permission policies
-are excluded.
+directories. Both reject case-colliding selected paths, filesystem name aliases, NUL,
+empty/dot/parent components, case-insensitive `.git` components and components longer than 255
+bytes. Colons and backslashes are accepted (`posix_colon_and_backslash_names_check_out_like_git`
+compares the result with Git status). Metadata-name aliases follow Git's `core.protectNTFS` and
+`core.protectHFS`, read from config at Git's observed defaults: NTFS protection on unless set to
+false, refusing `git~1` and `.git` with trailing dots, spaces or a `:stream`; HFS+ protection on by
+default on macOS only, refusing `.git` spelled with HFS-ignorable code points. Git 2.56.0 on macOS
+refused `git~1` with neither option set, although its manual describes NTFS protection as a Windows
+default. `metadata_name_refusals_match_git` checks every name under each setting against
+`git read-tree --reset -u` on the running platform. Nested ordinary/bare repositories and
+metadata-directory identities block traversal. Preparation projects marker-name presence through the
+actual planned operation order, including retained siblings and directories left empty by tracked
+deletions. It refuses any planned non-root directory with all three `HEAD`, `objects` and `refs`
+names, conservatively including ASCII case aliases. Entry types do not narrow this predicate: even
+three ordinary files are unsupported, although Git accepts that tree. This preflight prevents
+checkout from activating its own live guard midway through mutation; it does not disable guards on
+existing or newly created directories. Gitlinks, submodule recursion, sparse/split indexes,
+intent-to-add/skip-worktree entries and resolve-undo and unknown extensions are unsupported. Derived
+`TREE`, `FSMN`, `UNTR`, `EOIE` and `IEOT` caches are discarded even on unchanged checkouts; Git can
+rebuild them. Full v2/v3/v4 framing is accepted. Windows and other platforms refuse checkout before
+locking or reading the index; portable tests cover that boundary without claiming Windows
+materialization support. Native hard links, symlinks and POSIX modes are required; filesystem
+emulation and shared-permission policies are excluded.
 
 ### Phases and Failure Recovery
 

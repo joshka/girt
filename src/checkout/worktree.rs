@@ -16,6 +16,7 @@ use super::{Action, Applied, Error, Failure, Limits, Report, Stage};
 use crate::status::worktree::{
     directory_flags, open_root, optional_stat, repository_marker, same, validate_path,
 };
+use crate::worktree_names::Protection;
 use crate::{EntryMode, ObjectId, ObjectKind, Repository, TreeValue, index};
 
 type Leaves = BTreeMap<Vec<u8>, TreeValue>;
@@ -243,10 +244,15 @@ impl<'a> Plan<'a> {
         }) {
             return Err(refused(b"", "unsupported index extension"));
         }
+        let protection = Protection::from_config(repo)
+            .map_err(|_| refused(b"", "core.protectNTFS or core.protectHFS is not a boolean"))?;
         let mut paths = BTreeSet::new();
         let mut aliases = BTreeMap::new();
         for path in old.keys().chain(target.keys()) {
             validate_path(path)?;
+            if protection.refuses(path) {
+                return Err(refused(path, "repository metadata name alias"));
+            }
             if path.split(|b| *b == b'/').any(|part| part.len() > 255) {
                 return Err(refused(path, "path component exceeds 255 bytes"));
             }

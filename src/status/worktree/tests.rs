@@ -62,8 +62,6 @@ fn compares_bytes_without_stat_shortcuts(#[case] bytes: &[u8], #[case] changed: 
 #[case::dot(b"a/./file")]
 #[case::metadata(b"a/.GIT/config")]
 #[case::nul(b"a\0b")]
-#[case::backslash(b"a\\b")]
-#[case::drive(b"C:file")]
 #[case::empty_component(b"a//b")]
 fn rejects_paths_before_platform_conversion(#[case] path: &[u8]) {
     assert!(matches!(
