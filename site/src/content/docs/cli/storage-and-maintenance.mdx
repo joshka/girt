@@ -1,72 +1,129 @@
 ---
-title: Storage and maintenance
-description: Inspect pack storage and plan retention before deleting data.
-tableOfContents: false
+title: Packs and maintenance
+description: List and verify packs, rebuild pack indexes, and plan and run retention with girt.
 ---
 
-import CommandExample from '../../../components/CommandExample.astro';
+import CliNotice from '../../../components/CliNotice.astro';
+import Example from '../../../components/Example.astro';
 
-`pack list` describes packs, `verify` checks their checksums and objects, and `reindex` rebuilds a
-pack index. `maintenance plan` computes retention without writing, `repack` adds a pack without
-deleting old storage, and `run` can expire reflogs, retire packs and prune loose objects. Run
-`girt help maintenance run` before selecting destructive phases.
+<CliNotice />
 
-:::caution[Experimental CLI]
-The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
-testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
-may change; the library is the core deliverable.
-:::
+Objects live loose, one file each, or in packs: a `.pack` of compressed objects with an `.idx` index
+beside it. These commands look at packs and run girt's maintenance, which keeps every object
+something still reaches and removes what nothing does. Maintenance deletes data, so its destructive
+phases each need their own flag and an explicit `--yes`. None of the maintenance commands, nor
+`pack list` and `pack verify`, has an exact Git counterpart, so `--git` doesn't change their output.
+The library side is in [Maintenance and GC](/girt/guides/maintenance/) and the
+[safety model](/girt/compatibility/safety-model/).
 
-## Inspect retention and storage
+## Plan retention (`girt maintenance plan`)
 
-<CommandExample
-  command="girt maintenance plan"
-  api="Repository::plan_retention"
-  apiPath="repository/struct.Repository.html#method.plan_retention"
-  git="No single Git equivalent"
-  note="Read-only retention planning follows girt’s own policy."
->
+<Example cmd="maintenance plan">
 
-Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
+`girt maintenance plan` works out what maintenance would keep, without changing anything. Roots are
+every reference, every reflog entry, `HEAD` and the index; everything they reach is retained.
 
-```text
+```console
 $ girt maintenance plan
-roots 6
-retained 6
-reachable 6
+roots 17
+retained 17
+reachable 17
 unreachable-loose 0
 unreachable-packed 0
 protected-packs 0
 alternates 0
 ```
 
-`roots` counts distinct starting object IDs recovered from references, reflogs, indexes and other
-retention inputs. `reachable` counts the objects visited from those candidates. Here the plan
-retains six objects: two commits, two trees and two blobs. None are unreachable. `protected-packs`
-counts packs protected from retirement, and `alternates` reports borrowed object stores. Planning is
-read-only; it lets you inspect retention before selecting maintenance phases.
+</Example>
 
-`git verify-pack` checks an individual indexed pack, and `git index-pack <pack>` corresponds to
-`girt pack reindex <pack>`. Maintenance planning and execution follow girt's own retention policy
-and have no single Git command equivalent.
+`roots` counts the distinct starting points: reference and reflog values, `HEAD`, index entries and
+recent loose objects. `reachable` counts the objects visited from them, and `retained` those still
+required once reflog expiry is applied. `protected-packs` counts packs that maintenance won't
+retire, because of a `.keep` file or a recent modification time, and `alternates` the borrowed
+object stores, which girt reads but never prunes.
 
-</CommandExample>
+## Pack retained objects (`girt maintenance repack`)
 
-## Library API and safety
+<Example cmd="maintenance repack">
 
-Planning calls
-[Repository::plan_retention](https://docs.rs/girt/latest/girt/repository/struct.Repository.html#method.plan_retention)
-with a [RetentionPolicy](https://docs.rs/girt/latest/girt/retention/struct.RetentionPolicy.html).
-Pack verification uses
-[Objects::verify_packs](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.verify_packs);
-index rebuilding uses
-[pack::rebuild_index](https://docs.rs/girt/latest/girt/pack/fn.rebuild_index.html). Repacking and
-destructive phases use [retention](https://docs.rs/girt/latest/girt/retention/index.html) plans and
-explicit safety capabilities.
+`girt maintenance repack` writes every retained object into one new pack and prints its path,
+object count and size. The demo repository has only loose objects until this runs. It deletes nothing: the old packs and loose objects stay until
+`maintenance run --retire-packs` or `--prune-loose` removes them.
 
-`maintenance run` requires `--yes` to perform selected phases. That flag asserts that no other
-process reads or writes the repository; girt has no repository-wide lock that supplies this
-isolation. Without it the command only prints the plan and proposed phases. Recent objects and packs
-are protected by the CLI's two-week grace period; reflog expiry uses 90 days for reachable records
-and 30 for unreachable records. See [Maintenance and GC](/girt/guides/maintenance/) before running
-deletion. `--git` is ignored for maintenance, pack list and verification.
+```console
+$ girt maintenance repack
+/home/me/demo/.git/objects/pack/pack-8e2d3d02ad0532e0364ede2302d4dcc7db3d743a.pack 17 1118
+```
+
+</Example>
+
+## List packs (`girt pack list`)
+
+<Example cmd="pack list">
+
+`girt pack list` prints each pack's path, object count and `.pack` size in bytes: the repository's
+own packs first, then those of its alternates. `keep`, `promisor` and `alternate` follow when they
+apply.
+
+```console
+$ girt pack list
+/home/me/demo/.git/objects/pack/pack-8e2d3d02ad0532e0364ede2302d4dcc7db3d743a.pack 17 1118
+```
+
+</Example>
+
+## Check packs (`girt pack verify`)
+
+<Example cmd="pack verify">
+
+`girt pack verify` checks every pack's checksums and decodes every object in it. It prints `ok`,
+or the first error and exits 1. Where `git verify-pack` checks one pack, this checks all of them.
+
+```console
+$ girt pack verify
+ok
+```
+
+</Example>
+
+## Rebuild a pack index (`girt pack reindex`)
+
+<Example cmd="pack reindex">
+
+`girt pack reindex <pack>` rebuilds a pack's `.idx` from the `.pack` alone and reports whether the
+index was `created`, `replaced` or `unchanged`, with the pack checksum and object count. With
+`--git` it prints only the checksum, as `git index-pack` does.
+
+```console
+$ girt pack reindex .git/objects/pack/pack-8e2d3d02ad0532e0364ede2302d4dcc7db3d743a.pack
+unchanged 8e2d3d02ad0532e0364ede2302d4dcc7db3d743a 17
+```
+
+</Example>
+
+## Delete what nothing retains (`girt maintenance run`)
+
+<Example cmd="maintenance run">
+
+`girt maintenance run` runs the destructive phases you name: `--expire-reflogs` drops old reflog
+records, `--retire-packs` replaces old packs with one pack of their retained objects, and
+`--prune-loose` deletes unreachable loose objects. Without `--yes` it prints the plan and what each
+phase would remove, and stops.
+
+```console
+$ girt maintenance run --expire-reflogs --retire-packs
+roots 17
+retained 17
+…
+would-expire-reflog-records 0
+would-retire-packs 0
+dry run: pass --yes to run (nothing else may use the repository)
+```
+
+</Example>
+
+Passing `--yes` is your statement that nothing else, whether Git, jj, an editor or another girt,
+reads or writes the repository while maintenance runs; girt has no repository-wide lock to check it.
+Loose objects and packs less than two weeks old are always kept, and reflog records expire after 90
+days, or 30 when what they point at is unreachable. The phases always run in the same order:
+reflogs, then packs, then loose objects.

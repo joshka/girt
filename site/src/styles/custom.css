@@ -735,10 +735,28 @@ h1#_top {
 }
 
 /* CLI examples use the right column for a contextual command reference instead of a fixed TOC. */
-:root:has(.command-example) {
+:root:has(.girt-example:not(.inline)) {
   --sl-content-width: 72rem;
 }
 
-.sl-markdown-content:has(.command-example) > :is(p, .starlight-aside) {
+.sl-markdown-content:has(.girt-example:not(.inline)) > :is(p, ul, ol, pre, table, .expressive-code, .starlight-aside) {
   max-width: 48rem;
+}
+
+/* CLI section headings lead with the command: plain mono, no inline-code chip. */
+.sl-markdown-content :is(h2, h3) code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 0.82em;
+  font-weight: 600;
+}
+
+/* External links in page text carry the same arrow as external sidebar entries. */
+.sl-markdown-content a[href^='http']:not(:where(.not-content *))::after {
+  content: '↗' / ' (external)';
+  display: inline-block;
+  margin-left: 0.15em;
+  color: var(--sl-color-gray-3);
+  font-size: 0.85em;
 }

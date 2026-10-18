@@ -1,58 +1,66 @@
 ---
 title: Diffs
-description: Compare trees, detect renames and copies and print patches.
-tableOfContents: false
+description: Compare two commits or trees, detect renames and copies, and print patches with girt.
 ---
 
-import CommandExample from '../../../components/CommandExample.astro';
+import CliNotice from '../../../components/CliNotice.astro';
+import Example from '../../../components/Example.astro';
 
-`diff A B` compares two commit or tree revisions. `--names` is the default; `--renames` detects
-renames, `--copies` also considers copies from modified files, and `--patch` writes a unified diff.
-Run `girt help diff` for the supported combinations.
+<CliNotice />
 
-:::caution[Experimental CLI]
-The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
-testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
-may change; the library is the core deliverable.
-:::
+`girt diff` compares two snapshots: commits, or trees named any way the revision language allows. It
+never looks at the index or working tree; [`girt status`](/girt/cli/index-and-working-tree/) does
+that. The examples use the repository from [Getting started](/girt/cli/getting-started/), where
+`topic` renamed `src/main.rs`. The library side is in
+[Diffs and renames](/girt/guides/diffs-and-renames/).
 
-## Find changed paths
+## Compare two trees (`girt diff`)
 
-<CommandExample
-  command="girt diff HEAD~1 HEAD"
-  api="Objects::compare_trees"
-  apiPath="objects/struct.Objects.html#method.compare_trees"
-  git="git diff-tree --no-commit-id -r --name-status HEAD~1 HEAD"
-  note="Use --patch to see changed lines, or --renames to detect renamed paths."
->
+<Example cmd="diff">
 
-Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
+`girt diff A B` compares two commits or trees and lists each changed path with a status letter: `A`
+added, `D` deleted, `M` modified, `T` type changed. `--renames` pairs deletions with additions
+whose content is similar enough and prints them as `R<similarity>`; `--copies` also looks for
+copies of modified files. `--names` asks for the default name list explicitly. When a large change
+exceeds the rename limit, girt warns on stderr that exhaustive detection was skipped and prints the
+rest of the comparison.
 
-```text
-$ girt diff HEAD~1 HEAD
-M notes.txt
+```console
+$ girt diff main~1 main
+A .gitignore
+$ girt diff main~2 topic --renames
+M README.md
+R100 src/main.rs src/lib.rs
 ```
 
-`M` identifies a modified file. The old revision is the parent of HEAD; the new revision is HEAD.
-Add `--patch` to see the changed lines, or `--renames` to distinguish renamed paths from separate
-additions and deletions.
+</Example>
 
-The corresponding Git operations are `git diff-tree --no-commit-id -r --name-status HEAD~1 HEAD` for
-names, its `-M` option for rename detection, and `git diff HEAD~1 HEAD` for patches.
+Rename detection is off unless you ask for it, unlike `git diff`, which follows `diff.renames`. With
+`--git`, the name list matches `git diff-tree -r --name-status` (with `-M` or `-C` for `--renames`
+or `--copies`), and `--patch` matches `git diff --no-renames`, or `git diff -M` with `--renames`.
 
-</CommandExample>
+## Print a patch (`girt diff --patch`)
 
-## Library API and limits
+<Example cmd="diff patch">
 
-Plain comparisons use
-[Objects::compare_trees](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.compare_trees).
-Rename and copy detection use
-[Objects::diff_trees_with](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.diff_trees_with)
-with [rewrites::Options](https://docs.rs/girt/latest/girt/rewrites/struct.Options.html). Patch
-output uses
-[Objects::write_patch_with](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.write_patch_with)
-and repository diff attributes.
+`--patch` prints a unified diff with three lines of context. It applies `.gitattributes` and
+`diff.<driver>` settings as `git diff` does, but refuses a driver that needs `textconv` or an
+external command. The line diff is plain Myers without Git's indent heuristic, so an ambiguous hunk
+can line up differently from Git's.
 
-Patches use Myers diff, so ambiguous hunks can align differently from Git. A warning reports when
-limits skip exhaustive rename detection; the remaining comparison still has useful path changes. See
-[Diffs and renames](/girt/guides/diffs-and-renames/) for attribute policy, similarity and limits.
+```console
+$ girt diff main~2 topic --patch --renames
+diff --git a/README.md b/README.md
+index ce01362..94954ab 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1,2 @@
+ hello
++world
+diff --git a/src/main.rs b/src/lib.rs
+similarity index 100%
+rename from src/main.rs
+rename to src/lib.rs
+```
+
+</Example>

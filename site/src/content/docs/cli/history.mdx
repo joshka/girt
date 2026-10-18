@@ -1,63 +1,117 @@
 ---
 title: History and blame
-description: Walk commits, test ancestry and attribute file lines.
-tableOfContents: false
+description: Walk commit history, count commits, find merge bases and attribute lines with girt.
 ---
 
-import CommandExample from '../../../components/CommandExample.astro';
+import CliNotice from '../../../components/CliNotice.astro';
+import Example from '../../../components/Example.astro';
 
-`log` shows commits, with `--limit` and `--oneline` for shorter listings. `history count` counts
-reachable commits; `merge-base` finds common ancestors and `contains` tests ancestry. `blame`
-attributes a literal repository-relative path to commit ranges. Run `girt help history` and
-`girt help blame` for arguments.
+<CliNotice />
 
-:::caution[Experimental CLI]
-The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
-testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
-may change; the library is the core deliverable.
-:::
+These commands read the commit graph. None of them write to the repository. The examples use the
+repository from [Getting started](/girt/cli/getting-started/), with two branches: `main`, and
+`topic`, which forked from `main~1` and renamed a file. Comparing snapshots is on the
+[Diffs](/girt/cli/diffs/) page. The library side is in
+[Read objects and history](/girt/guides/objects-and-history/).
 
-## Count commits and attribute lines
+## Show history (`girt log`)
 
-<CommandExample
-  command="girt blame notes.txt"
-  api="Repo::blame"
-  apiPath="repo/struct.Repo.html#method.blame"
-  git="git blame --line-porcelain notes.txt"
-  note="girt returns ranges rather than Git’s per-line metadata."
->
+<Example cmd="log">
 
-Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
+`girt log` lists commits reachable from the revisions you give it, newest committer date first,
+starting from `HEAD` when you give none. It accepts `^A`, `A..B` and `A...B`. `-n` stops after that
+many commits and `--oneline` prints one line each.
 
-```text
-$ girt history count HEAD
-2
-$ girt blame notes.txt
-20e181280c52172d1d2916d4f225a928d5d05a3c 1 2 1 notes.txt
-e5d83fbd011e44793ba5f60d5091bb569e12352f 3 1 3 notes.txt
+```console
+$ girt log --oneline
+7ed7a0cc68995713f52d973e6adfd3d9e667324f Ignore target
+3dc25d2e2eeed699cba1e1ea0314dd88299f9b02 Add a second line
+e896f1ed22a211bd58c4b542fba2323ad09a52b0 Initial commit
+$ girt log main..topic --oneline
+90772130c5df4563a3c4c46956d4120724dfed1a Rename main to lib
 ```
 
-The history has two commits. Each blame record contains a commit ID, final start line, line count,
-original start line and original path. The first commit introduced lines 1–2; the second introduced
-line 3. Starts are one-based. Blame prints ranges rather than file contents or per-line metadata.
-`--git` is refused for blame.
+</Example>
 
-`history contains` prints `yes` or `no` and exits 0 or 1; `--git` suppresses its text. The
-corresponding Git operations are `git log`, `git rev-list --count`, `git merge-base`,
-`git merge-base --is-ancestor` and `git blame --line-porcelain`.
+The default format prints full IDs and the parent line, which makes the graph easy to follow in
+plain text:
 
-</CommandExample>
+```console
+$ girt log -n 1
+commit 7ed7a0cc68995713f52d973e6adfd3d9e667324f
+parent 3dc25d2e2eeed699cba1e1ea0314dd88299f9b02
+author A. Writer <a@example.com>
+date   2026-10-01 12:00:00 +0000
 
-## Library API and limits
+    Ignore target
+```
 
-The CLI resolves selections with
-[Selection](https://docs.rs/girt/latest/girt/revision/struct.Selection.html) and uses
-[Objects](https://docs.rs/girt/latest/girt/objects/struct.Objects.html) methods `walk_with`,
-`merge_bases_with` and `is_ancestor_with`. Log lists commits newest committer date first, as
-`git log` does. Blame calls
-[Repo::blame](https://docs.rs/girt/latest/girt/repo/struct.Repo.html#method.blame).
+The excluded side of a range is walked in full, so `A..B` with a long history behind `A` costs a
+full walk of that history. Git stops earlier; this is a known gap in the library's walk.
 
-`log` and `history count` accept ranges such as `main~1..main`. The excluded side is walked in full,
-which can be slower than Git near the root of a long history. Unsupported revision syntax is
-refused. See [Read objects and history](/girt/guides/objects-and-history/) for shallow history and
-resource limits.
+## Count commits (`girt history count`)
+
+<Example cmd="history count">
+
+`girt history count` prints how many commits the revisions select. It takes the same ranges as
+`log`.
+
+```console
+$ girt history count main...topic
+2
+```
+
+</Example>
+
+## Find a common ancestor (`girt history merge-base`)
+
+<Example cmd="history merge-base">
+
+`girt history merge-base A B` prints the best common ancestor of two commits, and `--all` prints
+every one when there is more than one. It exits 1 with no output when the commits share no
+history.
+
+```console
+$ girt history merge-base main topic
+3dc25d2e2eeed699cba1e1ea0314dd88299f9b02
+```
+
+</Example>
+
+## Test ancestry (`girt history contains`)
+
+<Example cmd="history contains">
+
+`girt history contains A B` asks whether `A` is an ancestor of `B`. It prints `yes` or `no` and
+exits 0 or 1, so it works directly in a shell `if`. With `--git` it prints nothing, as
+`git merge-base --is-ancestor` does.
+
+```console
+$ girt history contains main~2 topic
+yes
+$ girt history contains topic main
+no
+```
+
+</Example>
+
+## Attribute lines (`girt blame`)
+
+<Example cmd="blame">
+
+`girt blame <path> [revision]` finds the commit that last changed each line of a file. Each output
+line is a range: the commit, the range's first line and length in the final file, its first line
+in that commit, and the path it had there.
+
+```console
+$ girt blame README.md
+e896f1ed22a211bd58c4b542fba2323ad09a52b0 1 1 1 README.md
+3dc25d2e2eeed699cba1e1ea0314dd88299f9b02 2 1 2 README.md
+```
+
+</Example>
+
+Blame follows renames, so the path column can name a file the range had before it was moved. It
+doesn't detect lines copied or moved between files, and refuses files with a `textconv` driver. The
+path is a literal repository-relative path, not a pathspec, and line numbers start at 1. Its output
+is ranges rather than Git's annotated lines, so `girt blame --git` is refused.

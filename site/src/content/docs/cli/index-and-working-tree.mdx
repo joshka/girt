@@ -1,72 +1,132 @@
 ---
 title: Index and working tree
-description: Inspect tracked state, ignore decisions and checkout effects.
-tableOfContents: false
+description: List the index, show status, explain ignore rules, check out trees and manage linked worktrees with girt.
 ---
 
-import CommandExample from '../../../components/CommandExample.astro';
+import CliNotice from '../../../components/CliNotice.astro';
+import Example from '../../../components/Example.astro';
 
-`index list` reads tracked paths, `status` reports staged and unstaged changes (`--untracked` also
-lists untracked files), and `ignore check` explains ignore rules. `checkout` replaces the index and
-working tree without moving HEAD. `worktree list`, `lock`, `unlock`, `prune` and `repair` manage
-linked-worktree registrations. Run `girt help checkout` and `girt help worktree` before changing
-state.
+<CliNotice />
 
-:::caution[Experimental CLI]
-The girt CLI is not a replacement for Git. It exercises the library's Git operations and provides a
-testing surface for performance and byte-for-byte comparisons with Git. Command names and parameters
-may change; the library is the core deliverable.
-:::
+The index records what the next commit would contain; the working tree is the checked-out files.
+girt has no `add` or `commit`, so the examples use `git` to make changes for girt to look at. These
+commands read both and, in the case of `checkout` and `worktree`, change them. Status and checkout
+work on macOS and Linux only. The library side is in
+[The index and working tree](/girt/guides/index-and-working-tree/).
 
-## List tracked paths
+## List the index (`girt index list`)
 
-<CommandExample
-  command="girt status --untracked"
-  api="Repository::status"
-  apiPath="repository/struct.Repository.html#method.status"
-  git="git status --porcelain --untracked-files=all"
-  note="Default girt status omits untracked files; add --untracked to include them."
->
+<Example cmd="index list">
 
-Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
+`girt index list` prints the path of every index entry. `--stage` adds the mode, the blob ID and
+the stage number, which is 0 except during a conflicted merge.
 
-```text
-$ girt index list
-notes.txt
+```console
+$ girt index list --stage
+100644 2f7896d1d1365eafb0da03d9fe456fac81408487 0	.gitignore
+100644 94954abda49de8615a048f8d2e64b5de848e27a1 0	README.md
+100644 f328e4d9d04c31d0d70d16d21a07d1613be9d577 0	src/main.rs
 ```
 
-The index records `notes.txt` as a tracked path. `status` compares HEAD, the index and working tree;
-its two status letters describe staged and unstaged changes. Add `--untracked` to include files
-outside the index. For example, after creating an untracked `draft.txt`:
+</Example>
 
-```text
-$ girt status --untracked
-?? draft.txt
+## Show changes (`girt status`)
+
+<Example cmd="status">
+
+`girt status` compares `HEAD`, the index and the working tree and prints one `<XY> <path>` line per
+changed path, using the letters of `git status --porcelain`: the first column is the index against
+`HEAD`, the second the working tree against the index. `-u` adds untracked files, filtered through
+`.gitignore`, `info/exclude` and `core.excludesFile`. Without `-u` it corresponds to
+`git status --porcelain -uno`, and with it to `--untracked-files=all`.
+
+```console
+$ printf 'more\n' >> README.md
+$ printf 'new\n' > new.txt && git add new.txt
+$ printf 'scratch\n' > notes.txt
+$ girt status -u
+ M README.md
+A  new.txt
+?? notes.txt
 ```
 
-`??` marks an untracked path. `ignore check <path>` explains whether an ignore rule matches and
-prints its source and pattern when one does. `worktree list` prints each checkout's path, HEAD ID
-and branch or state. `checkout <tree>` replaces files and the index without moving HEAD or switching
-branches; use a disposable copy for checkout experiments.
+</Example>
 
-The corresponding Git operations are `git ls-files`, `git status --porcelain --untracked-files=all`,
-`git check-ignore -v`, `git worktree list` and `git read-tree -um <tree>`. girt's default status
-omits untracked files, like `git status --porcelain -uno`; its flags and record formatting follow
-its own CLI conventions.
+Status compares raw bytes. It applies no clean or smudge filters, no line-ending conversion, no
+`core.filemode` or `core.symlinks` policy and no rename detection, so a repository that relies on
+any of those can show changes Git wouldn't. On macOS, non-ASCII working-tree paths are refused for
+now.
 
-</CommandExample>
+## Explain ignore rules (`girt ignore check`)
 
-## Library API and limits
+<Example cmd="ignore check">
 
-Index listing reads [index::Index](https://docs.rs/girt/latest/girt/index/struct.Index.html). Status
-and ignore use [Repository](https://docs.rs/girt/latest/girt/repository/struct.Repository.html)
-methods `ignore_rules` and `status`; checkout calls `checkout_tree_with_progress`. Registration
-commands use `worktrees`, `lock_worktree`, `unlock_worktree`, `prune_worktree` and `repair_worktree`
-on that same type.
+`girt ignore check` reports, for each path, the rule that decides whether it is ignored, or that
+none does. Tracked paths are never ignored. It exits 0 when any path is ignored and 1 otherwise.
 
-Status and checkout compare raw bytes on macOS/Linux, without filters, EOL conversion or
-`core.filemode`; macOS paths must be ASCII. Checkout drops derived fsmonitor and untracked caches,
-and refuses split/sparse indexes, resolve-undo data and unknown extensions. Prune deletes a missing
-checkout's registration, HEAD and index; inspect its help before use. See
-[The index and working tree](/girt/guides/index-and-working-tree/) for safety and partial-failure
-contracts.
+```console
+$ mkdir -p target && touch target/app
+$ girt ignore check target/app notes.txt
+target/app: ignored by .gitignore:1: target/
+notes.txt: not ignored
+```
+
+</Example>
+
+## Check out a tree (`girt checkout`)
+
+<Example cmd="checkout">
+
+`girt checkout <revision>` replaces the index and working tree with that revision's tree. It
+doesn't move `HEAD`, so afterwards status reports the difference as staged changes. It prints what
+it changed. It refuses to run over uncommitted changes, so the first command puts the status
+example's changes away.
+
+```console
+$ git reset -q --hard && rm notes.txt
+$ girt checkout main~1
+installed 0, removed 1, created 0 directories, removed 0 directories
+$ girt status
+D  .gitignore
+$ girt checkout main --from main~1
+installed 1, removed 0, created 0 directories, removed 0 directories
+```
+
+</Example>
+
+Checkout updates the working tree from a known starting point, `--from`, which defaults to `HEAD`.
+That baseline must match the index and working tree exactly: girt refuses to run over dirty, staged
+or conflicted paths rather than overwrite them. After a `clone --no-checkout`, where there is no
+index yet, the baseline is empty. Content is written raw, without filters or line-ending conversion,
+and on macOS non-ASCII paths are refused, as in status. Split and sparse indexes, resolve-undo data
+and unknown index extensions are refused; the derived caches (`TREE`, `FSMN`, `UNTR`, `EOIE`,
+`IEOT`) are dropped for Git to rebuild.
+
+## Manage linked worktrees (`girt worktree`)
+
+<Example cmd="worktree">
+
+`girt worktree list` prints the main worktree and every linked one, with its `HEAD` and branch. The
+other subcommands look after a registration under `.git/worktrees/`: `lock` protects it from
+pruning, `unlock` removes that protection, `prune` deletes a registration whose checkout no longer
+exists, with its `HEAD` and index, and `repair` relinks a registration with a checkout that has moved.
+
+```console
+$ git worktree add -q ../review
+$ girt worktree list
+/home/me/demo 7ed7a0cc68995713f52d973e6adfd3d9e667324f [main]
+/home/me/review 7ed7a0cc68995713f52d973e6adfd3d9e667324f [review]
+$ girt worktree lock review --reason "on a removable disk"
+$ girt worktree unlock review
+$ mv ../review ../review-moved
+$ girt worktree repair review ../review-moved
+$ girt worktree list
+/home/me/demo 7ed7a0cc68995713f52d973e6adfd3d9e667324f [main]
+/home/me/review-moved 7ed7a0cc68995713f52d973e6adfd3d9e667324f [review]
+```
+
+</Example>
+
+The CLI has no command to create a linked worktree. The library can
+([`Repository::create_orphan_worktree`](https://docs.rs/girt/latest/girt/repository/struct.Repository.html#method.create_orphan_worktree))
+creates one with an unborn branch, and `git worktree add` works too.
