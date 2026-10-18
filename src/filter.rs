@@ -16,19 +16,26 @@
 //! - **`ident`.** `$Id$` in a stored blob is written as `$Id: <blob id> $`, and collapsed back when
 //!   storing.
 //!
-//! Filter drivers (`filter=<name>`) and `working-tree-encoding` are not applied yet: a path with
-//! either is refused with [`Error::Unsupported`] rather than converted partially.
+//! - **Drivers.** `filter=<name>` runs `filter.<name>.clean` when storing and `smudge` when
+//!   writing. Running commands is a trust decision the caller makes with [`Commands`]: the default,
+//!   [`Commands::Refuse`], returns [`Error::Refused`] instead of running one. A failing driver
+//!   leaves content unchanged and is reported in [`Converted::skipped`], unless
+//!   `filter.<name>.required` makes it an [`Error::Driver`].
+//!
+//! `working-tree-encoding` is not applied yet: a path with it is refused with
+//! [`Error::Unsupported`] rather than converted partially.
 //!
 //! ```
 //! use std::borrow::Cow;
 //!
 //! use girt::ObjectId;
 //! use girt::attributes::{Attributes, Case, Limits, Source};
-//! use girt::filter::{Pipeline, Settings, Staged};
+//! use girt::filter::{Drivers, Pipeline, Settings, Staged};
 //!
 //! let mut attributes = Attributes::new(Case::Sensitive, Limits::default());
 //! attributes.add(Source::Directory(b""), b"*.bat text eol=crlf\n")?;
-//! let mut filters = Pipeline::from_attributes(attributes, Settings::default());
+//! let mut filters =
+//!     Pipeline::from_attributes(attributes, Settings::default(), Drivers::default());
 //!
 //! let stored = filters.to_repository(b"run.bat", b"echo\r\n", Staged::Absent)?;
 //! assert_eq!(&*stored.bytes, b"echo\n");
@@ -37,8 +44,8 @@
 //!     b"echo\n",
 //!     ObjectId::null(girt::ObjectFormat::Sha1),
 //! )?;
-//! assert_eq!(&*written, b"echo\r\n");
-//! assert!(matches!(written, Cow::Owned(_)));
+//! assert_eq!(&*written.bytes, b"echo\r\n");
+//! assert!(matches!(written.bytes, Cow::Owned(_)));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -49,9 +56,11 @@ use crate::config::{Config, InvalidValue};
 use crate::workflow::Environment;
 use crate::{ObjectId, Objects, ReadBlobError, Repository};
 
+mod driver;
 mod eol;
 mod ident;
 
+pub use driver::{Commands, Direction, DriverError, Drivers, Limits};
 use eol::Stats;
 
 /// How `core.autocrlf` converts paths whose `text` attribute is unspecified.
@@ -224,12 +233,13 @@ pub enum Text {
 }
 
 /// The conversions that apply to one path, from [`Pipeline::plan`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Plan {
     text: Text,
     eol: LineEnding,
     ident: bool,
     safecrlf: SafeCrlf,
+    driver: Option<Vec<u8>>,
 }
 
 impl Plan {
@@ -251,11 +261,12 @@ impl Plan {
         self.ident
     }
 
-    /// Converts `blob`, a stored blob with ID `id`, to its working-tree bytes.
-    ///
-    /// Borrows `blob` when nothing changes.
-    pub fn to_worktree<'a>(&self, blob: &'a [u8], id: ObjectId) -> Cow<'a, [u8]> {
-        let bytes = Cow::Borrowed(blob);
+    /// The `filter` attribute's driver name, when set.
+    pub fn driver(&self) -> Option<&[u8]> {
+        self.driver.as_deref()
+    }
+
+    fn builtin_to_worktree<'a>(&self, bytes: Cow<'a, [u8]>, id: ObjectId) -> Cow<'a, [u8]> {
         let bytes = if self.ident {
             ident::expand(bytes, id)
         } else {
@@ -279,32 +290,25 @@ impl Plan {
         eol::convert_if(bytes, needed, eol::lf_to_crlf)
     }
 
-    /// Converts `file`, the bytes of the working file at `path`, to the content Git stores.
-    ///
-    /// `staged` supplies what [`Text::Auto`] consults: the path's currently staged blob.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::UnsafeCrlf`] under [`SafeCrlf::Refuse`] when the result would not be
-    /// written back as `file`, and [`Error::Staged`] when reading the staged blob fails.
-    pub fn to_repository<'a>(
+    fn builtin_to_repository<'a>(
         &self,
         path: &[u8],
-        file: &'a [u8],
+        file: Cow<'a, [u8]>,
         staged: Staged<'_>,
-    ) -> Result<Stored<'a>, Error> {
-        let stats = Stats::new(file);
+    ) -> Result<(Cow<'a, [u8]>, Option<CrlfWarning>), Error> {
+        let stats = Stats::new(&file);
         let convert = stats.crlf > 0
             && match self.text {
                 Text::Binary => false,
                 Text::Always => true,
                 Text::Auto => !stats.binary() && !staged.has_crlf()?,
             };
-        let bytes = eol::convert_if(Cow::Borrowed(file), convert, eol::crlf_to_lf);
+        let converted = convert.then(|| eol::crlf_to_lf(&file));
         let warning = if self.text == Text::Binary {
             None
         } else {
-            let written = self.eol_to_worktree(Cow::Borrowed(&*bytes));
+            let stored = converted.as_deref().unwrap_or(&file);
+            let written = self.eol_to_worktree(Cow::Borrowed(stored));
             (*written != *file).then(|| {
                 if stats.crlf > 0 && self.eol == LineEnding::Lf {
                     CrlfWarning::CrlfToLf
@@ -329,12 +333,13 @@ impl Plan {
             (warning, SafeCrlf::Warn) => warning,
             _ => None,
         };
+        let bytes = converted.map_or(file, Cow::Owned);
         let bytes = if self.ident {
             ident::collapse(bytes)
         } else {
             bytes
         };
-        Ok(Stored { bytes, warning })
+        Ok((bytes, warning))
     }
 }
 
@@ -367,14 +372,18 @@ impl Staged<'_> {
     }
 }
 
-/// Content to store, from [`Pipeline::to_repository`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Converted content, from [`Pipeline::to_repository`] or [`Pipeline::to_worktree`].
+#[derive(Debug)]
 #[non_exhaustive]
-pub struct Stored<'a> {
-    /// The bytes to hash and store; borrowed from the file when nothing changed.
+pub struct Converted<'a> {
+    /// The converted bytes; borrowed from the input when nothing changed.
     pub bytes: Cow<'a, [u8]>,
-    /// Set under [`SafeCrlf::Warn`] when writing the stored bytes back would change the file.
+    /// Set when storing under [`SafeCrlf::Warn`] and writing the stored bytes back would change
+    /// the file.
     pub warning: Option<CrlfWarning>,
+    /// A driver that is not `filter.<name>.required` failed, and its conversion was skipped as
+    /// Git skips it. Git reports this as an error message and continues.
+    pub skipped: Option<DriverError>,
 }
 
 /// How writing a stored file back would change its line endings.
@@ -411,6 +420,33 @@ pub enum Error {
         /// What writing the stored content back would change.
         change: CrlfWarning,
     },
+    /// A driver would run a command under [`Commands::Refuse`].
+    #[error(
+        "{direction} filter {:?} for {} needs commands to run",
+        String::from_utf8_lossy(driver),
+        String::from_utf8_lossy(path)
+    )]
+    Refused {
+        /// The path being converted.
+        path: Vec<u8>,
+        /// The driver name.
+        driver: Vec<u8>,
+        /// The direction that would run.
+        direction: Direction,
+    },
+    /// A `filter.<name>.required` driver failed or has no command for the direction.
+    #[error(
+        "{} filter failed for {}",
+        source_direction(source),
+        String::from_utf8_lossy(path)
+    )]
+    Driver {
+        /// The path being converted.
+        path: Vec<u8>,
+        /// What failed.
+        #[source]
+        source: DriverError,
+    },
     /// Reading the staged blob for [`Text::Auto`] failed.
     #[error("reading the staged blob")]
     Staged(#[source] Box<ReadBlobError>),
@@ -422,7 +458,7 @@ pub enum Error {
     Unsupported {
         /// The path being converted.
         path: Vec<u8>,
-        /// The attribute that requests it: `filter` or `working-tree-encoding`.
+        /// The attribute that requests it, such as `working-tree-encoding`.
         attribute: &'static str,
     },
 }
@@ -432,12 +468,22 @@ enum Rules {
     Attributes(Attributes),
 }
 
-/// The conversions of one repository: its attribute rules and [`Settings`].
+fn source_direction(error: &DriverError) -> Direction {
+    match error {
+        DriverError::Io { direction, .. }
+        | DriverError::Failed { direction, .. }
+        | DriverError::TooLarge { direction, .. }
+        | DriverError::Missing { direction, .. } => *direction,
+    }
+}
+
+/// The conversions of one repository: its attribute rules, [`Settings`] and [`Drivers`].
 ///
 /// [`Repository::filters`] loads a pipeline as Git would for that repository.
 pub struct Pipeline {
     rules: Rules,
     settings: Settings,
+    drivers: Drivers,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -445,24 +491,27 @@ impl std::fmt::Debug for Pipeline {
         formatter
             .debug_struct("Pipeline")
             .field("settings", &self.settings)
+            .field("drivers", &self.drivers)
             .finish_non_exhaustive()
     }
 }
 
 impl Pipeline {
     /// Uses attribute files read on demand by `lookup`.
-    pub fn new(lookup: Lookup, settings: Settings) -> Self {
+    pub fn new(lookup: Lookup, settings: Settings, drivers: Drivers) -> Self {
         Self {
             rules: Rules::Lookup(lookup),
             settings,
+            drivers,
         }
     }
 
     /// Uses attribute files the caller has already read.
-    pub fn from_attributes(attributes: Attributes, settings: Settings) -> Self {
+    pub fn from_attributes(attributes: Attributes, settings: Settings, drivers: Drivers) -> Self {
         Self {
             rules: Rules::Attributes(attributes),
             settings,
+            drivers,
         }
     }
 
@@ -489,16 +538,18 @@ impl Pipeline {
     /// # Errors
     ///
     /// Returns [`Error::Attributes`] when attributes cannot be read and [`Error::Unsupported`]
-    /// when the path has a `filter` or `working-tree-encoding` attribute.
+    /// when the path has a `working-tree-encoding` attribute.
     pub fn plan(&mut self, path: &[u8]) -> Result<Plan, Error> {
-        for attribute in ["filter", "working-tree-encoding"] {
-            if matches!(self.get(path, attribute.as_bytes())?, State::Value(_)) {
-                return Err(Error::Unsupported {
-                    path: path.to_vec(),
-                    attribute,
-                });
-            }
+        if matches!(self.get(path, b"working-tree-encoding")?, State::Value(_)) {
+            return Err(Error::Unsupported {
+                path: path.to_vec(),
+                attribute: "working-tree-encoding",
+            });
         }
+        let driver = match self.get(path, b"filter")? {
+            State::Value(name) => Some(name.to_vec()),
+            _ => None,
+        };
         let eol = match self.get(path, b"eol")? {
             State::Value(b"lf") => Some(LineEnding::Lf),
             State::Value(b"crlf") => Some(LineEnding::Crlf),
@@ -525,35 +576,100 @@ impl Pipeline {
             }),
             ident,
             safecrlf: settings.safecrlf,
+            driver,
         })
     }
 
     /// Converts `blob`, a stored blob with ID `id`, to the bytes Git writes at `path`.
     ///
+    /// Applies `ident`, then line endings, then the `filter` driver's smudge command.
+    ///
     /// # Errors
     ///
-    /// Returns the errors of [`Self::plan`].
+    /// Returns the errors of [`Self::plan`], [`Error::Refused`] when a smudge command would run
+    /// under [`Commands::Refuse`], and [`Error::Driver`] when a required driver fails.
     pub fn to_worktree<'a>(
         &mut self,
         path: &[u8],
         blob: &'a [u8],
         id: ObjectId,
-    ) -> Result<Cow<'a, [u8]>, Error> {
-        Ok(self.plan(path)?.to_worktree(blob, id))
+    ) -> Result<Converted<'a>, Error> {
+        let plan = self.plan(path)?;
+        let bytes = plan.builtin_to_worktree(Cow::Borrowed(blob), id);
+        let (bytes, skipped) = self.drive(&plan, path, Direction::Smudge, bytes)?;
+        Ok(Converted {
+            bytes,
+            warning: None,
+            skipped,
+        })
     }
 
     /// Converts `file`, the working file at `path`, to the content Git stores.
     ///
+    /// Applies the `filter` driver's clean command, then line endings, then `ident`. `staged`
+    /// supplies what [`Text::Auto`] consults: the path's currently staged blob.
+    ///
     /// # Errors
     ///
-    /// Returns the errors of [`Self::plan`] and [`Plan::to_repository`].
+    /// Returns the errors of [`Self::plan`], [`Error::Refused`] when a clean command would run
+    /// under [`Commands::Refuse`], [`Error::Driver`] when a required driver fails,
+    /// [`Error::UnsafeCrlf`] under [`SafeCrlf::Refuse`] when the result would not be written back
+    /// as the file, and [`Error::Staged`] when reading the staged blob fails.
     pub fn to_repository<'a>(
         &mut self,
         path: &[u8],
         file: &'a [u8],
         staged: Staged<'_>,
-    ) -> Result<Stored<'a>, Error> {
-        self.plan(path)?.to_repository(path, file, staged)
+    ) -> Result<Converted<'a>, Error> {
+        let plan = self.plan(path)?;
+        let (bytes, skipped) = self.drive(&plan, path, Direction::Clean, Cow::Borrowed(file))?;
+        let (bytes, warning) = plan.builtin_to_repository(path, bytes, staged)?;
+        Ok(Converted {
+            bytes,
+            warning,
+            skipped,
+        })
+    }
+
+    /// Runs the path's driver for `direction`, if it has a command.
+    fn drive<'a>(
+        &mut self,
+        plan: &Plan,
+        path: &[u8],
+        direction: Direction,
+        bytes: Cow<'a, [u8]>,
+    ) -> Result<(Cow<'a, [u8]>, Option<DriverError>), Error> {
+        let Some(name) = plan.driver() else {
+            return Ok((bytes, None));
+        };
+        let Some(driver) = self.drivers.get(name) else {
+            return Ok((bytes, None));
+        };
+        let failure = |source| Error::Driver {
+            path: path.to_vec(),
+            source,
+        };
+        let Some(command) = driver.command(direction) else {
+            if driver.required {
+                return Err(failure(DriverError::Missing {
+                    driver: name.to_vec(),
+                    direction,
+                }));
+            }
+            return Ok((bytes, None));
+        };
+        if self.drivers.commands == Commands::Refuse {
+            return Err(Error::Refused {
+                path: path.to_vec(),
+                driver: name.to_vec(),
+                direction,
+            });
+        }
+        match driver::run(name, direction, command, path, &bytes, &self.drivers) {
+            Ok(output) => Ok((Cow::Owned(output), None)),
+            Err(error) if driver.required => Err(failure(error)),
+            Err(error) => Ok((bytes, Some(error))),
+        }
     }
 }
 
@@ -561,15 +677,32 @@ impl Repository {
     /// Loads the conversions Git applies in this repository.
     ///
     /// Reads attribute files from the [`Repository::attribute_source`] Git would choose, through
-    /// [`Repository::attributes`] with default limits, and [`Settings`] from [`Self::config`].
+    /// [`Repository::attributes`] with default limits, and [`Settings`] and [`Drivers`] from
+    /// [`Self::config`]. `commands` decides whether driver commands may run; they run in the
+    /// working tree root. Open the repository with
+    /// [`ConfigInputs::git_default`](crate::config::ConfigInputs::git_default) to see drivers from
+    /// the user's global configuration, such as Git LFS installs.
     ///
     /// # Errors
     ///
     /// Returns the [`LoadError`] of choosing the source or loading the files, and
-    /// [`LoadError::Config`] for an invalid `core.autocrlf`, `core.eol` or `core.safecrlf`.
-    pub fn filters(&self, environment: &Environment) -> Result<Pipeline, LoadError> {
+    /// [`LoadError::Config`] for an invalid `core.autocrlf`, `core.eol`, `core.safecrlf` or
+    /// `filter.<name>.required`.
+    pub fn filters(
+        &self,
+        environment: &Environment,
+        commands: Commands,
+    ) -> Result<Pipeline, LoadError> {
         let source = self.attribute_source(environment)?;
         let lookup = self.attributes(environment, source)?;
-        Ok(Pipeline::new(lookup, Settings::from_config(self.config())?))
+        let mut drivers = Drivers::from_config(self.config())?.with_commands(commands);
+        if let Some(worktree) = self.worktree() {
+            drivers = drivers.with_directory(worktree);
+        }
+        Ok(Pipeline::new(
+            lookup,
+            Settings::from_config(self.config())?,
+            drivers,
+        ))
     }
 }
