@@ -7502,41 +7502,42 @@
     "size": "large",
     "op": "git clone",
     "variant": "local-full-checkout",
-    "girt_samples": 0,
+    "girt_samples": 1,
     "girt_attempts": 1,
-    "girt_ms": null,
-    "girt_rss_mb": null,
+    "girt_ms": 315216.8378329952,
+    "girt_rss_mb": 10794.984375,
     "stock_samples": 1,
     "stock_attempts": 1,
-    "stock_ms": 292720.9638750064,
-    "stock_rss_mb": 7125.703125,
+    "stock_ms": 352755.890542001,
+    "stock_rss_mb": 7115.609375,
     "git_samples": 1,
     "git_attempts": 1,
-    "git_ms": 293024.90170901,
-    "git_rss_mb": 7119.109375,
-    "ratio_vs_stock": null,
+    "git_ms": 236441.16729100642,
+    "git_rss_mb": 7107.328125,
+    "ratio_vs_stock": 0.8935834844562682,
     "sample_policy": "adaptive",
-    "status": "timeout",
-    "timeout_limits_s": {
-      "girt": 585.4419277500128
-    },
-    "stock_vs_git_ratio": 0.9989627576624684,
+    "stock_vs_git_ratio": 1.4919393884899792,
     "jj_level_gap": false,
-    "notes": "local-path pack transfer; full checkout; stock n=1 range=292720.964..292720.964ms; git n=1 range=293024.902..293024.902ms; timeout: {'girt': 585.4419277500128}; girt timed out at 586 s against 293 s for stock; profile shows prefetch threads waiting on a mutex (#581).",
+    "notes": "local-path pack transfer; full checkout; girt n=1 range=315216.838..315216.838ms; stock n=1 range=352755.891..352755.891ms; git n=1 range=236441.167..236441.167ms",
     "harness_op": "clone",
+    "status": "ok",
     "sample_ranges_ms": {
+      "girt": [
+        315216.8378329952,
+        315216.8378329952
+      ],
       "stock": [
-        292720.9638750064,
-        292720.9638750064
+        352755.890542001,
+        352755.890542001
       ],
       "git": [
-        293024.90170901,
-        293024.90170901
+        236441.16729100642,
+        236441.16729100642
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
+        "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -7544,32 +7545,23 @@
       "git": []
     },
     "tool_status": {
-      "girt": "timeout",
+      "girt": "ok",
       "stock": "ok",
       "git": "ok"
     },
-    "profiles": [
-      {
-        "tool": "girt",
-        "path": "/Users/joshka/tmp/girt-bench/matrix-0.14.0/jj-matrix-profiles/linux-v6.1-clone.json.gz",
-        "binary_sha256": "710a9150ea0ecd22b96704d4fe901b6be8b41ff139047f251c3368d4bb570e75"
-      }
-    ],
+    "profiles": [],
     "run_epochs": [
-      "2026-10-17T21:24:35-0700"
+      "2026-10-18T09:33:56-0700"
     ],
-    "girt_version": "0.14.0",
-    "girt_commit": "a52cb07a55e1d2646b272e3806d072fd0233a588",
-    "jj_adapter_commit": "51a0c97702c43a821a08e92f2c1ec21280400290",
-    "measured_on": "2026-10-17",
+    "girt_version": "0.17.0",
+    "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+    "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+    "measured_on": "2026-10-18",
     "load_1m_range": [
-      14.2,
-      61.3
+      14.5,
+      20.6
     ],
-    "issues": [
-      581,
-      455
-    ]
+    "issues": []
   },
   {
     "repo": "linux-v6.1",
