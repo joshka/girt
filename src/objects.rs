@@ -125,6 +125,7 @@ use std::{fs, io};
 pub use alternates::AlternateLimits;
 pub use header::ObjectHeader;
 pub use listing::{IndexedPack, ListLimits, LooseIds, LooseObject, ObjectStore, PackIds};
+pub(crate) use prefix::LooseListing;
 pub use prefix::ResolvePrefixError;
 pub use typed::{ReadBlobError, ReadCommitError, ReadTagError, ReadTreeError};
 
@@ -837,14 +838,39 @@ impl Objects {
         limits: ReadLimits,
         cancel: &AtomicBool,
     ) -> Result<Option<(ObjectKind, u64)>, ObjectReadError> {
+        self.locate_with(id, limits, cancel, None)
+    }
+
+    /// Locates like [`Self::locate`], opening a loose file only when `listing` names it.
+    pub(crate) fn locate_listed(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+        listing: &LooseListing,
+    ) -> Result<Option<(ObjectKind, u64)>, ObjectReadError> {
+        self.locate_with(id, limits, cancel, Some(listing))
+    }
+
+    fn locate_with(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+        listing: Option<&LooseListing>,
+    ) -> Result<Option<(ObjectKind, u64)>, ObjectReadError> {
         id.require_format(self.format)
             .map_err(crate::loose::Error::from)?;
+        let listed = self.listed(listing, id)?;
         for store in &self.stores {
             check_cancelled(cancel)?;
             for pack in &store.packs {
                 if let Some(position) = pack.find(id)? {
                     return pack.locate(position, limits, cancel).map(Some);
                 }
+            }
+            if !listed {
+                continue;
             }
             match store.loose.locate(id) {
                 Ok(located) => {
@@ -857,7 +883,7 @@ impl Objects {
                 Err(error) => return Err(error.into()),
             }
         }
-        Ok((id == self.format.hash_object(ObjectKind::Tree, b"")).then_some((ObjectKind::Tree, 0)))
+        Ok((id == self.format.empty_tree()).then_some((ObjectKind::Tree, 0)))
     }
 
     /// Locates every identity in `ids` as [`Self::locate`] would, visiting packed entries in pack
@@ -898,7 +924,7 @@ impl Objects {
                     Err(error) => return Err(error.into()),
                 }
             }
-            let empty = id == self.format.hash_object(ObjectKind::Tree, b"");
+            let empty = id == self.format.empty_tree();
             located.push((id, empty.then_some((ObjectKind::Tree, 0))));
         }
         packed.sort_unstable();
@@ -929,7 +955,7 @@ impl Objects {
         cancel: &AtomicBool,
         is_blob: impl Fn(ObjectId) -> bool,
     ) -> Result<(), ObjectReadError> {
-        if is_blob(self.format.hash_object(ObjectKind::Tree, b"")) {
+        if is_blob(self.format.empty_tree()) {
             return Err(ObjectReadError::Corrupt("blob claims canonical empty tree"));
         }
         let check_packs = self.stores.len() > 1
@@ -1150,7 +1176,7 @@ impl Objects {
                 return Ok(true);
             }
         }
-        Ok(id == self.format.hash_object(ObjectKind::Tree, b""))
+        Ok(id == self.format.empty_tree())
     }
 
     /// Reads an exact object by full identity with [`ReadLimits::default`]; returns `None` only
@@ -1254,7 +1280,7 @@ impl Objects {
             }
             // Git treats the canonical empty tree as present in every repository, even when it
             // is not stored.
-            if id == self.format.hash_object(ObjectKind::Tree, b"") {
+            if id == self.format.empty_tree() {
                 return Ok(Some(Object {
                     kind: ObjectKind::Tree,
                     format: self.format,
@@ -1325,12 +1351,10 @@ impl Objects {
             }
         }
         check_cancelled(cancelled)?;
-        Ok(
-            (id == self.format.hash_object(ObjectKind::Tree, b"")).then(|| UnverifiedObject {
-                kind: ObjectKind::Tree,
-                data: Arc::default(),
-            }),
-        )
+        Ok((id == self.format.empty_tree()).then(|| UnverifiedObject {
+            kind: ObjectKind::Tree,
+            data: Arc::default(),
+        }))
     }
 
     /// Checks physical empty-tree availability, excluding the reader's synthetic fallback.
@@ -1338,7 +1362,7 @@ impl Objects {
         &self,
         cancel: &AtomicBool,
     ) -> Result<bool, ObjectReadError> {
-        let id = self.format.hash_object(ObjectKind::Tree, b"");
+        let id = self.format.empty_tree();
         let hex = id.to_string();
         for store in &self.stores {
             check_cancelled(cancel)?;
@@ -1398,6 +1422,15 @@ impl Objects {
             .collect()
     }
 
+    /// Whether a loose file for `id` may exist: always without a listing, else as listed.
+    fn listed(
+        &self,
+        listing: Option<&LooseListing>,
+        id: ObjectId,
+    ) -> Result<bool, ObjectReadError> {
+        listing.map_or(Ok(true), |listing| self.loose_listed(listing, id))
+    }
+
     /// Locates the representation normal lookup uses; loose data is checked and then released.
     pub(crate) fn transfer_object(
         &self,
@@ -1405,7 +1438,28 @@ impl Objects {
         limits: ReadLimits,
         cancel: &AtomicBool,
     ) -> Result<Option<(ObjectKind, usize, Option<crate::pack::Packed>)>, ObjectReadError> {
-        Ok(match self.locate_transfer(id, limits, cancel)? {
+        self.transfer_object_with(id, limits, cancel, None)
+    }
+
+    /// Like [`Self::transfer_object`], opening a loose file only when `listing` names it.
+    pub(crate) fn transfer_object_listed(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+        listing: &LooseListing,
+    ) -> Result<Option<(ObjectKind, usize, Option<crate::pack::Packed>)>, ObjectReadError> {
+        self.transfer_object_with(id, limits, cancel, Some(listing))
+    }
+
+    fn transfer_object_with(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+        listing: Option<&LooseListing>,
+    ) -> Result<Option<(ObjectKind, usize, Option<crate::pack::Packed>)>, ObjectReadError> {
+        Ok(match self.locate_transfer(id, limits, cancel, listing)? {
             None => None,
             Some(Transfer::Packed(pack, packed)) => {
                 let (kind, length) = pack.object_header(packed.position, limits)?;
@@ -1426,7 +1480,7 @@ impl Objects {
         cancel: &AtomicBool,
     ) -> Result<Option<Option<crate::pack::Packed>>, ObjectReadError> {
         Ok(self
-            .locate_transfer(id, limits, cancel)?
+            .locate_transfer(id, limits, cancel, None)?
             .map(|transfer| match transfer {
                 Transfer::Packed(_, packed) => Some(packed),
                 Transfer::Stored(..) => None,
@@ -1438,9 +1492,11 @@ impl Objects {
         id: ObjectId,
         limits: ReadLimits,
         cancel: &AtomicBool,
+        listing: Option<&LooseListing>,
     ) -> Result<Option<Transfer<'_>>, ObjectReadError> {
         id.require_format(self.format)
             .map_err(crate::loose::Error::from)?;
+        let listed = self.listed(listing, id)?;
         let mut pack_index = 0;
         for store in &self.stores {
             check_cancelled(cancel)?;
@@ -1458,6 +1514,9 @@ impl Objects {
                 }
                 pack_index += 1;
             }
+            if !listed {
+                continue;
+            }
             match store
                 .loose
                 .read_raw(id, limits.max_object_bytes.min(limits.max_decode_bytes))
@@ -1469,7 +1528,7 @@ impl Objects {
                 Err(e) => return Err(e.into()),
             }
         }
-        if id == self.format.hash_object(ObjectKind::Tree, b"") {
+        if id == self.format.empty_tree() {
             return Ok(Some(Transfer::Stored(ObjectKind::Tree, 0)));
         }
         Ok(None)

@@ -9,6 +9,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::{RefName, packed};
 use crate::{ObjectFormat, ObjectId, Repository};
@@ -46,7 +47,9 @@ use crate::{ObjectFormat, ObjectId, Repository};
 /// Operations are synchronous. Reads are live, not a snapshot across multiple refs or symbolic
 /// hops. Loose files take precedence, including malformed loose files (no fallback on errors).
 /// Packed lookup validates the whole file and allocates proportional to its size; there is no
-/// configurable byte limit or cache. Peel records are validated but never returned as resolution.
+/// configurable byte limit. Handles from one [`Repository`] share the last parse, reused while
+/// the file keeps its device, inode, size and timestamps. Peel records are validated but never
+/// returned as resolution.
 ///
 /// Writes require a trusted repository on a local filesystem with exclusive file creation and
 /// atomic rename semantics. Cooperating writers must honor Git's `.lock` protocol; adversarial
@@ -88,6 +91,8 @@ pub struct References<'a> {
     pub(crate) common_dir: &'a Path,
     pub(crate) object_format: ObjectFormat,
     pub(crate) reference_backend: Backend,
+    /// The repository's parsed `packed-refs`, when this handle came from a [`Repository`].
+    pub(super) packed_cache: Option<&'a packed::PackedCache>,
 }
 
 /// A stored reference value paired with metadata captured from the same effective record.
@@ -418,12 +423,15 @@ impl<'a> References<'a> {
     pub const DEFAULT_SYMREF_DEPTH: usize = 4;
 
     pub(crate) fn new(repository: &'a Repository) -> Result<Self, ReferenceError> {
-        Self::from_layout(
-            repository.git_dir(),
-            repository.common_dir(),
-            repository.object_format(),
-            repository.reference_backend(),
-        )
+        Ok(Self {
+            packed_cache: Some(repository.packed_refs_cache()),
+            ..Self::from_layout(
+                repository.git_dir(),
+                repository.common_dir(),
+                repository.object_format(),
+                repository.reference_backend(),
+            )?
+        })
     }
 
     pub(crate) fn from_layout(
@@ -443,6 +451,7 @@ impl<'a> References<'a> {
             object_format,
             reference_backend,
             reftable_limits: super::reftable::StackLimits::default(),
+            packed_cache: None,
         })
     }
 
@@ -966,10 +975,16 @@ impl<'a> References<'a> {
             .map(|record| Target::Direct(record.target)))
     }
 
-    pub(super) fn packed(&self) -> Result<packed::Packed, ReferenceError> {
-        let path = self.common_dir.join("packed-refs");
-        let bytes = read_optional(&path)?.unwrap_or_default();
-        packed::parse(self.object_format, &bytes, &path)
+    pub(super) fn packed(&self) -> Result<Arc<packed::Snapshot>, ReferenceError> {
+        self.packed_at(&self.common_dir.join("packed-refs"))
+    }
+
+    /// Reads `packed-refs` at `path`, reusing this repository's parse of an unchanged file.
+    pub(super) fn packed_at(&self, path: &Path) -> Result<Arc<packed::Snapshot>, ReferenceError> {
+        match self.packed_cache {
+            Some(cache) => cache.load(self.object_format, path),
+            None => packed::load(self.object_format, path),
+        }
     }
 
     pub(super) fn path(&self, name: &RefName) -> Result<PathBuf, ReferenceError> {

@@ -475,7 +475,8 @@ impl References<'_> {
         let packed = if let Some(budget) = budget.as_deref_mut() {
             let path = self.common_dir.join("packed-refs");
             let bytes = read_limited(&path, budget)?.unwrap_or_default();
-            super::packed::parse(self.object_format, &bytes, &path)?
+            let records = super::packed::parse(self.object_format, &bytes, &path)?;
+            std::sync::Arc::new(super::packed::Snapshot { bytes, records })
         } else {
             self.packed()?
         };
@@ -483,13 +484,13 @@ impl References<'_> {
             budget.charge(packed.len())?;
         }
         let mut entries: BTreeMap<_, _> = packed
-            .into_iter()
+            .iter()
             .filter(|(name, _)| selected(name.as_bytes(), namespace))
             .map(|(name, record)| {
                 (
                     name.clone(),
                     ReferenceObservation {
-                        name,
+                        name: name.clone(),
                         target: Target::Direct(record.target),
                         peeled_hint: record.peeled_hint,
                     },

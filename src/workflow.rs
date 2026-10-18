@@ -259,6 +259,7 @@ use crate::fetch::{
 use crate::push::{PreparedPush, PushCommand, PushFailure, PushLimits, PushReport};
 use crate::refs::{RefName, Reflog};
 use crate::remote::{Destination, Direction, Protocol, ProtocolEnvironment, Refspecs, Remote};
+use crate::repository::{CONVENTIONAL, ReflogScope};
 use crate::transport::TransportControl;
 use crate::{ObjectId, Repository};
 
@@ -1044,10 +1045,15 @@ impl FetchOptions {
         self
     }
 
-    /// Appends a reflog entry by `committer` with `message` for each changed reference.
+    /// Appends a reflog entry by `committer` with `message` for each changed reference Git would
+    /// log.
     ///
-    /// Without this, no reflog entries are written and existing reflogs are left alone. `git
-    /// fetch` uses messages such as `fetch origin`. Unchanged references get no entry.
+    /// As with `git fetch`, `core.logAllRefUpdates` decides: by default, remote-tracking
+    /// references are logged, while tags and references below a
+    /// [tag namespace](Self::with_tag_namespace) are logged only when they already have a log.
+    /// `always` logs every changed reference. Without this, no reflog entries are written and
+    /// existing reflogs are left alone. `git fetch` uses messages such as `fetch origin`.
+    /// Unchanged references get no entry.
     #[must_use]
     pub fn with_reflog(mut self, committer: crate::Signature, message: impl Into<Vec<u8>>) -> Self {
         self.reflog = Some((committer, message.into()));
@@ -1950,16 +1956,43 @@ impl Repository {
             .iter()
             .map(|reference| reference.name.clone())
             .collect();
+        // Like `git fetch`, follow `core.logAllRefUpdates`: references outside its scope are
+        // logged only when they already have a log.
+        let mut logged = None;
         let reflog = match &options.reflog {
             None => Reflog::Preserve,
-            Some((committer, message)) => Reflog::AppendIfChanged {
-                committer: committer.clone(),
-                message: message.clone(),
-            },
+            Some((committer, message)) => {
+                let (committer, message) = (committer.clone(), message.clone());
+                match self
+                    .reflog_scope()
+                    .map_err(|error| TransferError::Configuration(error.to_string()))?
+                {
+                    ReflogScope::All => Reflog::AppendIfChanged { committer, message },
+                    scope => {
+                        if scope == ReflogScope::Conventional {
+                            logged = Some(Reflog::AppendIfChanged {
+                                committer: committer.clone(),
+                                message: message.clone(),
+                            });
+                        }
+                        Reflog::AppendExistingIfChanged { committer, message }
+                    }
+                }
+            }
         };
         let mut request =
             FetchRequest::prepare_listed(self.clone(), specs, authorized, reflog, listed)
                 .map_err(|error| TransferError::Fetch(Box::new(error.into())))?;
+        if let Some(logged) = logged {
+            for namespace in CONVENTIONAL {
+                #[expect(clippy::expect_used, reason = "constant reference names are valid")]
+                let namespace = RefName::new(namespace.strip_suffix(b"/").unwrap_or(namespace))
+                    .expect("valid name");
+                // Pruning a remote-tracking reference deletes its log, as below.
+                request =
+                    request.with_reflog_for_namespace(namespace, logged.clone(), Reflog::Delete);
+            }
+        }
         if options.prune {
             // Pruned references lose their reflogs, as in Git.
             request = request.with_prune();

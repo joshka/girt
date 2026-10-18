@@ -36,7 +36,48 @@ fn candidate_list(ids: &[ObjectId]) -> String {
 /// Clones share immutable buckets; refresh replaces the cache rather than mutating shared state.
 #[derive(Debug, Default)]
 pub(super) struct LooseAbbreviations {
-    buckets: OnceLock<Box<[OnceLock<Vec<ObjectId>>; 256]>>,
+    buckets: LooseBuckets,
+}
+
+/// Loose object names, each fanout directory listed on first use.
+///
+/// For an operation that asks whether many identities are stored, most of them absent, such as a
+/// fetch walking every object it might send. One listing per directory replaces one failed
+/// `open` per identity. A file created after its directory was listed is not seen, so the listing
+/// suits only questions where a missed object costs redundant work rather than correctness.
+#[derive(Debug, Default)]
+pub(crate) struct LooseListing {
+    buckets: LooseBuckets,
+}
+
+/// The fanout directory byte; every digest is at least 20 bytes long.
+fn first_byte(id: ObjectId) -> u8 {
+    id.as_bytes().first().copied().unwrap_or_default()
+}
+
+/// Sorted identities per first digest byte, across the primary store and its alternates.
+#[derive(Debug, Default)]
+struct LooseBuckets(OnceLock<Box<[OnceLock<Vec<ObjectId>>; 256]>>);
+
+impl LooseBuckets {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "a first digest byte indexes exactly 256 buckets"
+    )]
+    fn bucket(&self, objects: &Objects, first: u8) -> Result<&[ObjectId], ObjectReadError> {
+        let buckets = self
+            .0
+            .get_or_init(|| Box::new(std::array::from_fn(|_| OnceLock::new())));
+        let bucket = &buckets[usize::from(first)];
+        if let Some(ids) = bucket.get() {
+            return Ok(ids);
+        }
+        let mut ids = objects.loose_prefix_matches(&format!("{first:02x}"), None)?;
+        ids.sort_unstable();
+        ids.dedup();
+        // A concurrent successful scan may win publication; either scan is a valid snapshot.
+        Ok(bucket.get_or_init(|| ids))
+    }
 }
 
 impl Objects {
@@ -136,38 +177,35 @@ impl Objects {
         Ok(ids)
     }
 
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "a first digest byte indexes exactly 256 buckets"
-    )]
     fn abbreviation_candidates(
         &self,
         prefix: ObjectIdPrefix,
     ) -> Result<Vec<ObjectId>, ObjectReadError> {
-        let buckets = self
+        let first = first_byte(prefix.lower());
+        let mut ids: Vec<_> = self
             .abbreviations
             .buckets
-            .get_or_init(|| Box::new(std::array::from_fn(|_| OnceLock::new())));
-        let bucket = &buckets[usize::from(prefix.lower().as_bytes()[0])];
-        let mut ids = if let Some(ids) = bucket.get() {
-            ids.iter()
-                .copied()
-                .filter(|id| prefix.matches(*id))
-                .collect()
-        } else {
-            let text = prefix.to_string();
-            let all = self.loose_prefix_matches(&text[..2], None)?;
-            let matches = all
-                .iter()
-                .copied()
-                .filter(|id| prefix.matches(*id))
-                .collect();
-            // A concurrent successful scan may win publication; either scan is a valid snapshot.
-            let _ = bucket.set(all);
-            matches
-        };
+            .bucket(self, first)?
+            .iter()
+            .copied()
+            .filter(|id| prefix.matches(*id))
+            .collect();
         self.append_pack_matches(prefix, &mut ids)?;
         Ok(ids)
+    }
+
+    /// Whether `listing` names a loose file for `id` in this store or an alternate.
+    pub(crate) fn loose_listed(
+        &self,
+        listing: &LooseListing,
+        id: ObjectId,
+    ) -> Result<bool, ObjectReadError> {
+        let first = first_byte(id);
+        Ok(listing
+            .buckets
+            .bucket(self, first)?
+            .binary_search(&id)
+            .is_ok())
     }
 
     /// Resolves a prefix to exactly one stored identity, independently of revision syntax.

@@ -139,6 +139,7 @@ mod lock_wait;
 mod name;
 mod pack;
 mod packed;
+pub(crate) use packed::PackedCache;
 mod reflog;
 pub mod reftable;
 mod store;

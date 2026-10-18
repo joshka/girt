@@ -77,6 +77,7 @@ pub use init::{InitError, InitKind, InitOptions};
 pub(crate) use init::{initial_branch, initial_config};
 pub use operation::{OperationCleanupError, OperationError, OperationLimits, OperationState};
 pub use reflog_policy::ReflogPolicyError;
+pub(crate) use reflog_policy::{CONVENTIONAL, ReflogScope};
 pub use shallow::{ShallowError, ShallowRoots};
 use thiserror::Error;
 pub use worktree_admin::{WorktreeAdminError, WorktreeRetirement};
@@ -545,6 +546,7 @@ impl RepositoryMetadata {
             object_format: self.object_format,
             shallow,
             reference_backend: self.reference_backend,
+            packed_refs: std::sync::Arc::default(),
         }
     }
 
@@ -763,6 +765,8 @@ pub struct Repository {
     object_format: ObjectFormat,
     shallow: ShallowRoots,
     reference_backend: crate::refs::Backend,
+    /// Shared by clones; each use checks that `packed-refs` is unchanged.
+    packed_refs: std::sync::Arc<crate::refs::PackedCache>,
 }
 
 /// Repository location, metadata, configuration or supported-format failure.
@@ -864,6 +868,10 @@ impl Repository {
     /// Returns the on-disk reference backend selected by local repository configuration.
     pub fn reference_backend(&self) -> crate::refs::Backend {
         self.reference_backend
+    }
+
+    pub(crate) fn packed_refs_cache(&self) -> &crate::refs::PackedCache {
+        &self.packed_refs
     }
 
     /// Borrows this repository's reference store.

@@ -84,6 +84,9 @@ pub struct KnownHistory {
     pub(super) haves: Vec<ObjectId>,
     pub(super) shallow: Vec<ObjectId>,
     pub(super) only_when_all_wants_known: bool,
+    /// Loose names in `store`, listed once per fanout directory. A local receive asks about every
+    /// object it walks, and a new clone stores none of them.
+    pub(super) loose: Arc<crate::objects::LooseListing>,
 }
 
 /// Objects the destination already has, for delta bases and connectivity.
@@ -259,7 +262,12 @@ impl KnownHistory {
         self.objects.get(&id).map(Object::kind).or_else(|| {
             self.store
                 .as_ref()?
-                .transfer_object(id, crate::ReadLimits::trusted(), &AtomicBool::new(false))
+                .transfer_object_listed(
+                    id,
+                    crate::ReadLimits::trusted(),
+                    &AtomicBool::new(false),
+                    &self.loose,
+                )
                 .ok()
                 .flatten()
                 .map(|(kind, _, _)| kind)
@@ -270,7 +278,12 @@ impl KnownHistory {
     pub(super) fn stored_kind(&self, id: ObjectId) -> Option<ObjectKind> {
         self.store
             .as_ref()?
-            .locate(id, crate::ReadLimits::trusted(), &AtomicBool::new(false))
+            .locate_listed(
+                id,
+                crate::ReadLimits::trusted(),
+                &AtomicBool::new(false),
+                &self.loose,
+            )
             .ok()
             .flatten()
             .map(|(kind, _)| kind)
@@ -487,6 +500,7 @@ impl KnownHistory {
             haves,
             shallow,
             only_when_all_wants_known: false,
+            loose: Arc::default(),
         })
     }
 
@@ -522,6 +536,7 @@ impl KnownHistory {
             shallow: self.shallow.clone(),
             store: self.store.clone(),
             missing_empty_tree: self.missing_empty_tree,
+            loose: Arc::clone(&self.loose),
             ..Self::default()
         }
     }

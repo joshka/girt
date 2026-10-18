@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `workflow::fetch` with `FetchOptions::with_reflog` follows `core.logAllRefUpdates` as `git fetch`
+  does: by default it logs remote-tracking references, and logs tags and tag-namespace references
+  only when they already have a reflog. It previously created a reflog for every changed reference.
+- Handles from one `Repository` reuse the parsed `packed-refs` while the file keeps its identity,
+  and a local fetch into a new repository no longer probes for a loose copy of every object it
+  walks. A `jj git clone` of git/git is about 15% faster.
+
 ## [0.15.0](https://github.com/joshka/girt/compare/girt-v0.14.0...girt-v0.15.0) - 2026-10-18
 
 ### Other

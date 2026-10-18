@@ -309,6 +309,23 @@ impl ObjectFormat {
     /// # Ok::<(), girt::ParseObjectIdError>(())
     /// ```
     pub fn hash_object(self, kind: crate::ObjectKind, bytes: &[u8]) -> ObjectId {
+        self.hash_object_uncached(kind, bytes)
+    }
+
+    /// The empty tree's identity, which readers synthesize when no copy is stored.
+    ///
+    /// Lookups compare every missing identity against it, so it is hashed once per format.
+    pub(crate) fn empty_tree(self) -> ObjectId {
+        static SHA1: std::sync::OnceLock<ObjectId> = std::sync::OnceLock::new();
+        static SHA256: std::sync::OnceLock<ObjectId> = std::sync::OnceLock::new();
+        let cell = match self {
+            Self::Sha1 => &SHA1,
+            Self::Sha256 => &SHA256,
+        };
+        *cell.get_or_init(|| self.hash_object_uncached(crate::ObjectKind::Tree, b""))
+    }
+
+    fn hash_object_uncached(self, kind: crate::ObjectKind, bytes: &[u8]) -> ObjectId {
         #[cfg(test)]
         HASHES.with(|hashes| hashes.set(hashes.get() + 1));
         match self {
