@@ -3134,3 +3134,12 @@ intermediate objects in memory. The Git fixtures compare two-commit sequence ide
 progress, redundant skipping, input bounds, cancellation and no intermediate object publication.
 Automatic range selection, patch-ID filtering, merge-topology reconstruction and on-disk state are
 not part of this primitive.
+
+### Interactive todo plans
+
+The todo parser accepts Git's long/short pick, reword, edit, squash, fixup, drop, exec, break,
+label, reset, merge and update-ref syntax, including fixup/merge message flags. Linear execution
+retains source authors, combines fixup/squash metadata and returns explicit update-ref intents.
+Message editing and external execution require caller hooks. Merge/reset topology is refused before
+hooks; [generated-history merge lookup](https://github.com/joshka/girt/issues/616) tracks the
+missing ancestry boundary. Todo stops return progress; persistent continuation is caller-owned.

@@ -50,3 +50,30 @@ Install each completed step's generated blobs, trees and optional commit in sequ
 publishing the resulting tip. A stopped replay owns additional provisional objects and original
 conflict sides for a caller-owned resolution workflow. It does not move HEAD or write Git's
 sequencer state. The caller chooses whether to retain completed objects after a stop.
+
+## Execute a linear todo
+
+`replay::todo::Todo::parse` accepts Git's long and short interactive-rebase commands, including
+message flags, labels, reset, merge and update-ref. It preserves byte subjects and external command
+payloads, with byte/count bounds and original line locations. Parsing checks syntax; execution
+resolves commit prefixes and checks operation context.
+
+`Objects::execute_todo` computes pick, reword, edit, squash, fixup, drop, exec, break, label and
+update-ref instructions. Supply `TodoHooks` for message editing and external commands. The library
+never launches those commands itself. Hooks receive the proposed tip, which may exist only in
+memory; any hook side effects remain the caller's responsibility if a later instruction fails.
+
+Merge and reset instructions return typed unsupported-topology errors before any hook runs.
+[Generated-history merge lookup](https://github.com/joshka/girt/issues/616) tracks that extension.
+Edit and break return a stop position; conflicts and empty decisions retain the unresolved replay.
+Callers own continuation context after stops.
+
+`TodoRun::replays` retains the original single-step proposals and generated trees/blobs.
+`TodoRun::commits` contains final metadata after reword or combining commits; install these in
+creation order. Squash/fixup mappings point every combined source to the final amended identity.
+Explicit update-ref instructions produce target intents without changing references.
+
+Use `Objects::autosquash` to order `fixup!`, `squash!` and `amend!` subjects after earlier targets.
+`TodoRun::plan_updates` maps an observed reference snapshot through completed rewrites, excluding
+branches checked out in any working tree supplied by the caller. Validate old identities again in a
+reference transaction before publication. Neither planning operation updates references.
