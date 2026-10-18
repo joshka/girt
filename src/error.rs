@@ -110,6 +110,7 @@ from_domain_errors! {
     crate::replay::TodoExecutionError,
     crate::replay::todo::TodoError,
     crate::sequencer::Error,
+    crate::stash::Error,
     crate::merge::Error,
     crate::merge::TreeError,
     crate::merge::DriverError,

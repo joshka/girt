@@ -3228,3 +3228,17 @@ states; `Pathspec::matches_with` answers it.
 
 Limitations: absolute paths are rejected even when they name a path inside the worktree, and status,
 tree comparison and history refuse `attr:` magic.
+
+## Saved stash objects
+
+`stash::Snapshot` reads the base/index/optional-untracked parent shape produced by Git.
+`Objects::create_stash` takes explicit captured trees and identities and constructs unsigned saved
+commits without installing objects or changing refs/files. Default and custom worktree messages,
+index/untracked messages, parent order and SHA-1/SHA-256 identities are compared with Git in
+`tests/stash_git.rs`. Branch labels and unique abbreviation lengths are caller inputs.
+
+All-changes and keep-index plans name the cleanup trees. Staged-only saves retain only the index
+change, then compute inverse cleanup with the existing merge engine. Overlap retains structured
+conflicts; Git's patch-based cleanup can instead refuse after publishing the saved entry. Callers
+must retain the saved entry when cleanup cannot complete. Filesystem capture, filters and path
+selection remain caller policy; no convenience command captures or deletes working files.
