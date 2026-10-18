@@ -4221,3 +4221,10 @@ boundaries, preambles, transfer encodings, opaque attachments, missing final new
 containers. Part-count, nesting and shared header/decoded-output limits are checked at their
 boundaries. Encapsulated `message/rfc822` containers, encoded multipart containers and body
 character sets beyond UTF-8/ASCII remain explicit refusals.
+
+`tests/am_state.rs` creates stopped `git am` sessions with isolated configuration in SHA-1 and
+SHA-256 repositories. It compares original mail and extracted patch bytes with
+`git am --show-current-patch=raw` and `=diff`, checks other artifacts against Git-created files, and
+then continues or aborts with Git. Additional cases cover interrupted preparation, completed ranges,
+missing mail, malformed/overflowing counters, non-am metadata and snapshot admission limits. The
+state reader performs no repository mutation or script evaluation.

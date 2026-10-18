@@ -302,3 +302,17 @@ Input, raw headers, field count, MIME part count/depth, decoded content, log out
 are independently bounded. Any metadata, decoding, cancellation or limit error returns no partial
 result. Unknown outer headers still consume the header limits, and output limits include an optional
 Message-ID trailer. The parser consults no environment or mail configuration.
+
+## Inspect a stopped mail application
+
+Take a bounded `Repository::operation_state` snapshot, then pass it to `am::State::from_operation`.
+The reader recognizes Git's `rebase-apply/applying` marker and validates the positive `next`/`last`
+mail range. It borrows the current numbered mail, extracted patch, final commit message and author
+script without changing their bytes. An absent `rebase-apply` root returns `None`; apply-backend
+rebase metadata is refused.
+
+Extracted artifacts can be absent if preparation was interrupted. A completed range has no current
+mail. These observations do not validate agreement between mail, artifacts, HEAD and the index or
+constitute permission to resume or remove state. Author scripts remain untrusted opaque bytes and
+are never executed. Exclude concurrent operation writers while taking the snapshot. Inspection
+writes no files; Git can still continue or abort its operation afterwards.
