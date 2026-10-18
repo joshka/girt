@@ -230,3 +230,45 @@ fn identity_diagnostics_match_git_exactly() {
         }
     }
 }
+
+#[test]
+fn annotated_tag_diagnostics_match_git_exactly() {
+    for case in [
+        "bad-name",
+        "bad-name-and-tagger",
+        "missing-tagger",
+        "misplaced-tagger",
+        "bad-tagger",
+        "nul-header",
+        "unterminated",
+        "nul-body",
+        "non-utf8-name",
+    ] {
+        let (root, tree) = metadata_fixture();
+        let prefix = format!("object {tree}\ntype tree\n");
+        let person = "tagger A <a@example.invalid> 1000000000 +0000\n";
+        let payload = match case {
+            "bad-name-and-tagger" => {
+                format!("{prefix}tag a..b\ntagger A noemail\n\nx\n").into_bytes()
+            }
+            "bad-name" => format!("{prefix}tag a..b\n{person}\nx\n").into_bytes(),
+            "missing-tagger" => format!("{prefix}tag v1\n\nx\n").into_bytes(),
+            "misplaced-tagger" => format!("{prefix}tag v1\nextra x\n{person}\nx\n").into_bytes(),
+            "bad-tagger" => format!("{prefix}tag v1\ntagger A noemail\n\nx\n").into_bytes(),
+            "nul-header" => {
+                format!("{prefix}tag v1\n{}\nx\n", person.replace("A", "A\0")).into_bytes()
+            }
+            "unterminated" => format!("{prefix}tag v1\n{}", person.trim_end()).into_bytes(),
+            "nul-body" => format!("{prefix}tag v1\n{person}\nx\0y\n").into_bytes(),
+            "non-utf8-name" => [
+                prefix.as_bytes(),
+                b"tag bad \xff\n",
+                person.as_bytes(),
+                b"\nx\n",
+            ]
+            .concat(),
+            _ => unreachable!(),
+        };
+        assert_metadata_payload_matches_git(root.path(), "tag", &payload);
+    }
+}

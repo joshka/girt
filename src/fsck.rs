@@ -16,10 +16,12 @@ use std::collections::BTreeSet;
 use crate::{ObjectFormat, ObjectKind, Tree};
 
 mod commit;
+mod headers;
 mod identity;
 mod lost_found;
 mod message;
 mod policy;
+mod tag;
 mod transfer;
 
 pub use lost_found::{LostFoundCause, LostFoundError, LostFoundLimits};
@@ -30,7 +32,7 @@ pub use transfer::{
 };
 
 /// One payload defect. Repeated instances of the same category are reported once per object.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Finding {
     /// Stable category for configuration and machine-readable reports.
@@ -42,11 +44,13 @@ pub struct Finding {
 }
 
 /// Additional observed payload data for a diagnostic.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum FindingDetail {
     /// Byte offset of a NUL in a malformed header.
     ByteOffset(usize),
+    /// Invalid tag name, retained exactly as stored.
+    TagName(Box<[u8]>),
 }
 
 /// Checks one already bounded payload without resolving its object references.
@@ -55,8 +59,9 @@ pub enum FindingDetail {
 /// reserved names, null IDs and mode spellings. Commit and tag checks validate graph headers,
 /// required identities and readable dates. The complete Git fsck message catalogue is not covered.
 /// Memory is proportional to the supplied payload; bound storage reads before calling this.
-/// Results use default, non-strict reporting severities, are sorted by category and contain no
-/// duplicate categories. Use [`Policy::check_object`] for configured or strict checks.
+/// Results use default, non-strict reporting severities and contain no duplicate categories.
+/// Categories are ordered by name, with tag-name findings preceding tagger diagnostics. Use
+/// [`Policy::check_object`] for configured or strict checks.
 pub fn check_object(format: ObjectFormat, kind: ObjectKind, data: &[u8]) -> Vec<Finding> {
     check_payload(format, kind, data, 4096, false)
 }
@@ -72,38 +77,33 @@ fn check_payload(
     match kind {
         ObjectKind::Blob => {}
         ObjectKind::Commit => commit::check(format, data, &mut ids),
-        ObjectKind::Tag => match crate::Tag::parse(format, data) {
-            Err(_) => {
-                ids.insert(MessageId::BadTagObject);
-            }
-            Ok(tag) => match tag.tagger() {
-                Ok(Some(identity)) if identity.date().is_err() => {
-                    ids.insert(MessageId::BadDate);
-                }
-                Ok(None) => {
-                    ids.insert(MessageId::MissingTaggerEntry);
-                }
-                Err(_) => {
-                    ids.insert(MessageId::BadName);
-                }
-                _ => {}
-            },
-        },
+        ObjectKind::Tag => tag::check(format, data, &mut ids),
         ObjectKind::Tree => check_tree(format, data, &mut ids, max_name, strict),
     }
-    ids.into_iter()
+    let mut findings: Vec<_> = ids
+        .into_iter()
         .map(|message_id| Finding {
             message_id,
             severity: message_id.severity(false),
-            detail: if message_id == MessageId::NulInHeader {
-                data.iter()
+            detail: match message_id {
+                MessageId::NulInHeader => data
+                    .iter()
                     .position(|byte| *byte == 0)
-                    .map(FindingDetail::ByteOffset)
-            } else {
-                None
+                    .map(FindingDetail::ByteOffset),
+                // The graph parser has validated object/type/tag as the first three records.
+                MessageId::BadTagName => data
+                    .split(|byte| *byte == b'\n')
+                    .nth(2)
+                    .and_then(|line| line.strip_prefix(b"tag "))
+                    .map(|name| FindingDetail::TagName(name.into())),
+                _ => None,
             },
         })
-        .collect()
+        .collect();
+    if kind == ObjectKind::Tag {
+        findings.sort_by_key(|finding| finding.message_id != MessageId::BadTagName);
+    }
+    findings
 }
 
 fn check_tree(

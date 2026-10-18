@@ -151,7 +151,7 @@ fn required_identity_syntax_matches_git(#[case] format: ObjectFormat) {
         ),
     ];
     for (name, person, expected) in cases {
-        for role in ["author", "committer"] {
+        for role in ["author", "committer", "tagger"] {
             let directory = tempfile::tempdir().unwrap();
             let format_arg = if format == ObjectFormat::Sha1 {
                 "--object-format=sha1"
@@ -175,14 +175,23 @@ fn required_identity_syntax_matches_git(#[case] format: ObjectFormat) {
             } else {
                 (ordinary, person)
             };
-            let payload =
-                format!("tree {tree}\nauthor {author}\ncommitter {committer}\n\nmessage\n");
+            let (kind, payload) = if role == "tagger" {
+                (
+                    ObjectKind::Tag,
+                    format!("object {tree}\ntype tree\ntag v1\ntagger {person}\n\nmessage\n"),
+                )
+            } else {
+                (
+                    ObjectKind::Commit,
+                    format!("tree {tree}\nauthor {author}\ncommitter {committer}\n\nmessage\n"),
+                )
+            };
             let id = support::git(
                 directory.path(),
                 &[
                     "hash-object",
                     "-t",
-                    "commit",
+                    kind.as_str(),
                     "--literally",
                     "-w",
                     "--stdin",
@@ -196,7 +205,7 @@ fn required_identity_syntax_matches_git(#[case] format: ObjectFormat) {
                 b"",
             );
             let stderr = String::from_utf8_lossy(&oracle.stderr);
-            let findings = check_object(format, ObjectKind::Commit, payload.as_bytes());
+            let findings = check_object(format, kind, payload.as_bytes());
             assert_eq!(
                 findings
                     .iter()
