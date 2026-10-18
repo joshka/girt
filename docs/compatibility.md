@@ -1301,6 +1301,11 @@ no trailers. `trailer.<name>.command` and `.cmd` are refused with `TrailerComman
 does not run trailer commands; `--trim-empty`, `--if-exists` and the other per-invocation option
 overrides have no equivalent yet.
 
+Git 2.56 changed one rule: earlier versions read a `key://…` line, such as a URL, as a trailer
+(`git interpret-trailers --parse` prints `http: //example.com`), while 2.56 does not. girt follows
+2.56. A unit test pins that behaviour, and the live comparison skips the URL case when the Git under
+test is older, as on CI runners with Git 2.55.
+
 ## Commit History
 
 `tests/support/history_git.rs` generates original commit payloads and stores them through Git

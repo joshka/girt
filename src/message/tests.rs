@@ -166,3 +166,17 @@ fn trailer_arguments(#[case] argument: &[u8], #[case] expected: Option<(&[u8], &
         expected
     );
 }
+
+/// Git 2.56 stopped reading `key://…` lines as trailers; earlier versions print
+/// `http: //example.com`. girt follows 2.56, which the live comparison skips on older Git.
+#[test]
+fn url_lines_are_not_trailers() {
+    let config = super::TrailerConfig::default();
+    let message = b"subject\n\nhttp://example.com\n";
+    assert!(super::trailers(message, &config).is_empty());
+    let new = super::Trailer::parse_argument(b"K: v", &config).unwrap();
+    assert_eq!(
+        super::add_trailers(message, &[new], &config),
+        b"subject\n\nhttp://example.com\n\nK: v\n"
+    );
+}
