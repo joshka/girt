@@ -9,6 +9,69 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.16.0](https://github.com/joshka/girt/compare/girt-v0.15.0...girt-v0.16.0) - 2026-10-18
 
+### Breaking changes
+
+- `Repository::raw_status_with` and `Repository::status_with` take a `paths: &Pathspec` argument;
+  pass `&Pathspec::all()` for the previous behaviour (#549–#592).
+- Checkout no longer refuses colliding paths. On case-sensitive volumes both paths of a pair are
+  written (for example linux.git's `xt_CONNMARK.h` and `xt_connmark.h`). Where the volume or
+  `core.ignoreCase` folds names, one path per set is written as Git chooses and listed in the new
+  `Report::collisions`. A file and a directory sharing a name, case-only renames (#620) and existing
+  untracked aliases are still refused (#614–#629).
+- Checkout refuses Git's `core.protectNTFS`/`core.protectHFS` `.git` aliases (`git~1`, `.git.`,
+  `.git `, `.git:stream`, and HFS-ignorable spellings on macOS) unless those options are false.
+
+### Behaviour changes
+
+- Object readers on `Repository` load `.git/objects/info/commit-graph` (including split chains) by
+  default, and history walks, merge-base and ancestry queries trust it after checksum and structural
+  validation (#497–#590). Set `core.commitGraph=false` to disable it; strict per-object
+  verification is opt-in.
+- `Repo::status`, `Repo::switch`, `Repo::clone`, and `workflow::clone`/`clone_with` with default
+  options convert files as Git does and run the filter programs that `.gitattributes` selects. Opt
+  out with `Repo::with_filter_commands(Commands::Refuse)`,
+  `CloneOptions::with_filter_commands(Some(Commands::Refuse))`, or `None` for a raw clone checkout.
+  `girt status` and `girt checkout` convert by default; `--raw` restores the old behaviour. No
+  compile-time breaks: the extended types are `#[non_exhaustive]` (#539–#618).
+- Status and checkout accept `:`, `\` and non-ASCII names; `status`, `status_with` and
+  `status_with_filters` apply `core.ignoreCase` (and `core.precomposeUnicode` on macOS).
+- Normal and filtered status honour assume-unchanged, skip-worktree and intent-to-add entries,
+  `core.fileMode` and `core.symlinks`. Raw APIs are unchanged (#636–#640).
+
+### Added
+
+- The merge API: three-way byte content merging with whitespace policies, rename-aware in-memory
+  tree and commit merging with clean recursive bases, structured original conflict stages, explicit
+  per-path merge drivers, and guarded marker and index publication (#522–#580). Known partial
+  limits: #498, #543, #552, #575.
+- In-memory cherry-pick, revert and rebase on the merge engine, a rebase todo-list parser, and
+  interoperation with Git's sequencer state (#611, #623, #624). Known limits: #616, #621, #622.
+- Stash: save, apply, pop and list on the merge engine (#632–#641). Known limits: #638, #639.
+- `girt::pathspec`: Git pathspec parsing and matching, with path-limited status, diff and log.
+- `girt::filter`: `text`/`eol`/`text=auto`, `core.autocrlf`, `core.eol`, `core.safecrlf`, `ident`,
+  `working-tree-encoding` (UTF-16/32), and `filter.<name>.clean`/`smudge`/`process`, including the
+  long-running process protocol used by Git LFS. Running filter programs is explicit, through
+  `filter::Commands::Refuse` (the default for `Drivers`) or `Commands::Run`. Also
+  `Repository::filters`, `filters_with_source` and `filters_for_checkout` (honouring `attr.tree` and
+  `GIT_ATTR_SOURCE`), `Repository::status_with_filters`, `checkout_tree_with_filters`,
+  `CloneOptions::filter_commands`, `Repo::with_filter_commands` and
+  `filter::Pipeline::with_settings`.
+- Commit-graph reading, writing (full and incremental) and changed-path Bloom filters.
+- Unified text patch parsing and application in memory.
+- `checkout::Collision`, `Report::collisions`, `status::Comparison::Configured`, `Change::Added`
+  and `checkout_tree_configured[_with]`.
+- CLI: `girt status` and `girt checkout` gain `--raw` and `--refuse-filter-commands`;
+  `girt object hash --path`.
+- New dependency: `unicode-normalization` 0.1 (MIT/Apache; macOS and Linux only).
+
+### Performance
+
+- Faster commit-graph attachment: range queries are about 1.8× Git and ancestry queries about 2.8×
+  Git, down from about 7–11× (#625, #627).
+- Loose objects are written at Git's default compression and published with one rename: about
+  790 → 290 µs per object (#651).
+- Faster `jj git clone` of a local path through the adapter (#606).
+
 ### Other
 
 - Register apply errors in the crate wrapper ([#665](https://github.com/joshka/girt/pull/665))
