@@ -384,11 +384,12 @@ cancellation. It prepares exactly one next message from the snapshot, retains al
 and updates abort-safety to the proposed destination. Persisted subject retention (`-k`/`-b`),
 Message-ID, scissors and quiet options are supported. Explicit scissors takes precedence over the
 repository's loaded `mailinfo.scissors` configuration. Signoff, three-way/apply flags, quoted-CR
-policies and output encodings remain refused. Author, email, date and subject must all be nonempty;
-no missing-header or current-time fallback runs. Publish caller-owned checkout/HEAD changes before
-metadata, then stage the next patch explicitly. Git can finish with `am --continue` after staging.
-The publisher replaces `next` after the derived artifacts; failures still require rereading the
-reported partial state.
+policies and output encodings remain refused, with follow-up work tracked in
+[remaining am options](https://github.com/joshka/girt/issues/861). Author, email, date and subject
+must all be nonempty; no missing-header or current-time fallback runs. Publish caller-owned
+checkout/HEAD changes before metadata, then stage the next patch explicitly. Git can finish with
+`am --continue` after staging. The publisher replaces `next` after the derived artifacts; failures
+still require rereading the reported partial state.
 
 ### Recover final mail on an unborn branch
 
