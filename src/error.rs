@@ -106,6 +106,7 @@ impl<E: StdError + Send + Sync + 'static> From<crate::commit::SignError<E>> for 
 from_domain_errors! {
     crate::merge::Error,
     crate::merge::TreeError,
+    crate::merge::DriverError,
     crate::attributes::Error,
     crate::attributes::LoadError,
     crate::blame::Error,
