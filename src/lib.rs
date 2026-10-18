@@ -164,6 +164,9 @@
 //! object storage. Consult [`checkout`] and [`status`] before applying Git data to a filesystem.
 
 // Let library unit tests share the Git-generated integration fixtures.
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[path = "../tests/support/layout_git.rs"]
+mod layout_git;
 #[cfg(test)]
 extern crate self as girt;
 #[cfg(test)]

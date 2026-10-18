@@ -815,6 +815,22 @@ impl IndexEdit {
         self.index.replace_status_cache(*b"FSMN", data, self.limits)
     }
 
+    /// Installs caller-observed untracked-directory cache claims in the held draft.
+    ///
+    /// The caller owns filesystem freshness, environment and ignore-rule checks. Parsing the
+    /// supplied cache establishes structure only. Commit publishes with this guard's original
+    /// snapshot checks; this method performs no filesystem scan.
+    ///
+    /// # Errors
+    ///
+    /// Returns format, resource-limit or unsupported-extension errors without changing the draft.
+    pub fn set_untracked_cache(&mut self, cache: &super::UntrackedCache) -> Result<(), Error> {
+        let data = cache.encode(self.limits)?;
+        super::UntrackedCache::parse(self.index.object_format(), &data, self.limits)?;
+        self.index
+            .replace_status_cache(*b"UNTR", Some(data), self.limits)
+    }
+
     /// Enables or removes the untracked directory cache in the held draft.
     ///
     /// Like `git update-index --untracked-cache`, enabling an absent cache installs an empty

@@ -22,6 +22,9 @@ struct Args {
     /// Authorize querying the hook configured by core.fsmonitor before status.
     #[arg(long)]
     fsmonitor: bool,
+    /// Explicitly write observed status caches under the index lock.
+    #[arg(long)]
+    refresh_caches: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -79,7 +82,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(monitor) = &monitor {
         scan = scan.with_monitor(monitor);
     }
-    let report = scan.run_with(limits, &AtomicBool::new(false))?;
+    let report = if args.refresh_caches {
+        scan.refresh_caches_with(limits, &AtomicBool::new(false))?
+    } else {
+        scan.run_with(limits, &AtomicBool::new(false))?
+    };
 
     println!("Tracked content is compared as literal bytes and POSIX modes.");
 

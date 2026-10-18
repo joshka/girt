@@ -236,6 +236,7 @@ mod supported {
             names,
             environment: Box::new(environment),
             monitor: None,
+            capture: None,
             excludes: None,
         };
         let observed = worktree::scan(

@@ -85,6 +85,7 @@ pub(super) enum Listing {
         names: GitNames,
         environment: Box<crate::workflow::Environment>,
         monitor: Option<Box<crate::fsmonitor::Monitor>>,
+        capture: Option<Arc<super::untracked::Capture>>,
         excludes: Option<[ObjectId; 2]>,
     },
 }
@@ -235,6 +236,10 @@ fn scan_with_hook(
         previous = &entry.path;
     }
     directories.sort_unstable();
+    let capture = match &listing {
+        Listing::Ignoring { capture, .. } => capture.clone(),
+        _ => None,
+    };
     let (policy, rules, names) = match listing {
         Listing::Raw(policy) => (Policy::Raw(policy), None, None),
         Listing::Ignoring {
@@ -253,6 +258,7 @@ fn scan_with_hook(
         configured,
         monitor_clean,
         untracked_cache,
+        capture,
         ignored_gitlinks,
         file_mode,
         symlinks,
@@ -440,6 +446,7 @@ struct Scan<'a> {
     configured: bool,
     monitor_clean: &'a [bool],
     untracked_cache: Option<&'a super::untracked::Cache>,
+    capture: Option<Arc<super::untracked::Capture>>,
     ignored_gitlinks: HashSet<Vec<u8>>,
     file_mode: bool,
     symlinks: bool,
@@ -648,7 +655,7 @@ impl Scan<'_> {
             self.cached_names(fd, before, path)?
         };
         walk.cache_invalid |= invalidate;
-        let names = match cached {
+        let mut names = match cached {
             Some(names) => {
                 found.cache_reused += usize::from(names.cached);
                 names
@@ -665,6 +672,23 @@ impl Scan<'_> {
         found.observe(self.tracked.slots(path), Observed::Directory);
         // Ignore rules decide only what is listed, so an omitted listing skips them entirely.
         let ignoring = matches!(self.policy, Policy::Ignoring(_)) && self.lists_untracked();
+        if self.capture.is_some() && !walk.excluded && names.may_name(b".gitignore") {
+            names.ignore_observed = true;
+            if let Some(stat) = optional_stat(fd, b".gitignore", path)?
+                && FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile
+            {
+                let content = self.read_file(
+                    fd,
+                    b".gitignore",
+                    path,
+                    &stat,
+                    self.max_file_bytes.min(self.worktree_bytes.remaining()),
+                )?;
+                self.worktree_bytes
+                    .charge(content.len(), "worktree bytes")?;
+                names.ignore_content = Some(content);
+            }
+        }
         let rules = match rules {
             Some(rules)
                 if !walk.excluded && self.lists_untracked() && names.may_name(b".gitignore") =>
@@ -918,6 +942,54 @@ impl Scan<'_> {
         }
         let after = fstat(&**fd).map_err(|source| io(path, source))?;
         same(path, before, &after)?;
+        if let Some(capture) = &self.capture {
+            let untracked = found
+                .listed
+                .iter()
+                .filter_map(|entry| {
+                    let parent = entry
+                        .path
+                        .iter()
+                        .rposition(|byte| *byte == b'/')
+                        .map_or(&b""[..], |position| &entry.path[..position]);
+                    (parent == path).then(|| {
+                        let mut name = entry
+                            .path
+                            .get(path.len() + usize::from(!path.is_empty())..)
+                            .unwrap_or_default()
+                            .to_vec();
+                        if entry.kind != UntrackedKind::File {
+                            name.push(b'/');
+                        }
+                        name
+                    })
+                })
+                .collect();
+            capture
+                .directories
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(
+                    path.to_vec(),
+                    super::untracked::Record {
+                        stat: index_stat(before),
+                        exclude: names.ignore_content.as_ref().map(|bytes| {
+                            let literal = ObjectId::for_blob(self.format, bytes);
+                            let ignore_path = join(path, b".gitignore");
+                            if self.tracked.entry(&ignore_path).is_some_and(|(_, entry)| {
+                                entry.stage == index::Stage::Normal && entry.id == literal
+                            }) {
+                                literal
+                            } else {
+                                super::untracked::ignore_id(self.format, bytes)
+                            }
+                        }),
+                        untracked,
+                        check_only: walk.collapse.is_some(),
+                        valid: !walk.excluded,
+                    },
+                );
+        }
         Ok(Visited::Directory)
     }
 

@@ -1,9 +1,22 @@
 //! Admission of Git-written directory-cache claims; filesystem freshness is checked by the walk.
 use std::collections::BTreeMap;
+mod write;
 
 use super::worktree::{GitNames, Listing};
 use super::{Limits, UntrackedCacheFallback, UntrackedCacheUse, UntrackedFiles};
 use crate::{ObjectId, Repository, index};
+
+#[derive(Default)]
+pub(super) struct Capture {
+    pub(super) directories: std::sync::Mutex<BTreeMap<Vec<u8>, Record>>,
+}
+pub(super) struct Record {
+    pub(super) stat: index::Stat,
+    pub(super) exclude: Option<ObjectId>,
+    pub(super) untracked: Vec<Vec<u8>>,
+    pub(super) check_only: bool,
+    pub(super) valid: bool,
+}
 
 pub(super) struct Cache {
     pub(super) directories: BTreeMap<Vec<u8>, Directory>,
@@ -26,11 +39,16 @@ pub(super) fn load(
         files,
         names,
         excludes,
+        capture,
         ..
     } = listing
     else {
         return (None, UntrackedCacheUse::Disabled);
     };
+
+    if capture.is_some() {
+        return (None, UntrackedCacheUse::Disabled);
+    }
 
     if repo.config().boolean("core", None, "untrackedcache") == Ok(Some(false)) {
         return (None, UntrackedCacheUse::Disabled);

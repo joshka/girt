@@ -5,6 +5,9 @@ use crate::ignore::WorktreeRules;
 use crate::pathspec::Pathspec;
 use crate::{Repository, filter, fsmonitor};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod refresh;
+
 /// A configured status observation with optional filters, path selection and monitor queries.
 ///
 /// This composes the same walk as [`Repository::status_with_filters`]. Existing status methods
@@ -39,6 +42,8 @@ pub struct Scan<'a> {
     paths: Option<&'a Pathspec>,
     filters: Option<&'a mut filter::Pipeline>,
     monitor: Option<&'a fsmonitor::Monitor>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) capture: Option<std::sync::Arc<super::untracked::Capture>>,
 }
 impl<'a> Scan<'a> {
     /// Selects a repository, staged baseline, untracked listing and caller-loaded ignore rules.
@@ -59,6 +64,8 @@ impl<'a> Scan<'a> {
             paths: None,
             filters: None,
             monitor: None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            capture: None,
         }
     }
     /// Limits inspection and reporting to this pathspec, as in [`Repository::status_with`].
@@ -87,15 +94,40 @@ impl<'a> Scan<'a> {
     ///
     /// The index lock is held throughout the query and full tracked scan. Existing clean
     /// promises are not used during refresh. Known changed entries remain dirty in the new
-    /// checkpoint. Publication uses [`crate::index::IndexEdit::commit`], like
-    /// [`Repository::refresh_index`]. With no monitor supplied, this currently only observes
-    /// status and releases the lock without writing. Untracked-cache population is not yet
-    /// implemented by this operation.
+    /// checkpoint. Valid directory listings are rebuilt when `core.untrackedCache` enables them
+    /// or a UNTR extension already exists; `false` removes that extension. Publication uses
+    /// [`crate::index::IndexEdit::commit`], like [`Repository::refresh_index`]. Directory
+    /// records modified in the refresh's second remain invalid, so a later scan rereads them.
+    /// Loaded base ignore files are reread and their identities checked before recording stat
+    /// hints. This operation writes cache extensions, leaving tracked stat refresh to
+    /// [`Repository::refresh_index`].
     ///
+    ///
+    /// ```
+    /// use girt::status::{Baseline, Scan, UntrackedFiles};
+    /// use girt::workflow::Environment;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Worktree)?;
+    /// std::fs::write(repo.git_dir().join("config"),
+    ///     b"[core]\nrepositoryformatversion=0\nbare=false\nignoreCase=false\nprecomposeUnicode=false\nuntrackedCache=true\n")?;
+    /// let repo = Repository::open(repo.worktree().unwrap())?;
+    /// std::fs::write(repo.worktree().unwrap().join("notes.txt"), b"notes\n")?;
+    /// let rules = repo.ignore_rules(&Environment::default())?;
+    ///
+    /// let report = Scan::new(&repo, Baseline::Head, UntrackedFiles::Collapsed, &rules)
+    ///     .refresh_caches()?;
+    /// assert_eq!(report.untracked[0].path, b"notes.txt");
+    /// let index = repo.read_index(Default::default())?.unwrap();
+    /// assert!(index.untracked_cache(Default::default())?.is_some());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     /// # Errors
     ///
     /// Returns status and index-lock/publication errors. Path-limited and split-index refresh
-    /// are unsupported. Monitor failures return [`Error::Fsmonitor`] and write nothing.
+    /// are unsupported. Populating UNTR also requires collapsed listing and exact byte names.
+    /// Monitor failures return [`Error::Fsmonitor`] and write nothing.
     pub fn refresh_caches(self) -> Result<Report, Error> {
         self.refresh_caches_with(Limits::default(), &AtomicBool::new(false))
     }
@@ -106,105 +138,17 @@ impl<'a> Scan<'a> {
     ///
     /// Returns the errors of [`Self::refresh_caches`]. Cancellation before publication leaves
     /// the index unchanged. Unsupported platforms refuse before taking a lock or querying hooks.
-    pub fn refresh_caches_with(
-        mut self,
-        limits: Limits,
-        cancel: &AtomicBool,
-    ) -> Result<Report, Error> {
+    pub fn refresh_caches_with(self, limits: Limits, cancel: &AtomicBool) -> Result<Report, Error> {
         super::types::check(cancel)?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            if self.paths.is_some_and(|paths| !paths.is_all()) {
-                return Err(Error::Unsupported {
-                    path: Vec::new(),
-                    reason: "path-limited status cache refresh",
-                });
-            }
-            let repo = self.repo;
-            let mut edit = repo.edit_index(limits.index)?;
-            if edit
-                .index()
-                .extensions()
-                .iter()
-                .any(|extension| extension.signature() == *b"link")
-            {
-                return Err(Error::Unsupported {
-                    path: Vec::new(),
-                    reason: "split-index status cache refresh",
-                });
-            }
-            let checkpoint = if let Some(monitor) = self.monitor.take() {
-                if self.repo.worktree() != Some(monitor.worktree()) {
-                    return Err(Error::Fsmonitor(Box::new(fsmonitor::Error::Unsupported(
-                        "monitor belongs to another working tree",
-                    ))));
-                }
-                let old = edit.index().fsmonitor_cache(limits.index).ok().flatten();
-                let changes = monitor
-                    .query_with(
-                        old.as_ref().map(crate::index::FsmonitorCache::token),
-                        Default::default(),
-                        cancel,
-                    )
-                    .map_err(|error| {
-                        if matches!(error, fsmonitor::Error::Cancelled) {
-                            Error::Cancelled
-                        } else {
-                            Error::Fsmonitor(Box::new(error))
-                        }
-                    })?;
-                Some(changes.token().clone())
-            } else {
-                None
-            };
-            let report = self.run_with(limits, cancel)?;
-            super::types::check(cancel)?;
-            if let Some(token) = checkpoint {
-                let changed: std::collections::HashSet<_> = report
-                    .unstaged
-                    .iter()
-                    .map(|change| change.path.as_slice())
-                    .collect();
-                let dirty = edit
-                    .index()
-                    .entries()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(position, entry)| {
-                        (entry.stage != crate::index::Stage::Normal
-                            || entry.intent_to_add
-                            || entry.mode == crate::index::Mode::Gitlink
-                            || changed.contains(entry.path.as_slice()))
-                        .then_some(position)
-                    })
-                    .collect();
-                let cache = crate::index::FsmonitorCache::new(
-                    token,
-                    dirty,
-                    edit.index().entries().len(),
-                    limits.index,
-                )
-                .map_err(|source| crate::index::StorageError::Format {
-                    path: repo.git_dir().join("index"),
-                    source,
-                })?;
-                edit.set_fsmonitor_cache(Some(&cache)).map_err(|source| {
-                    crate::index::StorageError::Format {
-                        path: repo.git_dir().join("index"),
-                        source,
-                    }
-                })?;
-                super::types::check(cancel)?;
-                edit.commit()?;
-            } else {
-                edit.abort()?;
-            }
-            Ok(report)
-        }
+        return refresh::run(self, limits, cancel);
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let _ = &mut self;
-            self.run_with(limits, cancel)
+            let _ = (self, limits);
+            Err(Error::Unsupported {
+                path: Vec::new(),
+                reason: "status cache refresh requires macOS/Linux",
+            })
         }
     }
 
@@ -238,6 +182,7 @@ impl<'a> Scan<'a> {
                     names: super::workflow::supported::git_names(self.repo)?,
                     environment: Box::new(self.ignore.environment().clone()),
                     monitor: self.monitor.cloned().map(Box::new),
+                    capture: self.capture,
                     excludes: Some(self.ignore.untracked_excludes(self.repo.object_format())),
                 },
                 self.paths.unwrap_or(&all),

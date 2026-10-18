@@ -16,6 +16,7 @@ impl Scan<'_> {
         };
 
         let cached = &directory.cached;
+
         let Some(stat) = cached.stat().filter(|_| cached.valid()) else {
             return Ok((None, true));
         };
