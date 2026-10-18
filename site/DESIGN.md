@@ -387,6 +387,15 @@ A hairline-bordered box with a small `label-caps` title (NOTE, REFUSED, and so o
 and a `rust-800` border, with the title in muted rust. There is no left accent bar and no coloured
 fill on the whole box beyond these.
 
+### Command references
+
+CLI command examples pair the prose and output with a contextual reference in the right margin. The
+reference groups the girt command, the linked library API it exercises and the corresponding Git
+operation. Use a small branch icon, muted uppercase mono labels, a surface fill and a hairline
+border; keep commands in neutral mono text. These references replace the fixed table of contents on
+command pages. Below 80rem viewport width, place each reference after its example. Long commands
+wrap inside the card so the page never scrolls horizontally.
+
 ### Tables
 
 A 1.5px header rule in `on-surface-secondary`, hairline `rule` row dividers, and no zebra stripes.

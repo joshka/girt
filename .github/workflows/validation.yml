@@ -540,7 +540,7 @@ jobs:
           fi
           printf '%s\n' "$changed"
           # Documentation-only files, including everything under docs/.
-          prose='(\.md$|^docs/|^LICENSE|^\.config/vale\.ini$|^\.config/rumdl\.toml$|^\.config/vale/)'
+          prose='(\.mdx?$|^docs/|^LICENSE|^\.config/vale\.ini$|^\.config/rumdl\.toml$|^\.config/vale/)'
           # The website has its own workflow (site.yml) and never affects the Rust checks.
           site='(^site/|^\.github/workflows/site\.yml$|^\.gitattributes$)'
           if [ -n "${all:-}" ] || grep -vE "$site" <<<"$changed" | grep -qvE "$prose"; then

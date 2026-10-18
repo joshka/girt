@@ -1,7 +1,10 @@
 ---
 title: Storage and maintenance
 description: Inspect pack storage and plan retention before deleting data.
+tableOfContents: false
 ---
+
+import CommandExample from '../../../components/CommandExample.astro';
 
 `pack list` describes packs, `verify` checks their checksums and objects, and `reindex` rebuilds a
 pack index. `maintenance plan` computes retention without writing, `repack` adds a pack without
@@ -15,6 +18,14 @@ may change; the library is the core deliverable.
 :::
 
 ## Inspect retention and storage
+
+<CommandExample
+  command="girt maintenance plan"
+  api="Repository::plan_retention"
+  apiPath="repository/struct.Repository.html#method.plan_retention"
+  git="No single Git equivalent"
+  note="Read-only retention planning follows girt’s own policy."
+>
 
 Use the repository from [Getting started with the CLI](/girt/cli/getting-started/).
 
@@ -38,6 +49,8 @@ read-only; it lets you inspect retention before selecting maintenance phases.
 `git verify-pack` checks an individual indexed pack, and `git index-pack <pack>` corresponds to
 `girt pack reindex <pack>`. Maintenance planning and execution follow girt's own retention policy
 and have no single Git command equivalent.
+
+</CommandExample>
 
 ## Library API and safety
 
