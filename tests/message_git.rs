@@ -265,13 +265,31 @@ fn trailers_match_interpret_trailers() {
     });
 }
 
+/// Messages whose trailers Git 2.56 reads differently from earlier versions: before 2.56 a
+/// `key://…` line, such as a URL, counts as a trailer. girt follows 2.56; `src/message/tests.rs`
+/// pins that behaviour, and older Git skips these comparisons.
+const CHANGED_IN_2_56: &[&[u8]] = &[b"subject\n\nhttp://example.com\n"];
+
+/// The `(major, minor)` version of the Git under test.
+fn git_version(root: &Path) -> (u32, u32) {
+    let output = git(root, &["--version"], b"");
+    let text = String::from_utf8(output).unwrap();
+    let version = text.trim().trim_start_matches("git version ");
+    let mut parts = version.split('.').map(|part| part.parse().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+}
+
 fn check_trailers(root: &Path, config: &[&str]) {
     use girt::message::{Trailer, TrailerConfig, add_trailers, trailers};
 
+    let before_2_56 = git_version(root) < (2, 56);
     {
         let settings = config_arguments(config);
         let girt_config = TrailerConfig::from_config(&girt_config(config)).unwrap();
         for message in TRAILER_CORPUS {
+            if before_2_56 && CHANGED_IN_2_56.contains(message) {
+                continue;
+            }
             let mut args: Vec<&str> = settings.iter().map(String::as_str).collect();
             args.extend(["interpret-trailers", "--parse"]);
             let expected = git(root, &args, message);
