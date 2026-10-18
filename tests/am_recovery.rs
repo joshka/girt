@@ -676,7 +676,7 @@ fn generated_next_artifacts_obey_the_combined_metadata_budget() {
 }
 
 #[rstest]
-#[case("mailinfo.scissors", "true")]
+#[case("mailinfo.scissors", "invalid")]
 #[case("mailinfo.quotedCr", "strip")]
 #[case("i18n.commitEncoding", "ISO-8859-1")]
 fn queued_extraction_refuses_unresolved_config_policy(#[case] key: &str, #[case] value: &str) {
@@ -684,6 +684,136 @@ fn queued_extraction_refuses_unresolved_config_policy(#[case] key: &str, #[case]
     queued_stop(root.path(), "sha1", "files");
     git(root.path(), &["config", key, value], b"");
     let repo = Repository::open(root.path()).unwrap();
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        state.prepare_next_am(
+            &repo,
+            Action::Skip,
+            head(root.path()),
+            girt::mailinfo::Limits::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(girt::sequencer::Error::Unsupported(_))
+    ));
+    assert_eq!(
+        fs::read(repo.git_dir().join("rebase-apply/next")).unwrap(),
+        b"1\n"
+    );
+}
+
+fn option_stop(root: &Path, format: &str, backend: &str, mode: &str) {
+    queued_stop(root, format, backend);
+    let dir = root.join(".git/rebase-apply");
+    let mut mail = Vec::new();
+    for number in 1..=3 {
+        mail.extend(fs::read(dir.join(format!("{number:04}"))).unwrap());
+    }
+    let mail = String::from_utf8(mail).unwrap()
+        .replace("Subject: [PATCH 2/3] two\n", "Subject: [PATCH 2/3] [topic] two\nMessage-ID: <two@example.com>\n")
+        .replace("Body of two.\n", "Discard before cut.\n------------------------ >8 ------------------------\nBody of two.\n");
+    git(root, &["am", "--abort"], b"");
+    let flags = match mode {
+        "keep" => vec!["--keep"],
+        "nonpatch" => vec!["--keep-non-patch"],
+        "messageid" => vec!["--message-id"],
+        "scissors" => vec!["--scissors"],
+        "quiet" => vec!["--quiet"],
+        "combined" => vec!["--keep-non-patch", "--message-id", "--scissors", "--quiet"],
+        "override" => vec!["--no-scissors"],
+        _ => vec![],
+    };
+    if matches!(mode, "configured" | "override") {
+        git(root, &["config", "mailinfo.scissors", "true"], b"");
+    }
+    if mode == "configured_false" {
+        git(root, &["config", "mailinfo.scissors", "false"], b"");
+    }
+    fs::write(root.join("one"), b"obstruction\n").unwrap();
+    let mut args = vec!["am"];
+    args.extend(flags);
+    assert!(!git_output(root, &args, mail.as_bytes()).status.success());
+    fs::remove_file(root.join("one")).unwrap();
+}
+
+#[rstest]
+fn persisted_extraction_options_match_git(
+    #[values("sha1", "sha256")] format: &str,
+    #[values("files", "reftable")] backend: &str,
+    #[values(
+        "keep",
+        "nonpatch",
+        "messageid",
+        "scissors",
+        "quiet",
+        "combined",
+        "configured",
+        "configured_false",
+        "override"
+    )]
+    mode: &str,
+) {
+    let actual = tempfile::tempdir().unwrap();
+    let expected = tempfile::tempdir().unwrap();
+    option_stop(actual.path(), format, backend, mode);
+    option_stop(expected.path(), format, backend, mode);
+    let repo = Repository::open(actual.path()).unwrap();
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    let plan = state
+        .prepare_next_am(
+            &repo,
+            Action::Skip,
+            head(actual.path()),
+            girt::mailinfo::Limits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    plan.publish_metadata(&repo).unwrap();
+    assert!(
+        !git_output(expected.path(), &["am", "--skip"], b"")
+            .status
+            .success()
+    );
+    for name in [
+        "next",
+        "abort-safety",
+        "author-script",
+        "final-commit",
+        "info",
+        "msg",
+        "patch",
+        "keep",
+        "messageid",
+        "scissors",
+        "quiet",
+    ] {
+        assert_eq!(
+            fs::read(repo.git_dir().join("rebase-apply").join(name)).unwrap(),
+            fs::read(expected.path().join(".git/rebase-apply").join(name)).unwrap(),
+            "{mode}: {name}"
+        );
+    }
+    for root in [actual.path(), expected.path()] {
+        fs::remove_file(root.join("two")).unwrap();
+        stage(root);
+        git(root, &["am", "--continue"], b"");
+    }
+    assert_eq!(head(actual.path()), head(expected.path()));
+}
+
+#[rstest]
+#[case("keep")]
+#[case("messageid")]
+#[case("scissors")]
+#[case("quiet")]
+fn malformed_persisted_extraction_option_keeps_progress(#[case] name: &str) {
+    let root = tempfile::tempdir().unwrap();
+    queued_stop(root.path(), "sha1", "files");
+    let repo = Repository::open(root.path()).unwrap();
+    fs::write(repo.git_dir().join("rebase-apply").join(name), b"unknown\n").unwrap();
     let state = State::read_repository(&repo, Limits::default())
         .unwrap()
         .unwrap();
