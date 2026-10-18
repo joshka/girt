@@ -68,11 +68,19 @@ pub fn run(args: Args, context: &Context) -> Result<ExitCode> {
                     Severity::Error | Severity::Fatal => "error",
                     _ => "warning",
                 };
-                eprintln!(
-                    "{severity} in {kind} {id}: {}: {}",
-                    finding.message_id.as_str(),
-                    description(finding)
-                );
+                let mut stderr = std::io::stderr().lock();
+                write!(
+                    stderr,
+                    "{severity} in {kind} {id}: {}: ",
+                    finding.message_id.as_str()
+                )?;
+                if let Some(FindingDetail::TagName(name)) = &finding.detail {
+                    stderr.write_all(b"invalid 'tag' name: ")?;
+                    stderr.write_all(name)?;
+                } else {
+                    write!(stderr, "{}", description(finding))?;
+                }
+                writeln!(stderr)?;
             }
             ObjectFinding::BrokenLink {
                 source,

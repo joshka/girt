@@ -1,7 +1,7 @@
 //! Commit header conventions beyond graph decoding, observed with isolated Git fixtures.
 use std::collections::BTreeSet;
 
-use super::{MessageId, identity};
+use super::{MessageId, headers, identity};
 use crate::{Commit, ObjectFormat};
 
 pub(super) fn check(format: ObjectFormat, data: &[u8], ids: &mut BTreeSet<MessageId>) {
@@ -9,28 +9,9 @@ pub(super) fn check(format: ObjectFormat, data: &[u8], ids: &mut BTreeSet<Messag
         ids.insert(MessageId::BadCommit);
         return;
     }
-    // Git checks the complete physical header before interpreting its required records. A final
-    // newline without a blank separator is accepted; an incomplete physical line is not.
-    let mut remaining = data;
-    while !remaining.is_empty() {
-        let Some(end) = remaining.iter().position(|byte| *byte == b'\n') else {
-            ids.insert(if remaining.contains(&0) {
-                MessageId::NulInHeader
-            } else {
-                MessageId::UnterminatedHeader
-            });
-            return;
-        };
-        let line = &remaining[..end];
-        remaining = &remaining[end + 1..];
-        if line.contains(&0) {
-            ids.insert(MessageId::NulInHeader);
-            return;
-        }
-        if line.is_empty() {
-            break;
-        }
-    }
+    let Some(remaining) = headers::body(data, ids) else {
+        return;
+    };
     let mut lines = data.split(|byte| *byte == b'\n').peekable();
     lines.next(); // The ordinary parser has validated the leading tree record.
     while lines
