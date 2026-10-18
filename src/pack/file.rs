@@ -1681,6 +1681,36 @@ mod read_each_tests {
         }
     }
 
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn ordered_read_ahead_preserves_payloads_limits_and_early_stop(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let (path, positions) = many(root.path(), format);
+        let pack = open(&path, format);
+        let cancel = AtomicBool::new(false);
+        let expected: Vec<_> = positions.iter()
+            .map(|&position| pack.read(position, ReadLimits::default(), &cancel).unwrap())
+            .collect();
+
+        let actual = pack.with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel,
+            |reads| reads.collect::<Result<Vec<_>, _>>()).unwrap();
+        assert_eq!(actual, expected);
+
+        let limits = ReadLimits { max_object_bytes: 1, ..ReadLimits::default() };
+        let error = pack.with_ordered_reads(&positions, limits, 4, &cancel,
+            |reads| reads.next().unwrap()).unwrap_err();
+        assert!(matches!(error, Error::Limit("object bytes")));
+
+        // Dropping the consumer while workers are sending must let every worker join.
+        pack.with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel,
+            |reads| reads.next().unwrap()).unwrap();
+        cancel.store(true, Ordering::Relaxed);
+        let error = pack.with_ordered_reads(&positions, ReadLimits::default(), 4, &cancel,
+            |reads| reads.next().unwrap()).unwrap_err();
+        assert!(matches!(error, Error::Cancelled));
+    }
+
     /// Entries whose index names each other's bytes pass the checksum and CRC pass but fail
     /// decoding, even when only a later worker run holds them.
     #[rstest]
