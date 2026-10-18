@@ -167,6 +167,15 @@ pub enum TreeError {
     /// Caller cancelled computation.
     #[error("merge cancelled")]
     Cancelled,
+    /// A caller-selected content driver failed; no fallback resolution is attempted.
+    #[error("running path-selected merge driver")]
+    Driver {
+        /// Destination byte path passed to the callback.
+        path: Vec<u8>,
+        /// Original caller-owned failure.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     /// Directory conflicts need explicit path expansion before index representation.
     #[error("directory conflicts cannot be represented as leaf index stages")]
     DirectoryStages,
@@ -253,11 +262,23 @@ pub(super) fn merge_prepared(
     cancel: &AtomicBool,
     memory: &super::memory::Memory,
 ) -> Result<TreeMerge, TreeError> {
+    merge_prepared_with_driver(objects, roots, options, cancel, memory, None)
+}
+
+pub(super) fn merge_prepared_with_driver<'a, 'd>(
+    objects: &'a Objects,
+    roots: [ObjectId; 3],
+    options: TreeOptions,
+    cancel: &'a AtomicBool,
+    memory: &'a super::memory::Memory,
+    driver: Option<&'a mut (dyn super::TreeDriver + 'd)>,
+) -> Result<TreeMerge, TreeError> {
     let mut merger = Merger {
         objects,
         options,
         cancel,
         memory,
+        driver,
         remaining: options.max_entries,
         conflicts: Vec::new(),
         blobs: Vec::new(),
@@ -265,6 +286,7 @@ pub(super) fn merge_prepared(
     };
     let [base, ours, theirs] = roots;
     let tree = merger.directory(Some(base), Some(ours), Some(theirs), &[], 0)?;
+    merger.check()?;
     Ok(TreeMerge {
         tree,
         conflicts: merger.conflicts,
@@ -273,9 +295,10 @@ pub(super) fn merge_prepared(
     })
 }
 
-struct Merger<'a> {
+struct Merger<'a, 'd> {
     objects: &'a Objects,
     memory: &'a super::memory::Memory,
+    driver: Option<&'a mut (dyn super::TreeDriver + 'd)>,
     options: TreeOptions,
     cancel: &'a AtomicBool,
     remaining: usize,
@@ -284,7 +307,7 @@ struct Merger<'a> {
     trees: Vec<Tree>,
 }
 
-impl Merger<'_> {
+impl Merger<'_, '_> {
     fn check(&self) -> Result<(), TreeError> {
         if self.cancel.load(Ordering::Relaxed) {
             Err(TreeError::Cancelled)
@@ -422,15 +445,13 @@ impl Merger<'_> {
         ours: TreeValue,
         theirs: TreeValue,
     ) -> Result<Option<TreeValue>, TreeError> {
-        let mode =
+        let (mode, mode_conflict) =
             if ours.mode == theirs.mode || conflict.base.is_some_and(|b| b.mode == theirs.mode) {
-                ours.mode
+                (ours.mode, false)
             } else if conflict.base.is_some_and(|b| b.mode == ours.mode) {
-                theirs.mode
+                (theirs.mode, false)
             } else {
-                conflict.kind = ConflictKind::Mode;
-                self.conflicts.push(conflict);
-                return Ok(Some(ours));
+                (ours.mode, true)
             };
         let base = match conflict.base {
             Some(b) => self.memory.read_blob(self.objects, b.id)?,
@@ -438,14 +459,33 @@ impl Merger<'_> {
         };
         let a = self.memory.read_blob(self.objects, ours.id)?;
         let b = self.memory.read_blob(self.objects, theirs.id)?;
-        let content = content_with(&base, &a, &b, self.options.content, self.cancel)?;
-        if content.is_clean() {
+        let content = if let Some(driver) = self.driver.as_deref_mut() {
+            driver
+                .merge(
+                    &conflict.path,
+                    &base,
+                    &a,
+                    &b,
+                    self.options.content,
+                    self.cancel,
+                )
+                .map_err(|source| TreeError::Driver {
+                    path: conflict.path.clone(),
+                    source,
+                })?
+        } else {
+            content_with(&base, &a, &b, self.options.content, self.cancel)?
+        };
+        self.check()?;
+        if content.is_clean() && !mode_conflict {
             let bytes = content.render(&MarkerOptions::default());
             let id = ObjectId::for_blob(self.objects.object_format(), &bytes);
             self.blobs.push((id, bytes));
             return Ok(Some(TreeValue { mode, id }));
         }
-        conflict.kind = if conflict.base.is_none() {
+        conflict.kind = if mode_conflict {
+            ConflictKind::Mode
+        } else if conflict.base.is_none() {
             ConflictKind::AddAdd
         } else {
             ConflictKind::Content

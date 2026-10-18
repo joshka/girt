@@ -178,51 +178,85 @@ impl Objects {
         options: CommitOptions,
         cancel: &AtomicBool,
     ) -> Result<CommitMerge, CommitError> {
-        let mut merger = Bases {
-            objects: self,
-            options,
-            cancel,
-            memory: Memory::default(),
-            remaining: options.max_virtual_merges,
-            queries: options.max_ancestry_queries,
-        };
-        merger.check()?;
-        let mut bases = merger.query_bases(ours, theirs)?;
-        bases.sort();
-        if bases.is_empty() && !options.allow_unrelated_histories {
-            return Err(CommitError::Unrelated);
-        }
-        let base_tree = merger.synthesize(&bases, 0)?;
-        let a = self.read_commit(ours)?.tree();
-        let b = self.read_commit(theirs)?.tree();
-        merger.check()?;
-        let mut result = super::renames::merge_with_memory(
-            self,
-            [base_tree, a, b],
-            options.trees,
-            cancel,
-            &mut merger.memory,
-        )?;
-        result.blobs.extend(merger.memory.blobs);
-        Ok(CommitMerge {
-            parents: [ours, theirs],
-            bases,
-            base_tree,
-            result,
-        })
+        merge_with_driver(self, ours, theirs, options, cancel, None)
+    }
+
+    /// Merges commit tips using one path-driver instance for recursive bases and final content.
+    ///
+    /// Uses [`Self::merge_commits_with`]'s bounds, history policy and in-memory result contract.
+    /// Callback side effects and attribute snapshot choice belong to the caller; no implicit
+    /// command runs. See [`super::TreeDriver`] for attribute and custom-driver composition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommitError`], retaining any driver failure's path and original source.
+    pub fn merge_commits_with_driver(
+        &self,
+        ours: ObjectId,
+        theirs: ObjectId,
+        options: CommitOptions,
+        cancel: &AtomicBool,
+        driver: &mut dyn super::TreeDriver,
+    ) -> Result<CommitMerge, CommitError> {
+        merge_with_driver(self, ours, theirs, options, cancel, Some(driver))
     }
 }
 
-struct Bases<'a> {
+fn merge_with_driver<'a, 'd>(
+    objects: &'a Objects,
+    ours: ObjectId,
+    theirs: ObjectId,
+    options: CommitOptions,
+    cancel: &'a AtomicBool,
+    driver: Option<&'a mut (dyn super::TreeDriver + 'd)>,
+) -> Result<CommitMerge, CommitError> {
+    let mut merger = Bases {
+        objects,
+        options,
+        cancel,
+        memory: Memory::default(),
+        driver,
+        remaining: options.max_virtual_merges,
+        queries: options.max_ancestry_queries,
+    };
+    merger.check()?;
+    let mut bases = merger.query_bases(ours, theirs)?;
+    bases.sort();
+    if bases.is_empty() && !options.allow_unrelated_histories {
+        return Err(CommitError::Unrelated);
+    }
+    let base_tree = merger.synthesize(&bases, 0)?;
+    let a = objects.read_commit(ours)?.tree();
+    let b = objects.read_commit(theirs)?.tree();
+    merger.check()?;
+    let mut result = super::renames::merge_with_memory_and_driver(
+        objects,
+        [base_tree, a, b],
+        options.trees,
+        cancel,
+        &mut merger.memory,
+        merger.driver.as_deref_mut(),
+    )?;
+    result.blobs.extend(merger.memory.blobs);
+    Ok(CommitMerge {
+        parents: [ours, theirs],
+        bases,
+        base_tree,
+        result,
+    })
+}
+
+struct Bases<'a, 'd> {
     objects: &'a Objects,
     options: CommitOptions,
     cancel: &'a AtomicBool,
     memory: Memory,
+    driver: Option<&'a mut (dyn super::TreeDriver + 'd)>,
     remaining: usize,
     queries: usize,
 }
 
-impl Bases<'_> {
+impl Bases<'_, '_> {
     fn check(&self) -> Result<(), CommitError> {
         if self.cancel.load(Ordering::Relaxed) {
             Err(CommitError::Cancelled)
@@ -279,12 +313,13 @@ impl Bases<'_> {
             let common = self.common(&accumulated, *next)?;
             let base = self.synthesize(&common, depth + 1)?;
             let next_tree = self.objects.read_commit(*next)?.tree();
-            let mut result = super::renames::merge_with_memory(
+            let mut result = super::renames::merge_with_memory_and_driver(
                 self.objects,
                 [base, tree, next_tree],
                 self.options.trees,
                 self.cancel,
                 &mut self.memory,
+                self.driver.as_deref_mut(),
             )?;
             if !result.is_clean() {
                 result.blobs.extend(

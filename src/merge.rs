@@ -23,6 +23,8 @@
 //! renames. [`crate::Objects::merge_trees`] composes rename inference and directory relocation
 //! with the same in-memory result, explicitly refusing ambiguous normalization layouts.
 //! [`Driver`] selects built-in or caller-owned custom drivers from an attribute state.
+//! [`TreeDriver`] routes tree and commit content merges through explicit per-path policy,
+//! including recursive virtual bases, without implicit attribute snapshots or process execution.
 //! [`MarkerOptions::from_config`] applies an explicit conflict-style configuration snapshot.
 //! [`crate::Objects::merge_commits`] discovers ancestors and recursively synthesizes clean
 //! virtual bases, retaining all generated objects without publication. Conflicted virtual bases
@@ -36,6 +38,7 @@ mod commits;
 mod content;
 mod driver;
 mod memory;
+mod path_driver;
 mod publication;
 mod renames;
 mod render;
@@ -46,6 +49,7 @@ mod whitespace;
 pub use commits::{CommitError, CommitMerge, CommitOptions};
 pub use content::{content, content_with};
 pub use driver::{Driver, DriverError};
+pub use path_driver::TreeDriver;
 pub use publication::{MergeCheckout, PreparationLimits, PublicationError};
 pub use renames::{RenameError, TreeMergeOptions};
 pub use tree::{ConflictKind, TreeConflict, TreeError, TreeMerge, TreeOptions};
