@@ -141,3 +141,28 @@ fn auto_prefix(#[case] message: &[u8], #[case] expected: &[u8]) {
 fn auto_prefix_exhausted() {
     assert!(CommentPrefix::auto(b"#\n;\n@\n!\n$\n%\n^\n&\n|\n:\nx\n").is_none());
 }
+
+#[rstest]
+#[case::command(b"[trailer \"fix\"]\ncommand = echo\n")]
+#[case::cmd(b"[trailer \"fix\"]\ncmd = echo\n")]
+fn trailer_commands_are_refused(#[case] config: &[u8]) {
+    let config = Config::parse(config).unwrap();
+    let error = super::TrailerConfig::from_config(&config).unwrap_err();
+    assert_eq!(error.name, "fix");
+}
+
+#[rstest]
+#[case::colon(b"Key: value", Some((&b"Key"[..], &b"value"[..])))]
+#[case::equals(b" Key = value ", Some((&b"Key"[..], &b"value"[..])))]
+#[case::no_separator(b"Key", Some((&b"Key"[..], &b""[..])))]
+#[case::empty_key(b" : value", None)]
+fn trailer_arguments(#[case] argument: &[u8], #[case] expected: Option<(&[u8], &[u8])>) {
+    let config = super::TrailerConfig::default();
+    let trailer = super::Trailer::parse_argument(argument, &config);
+    assert_eq!(
+        trailer
+            .as_ref()
+            .map(|t| (t.key.as_slice(), t.value.as_slice())),
+        expected
+    );
+}

@@ -1,4 +1,4 @@
-//! Commit message text: cleanup before committing.
+//! Commit message text: cleanup before committing, and trailers.
 //!
 //! Git tidies a commit message before storing it. [`cleanup`] does the same to message bytes:
 //! [`Cleanup::Whitespace`] removes trailing whitespace on each line, collapses runs of blank lines
@@ -25,12 +25,22 @@
 //! );
 //! ```
 //!
-//! An empty result means the message had no content; Git aborts the commit in that case, and so
-//! should callers that commit edited messages. The functions here are pure: they read no files and
-//! run no editor.
+//! Trailers are the `Key: value` lines at the end of a message, such as `Signed-off-by:`.
+//! [`trailers`] lists them as `git interpret-trailers --parse` does and [`add_trailers`] adds new
+//! ones following the `trailer.*` rules that [`TrailerConfig`] reads.
+//!
+//! An empty [`cleanup`] result means the message had no content; Git aborts the commit in that
+//! case, and so should callers that commit edited messages. The functions here are pure: they read
+//! no files and run no editor.
 
 use crate::Config;
 use crate::config::InvalidValue;
+
+mod trailers;
+pub use trailers::{
+    IfExists, IfMissing, Placement, Trailer, TrailerCommandError, TrailerConfig, TrailerKey,
+    add_trailers, trailers,
+};
 
 /// How [`cleanup`] tidies a message, as Git's `commit.cleanup` modes do.
 ///

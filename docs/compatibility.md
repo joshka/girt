@@ -1240,6 +1240,24 @@ from a `-F` message before choosing (`x\n;z\n#z\n` gets `#`, while `x\n#z\n;z\n`
 reproducing `git commit -F` drop those lines first. Git deprecates `auto`. Every assignment of
 `core.commentChar` and `core.commentString` is validated, not just the last.
 
+## Commit Message Trailers
+
+`tests/message_git.rs` runs 49 original messages through `git interpret-trailers --parse` and
+through eight `--trailer` argument sets under 16 configurations, comparing every output byte for
+byte with `girt::message::trailers` and `add_trailers` (Git 2.56.0, isolated configuration). The
+corpus covers block detection (the first paragraph, comment lines, continuation lines, the 25% rule
+with `Signed-off-by: `, cherry-pick notes and configured keys, URLs, scissors lines and `---`
+dividers), separators, `trailer.where`, `trailer.ifExists` and `trailer.ifMissing` globally and per
+key, configured key abbreviations, and how Git rewrites the existing block.
+
+Rules learned from the Git CLI that its documentation does not state: a key matches a configured
+section when, without trailing `-`, it abbreviates the section name or key; a new trailer matches an
+existing one when the shorter key is a case-insensitive prefix of the longer; continuation lines do
+not count toward the 25% rule; and with no trailer block Git appends a blank line even when it adds
+no trailers. `trailer.<name>.command` and `.cmd` are refused with `TrailerCommandError` because girt
+does not run trailer commands; `--trim-empty`, `--if-exists` and the other per-invocation option
+overrides have no equivalent yet.
+
 ## Commit History
 
 `tests/support/history_git.rs` generates original commit payloads and stores them through Git
