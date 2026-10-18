@@ -3,6 +3,8 @@
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod v0;
+
 use super::shallow::{self, Deepen};
 use super::{Protocol, ServeError};
 use crate::hide_refs::HideRules;
@@ -168,7 +170,8 @@ pub enum WantPolicy {
     Advertised,
     /// Also the objects that hidden references name.
     Tips,
-    /// Also commits reachable from any reference, hidden or not.
+    /// Also commits reachable from any reference, hidden or not, and, as in Git, any object
+    /// that isn't a commit.
     Reachable,
     /// Any object in the repository.
     Any,
@@ -277,8 +280,9 @@ impl<'r> UploadPack<'r> {
         self
     }
 
-    /// Serves a full-duplex session, such as stdin and stdout under SSH: advertises capabilities,
-    /// then answers requests until the client closes its side.
+    /// Serves a full-duplex session, such as stdin and stdout under SSH: advertises references or
+    /// capabilities, then answers requests until the client closes its side. A v0 session serves
+    /// one fetch.
     ///
     /// Requests the client could correct are reported to it in an `ERR` packet before returning
     /// the error. Cancellation is checked between packets, between object reads and between pack
@@ -286,8 +290,7 @@ impl<'r> UploadPack<'r> {
     ///
     /// # Errors
     ///
-    /// Returns [`ServeError::Unsupported`] for [`Protocol::V0`], and otherwise the failure that
-    /// ended the session.
+    /// Returns the failure that ended the session.
     pub fn serve(
         &self,
         protocol: Protocol,
@@ -301,6 +304,13 @@ impl<'r> UploadPack<'r> {
             remaining: self.limits.max_request_bytes,
             cancel,
         };
+        if protocol == Protocol::V0 {
+            let result = self.serve_v0(&mut wire, output, cancel);
+            if let Err(error) = &result {
+                report(error, output, cancel);
+            }
+            return result;
+        }
         while self.answer(&mut wire, output, cancel)? {}
         Ok(())
     }
@@ -312,15 +322,15 @@ impl<'r> UploadPack<'r> {
     ///
     /// # Errors
     ///
-    /// Returns [`ServeError::Unsupported`] for [`Protocol::V0`], or the write failure.
+    /// Returns the failure to read the references or write the advertisement.
     pub fn advertise(
         &self,
         protocol: Protocol,
         output: &mut impl Write,
         cancel: &AtomicBool,
     ) -> Result<(), ServeError> {
-        if protocol != Protocol::V2 {
-            return Err(ServeError::Unsupported("protocol v0"));
+        if protocol == Protocol::V0 {
+            return self.advertise_v0(output, cancel);
         }
         let format = self.repository.object_format();
         for line in [
@@ -643,24 +653,38 @@ impl<'r> UploadPack<'r> {
                 .not
                 .push(self.peel_commit(&objects, id, cancel)?);
         }
+        // Like Git, a have that is a parent of an earlier common commit is already known to be
+        // common and isn't acknowledged again.
         let mut common = Vec::new();
+        let mut acknowledged = Vec::new();
+        let mut near = IdSet::default();
         for &have in &request.haves {
             packet::check_cancelled(cancel)?;
-            if objects.contains(have)? {
+            if near.contains(&have) {
                 common.push(have);
+                self.extend_near(&objects, &mut near, have);
+            } else if objects.contains(have)? {
+                common.push(have);
+                acknowledged.push(have);
+                self.extend_near(&objects, &mut near, have);
             }
         }
-        if !request.done {
+        // A request without haves has nothing to negotiate, and Git answers it as if done.
+        if !request.done && !request.haves.is_empty() {
             packet::packet(output, b"acknowledgments\n", cancel)?;
-            if common.is_empty() {
+            if acknowledged.is_empty() {
                 packet::packet(output, b"NAK\n", cancel)?;
             }
-            for id in &common {
+            for id in &acknowledged {
                 packet::packet(output, format!("ACK {id}\n").as_bytes(), cancel)?;
             }
-            // Haves without a common object leave the client to offer older history, and a
-            // client that asked to wait sends `done` before any pack.
-            if request.wait_for_done || common.is_empty() && !request.haves.is_empty() {
+            // Until every want reaches the common history the client is left to offer older
+            // history, as with Git, and a client that asked to wait sends `done` first.
+            let ready = !common.is_empty() && {
+                let mut budget = self.limits.history.max_commits;
+                self.reaches_common(&objects, &request.wants, &near, &mut budget, cancel)?
+            };
+            if request.wait_for_done || !ready {
                 packet::put(output, b"0000", cancel)?;
                 return Ok(());
             }
@@ -703,15 +727,20 @@ impl<'r> UploadPack<'r> {
             }
             packet::put(output, b"0001", cancel)?;
         }
+        packet::packet(output, b"packfile\n", cancel)?;
+        let band = Band::Packets(SIDEBAND_DATA);
         self.send_pack(
             &objects,
             &request,
             &common,
             &boundaries,
             &tags,
+            band,
             output,
             cancel,
-        )
+        )?;
+        packet::put(output, b"0000", cancel)?;
+        Ok(())
     }
 
     /// Resolves a `deepen-not` name as Git does: as given, then under `refs/`, `refs/tags/`,
@@ -756,10 +785,90 @@ impl<'r> UploadPack<'r> {
         Ok(peeled.target)
     }
 
+    /// Whether every want reaches a commit in `near`, so a pack can be sent.
+    ///
+    /// The walk skips commits older than the oldest in `near`. Every commit read is charged to
+    /// `budget`, which a session shares across negotiation rounds, and cancellation is checked
+    /// between reads.
+    pub(super) fn reaches_common(
+        &self,
+        objects: &crate::Objects,
+        wants: &[ObjectId],
+        near: &IdSet,
+        budget: &mut usize,
+        cancel: &AtomicBool,
+    ) -> Result<bool, ServeError> {
+        let date = |id: ObjectId| -> Option<(i64, Vec<ObjectId>)> {
+            let commit = objects.read_commit_with(id, self.limits.read).ok()?;
+            let seconds = commit
+                .committer()
+                .ok()
+                .flatten()
+                .and_then(|person| person.date().ok())
+                .map_or(0, |date| date.seconds);
+            Some((seconds, commit.parents().to_vec()))
+        };
+        let mut oldest = i64::MAX;
+        for &id in near {
+            packet::check_cancelled(cancel)?;
+            *budget = budget
+                .checked_sub(1)
+                .ok_or(ServeError::Limit("negotiation commits"))?;
+            if let Some((seconds, _)) = date(id) {
+                oldest = oldest.min(seconds);
+            }
+        }
+        for &want in wants {
+            let mut seen = IdSet::default();
+            let mut pending = vec![want];
+            let mut found = false;
+            while let Some(id) = pending.pop() {
+                if near.contains(&id) {
+                    found = true;
+                    break;
+                }
+                if !seen.insert(id) {
+                    continue;
+                }
+                packet::check_cancelled(cancel)?;
+                *budget = budget
+                    .checked_sub(1)
+                    .ok_or(ServeError::Limit("negotiation commits"))?;
+                let Some((seconds, parents)) = date(id) else {
+                    continue;
+                };
+                if seconds >= oldest {
+                    pending.extend(parents);
+                }
+            }
+            if !found {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Adds a common object and, for a commit, its parents, which Git also treats as common.
+    pub(super) fn extend_near(&self, objects: &Objects, near: &mut IdSet, id: ObjectId) {
+        near.insert(id);
+        if let Ok(commit) = objects.read_commit_with(id, self.limits.read) {
+            near.extend(commit.parents());
+        }
+    }
+
     /// Refuses the first want that the want policy doesn't allow.
     fn check_wants(&self, wants: &[ObjectId], advertised: &[Advertised]) -> Result<(), ServeError> {
         // Every request here is protocol v2.
-        let policy = self.wants.unwrap_or(WantPolicy::Any);
+        self.check_wants_with(wants, advertised, self.wants.unwrap_or(WantPolicy::Any))
+    }
+
+    /// Refuses the first want that `policy` doesn't allow.
+    fn check_wants_with(
+        &self,
+        wants: &[ObjectId],
+        advertised: &[Advertised],
+        policy: WantPolicy,
+    ) -> Result<(), ServeError> {
         let named = |reference: &&Advertised| std::iter::once(reference.id).chain(reference.peeled);
         let mut allowed: IdSet = advertised
             .iter()
@@ -792,6 +901,16 @@ impl<'r> UploadPack<'r> {
                     .collect();
                 allowed.extend(objects.walk_with(&roots, self.limits.history)?);
                 missing.retain(|want| !allowed.contains(want));
+                // Like Git, only commit wants are checked for reachability; any other object the
+                // repository has is allowed.
+                let mut commits = Vec::new();
+                for want in missing {
+                    match objects.header(want, self.limits.read)? {
+                        Some(header) if header.kind() != ObjectKind::Commit => {}
+                        _ => commits.push(want),
+                    }
+                }
+                missing = commits;
             }
             WantPolicy::Advertised | WantPolicy::Tips => {}
         }
@@ -810,6 +929,7 @@ impl<'r> UploadPack<'r> {
         common: &[ObjectId],
         boundaries: &shallow::Boundaries,
         tags: &[Advertised],
+        band: Band,
         output: &mut impl Write,
         cancel: &AtomicBool,
     ) -> Result<(), ServeError> {
@@ -849,7 +969,6 @@ impl<'r> UploadPack<'r> {
                 }
             }
         }
-        packet::packet(output, b"packfile\n", cancel)?;
         let framing = if request.ofs_delta {
             crate::pack::DeltaFraming::Offset
         } else {
@@ -857,7 +976,8 @@ impl<'r> UploadPack<'r> {
         };
         let mut band = Sideband {
             output,
-            buffer: Vec::with_capacity(SIDEBAND_DATA),
+            band,
+            buffer: Vec::new(),
             cancel,
         };
         // A thin pack may delta against objects the client is known to have.
@@ -897,7 +1017,6 @@ impl<'r> UploadPack<'r> {
             crate::pack::ReuseError::Write(error) => crate::push::PushFailure::Pack(error),
         })?;
         band.drain()?;
-        packet::put(output, b"0000", cancel)?;
         Ok(())
     }
 
@@ -949,9 +1068,19 @@ fn trim(line: &[u8]) -> &[u8] {
     line.strip_suffix(b"\n").unwrap_or(line)
 }
 
-/// Frames written bytes as sideband 1 packets of the largest size.
+/// How pack bytes reach the client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Band {
+    /// Unframed, for a v0 client without `side-band`.
+    Raw,
+    /// Sideband 1 packets carrying at most this many pack bytes.
+    Packets(usize),
+}
+
+/// Frames written bytes as sideband 1 packets, or passes them through for [`Band::Raw`].
 struct Sideband<'a, W> {
     output: &'a mut W,
+    band: Band,
     buffer: Vec<u8>,
     cancel: &'a AtomicBool,
 }
@@ -973,11 +1102,16 @@ impl<W: Write> Sideband<'_, W> {
 
 impl<W: Write> Write for Sideband<'_, W> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let room = SIDEBAND_DATA - self.buffer.len();
+        let Band::Packets(capacity) = self.band else {
+            packet::check_cancelled(self.cancel)
+                .map_err(|_| std::io::Error::other("serving cancelled"))?;
+            return self.output.write(bytes);
+        };
+        let room = capacity - self.buffer.len();
         let taken = bytes.len().min(room);
         self.buffer
             .extend_from_slice(bytes.get(..taken).unwrap_or_default());
-        if self.buffer.len() == SIDEBAND_DATA {
+        if self.buffer.len() == capacity {
             self.drain()?;
         }
         Ok(taken)
