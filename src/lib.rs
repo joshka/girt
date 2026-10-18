@@ -183,6 +183,7 @@ mod edges;
 mod error;
 pub use error::{Error, Result};
 pub mod fetch;
+pub mod filter;
 #[cfg(any(fuzzing, test))]
 #[doc(hidden)]
 pub mod fuzzing;

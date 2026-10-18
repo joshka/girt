@@ -140,6 +140,7 @@ from_domain_errors! {
     crate::content_diff::ContentReadError,
     crate::content_diff::DiffError,
     crate::fetch::FetchError,
+    crate::filter::Error,
     crate::fetch::FetchFinishError,
     crate::fetch::FetchFinishFailure,
     crate::fetch::FetchPlanError,

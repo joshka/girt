@@ -2518,6 +2518,41 @@ bare repository and a symlinked `.gitattributes`. It also checks textconv refusa
 context, and all remaining differences also occur with Git's attributes disabled. The built-in
 `rust` pattern was derived from CLI observation only.
 
+## Content Filters
+
+`filter::Pipeline` converts content between its stored and working-tree forms
+([issue 496](https://github.com/joshka/girt/issues/496)). `Repository::filters` loads the attribute
+files Git reads and `core.autocrlf`, `core.eol` and `core.safecrlf`; `Pipeline::plan` resolves the
+`text`, `eol` and `ident` attributes for one path.
+
+Line endings follow Git: `-text` and `binary` never convert; `text`, or an `eol` attribute with
+`text` unspecified, always converts; `text=auto`, or an unspecified `text` under `core.autocrlf`
+`true` or `input`, converts only content that looks like text. Content is binary for `text=auto`
+when it contains NUL, a CR not followed by LF, or more than one nonprintable byte per 128 printable
+ones, where backspace, tab, form feed and escape are printable and a final DOS end-of-file byte is
+not counted. Storing replaces CRLF with LF and keeps lone CR. Writing CRLF adds CR before each LF
+that lacks one, except that `text=auto` leaves a blob with any CR unchanged. Under `text=auto` a
+file whose staged blob already contains CR is stored unconverted, unless renormalizing. The `eol`
+attribute picks the written line ending; otherwise `core.autocrlf=true` writes CRLF, `input` writes
+LF, and `false` follows `core.eol`. `core.safecrlf` compares the working file with what writing the
+stored result would produce: `warn` reports the change, `true` refuses, `false` is silent. `ident`
+writes `$Id: <blob id> $` for `$Id$` and for `$Id:` text closed by `$` on the same line, and
+collapses both forms when storing.
+
+Paths with a `filter` or `working-tree-encoding` attribute are refused with
+`filter::Error::Unsupported` until drivers and encodings are implemented.
+
+### Content Filters Evidence
+
+`tests/filter_eol.rs` compares `Pipeline::to_repository` with the blobs `git add` stores and its
+`safecrlf=warn` warnings, and `Pipeline::to_worktree` with the files `git checkout-index` writes,
+for 8 `core.autocrlf` × `core.eol` combinations, 13 attribute lines and 11 content shapes (LF, CRLF,
+mixed, lone CR, trailing CR, NUL, no final newline, empty, control bytes, DOS end-of-file and
+`ident` keywords), on Git 2.56.0 with system and global configuration disabled. It also checks the
+staged-CR rule and `--renormalize`, and `core.safecrlf=true` refusals by exit status. Unit tests in
+`src/filter/eol.rs` pin the nonprintable-byte threshold measured with `git add` (1 per 128, 2 per
+256), and `src/filter/ident.rs` the keyword forms observed with `git add` and `git checkout`.
+
 ## Working-Tree Index
 
 `index::Index` provides bounded SHA-1/SHA-256 v2/v3/v4 parsing, construction, entry replacement and
