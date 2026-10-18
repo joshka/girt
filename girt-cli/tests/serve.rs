@@ -221,3 +221,95 @@ fn v2_wants_match_git_under_every_policy() {
         }
     }
 }
+
+/// What a shallow copy holds: its boundary commits and every commit it has.
+fn shape(repo: &Path) -> (String, String) {
+    let shallow = std::fs::read_to_string(repo.join(".git/shallow")).unwrap_or_default();
+    let commits = String::from_utf8(git(repo, &["rev-list", "--all"], b"")).unwrap();
+    (shallow, commits)
+}
+
+/// Runs `git <args>` in `repo` through girt's server or Git's, checking connectivity after.
+fn run(repo: &Path, args: &[&str], girt: bool) {
+    let server = upload_pack();
+    let mut full = vec!["-c", "protocol.version=2"];
+    full.push(args[0]);
+    if girt {
+        full.push(&server);
+    }
+    full.extend(&args[1..]);
+    git(repo, &full, b"");
+}
+
+/// A longer history, with a merge and a tag, for shallow requests.
+fn deep_origin(root: &Path) -> std::path::PathBuf {
+    let origin = origin(root, "sha1");
+    for name in ["three", "four"] {
+        commit(&origin, name);
+    }
+    git(
+        &origin,
+        &["merge", "-q", "--no-edit", "--no-gpg-sign", "side"],
+        b"",
+    );
+    for name in ["five", "six"] {
+        commit(&origin, name);
+    }
+    origin
+}
+
+#[test]
+fn shallow_depth_matches_git() {
+    shallow_requests_match_git(
+        &["--depth=2"],
+        &[
+            &["fetch", "-q", "--deepen=2"],
+            &["fetch", "-q", "--unshallow"],
+        ],
+    );
+}
+
+#[test]
+fn shallow_depth_through_merge_matches_git() {
+    shallow_requests_match_git(&["--depth=4"], &[&["fetch", "-q", "--depth=6"]]);
+}
+
+#[test]
+fn shallow_since_matches_git() {
+    shallow_requests_match_git(&["--shallow-since=@1700000000"], &[]);
+}
+
+#[test]
+fn shallow_exclude_matches_git() {
+    shallow_requests_match_git(
+        &["--shallow-exclude=light"],
+        &[&["fetch", "-q", "--shallow-exclude=inner"]],
+    );
+}
+
+fn shallow_requests_match_git(clone_args: &[&str], fetches: &[&[&str]]) {
+    let root = tempfile::tempdir().unwrap();
+    let origin = deep_origin(root.path());
+    let url = format!("file://{}", origin.display());
+    for (name, girt) in [("by-girt", true), ("by-git", false)] {
+        let mut args = vec!["clone", "-q"];
+        args.extend(clone_args);
+        args.extend([url.as_str(), name]);
+        run(root.path(), &args, girt);
+    }
+    let compare = |step: &str| {
+        let by_girt = root.path().join("by-girt");
+        git(&by_girt, &["fsck", "--strict"], b"");
+        assert_eq!(
+            shape(&by_girt),
+            shape(&root.path().join("by-git")),
+            "{step}"
+        );
+    };
+    compare("clone");
+    for fetch in fetches {
+        run(&root.path().join("by-girt"), fetch, true);
+        run(&root.path().join("by-git"), fetch, false);
+        compare(&fetch.join(" "));
+    }
+}

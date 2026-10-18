@@ -230,3 +230,139 @@ fn wait_for_done_acknowledges_without_a_pack() {
         String::from_utf8(git_upload_pack(&repo, &request)).unwrap(),
     );
 }
+
+/// The response up to the pack, which differs between servers.
+fn before_pack(response: &[u8]) -> String {
+    let text = String::from_utf8_lossy(response);
+    match text.find("000dpackfile\n") {
+        Some(end) => text[..end].to_owned(),
+        None => text.into_owned(),
+    }
+}
+
+/// `one`, `two`, then `three`, `four` on main and `side` on a branch, merged, then `five`, `six`.
+fn merge_fixture(root: &Path, format: &str) -> std::path::PathBuf {
+    let repo = root.join("repo");
+    git(
+        root,
+        &[
+            "init",
+            "-q",
+            "-b",
+            "main",
+            &format!("--object-format={format}"),
+            "repo",
+        ],
+        b"",
+    );
+    commit(&repo, "one");
+    commit(&repo, "two");
+    git(&repo, &["switch", "-q", "-c", "side"], b"");
+    commit(&repo, "side");
+    git(&repo, &["switch", "-q", "main"], b"");
+    commit(&repo, "three");
+    commit(&repo, "four");
+    git(
+        &repo,
+        &["merge", "-q", "--no-edit", "--no-gpg-sign", "side"],
+        b"",
+    );
+    commit(&repo, "five");
+    commit(&repo, "six");
+    git(
+        &repo,
+        &["tag", "-a", "--no-sign", "-m", "t", "tagged", "main~1"],
+        b"",
+    );
+    repo
+}
+
+#[rstest::rstest]
+#[case::depth_one(&[], &["deepen 1"])]
+#[case::depth_to_root(&[], &["deepen 7"])]
+#[case::deepen_past_merge(&["main~3", "side"], &["deepen 6"])]
+#[case::relative(&["main~3", "side"], &["deepen 1", "deepen-relative"])]
+#[case::unshallow(&["main~1"], &["deepen 2147483647"])]
+#[case::since(&[], &["deepen-since 1700000000"])]
+#[case::not_tag(&[], &["deepen-not tagged"])]
+#[case::not_branch(&[], &["deepen-not side"])]
+#[case::shallow_without_deepen(&["main~2"], &[])]
+fn shallow_info_matches_git(
+    #[case] client_shallow: &[&str],
+    #[case] deepen: &[&str],
+    #[values("sha1", "sha256")] format: &str,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = merge_fixture(root.path(), format);
+    let mut lines = vec![format!("want {}", rev_parse(&repo, "main"))];
+    for revision in client_shallow {
+        lines.push(format!("shallow {}", rev_parse(&repo, revision)));
+    }
+    lines.extend(deepen.iter().map(|line| (*line).to_owned()));
+    lines.push("done".to_owned());
+    let mut request = pkt("command=fetch\n");
+    request.extend(pkt(&format!("object-format={format}\n")));
+    request.extend_from_slice(b"0001");
+    for line in &lines {
+        request.extend(pkt(&format!("{line}\n")));
+    }
+    request.extend_from_slice(b"0000");
+    let by_girt = girt_respond(&repo, &request);
+    let by_git = git_upload_pack(&repo, &request);
+    assert_eq!(before_pack(&by_girt), before_pack(&by_git));
+    assert_eq!(pack_object_count(&by_girt), pack_object_count(&by_git));
+}
+
+/// The object count in the pack header of a v2 `packfile` section.
+fn pack_object_count(response: &[u8]) -> Option<u32> {
+    let start = response
+        .windows(13)
+        .position(|window| window == b"000dpackfile\n")?
+        + 13;
+    let mut rest = &response[start..];
+    let mut pack = Vec::new();
+    while rest.len() >= 4 && pack.len() < 12 {
+        let length = usize::from_str_radix(std::str::from_utf8(&rest[..4]).ok()?, 16).ok()?;
+        if length == 0 {
+            break;
+        }
+        if rest[4] == 1 {
+            pack.extend_from_slice(&rest[5..length]);
+        }
+        rest = &rest[length..];
+    }
+    Some(u32::from_be_bytes(pack.get(8..12)?.try_into().ok()?))
+}
+
+/// [`merge_fixture`] plus an unrelated `other` branch of three commits.
+fn orphan_fixture(root: &Path) -> std::path::PathBuf {
+    let repo = merge_fixture(root, "sha1");
+    git(&repo, &["switch", "-q", "--orphan", "other"], b"");
+    for name in ["o1", "o2", "o3"] {
+        commit(&repo, name);
+    }
+    git(&repo, &["switch", "-q", "main"], b"");
+    repo
+}
+
+#[rstest::rstest]
+#[case::unshallow_lifts_unrelated(&["main~2", "other"], &["deepen 2147483647"])]
+#[case::large_depth_keeps_unrelated(&["main~2", "other"], &["deepen 1000"])]
+#[case::relative_skips_unrelated(&["main~2", "other"], &["deepen 1", "deepen-relative"])]
+#[case::since_lifts_root(&["main~6"], &["deepen-since 1"])]
+#[case::boundary_without_deepen(&["main~1"], &[])]
+fn shallow_boundaries_match_git(#[case] client_shallow: &[&str], #[case] deepen: &[&str]) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = orphan_fixture(root.path());
+    let mut lines = vec![format!("want {}", rev_parse(&repo, "main"))];
+    for revision in client_shallow {
+        lines.push(format!("shallow {}", rev_parse(&repo, revision)));
+    }
+    lines.extend(deepen.iter().map(|line| (*line).to_owned()));
+    lines.push("done".to_owned());
+    let request = fetch_request(&lines);
+    let by_girt = girt_respond(&repo, &request);
+    let by_git = git_upload_pack(&repo, &request);
+    assert_eq!(before_pack(&by_girt), before_pack(&by_git));
+    assert_eq!(pack_object_count(&by_girt), pack_object_count(&by_git));
+}
