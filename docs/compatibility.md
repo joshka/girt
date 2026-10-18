@@ -2539,8 +2539,15 @@ stored result would produce: `warn` reports the change, `true` refuses, `false` 
 writes `$Id: <blob id> $` for `$Id$` and for `$Id:` text closed by `$` on the same line, and
 collapses both forms when storing.
 
-Paths with a `filter` or `working-tree-encoding` attribute are refused with
-`filter::Error::Unsupported` until drivers and encodings are implemented.
+`filter=<name>` runs `filter.<name>.clean` before the line-ending step when storing and `smudge`
+after it when writing, through `sh -c` in the working tree root with `%f` replaced by the
+shell-quoted path and `%%` by `%`. `filter::Commands::Refuse`, the default, returns
+`filter::Error::Refused` instead of running a command. A failing driver leaves content unchanged and
+is reported in `Converted::skipped`, as Git prints an error and continues; with
+`filter.<name>.required` a failure, or a missing command, is `filter::Error::Driver`, as Git exits
+128. A driver name with no configuration leaves content unchanged. Output above
+`filter::Limits::max_output_bytes` stops the command. Paths with `working-tree-encoding` are refused
+with `filter::Error::Unsupported`.
 
 ### Content Filters Evidence
 
@@ -2552,6 +2559,11 @@ mixed, lone CR, trailing CR, NUL, no final newline, empty, control bytes, DOS en
 staged-CR rule and `--renormalize`, and `core.safecrlf=true` refusals by exit status. Unit tests in
 `src/filter/eol.rs` pin the nonprintable-byte threshold measured with `git add` (1 per 128, 2 per
 256), and `src/filter/ident.rs` the keyword forms observed with `git add` and `git checkout`.
+`tests/filter_drivers.rs` compares clean and smudge output, `%f` and the working directory with
+`git add` from a subdirectory and `git checkout-index`, including a path with a quote and space, a
+failing driver, a driver combined with `text eol=crlf`, an unconfigured driver and a command that
+reads only part of its input; it checks required failures against Git's exit status, refusal, and
+the output limit.
 
 ## Working-Tree Index
 

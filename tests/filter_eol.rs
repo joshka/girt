@@ -7,7 +7,7 @@ mod pack_git;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use girt::filter::{CrlfWarning, Error, Staged};
+use girt::filter::{Commands, CrlfWarning, Error, Staged};
 use girt::workflow::Environment;
 use girt::{ObjectId, Repository};
 use pack_git::{git, git_output};
@@ -109,7 +109,7 @@ fn storing_matches_git_add() {
             let expected_warnings = warnings(&output.stderr);
 
             let repo = Repository::open(root).unwrap();
-            let mut filters = repo.filters(&environment()).unwrap();
+            let mut filters = repo.filters(&environment(), Commands::Refuse).unwrap();
             for (name, bytes) in CONTENTS {
                 let stored = git(root, &["cat-file", "blob", &format!(":{name}")], b"");
                 let ours = filters
@@ -170,10 +170,13 @@ fn writing_matches_git_checkout_index() {
             git(root, &["checkout-index", "-a", "-f"], b"");
 
             let repo = Repository::open(root).unwrap();
-            let mut filters = repo.filters(&environment()).unwrap();
+            let mut filters = repo.filters(&environment(), Commands::Refuse).unwrap();
             for ((name, bytes), id) in CONTENTS.iter().zip(ids) {
                 let written = std::fs::read(root.join(name)).unwrap();
-                let ours = filters.to_worktree(name.as_bytes(), bytes, id).unwrap();
+                let ours = filters
+                    .to_worktree(name.as_bytes(), bytes, id)
+                    .unwrap()
+                    .bytes;
                 converted += usize::from(written != **bytes);
                 if *ours != *written {
                     failures.push(format!(
@@ -220,7 +223,7 @@ fn staged_cr_keeps_auto_files_unconverted() {
             let expected = git(root, &["cat-file", "blob", ":f"], b"");
 
             let repo = Repository::open(root).unwrap();
-            let mut filters = repo.filters(&environment()).unwrap();
+            let mut filters = repo.filters(&environment(), Commands::Refuse).unwrap();
             let ours = filters
                 .to_repository(b"f", file, Staged::Blob(staged))
                 .unwrap();
@@ -258,7 +261,7 @@ fn safecrlf_true_refuses_as_git_does() {
         );
 
         let repo = Repository::open(root).unwrap();
-        let mut filters = repo.filters(&environment()).unwrap();
+        let mut filters = repo.filters(&environment(), Commands::Refuse).unwrap();
         let ours = filters.to_repository(b"f", file, Staged::Absent);
         assert_eq!(
             matches!(ours, Err(Error::UnsafeCrlf { .. })),
