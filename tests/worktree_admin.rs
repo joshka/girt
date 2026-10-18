@@ -11,7 +11,13 @@ use girt::{
 use rstest::rstest;
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let output = command
         .current_dir(root)
         .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -448,4 +454,55 @@ fn repair_permission_failure_preserves_existing_links() {
     assert!(matches!(result, Err(WorktreeAdminError::Io { .. })));
     assert_eq!(fs::read(checkout.join(".git")).unwrap(), forward);
     assert_eq!(fs::read(registration.join("gitdir")).unwrap(), backlink);
+}
+
+/// Orphan creation and missing-registration pruning do not replace Git's ordinary add/remove.
+#[test]
+fn existing_branch_add_and_live_removal_are_not_supported() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        root.path().join("main"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    let main = repo.worktree().unwrap();
+    git(
+        main,
+        &[
+            "-c",
+            "user.name=Audit",
+            "-c",
+            "user.email=audit@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "worktree audit",
+        ],
+    );
+    git(main, &["branch", "topic"]);
+    let refused = root.path().join("girt-topic");
+    assert!(
+        repo.create_orphan_worktree(&refused, &RefName::new("refs/heads/topic").unwrap(), 4)
+            .is_err()
+    );
+    assert!(!refused.exists());
+    let linked = root.path().join("git-topic");
+    git(
+        main,
+        &["worktree", "add", linked.to_str().unwrap(), "topic"],
+    );
+    let registration = repo.common_dir().join("worktrees/git-topic");
+    assert!(matches!(
+        repo.prune_worktree(
+            &registration,
+            SystemTime::now() + Duration::from_secs(60),
+            WorktreeRetirement::Confirmed
+        ),
+        Err(WorktreeAdminError::Protected(_))
+    ));
+    assert!(linked.is_dir());
+    git(main, &["worktree", "remove", linked.to_str().unwrap()]);
+    assert!(!linked.exists());
+    assert!(!registration.exists());
 }

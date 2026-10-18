@@ -172,6 +172,36 @@ boundaries with Git. `configured_ignore_revisions_are_not_applied` additionally 
 [issue 503](https://github.com/joshka/girt/issues/503), which also tracks moves, copies, textconv
 and incremental output. These comparisons use original fixtures and Git 2.56.0.
 
+## Git Capability Audit: Attributes, Tags, Worktrees and Credentials
+
+`tests/patch_attributes.rs::consumer_attributes_and_custom_macros_match_git` compares `text`, `eol`,
+`filter`, `merge`, `export-ignore`, `diff`, a custom macro and the built-in binary macro with
+`git check-attr`. `named_user_attribute_file_is_explicitly_refused` also demonstrates Git accepting
+a named-user home path for `core.attributesFile` where girt refuses it
+([issue 555](https://github.com/joshka/girt/issues/555)). Reading these values does not apply their
+consumer behavior. Attributes remain Partial: filters are tracked in
+[issue 496](https://github.com/joshka/girt/issues/496), merging in
+[issue 493](https://github.com/joshka/girt/issues/493), and archive behavior in
+[issue 526](https://github.com/joshka/girt/issues/526).
+
+`tests/tags.rs` compares annotated tags targeting all four kinds and imported framing with Git;
+`tests/revisions.rs` covers peeling. Tags remain Supported. `tests/worktree_admin.rs`,
+`tests/worktree_create.rs`, `tests/worktree_policy.rs` and `tests/worktree_repair.rs` compare Git's
+view of created, locked, repaired and pruned registrations, including files and reftable backends.
+`existing_branch_add_and_live_removal_are_not_supported` also confirms that orphan registration does
+not replace Git’s existing-branch add, and missing-checkout pruning does not replace live removal
+([issue 487](https://github.com/joshka/girt/issues/487)). Move remains absent under
+[issue 504](https://github.com/joshka/girt/issues/504); cross-worktree reference aliases are
+separately tracked in [issue 550](https://github.com/joshka/girt/issues/550).
+
+`tests/layout_shallow.rs` compares shallow walks and ancestry with Git, including refresh after Git
+deepens a clone, both formats and linked metadata. Shallow history remains Supported.
+`tests/credential_store.rs` compares store/get/erase interoperability and escaped credential fields
+with `git credential-store`. `askpass_answers_match_git_credential_fill` compares an original
+askpass program with Git's `GIT_ASKPASS` fallback. Credentials remain Supported for explicit helpers
+and askpass; applications own interactive terminal prompts. These observations use Git 2.56.0 and
+disposable original fixtures.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger

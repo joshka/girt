@@ -30,7 +30,7 @@ the path out of `git archive`). A **macro** names a group of settings: `binary` 
 `-diff -merge -text`. Diffs, merges, checkout, status and archives all consult attributes, and
 `git check-attr -a path` shows what applies to a path.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">All attributes are read; only the diff-related ones take effect.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/496">Attributes and macros match `git check-attr`; consumer gaps include filters, [merging](https://github.com/joshka/girt/issues/493) and [archive](https://github.com/joshka/girt/issues/526). Named-user `core.attributesFile` paths are refused ([#555](https://github.com/joshka/girt/issues/555)).</GirtStatus>
 
 ## Tags
 
@@ -57,7 +57,7 @@ worktrees, because a commit in one would silently change the other's checkout.
 Administration covers listing (`git worktree list`), locking a worktree on a removable drive so it
 isn't cleaned up, moving one, and pruning the records of worktrees whose directories were deleted.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/504">Add, list, lock, unlock, prune and repair; no move.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/504">Orphan add, list, lock, unlock, prune and repair; no move, existing-history add or live removal ([#487](https://github.com/joshka/girt/issues/487)). Cross-worktree ref aliases are also absent ([#550](https://github.com/joshka/girt/issues/550)).</GirtStatus>
 
 ## Shallow history
 
@@ -90,4 +90,4 @@ Git calls the helper again with `store` or `erase` (`git credential approve` and
 helpers keep working credentials and drop bad ones. If no helper answers, Git falls back to the
 program in `GIT_ASKPASS` or a terminal prompt.
 
-<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/remote/index.html">Helpers and askpass; no terminal prompts.</GirtStatus>
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/remote/index.html">Git-verified credential store and askpass protocol; applications supply terminal prompts.</GirtStatus>
