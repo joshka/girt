@@ -70,7 +70,7 @@ const ENTRIES: &[Entry] = &[
     // Top-level Git commands: every name in `git_commands.txt` appears exactly once.
     commands(&[
         "blame", "checkout", "clone", "config", "diff", "fetch", "help", "history", "init", "log",
-        "maintenance", "multi-pack-index", "push", "remote", "repo", "status", "worktree",
+        "maintenance", "multi-pack-index", "push", "remote", "repo", "reset", "status", "worktree",
     ], Hint::Same),
     commands(&["annotate"], use_(&[("annotate", "blame")])),
     commands(&["cat-file"], use_(&[
@@ -107,10 +107,6 @@ const ENTRIES: &[Entry] = &[
     commands(&["reflog"], use_(&[("reflog show", "ref log")])),
     commands(&["refs"], use_(&[("refs list", "ref list")])),
     commands(&["repack"], use_(&[("repack -a", "maintenance repack")])),
-    commands(&["reset"], use_(&[
-        ("reset --soft / --mixed", "reset --soft / reset"),
-        ("reset -- <paths>", "reset -- <paths>"),
-    ])),
     commands(&["rev-list"], use_(&[("rev-list --count", "history count"), ("rev-list", "log")])),
     commands(&["rev-parse"], use_(&[("rev-parse --verify", "object id"), ("rev-parse <ref>", "ref show")])),
     commands(&["send-pack"], use_(&[("send-pack", "push")])),
