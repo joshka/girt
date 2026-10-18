@@ -15,6 +15,9 @@
 //! [`Repository::expire_reflogs`](crate::Repository::expire_reflogs),
 //! [`Repository::retire_old_packs`](crate::Repository::retire_old_packs), and
 //! [`Repository::prune_unreachable_loose`](crate::Repository::prune_unreachable_loose).
+//! [`Repository::collect_garbage`](crate::Repository::collect_garbage) expires reflogs and prunes
+//! loose objects, and consolidates packs once they outnumber `gc.autoPackLimit`; see
+//! [`PackConsolidation`]. No other operation consolidates packs.
 //! The caller supplies [`MaintenanceIsolation`] to exclude external writers and dependent readers
 //! for the full operation. Failure reports preserve completed effects; retry from fresh scans under
 //! a new isolation guard. Read each method's platform and recovery contract before use.
@@ -226,6 +229,8 @@ pub use expire::{ExpireCause, ExpireFailure, ExpireReport};
 mod retire;
 pub use retire::{RetireCause, RetireFailure, RetireReport};
 mod compose;
+mod consolidate;
+pub use consolidate::PackConsolidation;
 mod inputs;
 #[cfg(test)]
 mod walk_tests;
@@ -337,6 +342,8 @@ pub struct RetentionPolicy {
     pub recent_cutoff: Option<SystemTime>,
     /// Reflog expiry selection; the default retains every record.
     pub reflog_expiry: ReflogExpiryPolicy,
+    /// Whether composed maintenance consolidates packs; the default follows `gc.autoPackLimit`.
+    pub pack_consolidation: PackConsolidation,
     /// Maximum names, directory entries, and graph objects visited in each bounded phase.
     pub max_entries: usize,
     /// Maximum graph edges followed in each distinct closure traversal.
@@ -394,6 +401,13 @@ impl RetentionPolicy {
     #[must_use]
     pub fn with_reflog_expiry(mut self, reflog_expiry: ReflogExpiryPolicy) -> Self {
         self.reflog_expiry = reflog_expiry;
+        self
+    }
+
+    /// Sets [`Self::pack_consolidation`].
+    #[must_use]
+    pub fn with_pack_consolidation(mut self, pack_consolidation: PackConsolidation) -> Self {
+        self.pack_consolidation = pack_consolidation;
         self
     }
 
@@ -474,6 +488,7 @@ impl Default for RetentionPolicy {
             heads: Vec::new(),
             recent_cutoff: None,
             reflog_expiry: ReflogExpiryPolicy::KeepAll,
+            pack_consolidation: PackConsolidation::Configured,
             max_entries: 1_000_000,
             max_edges: 4_000_000,
             max_bytes: 4 * 1024 * 1024 * 1024,
@@ -573,9 +588,14 @@ pub struct RetentionPlan {
     object_info: BTreeMap<ObjectId, ObjectInfo>,
     // Separate closure protects dependencies of surviving packs without affecting reflog liveness.
     protected_objects: BTreeSet<ObjectId>,
+    // Recent packs that consolidation retires: their objects join the protected closure instead.
+    folded_packs: BTreeSet<PathBuf>,
+    fold_recent_packs: bool,
     /// Successfully visited objects reachable from candidates.
     pub reachable: BTreeSet<ObjectId>,
-    /// Packs protected by `.keep` or by a recent pack modification time.
+    /// Packs protected by `.keep` or by a recent pack modification time. Planning for pack
+    /// consolidation instead protects `.keep`, promisor and other sidecar-bearing packs of any
+    /// age, and leaves recent packs retirable with all of their objects retained.
     pub protected_packs: BTreeSet<PathBuf>,
     /// Canonical alternate stores used for reads; none is owned for pruning.
     pub alternate_stores: Vec<PathBuf>,
@@ -652,6 +672,7 @@ impl Repository {
     fn observe_retention_roots(
         &self,
         policy: &RetentionPolicy,
+        fold_recent_packs: bool,
         cancel: &AtomicBool,
     ) -> RetentionPlan {
         let mut plan = RetentionPlan {
@@ -663,6 +684,8 @@ impl Repository {
             store: None,
             object_info: BTreeMap::new(),
             protected_objects: BTreeSet::new(),
+            folded_packs: BTreeSet::new(),
+            fold_recent_packs,
             reachable: BTreeSet::new(),
             protected_packs: BTreeSet::new(),
             alternate_stores: Vec::new(),
@@ -740,8 +763,19 @@ impl Repository {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn plan_retention(&self, policy: &RetentionPolicy, cancel: &AtomicBool) -> RetentionPlan {
+        self.plan_retention_folding(policy, false, cancel)
+    }
+
+    // Folding treats recent packs, other than `.keep` and promisor packs, as retirable storage
+    // whose every object stays required, rather than as whole protected packs.
+    pub(super) fn plan_retention_folding(
+        &self,
+        policy: &RetentionPolicy,
+        fold_recent_packs: bool,
+        cancel: &AtomicBool,
+    ) -> RetentionPlan {
         let _headers = crate::pack::HeaderScope::new();
-        let mut plan = self.observe_retention_roots(policy, cancel);
+        let mut plan = self.observe_retention_roots(policy, fold_recent_packs, cancel);
         if !plan.is_complete() {
             return plan;
         }
@@ -873,7 +907,12 @@ impl Repository {
         let has_old_pack = primary_packs
             .into_iter()
             .any(|(path, _)| !plan.protected_packs.contains(path));
-        if (has_candidates || has_old_pack) && !plan.protected_packs.is_empty() {
+        let retained_packs: BTreeSet<PathBuf> = plan
+            .protected_packs
+            .union(&plan.folded_packs)
+            .cloned()
+            .collect();
+        if (has_candidates || has_old_pack) && !retained_packs.is_empty() {
             let indexed: BTreeSet<_> = store
                 .primary_packs_with_paths()
                 .into_iter()
@@ -903,7 +942,7 @@ impl Repository {
             }
             let mut protected_roots = BTreeSet::new();
             for (path, pack) in store.primary_packs_with_paths() {
-                if !plan.protected_packs.contains(path) {
+                if !retained_packs.contains(path) {
                     continue;
                 }
                 for id in pack.identities() {
@@ -914,7 +953,12 @@ impl Repository {
                             return plan;
                         }
                     };
-                    let (kind, size) = match store.locate(id, policy.read, cancel) {
+                    // An earlier walk already located this identity through the same store.
+                    let known = plan.object_info.get(&id).map(|info| (info.kind, info.size));
+                    let (kind, size) = match known.map_or_else(
+                        || store.locate(id, policy.read, cancel),
+                        |info| Ok(Some(info)),
+                    ) {
                         Ok(Some(info)) => info,
                         Ok(None) => {
                             plan.fail(RetentionError::MissingProtectedObject);
@@ -930,7 +974,10 @@ impl Repository {
                         plan.object_info
                             .entry(id)
                             .or_insert(ObjectInfo { kind, size });
-                    } else {
+                    } else if !plan.required.contains(&id) {
+                        // `required` is closed under verified edges, and every consumer of the
+                        // protected closure also retains `required`, so walking it again from
+                        // here would add nothing.
                         protected_roots.insert(id);
                     }
                     if plan.protected_objects.len() > policy.max_entries {
@@ -1224,6 +1271,7 @@ fn recent_objects(
         }
         let name = dir.file_name();
         if name == "pack" {
+            let mut pack_files = BTreeSet::new();
             for file in fs::read_dir(dir.path()).map_err(RetentionError::read)? {
                 entries += 1;
                 if entries > policy.max_entries {
@@ -1243,7 +1291,9 @@ fn recent_objects(
                         plan.protected_packs.insert(path);
                     }
                 }
+                pack_files.insert(file.path());
             }
+            fold_recent_packs(plan, &pack_files);
             continue;
         }
         let Some(prefix) = name.to_str() else {
@@ -1279,6 +1329,34 @@ fn recent_objects(
         }
     }
     Ok(())
+}
+
+// Consolidation retires recent packs whose artifacts retirement can remove, keeping every object
+// they hold required. `.keep` and promisor packs, and packs with other sidecars such as cruft
+// `.mtimes`, stay protected whatever their age, so their objects stay out of the replacement.
+// Unindexed packs are invisible to readers and retirement alike, so folding leaves them as they
+// are.
+fn fold_recent_packs(plan: &mut RetentionPlan, pack_files: &BTreeSet<PathBuf>) {
+    if !plan.fold_recent_packs {
+        return;
+    }
+    for pack in pack_files.iter().filter(|path| {
+        path.extension().is_some_and(|ext| ext == "pack")
+            && pack_files.contains(&path.with_extension("idx"))
+    }) {
+        let foldable = pack_files.iter().all(|path| {
+            path.file_stem() != pack.file_stem()
+                || matches!(
+                    path.extension().and_then(|ext| ext.to_str()),
+                    Some("idx" | "pack" | "rev" | "bitmap")
+                )
+        });
+        if !foldable {
+            plan.protected_packs.insert(pack.clone());
+        } else if plan.protected_packs.remove(pack) {
+            plan.folded_packs.insert(pack.clone());
+        }
+    }
 }
 
 /// What the walk knows about one identity it has queued.

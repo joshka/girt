@@ -1065,6 +1065,242 @@ mod tests {
         assert!(error.report.removed.is_empty());
         assert!(old_index.exists());
     }
+
+    /// Three history packs, a recent unreachable blob's pack and a `.keep` pack, all newer than
+    /// any cutoff, so consolidation folds every pack except the `.keep` one.
+    fn consolidation_fixture() -> (tempfile::TempDir, Vec<String>) {
+        let root = tempfile::tempdir().unwrap();
+        git(root.path(), &["init", "--bare", "--template=", "."], b"");
+        let keep = git(root.path(), &["hash-object", "-w", "--stdin"], b"kept\n");
+        let checksum = git(
+            root.path(),
+            &[
+                "-c",
+                "pack.writeReverseIndex=true",
+                "pack-objects",
+                "-q",
+                "objects/pack/pack",
+            ],
+            format!("{keep}\n").as_bytes(),
+        );
+        fs::write(
+            root.path()
+                .join(format!("objects/pack/pack-{checksum}.keep")),
+            b"",
+        )
+        .unwrap();
+        let mut parent: Option<String> = None;
+        for number in 0..3 {
+            let blob = git(
+                root.path(),
+                &["hash-object", "-w", "--stdin"],
+                format!("content {number}\n").as_bytes(),
+            );
+            let tree = git(
+                root.path(),
+                &["mktree"],
+                format!("100644 blob {blob}\tfile\n").as_bytes(),
+            );
+            let mut args = vec!["commit-tree", tree.as_str()];
+            if let Some(parent) = &parent {
+                args.extend(["-p", parent.as_str()]);
+            }
+            let commit = git(root.path(), &args, b"commit\n");
+            git(
+                root.path(),
+                &["update-ref", "refs/heads/main", &commit],
+                b"",
+            );
+            git(
+                root.path(),
+                &[
+                    "pack-objects",
+                    "-q",
+                    "--revs",
+                    "--incremental",
+                    "objects/pack/pack",
+                ],
+                b"refs/heads/main\n",
+            );
+            parent = Some(commit);
+        }
+        let unreachable = git(
+            root.path(),
+            &["hash-object", "-w", "--stdin"],
+            b"unreachable\n",
+        );
+        git(
+            root.path(),
+            &[
+                "-c",
+                "pack.writeReverseIndex=true",
+                "pack-objects",
+                "-q",
+                "objects/pack/pack",
+            ],
+            format!("{unreachable}\n").as_bytes(),
+        );
+        git(root.path(), &["prune-packed"], b"");
+        let objects = git(
+            root.path(),
+            &[
+                "cat-file",
+                "--batch-all-objects",
+                "--batch-check=%(objectname)",
+            ],
+            b"",
+        );
+        (root, objects.lines().map(str::to_owned).collect())
+    }
+
+    fn consolidate_at(
+        repository: &Repository,
+        remove: impl FnMut(&Path) -> io::Result<()>,
+        sync_directory: impl FnMut(&Path) -> io::Result<()>,
+    ) -> Result<RetireReport, RetireFailure> {
+        let policy = RetentionPolicy::default();
+        let cancel = AtomicBool::new(false);
+        let mut session =
+            super::super::inputs::Session::new_folding(repository, &policy, true, &cancel).unwrap();
+        repository.retire_planned_at(
+            &policy,
+            RepackLimits::default(),
+            &cancel,
+            Some(&mut session),
+            || {},
+            (remove, sync_directory),
+        )
+    }
+
+    /// Runs consolidation until an injected failure at the given removal or directory-sync call.
+    /// Removal order per old pack is index, directory sync, reverse index, pack, directory sync;
+    /// publication first syncs the pack and object directories.
+    fn crash_consolidation_at(
+        fail_remove: Option<usize>,
+        fail_sync: Option<usize>,
+    ) -> (tempfile::TempDir, Vec<String>, Option<PathBuf>) {
+        let (root, before) = consolidation_fixture();
+        let repository = Repository::open(root.path()).unwrap();
+        let (mut removes, mut syncs) = (0, 0);
+        let error = consolidate_at(
+            &repository,
+            |path| {
+                removes += 1;
+                if Some(removes) == fail_remove {
+                    return Err(io::ErrorKind::Interrupted.into());
+                }
+                fs::remove_file(path)
+            },
+            |directory| {
+                syncs += 1;
+                if Some(syncs) == fail_sync {
+                    return Err(io::ErrorKind::Interrupted.into());
+                }
+                File::open(directory).and_then(|dir| dir.sync_all())
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error.cause, RetireCause::Io(_)));
+        assert!(error.report.published.is_some());
+        (root, before, error.uncertain)
+    }
+
+    // A crash at each removal or directory-sync boundary leaves every object readable by Git and
+    // by a fresh girt store.
+    // `uncertain` is the extension of the path the failure report names: the artifact whose
+    // removal failed, the index whose unlink was not synced, or the pack directory otherwise.
+    #[rstest::rstest]
+    #[case::first_index_unlink(Some(1), None, "idx")]
+    #[case::first_reverse_index_unlink(Some(2), None, "rev")]
+    #[case::first_pack_unlink(Some(3), None, "pack")]
+    #[case::second_index_unlink(Some(4), None, "idx")]
+    #[case::pack_directory_sync_after_publication(None, Some(1), "")]
+    #[case::object_directory_sync_after_publication(None, Some(2), "")]
+    #[case::sync_after_first_index_unlink(None, Some(3), "idx")]
+    #[case::sync_after_first_pair(None, Some(4), "pack")]
+    fn consolidation_crash_points_keep_every_object_readable(
+        #[case] fail_remove: Option<usize>,
+        #[case] fail_sync: Option<usize>,
+        #[case] uncertain: &str,
+    ) {
+        let (root, before, failed_at) = crash_consolidation_at(fail_remove, fail_sync);
+        let failed_extension = failed_at
+            .as_deref()
+            .and_then(Path::extension)
+            .map(|ext| ext.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        assert_eq!(failed_extension, uncertain);
+
+        git(root.path(), &["fsck", "--full", "--strict"], b"");
+        let present = git(
+            root.path(),
+            &[
+                "cat-file",
+                "--batch-all-objects",
+                "--batch-check=%(objectname)",
+            ],
+            b"",
+        );
+        assert_eq!(present.lines().collect::<Vec<_>>(), before);
+        let objects = Repository::open(root.path())
+            .unwrap()
+            .objects_with(crate::PackLimits::default())
+            .unwrap();
+        let unreadable: Vec<_> = before
+            .iter()
+            .filter(|id| {
+                objects
+                    .read_with(id.parse().unwrap(), crate::ReadLimits::default())
+                    .ok()
+                    .flatten()
+                    .is_none()
+            })
+            .collect();
+        assert!(unreadable.is_empty(), "{unreadable:?}");
+    }
+
+    // A crash that leaves no unindexed old pack is finished by the next consolidation. An
+    // unindexed recent pack instead stays protected, so planning refuses it until it ages.
+    #[rstest::rstest]
+    #[case::first_index_unlink(Some(1), None)]
+    #[case::second_index_unlink(Some(4), None)]
+    #[case::pack_directory_sync_after_publication(None, Some(1))]
+    #[case::object_directory_sync_after_publication(None, Some(2))]
+    #[case::sync_after_first_pair(None, Some(4))]
+    fn next_consolidation_finishes_after_a_crash(
+        #[case] fail_remove: Option<usize>,
+        #[case] fail_sync: Option<usize>,
+    ) {
+        let (root, before, _) = crash_consolidation_at(fail_remove, fail_sync);
+
+        let repository = Repository::open(root.path()).unwrap();
+        consolidate_at(
+            &repository,
+            |path| fs::remove_file(path),
+            |directory| File::open(directory).and_then(|dir| dir.sync_all()),
+        )
+        .unwrap();
+
+        let packs = fs::read_dir(root.path().join("objects/pack"))
+            .unwrap()
+            .filter(|entry| {
+                let path = entry.as_ref().unwrap().path();
+                path.extension().is_some_and(|ext| ext == "pack")
+            })
+            .count();
+        assert_eq!(packs, 2, "the .keep pack and one consolidated pack");
+        let present = git(
+            root.path(),
+            &[
+                "cat-file",
+                "--batch-all-objects",
+                "--batch-check=%(objectname)",
+            ],
+            b"",
+        );
+        assert_eq!(present.lines().collect::<Vec<_>>(), before);
+        git(root.path(), &["fsck", "--full", "--strict"], b"");
+    }
 }
 
 /// Multi-pack index files in a pack directory: the index, its bitmaps and reverse indexes, and an

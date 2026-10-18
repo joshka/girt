@@ -671,7 +671,7 @@ fn no_expiry_possible(
     policy: &RetentionPolicy,
     cancel: &AtomicBool,
 ) -> Result<bool, ExpireFailure> {
-    let plan = repository.observe_retention_roots(policy, cancel);
+    let plan = repository.observe_retention_roots(policy, false, cancel);
     check(cancel, &ExpireReport::default())?;
     if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
         return Err(failed(
