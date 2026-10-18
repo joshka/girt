@@ -68,3 +68,35 @@ fn unsupported_names_are_not_silently_skipped() {
         ));
     }
 }
+
+#[path = "support/maintenance_git.rs"]
+mod maintenance_git;
+
+#[test]
+fn git_explicit_task_ignores_disabled_and_malformed_selection_config() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    maintenance_git::git(
+        root,
+        &["init", "--bare", "--template=", "--ref-format=files", "-q"],
+        b"",
+    );
+    maintenance_git::git(
+        root,
+        &[
+            "-c",
+            "maintenance.pack-refs.enabled=false",
+            "-c",
+            "maintenance.auto=bogus",
+            "-c",
+            "maintenance.strategy=bogus",
+            "maintenance",
+            "run",
+            "--task=pack-refs",
+        ],
+        b"",
+    );
+    assert!(root.join("packed-refs").is_file());
+    let selected = TaskSelection::explicit(&[Task::PackRefs]).unwrap();
+    assert_eq!(selected.tasks(), &[Task::PackRefs]);
+}
