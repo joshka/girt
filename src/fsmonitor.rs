@@ -223,6 +223,11 @@ impl Repository {
 }
 
 impl Monitor {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn worktree(&self) -> &std::path::Path {
+        &self.root
+    }
+
     /// Queries with default response limits and a cancellation flag that is never set.
     ///
     /// See [`Self::query_with`] for execution, protocol and freshness contracts.

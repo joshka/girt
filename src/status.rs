@@ -30,6 +30,13 @@
 //! assume-unchanged and skip-worktree promises; raw status inspects those files. No index
 //! refresh, locks, hooks, writes, rename detection, staging or checkout occur.
 //!
+//! [`Scan`] composes configured status with optional path selection, filters and an explicitly
+//! authorized filesystem monitor. Its checkpoint and dirty bits can avoid tracked stat calls;
+//! existing status methods never query hooks. Collapsed whole-tree listing can reuse UNTR under
+//! exact byte name policy after checking its environment, ignore inputs and directory metadata.
+//! [`Report::untracked_cache`] records reused listings or a typed fallback reason. Other listing
+//! and name policies retain ordinary traversal. Neither cache makes the report an atomic snapshot.
+//!
 //! Status never writes back the stat words it could have learned, so a file whose stat went stale
 //! but whose content did not is read by every call.
 //! [`Repository::refresh_index`](crate::Repository::refresh_index) is the explicit write that
@@ -82,7 +89,10 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 mod refresh;
+mod scan;
 mod types;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod untracked;
 mod workflow;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) use workflow::nested_status;
@@ -90,4 +100,5 @@ pub(crate) use workflow::nested_status;
 pub(crate) mod worktree;
 
 pub use refresh::Refresh;
+pub use scan::Scan;
 pub use types::*;
