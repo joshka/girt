@@ -15,107 +15,11 @@ use std::collections::BTreeSet;
 
 use crate::{ObjectFormat, ObjectKind, Tree};
 
-/// Severity assigned before caller-specific policy overrides.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum Severity {
-    /// Corruption that makes an integrity check fail.
-    Error,
-    /// Accepted historical data that deserves attention.
-    Warning,
-    /// Informational compatibility observation.
-    Info,
-    /// Suppressed by an explicit caller policy.
-    Ignore,
-}
+mod message;
+mod policy;
 
-/// A Git fsck diagnostic category.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
-pub enum MessageId {
-    /// Unreadable tree framing.
-    BadTree,
-    /// Unreadable commit framing or graph headers.
-    BadCommit,
-    /// Unreadable annotated tag framing.
-    BadTagObject,
-    /// A tree contains the same byte name more than once.
-    DuplicateEntries,
-    /// Tree entries violate Git's directory ordering.
-    TreeNotSorted,
-    /// An entry has an empty name.
-    EmptyName,
-    /// An entry contains a slash.
-    FullPathname,
-    /// An entry is named `.`.
-    HasDot,
-    /// An entry is named `..`.
-    HasDotdot,
-    /// An entry names repository metadata.
-    HasDotgit,
-    /// An entry has a zero object identity.
-    NullSha1,
-    /// A mode starts with a redundant zero.
-    ZeroPaddedFilemode,
-    /// A commit lacks an author record.
-    MissingAuthor,
-    /// A commit lacks a committer record.
-    MissingCommitter,
-    /// Identity framing is malformed.
-    BadName,
-    /// An identity timestamp or timezone is malformed.
-    BadDate,
-    /// A tag lacks a tagger record.
-    MissingTaggerEntry,
-    /// A mode is not one of Git's accepted file modes.
-    BadFilemode,
-}
-
-impl MessageId {
-    /// Git's case-sensitive diagnostic spelling (configuration keys are case-insensitive).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::BadTree => "badTree",
-            Self::BadCommit => "badCommit",
-            Self::BadTagObject => "badTagObject",
-            Self::DuplicateEntries => "duplicateEntries",
-            Self::TreeNotSorted => "treeNotSorted",
-            Self::EmptyName => "emptyName",
-            Self::FullPathname => "fullPathname",
-            Self::HasDot => "hasDot",
-            Self::HasDotdot => "hasDotdot",
-            Self::HasDotgit => "hasDotgit",
-            Self::NullSha1 => "nullSha1",
-            Self::ZeroPaddedFilemode => "zeroPaddedFilemode",
-            Self::BadFilemode => "badFilemode",
-            Self::MissingAuthor => "missingAuthor",
-            Self::MissingCommitter => "missingCommitter",
-            Self::BadName => "badName",
-            Self::BadDate => "badDate",
-            Self::MissingTaggerEntry => "missingTaggerEntry",
-        }
-    }
-
-    /// Default Git severity; strict checking promotes warnings to errors.
-    pub fn severity(self, strict: bool) -> Severity {
-        match self {
-            Self::MissingTaggerEntry => Severity::Info,
-            Self::BadFilemode => Severity::Warning,
-            Self::EmptyName
-            | Self::FullPathname
-            | Self::HasDot
-            | Self::HasDotdot
-            | Self::HasDotgit
-            | Self::NullSha1
-            | Self::ZeroPaddedFilemode
-                if !strict =>
-            {
-                Severity::Warning
-            }
-            _ => Severity::Error,
-        }
-    }
-}
+pub use message::{MessageId, Severity};
+pub use policy::{Policy, PolicyError, PolicyLimits, Scope};
 
 /// One payload defect. Repeated instances of the same category are reported once per object.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -123,6 +27,8 @@ impl MessageId {
 pub struct Finding {
     /// Stable category for configuration and machine-readable reports.
     pub message_id: MessageId,
+    /// Effective severity after strict mode and configured overrides.
+    pub severity: Severity,
 }
 
 /// Checks one already bounded payload without resolving its object references.
@@ -131,8 +37,19 @@ pub struct Finding {
 /// reserved names, null IDs and mode spellings. Commit and tag checks validate graph headers,
 /// required identities and readable dates. The complete Git fsck message catalogue is not covered.
 /// Memory is proportional to the supplied payload; bound storage reads before calling this.
-/// Results are sorted by category and contain no duplicate categories.
+/// Results use default, non-strict reporting severities, are sorted by category and contain no
+/// duplicate categories. Use [`Policy::check_object`] for configured or strict checks.
 pub fn check_object(format: ObjectFormat, kind: ObjectKind, data: &[u8]) -> Vec<Finding> {
+    check_payload(format, kind, data, 4096, false)
+}
+
+fn check_payload(
+    format: ObjectFormat,
+    kind: ObjectKind,
+    data: &[u8],
+    max_name: usize,
+    strict: bool,
+) -> Vec<Finding> {
     let mut ids = BTreeSet::new();
     match kind {
         ObjectKind::Blob => {}
@@ -162,10 +79,13 @@ pub fn check_object(format: ObjectFormat, kind: ObjectKind, data: &[u8]) -> Vec<
                 _ => {}
             },
         },
-        ObjectKind::Tree => check_tree(format, data, &mut ids),
+        ObjectKind::Tree => check_tree(format, data, &mut ids, max_name, strict),
     }
     ids.into_iter()
-        .map(|message_id| Finding { message_id })
+        .map(|message_id| Finding {
+            message_id,
+            severity: message_id.severity(false),
+        })
         .collect()
 }
 
@@ -188,7 +108,13 @@ fn check_identity(
     }
 }
 
-fn check_tree(format: ObjectFormat, data: &[u8], ids: &mut BTreeSet<MessageId>) {
+fn check_tree(
+    format: ObjectFormat,
+    data: &[u8],
+    ids: &mut BTreeSet<MessageId>,
+    max_name: usize,
+    strict: bool,
+) {
     let Ok(tree) = Tree::parse(format, data) else {
         ids.insert(MessageId::BadTree);
         return;
@@ -205,6 +131,9 @@ fn check_tree(format: ObjectFormat, data: &[u8], ids: &mut BTreeSet<MessageId>) 
         }
         previous = Some(entry);
         let name = entry.name.as_slice();
+        if name.len() > max_name {
+            ids.insert(MessageId::LargePathname);
+        }
         match name {
             b"" => {
                 ids.insert(MessageId::EmptyName);
@@ -235,10 +164,12 @@ fn check_tree(format: ObjectFormat, data: &[u8], ids: &mut BTreeSet<MessageId>) 
                     .checked_mul(8)?
                     .checked_add(u32::from(byte.checked_sub(b'0')?))
             });
-            if !matches!(
-                numeric,
-                Some(0o40000 | 0o100644 | 0o100664 | 0o100755 | 0o120000 | 0o160000)
-            ) {
+            if (strict && numeric == Some(0o100664))
+                || !matches!(
+                    numeric,
+                    Some(0o40000 | 0o100644 | 0o100664 | 0o100755 | 0o120000 | 0o160000)
+                )
+            {
                 ids.insert(MessageId::BadFilemode);
             }
             if let Some((_, tail)) = crate::bytes::split_once(tail, 0) {
@@ -262,6 +193,12 @@ pub struct Options {
     pub read: crate::ReadLimits,
     /// Skip payload convention checks while still decoding and following graph edges.
     pub connectivity_only: bool,
+    /// Promote default warnings to errors, without changing explicit severity overrides.
+    pub strict: bool,
+    /// Explicit policy, or repository `fsck.*` configuration when absent.
+    pub policy: Option<Policy>,
+    /// Base for relative skip-list paths; defaults to the worktree or bare Git directory.
+    pub skip_list_base: Option<std::path::PathBuf>,
 }
 
 /// A defect associated with a stored object or one of its dependencies.
@@ -312,10 +249,32 @@ pub struct Report {
     pub dangling: BTreeSet<crate::ObjectId>,
 }
 
+impl ObjectFinding {
+    /// Effective severity; missing, mistyped and unreadable objects always remain errors.
+    pub fn severity(&self) -> Severity {
+        match self {
+            Self::Payload { finding, .. } => finding.severity,
+            _ => Severity::Error,
+        }
+    }
+}
+
+impl Report {
+    /// Whether a completed scan reports corruption requiring a failing command exit status.
+    pub fn has_errors(&self) -> bool {
+        self.findings
+            .iter()
+            .any(|finding| matches!(finding.severity(), Severity::Error | Severity::Fatal))
+    }
+}
+
 /// A scan could not establish complete inventory or root discovery.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// Configured message policy or skip-list loading failed.
+    #[error(transparent)]
+    Policy(#[from] PolicyError),
     /// Storage inventory or pack verification failed.
     #[error(transparent)]
     Objects(#[from] crate::ObjectReadError),
@@ -368,6 +327,24 @@ impl crate::Repository {
         use std::collections::BTreeMap;
         use std::sync::atomic::Ordering;
 
+        let configured;
+        let policy = if let Some(policy) = &options.policy {
+            policy
+        } else {
+            let base = options
+                .skip_list_base
+                .as_deref()
+                .or(self.worktree())
+                .unwrap_or(self.git_dir());
+            configured = Policy::from_config(
+                self.config(),
+                Scope::Repository,
+                self.object_format(),
+                base,
+                PolicyLimits::default(),
+            )?;
+            &configured
+        };
         let roots = self
             .integrity_roots(&options.roots, cancel)
             .map_err(Box::new)?;
@@ -425,7 +402,8 @@ impl crate::Repository {
             }
             if !options.connectivity_only {
                 report.findings.extend(
-                    check_object(id.format(), object.kind(), object.data())
+                    policy
+                        .check_object(id, object.kind(), object.data(), options.strict)
                         .into_iter()
                         .map(|finding| ObjectFinding::Payload { id, finding }),
                 );
@@ -447,7 +425,10 @@ impl crate::Repository {
                 };
                 report.findings.push(ObjectFinding::Payload {
                     id,
-                    finding: Finding { message_id },
+                    finding: Finding {
+                        message_id,
+                        severity: Severity::Error,
+                    },
                 });
             }
             edge_count = edge_count
