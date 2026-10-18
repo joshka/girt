@@ -952,6 +952,7 @@ fn case_alias_status_requires_git_policy() {
     let root = repo.worktree().unwrap();
     fs::rename(root.join("file"), root.join("FILE")).unwrap();
     if !root.join("file").exists() {
+        eprintln!("skipping case-alias comparison: the fixture volume is case-sensitive");
         return;
     }
     assert!(

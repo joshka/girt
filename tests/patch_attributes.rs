@@ -435,6 +435,9 @@ fn consumer_attributes_and_custom_macros_match_git() {
 }
 
 /// The configured-source limitation also affects attributes, independently of ignore matching.
+///
+/// This fixture deliberately creates a temporary directory in the real home so Git can resolve
+/// `~user` through the user database. It requires a writable HOME matching that user's home.
 #[cfg(unix)]
 #[test]
 fn named_user_attribute_file_is_explicitly_refused() {

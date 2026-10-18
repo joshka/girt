@@ -1861,3 +1861,65 @@ fn long_side_history() -> Vec<Vec<usize>> {
     parents.push(vec![128, 127]);
     parents
 }
+
+/// Default Git fetch follows reachable tags and records FETCH_HEAD; girt leaves both to callers.
+#[test]
+fn automatic_tags_and_fetch_head_remain_caller_owned() {
+    let source = Source::new();
+    let (_root, repository) = destination();
+    let (_git_root, oracle) = destination();
+    let spec = "refs/heads/main:refs/remotes/origin/main";
+    fetch(&repository, &source, &[spec]);
+    git(
+        oracle.git_dir(),
+        &["fetch", source.root.path().to_str().unwrap(), spec],
+        b"",
+    );
+    assert!(stored(&oracle, "refs/tags/v1").is_some());
+    assert_eq!(stored(&repository, "refs/tags/v1"), None);
+    assert!(oracle.git_dir().join("FETCH_HEAD").is_file());
+    assert!(!repository.git_dir().join("FETCH_HEAD").exists());
+    assert_available(&repository, source.first);
+}
+
+/// Git can deliberately omit blobs; the current girt fetch surface requests complete closure.
+#[test]
+fn git_partial_clone_filter_has_no_girt_fetch_equivalent() {
+    let source = Source::new();
+    git(
+        source.root.path(),
+        &["config", "uploadpack.allowFilter", "true"],
+        b"",
+    );
+    let parent = tempfile::tempdir().unwrap();
+    let filtered = parent.path().join("filtered.git");
+    git(
+        parent.path(),
+        &[
+            "clone",
+            "--bare",
+            "--no-local",
+            "--filter=blob:none",
+            source.root.path().to_str().unwrap(),
+            filtered.to_str().unwrap(),
+        ],
+        b"",
+    );
+    let missing = git(
+        &filtered,
+        &["rev-list", "--objects", "--all", "--missing=print"],
+        b"",
+    );
+    assert!(
+        String::from_utf8_lossy(&missing)
+            .lines()
+            .any(|line| line == format!("?{}", source.blob))
+    );
+    let (_root, repository) = destination();
+    fetch(
+        &repository,
+        &source,
+        &["refs/heads/*:refs/remotes/origin/*"],
+    );
+    assert_available(&repository, source.blob);
+}

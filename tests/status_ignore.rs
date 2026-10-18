@@ -489,6 +489,9 @@ fn configured_sources_are_bounded_and_never_block() {
 }
 
 /// A real user's home resolves independently of HOME in Git, unlike girt's explicit refusal.
+///
+/// This fixture deliberately creates a temporary directory in the real home so Git can resolve
+/// `~user` through the user database. It requires a writable HOME matching that user's home.
 #[test]
 fn existing_user_home_excludes_are_a_git_compatibility_gap() {
     let user = Command::new("id").arg("-un").output().unwrap();

@@ -38,7 +38,7 @@ asks the server to leave out file contents and fetches them later on demand.
 **Clone** is `git init`, then adding the remote, a fetch, and a
 [checkout](/girt/how-git-works/working-tree/#checkout-of-a-tree) of the default branch.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/505">Protocol v0 and v2, depth and pruning; HTTP sends all haves in one round, tags aren't followed, and partial clone isn't supported.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/505">Protocol v0 and v2, depth and pruning; HTTP sends all haves in one round, tags aren't followed, `FETCH_HEAD` isn't written, and partial clone isn't supported.</GirtStatus>
 
 ## Push
 
@@ -67,4 +67,4 @@ The same protocol runs over three transports:
 - **SSH**: the client runs `ssh host git-upload-pack 'repo.git'` (or `git-receive-pack`) and speaks
   the protocol over the connection.
 
-<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/transport/index.html">Local is built in; HTTP and SSH are the `http` and `ssh` features. SSH uses system OpenSSH on macOS and Linux.</GirtStatus>
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/transport/index.html">Local is built in; HTTP and SSH are the `http` and `ssh` features. HTTP/SSH v2 clients are Git-verified. SSH uses system OpenSSH on macOS and Linux; intermittent fixture exits remain under [investigation](https://github.com/joshka/girt/issues/572).</GirtStatus>
