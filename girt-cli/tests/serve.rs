@@ -885,3 +885,57 @@ fn update_instead_with_line_ending_conversion_matches_git() {
     };
     push_matches_git(false, &server, &new_commit, &["main"]);
 }
+
+#[test]
+fn atomic_push_matches_git() {
+    let args = [
+        "--atomic",
+        "main",
+        "HEAD:refs/heads/new",
+        ":refs/heads/side",
+    ];
+    push_matches_git(true, &|_| {}, &new_commit, &args);
+    let deny = |repo: &Path| git(repo, &["config", "receive.denyDeletes", "true"], b"").clear();
+    push_matches_git(true, &deny, &new_commit, &args);
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_push_with_declining_hook_matches_git() {
+    let update = |repo: &Path| {
+        hook(
+            repo,
+            "update",
+            r#"test "$1" = refs/heads/new && exit 1; exit 0"#,
+        );
+    };
+    let args = [
+        "--atomic",
+        "main",
+        "HEAD:refs/heads/new",
+        ":refs/heads/side",
+    ];
+    push_matches_git(true, &update, &new_commit, &args);
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_push_stops_at_the_first_declined_hook_as_git_does() {
+    let update = |repo: &Path| {
+        hook(repo, "update", r#"echo "$1" >> "$GIT_DIR/updates"; exit 1"#);
+    };
+    let args = [
+        "--atomic",
+        "main",
+        "HEAD:refs/heads/new",
+        ":refs/heads/side",
+    ];
+    push_matches_git(true, &update, &new_commit, &args);
+}
+
+#[test]
+fn atomic_push_with_a_locked_ref_matches_git() {
+    let locked = |repo: &Path| std::fs::write(repo.join("refs/heads/new.lock"), "").unwrap();
+    let args = ["--atomic", "main", "HEAD:refs/heads/new"];
+    push_matches_git(true, &locked, &new_commit, &args);
+}
