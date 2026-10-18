@@ -20,9 +20,12 @@
 //!
 //! Parsing follows the `git help gitformat-commit-graph` format documentation. Unknown chunks are
 //! ignored. Bloom filters are not interpreted by this parser. Split files require their base
-//! layers and are rejected by the single-file entry point.
+//! layers through [`CommitGraph::parse_chain`].
 
+mod store;
 use std::collections::BTreeMap;
+
+pub use store::{GraphLoadError, GraphVerifyError};
 
 use crate::{ObjectFormat, ObjectId};
 
@@ -115,57 +118,57 @@ impl CommitGraph {
         format: ObjectFormat,
         limits: GraphLimits,
     ) -> Result<Self, GraphError> {
-        let chunks = Chunks::parse(bytes, format, limits)?;
-        if bytes[7] != 0 {
-            return Err(GraphError::Unsupported("split graph requires base layers"));
+        let commits = parse_layer(bytes, format, limits, &[], &[], &mut { limits.max_parents })?;
+        Ok(Self { commits })
+    }
+
+    /// Parses a split chain supplied in base-to-tip order with default bounds.
+    ///
+    /// # Errors
+    ///
+    /// Rejects damaged layers, missing or reordered bases, duplicate commits and exhausted
+    /// aggregate bounds. An empty chain produces an empty index. Every layer must use `format`.
+    pub fn parse_chain(layers: &[&[u8]], format: ObjectFormat) -> Result<Self, GraphError> {
+        Self::parse_chain_with(layers, format, GraphLimits::default())
+    }
+
+    /// Parses a split chain under aggregate byte, commit and parent bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::parse_chain`]. At most 256 layers are accepted because
+    /// the format's base-count field has one byte. Layer bytes are retained only by the caller.
+    pub fn parse_chain_with(
+        layers: &[&[u8]],
+        format: ObjectFormat,
+        limits: GraphLimits,
+    ) -> Result<Self, GraphError> {
+        if layers.len() > 256 {
+            return Err(GraphError::Limit("chain layers"));
         }
-        let fanout = chunks.required(b"OIDF")?;
-        if fanout.len() != 1024 {
-            return Err(bad("fanout length"));
+        let total = layers.iter().try_fold(0usize, |total, layer| {
+            total
+                .checked_add(layer.len())
+                .ok_or(GraphError::Limit("bytes"))
+        })?;
+        if total > limits.max_bytes {
+            return Err(GraphError::Limit("bytes"));
         }
-        let count = word(fanout, 1020)? as usize;
-        if count > limits.max_commits {
-            return Err(GraphError::Limit("commits"));
-        }
-        let ids = chunks.required(b"OIDL")?;
-        let data = chunks.required(b"CDAT")?;
-        let width = format.digest_len();
-        if ids.len() / width != count
-            || ids.len() % width != 0
-            || data.len() != count * (width + 16)
-        {
-            return Err(bad("commit table length"));
-        }
-        validate_fanout(fanout, ids, width)?;
-        let ids: Vec<_> = ids
-            .chunks_exact(width)
-            .map(|bytes| id(format, bytes))
-            .collect::<Result<_, _>>()?;
-        let generation = chunks.optional(b"GDA2");
-        if generation.is_some_and(|g| g.len() != count * 4) {
-            return Err(bad("generation table length"));
-        }
-        let mut commits = Vec::with_capacity(count);
+        let mut commits = Vec::new();
+        let mut ids = Vec::new();
+        let mut hashes = Vec::new();
         let mut parents_left = limits.max_parents;
-        for (index, record) in data.chunks_exact(width + 16).enumerate() {
-            let positions = parent_positions(record, width, &chunks, &mut parents_left)?;
-            let parents = positions
-                .into_iter()
-                .map(|p| ids.get(p as usize).copied().ok_or(bad("parent position")))
-                .collect::<Result<_, _>>()?;
-            let high = word(record, width + 8)?;
-            let commit_time = (u64::from(high & 3) << 32) | u64::from(word(record, width + 12)?);
-            let corrected_commit_date = generation
-                .map(|g| corrected_date(g, index, commit_time, &chunks))
-                .transpose()?;
-            commits.push(GraphCommit {
-                id: ids[index],
-                tree: id(format, &record[..width])?,
-                parents,
-                commit_time,
-                generation: high >> 2,
-                corrected_commit_date,
-            });
+        for bytes in layers {
+            let mut remaining = limits;
+            remaining.max_commits = limits.max_commits - commits.len();
+            let layer = parse_layer(bytes, format, remaining, &ids, &hashes, &mut parents_left)?;
+            ids.extend(layer.iter().map(|c| c.id));
+            commits.extend(layer);
+            hashes.push(id(format, &bytes[bytes.len() - format.digest_len()..])?);
+        }
+        commits.sort_unstable_by_key(|c| c.id);
+        if commits.windows(2).any(|pair| pair[0].id == pair[1].id) {
+            return Err(bad("duplicate commit across layers"));
         }
         Ok(Self { commits })
     }
@@ -182,6 +185,83 @@ impl CommitGraph {
             .ok()
             .map(|i| &self.commits[i])
     }
+}
+
+fn parse_layer(
+    bytes: &[u8],
+    format: ObjectFormat,
+    limits: GraphLimits,
+    bases: &[ObjectId],
+    hashes: &[ObjectId],
+    parents_left: &mut usize,
+) -> Result<Vec<GraphCommit>, GraphError> {
+    let chunks = Chunks::parse(bytes, format, limits)?;
+    if usize::from(bytes[7]) != hashes.len() {
+        return Err(bad("base graph count"));
+    }
+    let base_bytes = chunks.optional(b"BASE").unwrap_or_default();
+    let expected: Vec<_> = hashes
+        .iter()
+        .flat_map(|h: &ObjectId| h.as_bytes().iter().copied())
+        .collect();
+    if base_bytes != expected {
+        return Err(bad("base graph identities"));
+    }
+    let fanout = chunks.required(b"OIDF")?;
+    if fanout.len() != 1024 {
+        return Err(bad("fanout length"));
+    }
+    let count = word(fanout, 1020)? as usize;
+    if count > limits.max_commits {
+        return Err(GraphError::Limit("commits"));
+    }
+    let ids = chunks.required(b"OIDL")?;
+    let data = chunks.required(b"CDAT")?;
+    let width = format.digest_len();
+    if ids.len() / width != count || ids.len() % width != 0 || data.len() != count * (width + 16) {
+        return Err(bad("commit table length"));
+    }
+    validate_fanout(fanout, ids, width)?;
+    let ids: Vec<_> = ids
+        .chunks_exact(width)
+        .map(|bytes| id(format, bytes))
+        .collect::<Result<_, _>>()?;
+    let generation = chunks.optional(b"GDA2");
+    if generation.is_some_and(|g| g.len() != count * 4) {
+        return Err(bad("generation table length"));
+    }
+    let mut commits = Vec::with_capacity(count);
+    for (index, record) in data.chunks_exact(width + 16).enumerate() {
+        let positions = parent_positions(record, width, &chunks, parents_left)?;
+        let parents = positions
+            .into_iter()
+            .map(|p| {
+                bases
+                    .get(p as usize)
+                    .or_else(|| {
+                        (p as usize)
+                            .checked_sub(bases.len())
+                            .and_then(|i| ids.get(i))
+                    })
+                    .copied()
+                    .ok_or(bad("parent position"))
+            })
+            .collect::<Result<_, _>>()?;
+        let high = word(record, width + 8)?;
+        let commit_time = (u64::from(high & 3) << 32) | u64::from(word(record, width + 12)?);
+        let corrected_commit_date = generation
+            .map(|g| corrected_date(g, index, commit_time, &chunks))
+            .transpose()?;
+        commits.push(GraphCommit {
+            id: ids[index],
+            tree: id(format, &record[..width])?,
+            parents,
+            commit_time,
+            generation: high >> 2,
+            corrected_commit_date,
+        });
+    }
+    Ok(commits)
 }
 
 struct Chunks<'a>(BTreeMap<[u8; 4], &'a [u8]>);

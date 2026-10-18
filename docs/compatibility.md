@@ -245,8 +245,12 @@ runs.
 edges, including octopus merges, generation v1 and corrected commit dates (GDA2/GDO2). Parsing
 checks the checksum, chunk boundaries, fanout, sorted identities and parent positions under explicit
 byte, commit and parent bounds. This is structural validation, not object-store verification.
-Unknown chunks are ignored; split files require a later loading increment. History queries do not
-yet consume this metadata, and Bloom filters are not used.
+Unknown chunks are ignored. Split chains resolve global parent positions against checked base
+identities and reject missing, reordered or duplicate layers. Repository loading honors
+`core.commitGraph`; malformed indexes return errors so callers can use objects instead. Explicit
+`CommitGraph::verify` checks trees, ordered parents and committer dates against object reads. It
+does not validate generation equations. History queries do not yet consume this metadata, and Bloom
+filters are not used.
 
 `tests/commit_graph.rs` generates original histories using the installed Git executable, writes both
 generation versions with `git commit-graph write --reachable`, runs `git commit-graph verify`, and
