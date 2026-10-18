@@ -362,11 +362,15 @@ mod tests {
 
     #[test]
     fn refuses_byte_and_instruction_limits() {
-        let mut limits = TodoLimits::default();
-        limits.max_bytes = 0;
+        let limits = TodoLimits {
+            max_bytes: 0,
+            ..TodoLimits::default()
+        };
         assert_eq!(Todo::parse(b"pick abcd\n", limits), Err(TodoError::Limit));
-        limits.max_bytes = 1024;
-        limits.max_instructions = 0;
+        let limits = TodoLimits {
+            max_bytes: 1024,
+            max_instructions: 0,
+        };
         assert_eq!(Todo::parse(b"pick abcd\n", limits), Err(TodoError::Limit));
     }
 }
