@@ -20,6 +20,7 @@ mod complete;
 mod config;
 mod diff;
 mod git_hints;
+mod grep;
 mod history;
 mod maintenance;
 mod object;
@@ -96,6 +97,9 @@ enum Command {
 
     /// Attribute file lines (commit, final start, count, original start, path).
     Blame(blame::Args),
+
+    /// Search file contents (`git grep`).
+    Grep(grep::Args),
 
     /// Show commit history.
     Log(history::LogArgs),
@@ -176,7 +180,10 @@ const STYLES: Styles = Styles::styled()
 
 fn main() -> ExitCode {
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
-    let args: Vec<_> = std::env::args_os().collect();
+    let mut args: Vec<_> = std::env::args_os().collect();
+    // `git grep` options such as `-v`, `-q`, `-h` and `-C` collide with girt's global options, so
+    // everything after `grep` bypasses clap.
+    let grep_args = grep::split_raw_args(&mut args);
     let early_color = color::Color::early(&args);
     // Help uses stdout; parse errors use stderr. Resolve each before clap prints and exits.
     let mut command = Cli::command();
@@ -203,7 +210,10 @@ fn main() -> ExitCode {
             error.with_cmd(&command).exit();
         }
     };
-    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    if let (Command::Grep(grep), Some(raw)) = (&mut cli.command, grep_args) {
+        grep.set_raw(raw);
+    }
     let stderr_color = cli.color.stderr() && !cli.git;
     // Future anstream diagnostics must share the reporting policy too.
     if stderr_color {
@@ -286,6 +296,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Tree(command) => tree::run(command, context),
         Command::Ref(command) => refs::run(command, context),
         Command::Blame(args) => blame::run(args, context),
+        Command::Grep(args) => grep::run(args, context),
         Command::Log(args) => history::log(args, context),
         Command::Replace(command) => replace::run(command, context),
         Command::History(command) => history::run(command, context),

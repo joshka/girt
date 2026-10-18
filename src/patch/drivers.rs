@@ -228,6 +228,21 @@ impl DiffAttributes {
 }
 
 impl DiffAttributes {
+    /// How `path`'s driver classifies content (`Some(true)` binary, `Some(false)` text, `None`
+    /// by NUL detection) and its function-line pattern, for `git grep`.
+    pub(crate) fn grep_driver(
+        &mut self,
+        path: &[u8],
+    ) -> Result<(Option<bool>, Option<FunctionLines>), Error> {
+        let driver = self.driver(path)?;
+        let binary = match driver.content {
+            Content::Auto => None,
+            Content::Text => Some(false),
+            Content::Binary => Some(true),
+        };
+        Ok((binary, driver.function))
+    }
+
     /// The driver name of `path` when that driver configures textconv, for blame's refusal.
     pub(crate) fn textconv_driver(&mut self, path: &[u8]) -> Result<Option<Vec<u8>>, Error> {
         let driver = self.driver(path)?;

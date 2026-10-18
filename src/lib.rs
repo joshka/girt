@@ -172,6 +172,7 @@ extern crate self as girt;
 #[cfg(test)]
 #[path = "../tests/support/pack_git.rs"]
 mod pack_git;
+mod posix_regex;
 
 pub mod attributes;
 pub mod bitmap;
@@ -193,6 +194,7 @@ pub mod display;
 mod edges;
 mod error;
 pub mod format_patch;
+pub mod grep;
 pub mod multi_pack_index;
 pub use error::{Error, Result};
 pub mod am;

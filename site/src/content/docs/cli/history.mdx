@@ -140,3 +140,26 @@ Blame follows renames, so the path column can name a file the range had before i
 doesn't detect lines copied or moved between files, and refuses files with a `textconv` driver. The
 path is a literal repository-relative path, not a pathspec, and line numbers start at 1. Its output
 is ranges rather than Git's annotated lines, so `girt blame --git` is refused.
+
+## Search file contents (`girt grep`)
+
+<Example cmd="grep">
+
+`girt grep` takes `git grep`'s options and prints its output byte for byte. It searches tracked
+files in the working tree by default, the index with `--cached`, any commit or tree named on the
+command line, untracked files with `--untracked`, and a plain directory with `--no-index`.
+
+```console
+$ girt grep -n main main topic
+main:src/main.rs:1:fn main() {}
+topic:src/lib.rs:1:fn main() {}
+$ girt grep -c -e o --and --not -e world
+README.md:1
+```
+
+</Example>
+
+Patterns are POSIX basic (the default), extended (`-E`) or fixed strings (`-F`). The `diff`
+attribute decides which files are binary and which function lines `-p` and `-W` show, as in Git.
+Back-references, Perl-compatible patterns (`-P`), `--textconv`, `--recurse-submodules` and color are
+refused.

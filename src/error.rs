@@ -138,6 +138,8 @@ from_domain_errors! {
     crate::diffstat::Error,
     crate::format_patch::Error,
     crate::format_patch::SeriesError,
+    crate::grep::Error,
+    crate::grep::PatternError,
     crate::apply::IndexError,
     crate::mailbox::Error,
     crate::mailinfo::Error,
