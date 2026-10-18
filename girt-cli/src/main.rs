@@ -13,6 +13,7 @@ use color_eyre::eyre::eyre;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
+mod archive;
 mod blame;
 mod color;
 mod common;
@@ -98,6 +99,8 @@ enum Command {
     /// Attribute file lines (commit, final start, count, original start, path).
     Blame(blame::Args),
 
+    /// Export a tree as a tar or zip archive (`git archive`).
+    Archive(archive::Args),
     /// Search file contents (`git grep`).
     Grep(grep::Args),
 
@@ -181,9 +184,7 @@ const STYLES: Styles = Styles::styled()
 fn main() -> ExitCode {
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     let mut args: Vec<_> = std::env::args_os().collect();
-    // `git grep` options such as `-v`, `-q`, `-h` and `-C` collide with girt's global options, so
-    // everything after `grep` bypasses clap.
-    let grep_args = grep::split_raw_args(&mut args);
+    let raw_args = common::split_raw_args(&mut args);
     let early_color = color::Color::early(&args);
     // Help uses stdout; parse errors use stderr. Resolve each before clap prints and exits.
     let mut command = Cli::command();
@@ -211,8 +212,12 @@ fn main() -> ExitCode {
         }
     };
     let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
-    if let (Command::Grep(grep), Some(raw)) = (&mut cli.command, grep_args) {
-        grep.set_raw(raw);
+    if let Some(raw) = raw_args {
+        match &mut cli.command {
+            Command::Grep(args) => args.set_raw(raw),
+            Command::Archive(args) => args.set_raw(raw),
+            _ => {}
+        }
     }
     let stderr_color = cli.color.stderr() && !cli.git;
     // Future anstream diagnostics must share the reporting policy too.
@@ -296,6 +301,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Tree(command) => tree::run(command, context),
         Command::Ref(command) => refs::run(command, context),
         Command::Blame(args) => blame::run(args, context),
+        Command::Archive(args) => archive::run(args, context),
         Command::Grep(args) => grep::run(args, context),
         Command::Log(args) => history::log(args, context),
         Command::Replace(command) => replace::run(command, context),

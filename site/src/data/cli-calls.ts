@@ -171,6 +171,13 @@ export const calls: Record<string, CliCalls> = {
     git: 'git blame',
     api: [method('Repo', 'repo/struct.Repo.html', 'blame')],
   },
+  archive: {
+    git: 'git archive',
+    api: [
+      unreleased('Repository::archive', 526),
+      unreleased('archive::Options', 526),
+    ],
+  },
   grep: {
     git: 'git grep',
     api: [
