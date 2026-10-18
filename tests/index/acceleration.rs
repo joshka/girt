@@ -255,3 +255,26 @@ fn monitor_negotiates_and_bounds_untrusted_hook_output() {
         Err(Error::Cancelled)
     ));
 }
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn explicitly_enables_and_disables_untracked_cache(#[case] format: ObjectFormat) {
+    let temporary = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, temporary.path().join("r"), InitKind::Worktree).unwrap();
+    let root = repo.worktree().unwrap();
+    std::fs::write(root.join("tracked"), b"tracked\n").unwrap();
+    oracle::git(root, &["add", "tracked"], b"");
+    let original = std::fs::read(repo.git_dir().join("index")).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.set_untracked_cache_enabled(true).unwrap();
+    assert!(edit.index().untracked_cache(Limits::default()).unwrap().is_some());
+    assert_eq!(std::fs::read(repo.git_dir().join("index")).unwrap(), original);
+    edit.commit().unwrap();
+    oracle::git(root, &["status", "--porcelain"], b"");
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.set_untracked_cache_enabled(false).unwrap();
+    edit.commit().unwrap();
+    assert!(repo.read_index(Limits::default()).unwrap().unwrap().untracked_cache(Limits::default()).unwrap().is_none());
+    oracle::git(root, &["status", "--porcelain"], b"");
+}
