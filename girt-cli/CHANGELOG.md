@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9](https://github.com/joshka/girt/compare/girt-cli-v0.2.8...girt-cli-v0.2.9) - 2026-10-18
+
+### Other
+
+- Check out clones through filters ([#618](https://github.com/joshka/girt/pull/618))
+- Apply filters in Repo and the CLI by default ([#598](https://github.com/joshka/girt/pull/598))
+- Limit log to a pathspec with Git's default simplification ([#588](https://github.com/joshka/girt/pull/588))
+- Limit tree diff to a pathspec ([#586](https://github.com/joshka/girt/pull/586))
+- Limit status to a pathspec ([#585](https://github.com/joshka/girt/pull/585))
+
 ## [0.2.8](https://github.com/joshka/girt/compare/girt-cli-v0.2.7...girt-cli-v0.2.8) - 2026-10-18
 
 ### Other

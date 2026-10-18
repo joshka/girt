@@ -7,6 +7,137 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/joshka/girt/compare/girt-v0.15.0...girt-v0.16.0) - 2026-10-18
+
+### Breaking changes
+
+- `Repository::raw_status_with` and `Repository::status_with` take a `paths: &Pathspec` argument;
+  pass `&Pathspec::all()` for the previous behaviour (#549–#592).
+- Checkout no longer refuses colliding paths. On case-sensitive volumes both paths of a pair are
+  written (for example linux.git's `xt_CONNMARK.h` and `xt_connmark.h`). Where the volume or
+  `core.ignoreCase` folds names, one path per set is written as Git chooses and listed in the new
+  `Report::collisions`. A file and a directory sharing a name, case-only renames (#620) and existing
+  untracked aliases are still refused (#614–#629).
+- Checkout refuses Git's `core.protectNTFS`/`core.protectHFS` `.git` aliases (`git~1`, `.git.`,
+  `.git `, `.git:stream`, and HFS-ignorable spellings on macOS) unless those options are false.
+
+### Behaviour changes
+
+- Object readers on `Repository` load `.git/objects/info/commit-graph` (including split chains) by
+  default, and history walks, merge-base and ancestry queries trust it after checksum and structural
+  validation (#497–#590). Set `core.commitGraph=false` to disable it; strict per-object
+  verification is opt-in.
+- `Repo::status`, `Repo::switch`, `Repo::clone`, and `workflow::clone`/`clone_with` with default
+  options convert files as Git does and run the filter programs that `.gitattributes` selects. Opt
+  out with `Repo::with_filter_commands(Commands::Refuse)`,
+  `CloneOptions::with_filter_commands(Some(Commands::Refuse))`, or `None` for a raw clone checkout.
+  `girt status` and `girt checkout` convert by default; `--raw` restores the old behaviour. No
+  compile-time breaks: the extended types are `#[non_exhaustive]` (#539–#618).
+- Status and checkout accept `:`, `\` and non-ASCII names; `status`, `status_with` and
+  `status_with_filters` apply `core.ignoreCase` (and `core.precomposeUnicode` on macOS).
+- Normal and filtered status honour assume-unchanged, skip-worktree and intent-to-add entries,
+  `core.fileMode` and `core.symlinks`. Raw APIs are unchanged (#636–#640).
+
+### Added
+
+- The merge API: three-way byte content merging with whitespace policies, rename-aware in-memory
+  tree and commit merging with clean recursive bases, structured original conflict stages, explicit
+  per-path merge drivers, and guarded marker and index publication (#522–#580). Known partial
+  limits: #498, #543, #552, #575.
+- In-memory cherry-pick, revert and rebase on the merge engine, a rebase todo-list parser, and
+  interoperation with Git's sequencer state (#611, #623, #624). Known limits: #616, #621, #622.
+- Stash: save, apply, pop and list on the merge engine (#632–#641). Known limits: #638, #639.
+- `girt::pathspec`: Git pathspec parsing and matching, with path-limited status, diff and log.
+- `girt::filter`: `text`/`eol`/`text=auto`, `core.autocrlf`, `core.eol`, `core.safecrlf`, `ident`,
+  `working-tree-encoding` (UTF-16/32), and `filter.<name>.clean`/`smudge`/`process`, including the
+  long-running process protocol used by Git LFS. Running filter programs is explicit, through
+  `filter::Commands::Refuse` (the default for `Drivers`) or `Commands::Run`. Also
+  `Repository::filters`, `filters_with_source` and `filters_for_checkout` (honouring `attr.tree` and
+  `GIT_ATTR_SOURCE`), `Repository::status_with_filters`, `checkout_tree_with_filters`,
+  `CloneOptions::filter_commands`, `Repo::with_filter_commands` and
+  `filter::Pipeline::with_settings`.
+- Commit-graph reading, writing (full and incremental) and changed-path Bloom filters.
+- Unified text patch parsing and application in memory.
+- `checkout::Collision`, `Report::collisions`, `status::Comparison::Configured`, `Change::Added`
+  and `checkout_tree_configured[_with]`.
+- CLI: `girt status` and `girt checkout` gain `--raw` and `--refuse-filter-commands`;
+  `girt object hash --path`.
+- New dependency: `unicode-normalization` 0.1 (MIT/Apache; macOS and Linux only).
+
+### Performance
+
+- Faster commit-graph attachment: range queries are about 1.8× Git and ancestry queries about 2.8×
+  Git, down from about 7–11× (#625, #627).
+- Loose objects are written at Git's default compression and published with one rename: about
+  790 → 290 µs per object (#651).
+- Faster `jj git clone` of a local path through the adapter (#606).
+
+### Other
+
+- Register apply errors in the crate wrapper ([#665](https://github.com/joshka/girt/pull/665))
+- Initialize apply fuzz limits directly ([#658](https://github.com/joshka/girt/pull/658))
+- Apply configured symlink representations ([#640](https://github.com/joshka/girt/pull/640))
+- Apply index flags and file mode policy in status ([#636](https://github.com/joshka/girt/pull/636))
+- Publish Linux jj file annotate on girt 0.14.0 (1.14x, below the 1.2x line) ([#637](https://github.com/joshka/girt/pull/637))
+- Write loose objects at Git's default compression and publish them with one rename ([#651](https://github.com/joshka/girt/pull/651))
+- Parse and apply unified text patches in memory ([#648](https://github.com/joshka/girt/pull/648))
+- Apply core.ignoreCase and core.precomposeUnicode in status ([#629](https://github.com/joshka/girt/pull/629))
+- Follow the volume's name rules in checkout: Unicode names, Git's collision handling ([#628](https://github.com/joshka/girt/pull/628))
+- Accept colon and backslash working-tree names; refuse Git's NTFS/HFS .git aliases ([#614](https://github.com/joshka/girt/pull/614))
+- Complete stash save compatibility evidence ([#646](https://github.com/joshka/girt/pull/646))
+- Apply stashes and edit saved history explicitly ([#641](https://github.com/joshka/girt/pull/641))
+- Compute and read Git stash snapshots ([#632](https://github.com/joshka/girt/pull/632))
+- Normalize the fetch reflog fixture path ([#643](https://github.com/joshka/girt/pull/643))
+- Check out clones through filters ([#618](https://github.com/joshka/girt/pull/618))
+- Apply filters in Repo and the CLI by default ([#598](https://github.com/joshka/girt/pull/598))
+- Convert working-tree-encoding for UTF-16 and UTF-32 ([#596](https://github.com/joshka/girt/pull/596))
+- Write converted files in checkout ([#573](https://github.com/joshka/girt/pull/573))
+- Compare converted working files in status ([#568](https://github.com/joshka/girt/pull/568))
+- Speak the long-running filter process protocol (Git LFS) ([#561](https://github.com/joshka/girt/pull/561))
+- Run filter clean and smudge commands (girt::filter) ([#548](https://github.com/joshka/girt/pull/548))
+- Add line-ending and ident conversion (girt::filter) ([#539](https://github.com/joshka/girt/pull/539))
+- Initialize replay test limits directly ([#634](https://github.com/joshka/girt/pull/634))
+- Limit log to a pathspec with Git's default simplification ([#588](https://github.com/joshka/girt/pull/588))
+- Limit tree diff to a pathspec ([#586](https://github.com/joshka/girt/pull/586))
+- Limit status to a pathspec ([#585](https://github.com/joshka/girt/pull/585))
+- Support attr: pathspec magic ([#558](https://github.com/joshka/girt/pull/558))
+- Add girt::pathspec for parsing, matching and pruning pathspecs ([#549](https://github.com/joshka/girt/pull/549))
+- Read and publish explicit Git sequencer recovery ([#624](https://github.com/joshka/girt/pull/624))
+- Parse and execute linear rebase todo plans ([#623](https://github.com/joshka/girt/pull/623))
+- Replay commit sequences entirely in memory ([#613](https://github.com/joshka/girt/pull/613))
+- Compute cherry-picks and reverts in memory ([#611](https://github.com/joshka/girt/pull/611))
+- Reduce commit-graph ancestry validation cost ([#627](https://github.com/joshka/girt/pull/627))
+- Record commit-graph history timing against Git ([#626](https://github.com/joshka/girt/pull/626))
+- Add command-page rules and site-page examples to the docs guides ([#597](https://github.com/joshka/girt/pull/597))
+- Speed up jj git clone of a local path ([#606](https://github.com/joshka/girt/pull/606))
+- Trust valid commit-graphs by default ([#590](https://github.com/joshka/girt/pull/590))
+- Publish full and incremental commit-graph files ([#565](https://github.com/joshka/girt/pull/565))
+- Build and encode full and incremental commit-graphs ([#557](https://github.com/joshka/girt/pull/557))
+- Use changed-path Bloom filters in first-parent queries ([#546](https://github.com/joshka/girt/pull/546))
+- Use indexed metadata for bounded history queries ([#541](https://github.com/joshka/girt/pull/541))
+- Load split commit-graph chains and verify objects ([#535](https://github.com/joshka/girt/pull/535))
+- Read standalone commit-graph metadata ([#497](https://github.com/joshka/girt/pull/497))
+- Group code examples into paragraphs and measure dense code ([#603](https://github.com/joshka/girt/pull/603))
+- Publish Linux jj git init --colocate on girt 0.14.0 (parity, no longer a timeout) ([#609](https://github.com/joshka/girt/pull/609))
+- Route merges through per-path drivers ([#580](https://github.com/joshka/girt/pull/580))
+- Compare merge lines with whitespace policy ([#570](https://github.com/joshka/girt/pull/570))
+- Publish merge conflicts through guarded checkout ([#566](https://github.com/joshka/girt/pull/566))
+- Merge commits with recursive virtual bases ([#554](https://github.com/joshka/girt/pull/554))
+- Merge renamed paths without writing objects ([#544](https://github.com/joshka/girt/pull/544))
+- Select merge drivers from attributes ([#540](https://github.com/joshka/girt/pull/540))
+- Merge tree entries without a working tree ([#537](https://github.com/joshka/girt/pull/537))
+- Add three-way content merging ([#522](https://github.com/joshka/girt/pull/522))
+- Publish Linux jj log ancestry on the fixed adapter (1.01x, no longer a timeout) ([#601](https://github.com/joshka/girt/pull/601))
+- Audit Git transfer compatibility ([#574](https://github.com/joshka/girt/pull/574))
+- Audit other Git capabilities ([#564](https://github.com/joshka/girt/pull/564))
+- Audit Git diff compatibility ([#563](https://github.com/joshka/girt/pull/563))
+- Audit Git working-tree compatibility ([#559](https://github.com/joshka/girt/pull/559))
+- Audit config and revision compatibility ([#553](https://github.com/joshka/girt/pull/553))
+- Audit Git reference compatibility ([#551](https://github.com/joshka/girt/pull/551))
+- Audit Git storage compatibility ([#547](https://github.com/joshka/girt/pull/547))
+- Re-measure jj log ancestry and limited on the fixed adapter (small and medium) ([#591](https://github.com/joshka/girt/pull/591))
+- Re-measure Linux clone, workspace add and gc on girt 0.14.0; add fresh read copies to the harness ([#582](https://github.com/joshka/girt/pull/582))
+
 ### Changed
 
 - `workflow::fetch` with `FetchOptions::with_reflog` follows `core.logAllRefUpdates` as `git fetch`
