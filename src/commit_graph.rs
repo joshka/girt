@@ -26,6 +26,8 @@
 
 mod bloom;
 mod history;
+mod write;
+pub use write::GraphWriteError;
 mod store;
 use std::collections::BTreeMap;
 
@@ -37,6 +39,7 @@ use crate::{ObjectFormat, ObjectId};
 #[derive(Clone, Debug)]
 pub struct CommitGraph {
     commits: Vec<GraphCommit>,
+    format: ObjectFormat,
     generation_order: history::GenerationOrder,
 }
 
@@ -127,6 +130,7 @@ impl CommitGraph {
         let commits = parse_layer(bytes, format, limits, &[], &[], &mut { limits.max_parents })?;
         Ok(Self {
             commits,
+            format,
             generation_order: history::GenerationOrder::Unavailable,
         })
     }
@@ -181,6 +185,7 @@ impl CommitGraph {
         }
         Ok(Self {
             commits,
+            format,
             generation_order: history::GenerationOrder::Unavailable,
         })
     }

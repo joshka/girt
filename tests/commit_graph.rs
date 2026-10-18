@@ -581,3 +581,110 @@ fn bloom_large_change_filter_is_always_conservative(
     assert_eq!(graph.might_change_path(large, b"file-0000"), Some(true));
     assert_eq!(graph.might_change_path(large, b"not-present"), Some(true));
 }
+
+#[rstest]
+fn girt_writes_graphs_git_can_verify(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(
+        &[vec![], vec![0], vec![0], vec![0], vec![1, 2, 3]],
+        false,
+        format,
+    );
+    let graph = CommitGraph::from_objects(&h.objects(), &[h.ids[4]]).unwrap();
+    let bytes = graph.encode().unwrap();
+    std::fs::create_dir_all(h.root.path().join("objects/info")).unwrap();
+    std::fs::write(h.root.path().join("objects/info/commit-graph"), &bytes).unwrap();
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+    assert_eq!(
+        CommitGraph::parse(&bytes, format).unwrap().commits(),
+        graph.commits()
+    );
+}
+
+#[rstest]
+fn girt_incremental_layers_match_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![], vec![0], vec![1]], false, format);
+    let base = CommitGraph::from_objects(&h.objects(), &[h.ids[0]])
+        .unwrap()
+        .encode()
+        .unwrap();
+    let all = CommitGraph::from_objects(&h.objects(), &[h.ids[2]]).unwrap();
+    let tip = all.encode_incremental(&[&base]).unwrap();
+    let parsed = CommitGraph::parse_chain(&[&base, &tip], format).unwrap();
+    assert_eq!(parsed.commits().len(), 3);
+    let directory = h.root.path().join("objects/info/commit-graphs");
+    std::fs::create_dir_all(&directory).unwrap();
+    let first = install_layer(&directory, &base, format);
+    let second = install_layer(&directory, &tip, format);
+    std::fs::write(
+        directory.join("commit-graph-chain"),
+        format!("{first}\n{second}\n"),
+    )
+    .unwrap();
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+}
+
+fn install_layer(
+    directory: &std::path::Path,
+    bytes: &[u8],
+    format: ObjectFormat,
+) -> girt::ObjectId {
+    let checksum =
+        girt::ObjectId::from_bytes(format, &bytes[bytes.len() - format.digest_len()..]).unwrap();
+    std::fs::write(directory.join(format!("graph-{checksum}.graph")), bytes).unwrap();
+    checksum
+}
+
+#[rstest]
+fn writer_handles_corrected_date_overflow(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![]], false, format);
+    let tree = h.objects().read_commit(h.ids[0]).unwrap().tree();
+    let parent = dated_commit(&h, tree, &[], 5_000_000_000);
+    let child = dated_commit(&h, tree, &[parent], 1);
+    let graph = CommitGraph::from_objects(&h.objects(), &[child]).unwrap();
+    let bytes = graph.encode().unwrap();
+    std::fs::create_dir_all(h.root.path().join("objects/info")).unwrap();
+    std::fs::write(h.root.path().join("objects/info/commit-graph"), &bytes).unwrap();
+    git(h.root.path(), &["commit-graph", "verify"], b"");
+    assert_eq!(
+        CommitGraph::parse(&bytes, format)
+            .unwrap()
+            .get(child)
+            .unwrap()
+            .corrected_commit_date,
+        Some(5_000_000_001)
+    );
+}
+
+#[rstest]
+fn graph_writer_keeps_input_bounds_and_rejects_shallow_history(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(&[vec![], vec![0]], false, format);
+    assert!(
+        CommitGraph::from_objects_with(
+            &h.objects(),
+            &[h.ids[1]],
+            girt::HistoryLimits::default().with_max_commits(1)
+        )
+        .is_err()
+    );
+    assert!(
+        CommitGraph::from_objects_with(
+            &h.objects(),
+            &[h.ids[1]],
+            girt::HistoryLimits::default().with_max_parents(0)
+        )
+        .is_err()
+    );
+    std::fs::write(h.root.path().join("shallow"), format!("{}\n", h.ids[1])).unwrap();
+    assert!(matches!(
+        CommitGraph::from_objects(&h.objects(), &[h.ids[1]]),
+        Err(girt::commit_graph::GraphWriteError::Shallow)
+    ));
+}

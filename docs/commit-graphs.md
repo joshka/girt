@@ -82,3 +82,34 @@ A filter in a merge describes the first-parent difference only. Empty-change and
 filters remain conservative, and explicit object verification checks commit metadata rather than
 recomputing Bloom filters. Applications requiring object-backed path correctness can leave the index
 detached.
+
+## Build graph artifacts
+
+`CommitGraph::from_objects` reads and verifies the selected commit closure independently of any
+attached auxiliary index, then calculates topological generations and corrected dates. It refuses
+shallow history and timestamps outside the format's unsigned 34-bit range. The default and `_with`
+forms use the same commit, parent and per-read bounds as history queries. Construction writes no
+files.
+
+```rust
+use girt::{ObjectId, Repository, commit_graph::CommitGraph};
+
+fn encode_history(repository: &Repository, tip: ObjectId) -> girt::Result<Vec<u8>> {
+    let objects = repository.objects()?;
+    let graph = CommitGraph::from_objects(&objects, &[tip])?;
+    Ok(graph.encode()?)
+}
+```
+
+`encode` returns a standalone file. `encode_incremental` takes existing layer bytes in base-to-tip
+order and returns one new layer. It preserves base positions, checks overlapping metadata and emits
+only new commits; base commits absent from the selected graph remain in the chain. Callers must
+retain those exact base files and publish a manifest listing their checksums followed by the new
+checksum. Encoding checks base structure and checksums, not base object claims. Verify bases when
+required by the application's trust policy. New layers omit Bloom filters; any base filters remain
+in their original files.
+
+Artifact encoding uses the default 512 MiB output limit and does not publish files or coordinate
+writers. A parsed generation-v1-only graph lacks corrected dates required by this encoder; rebuild
+it from objects before encoding. Incremental artifact output does not yet avoid a complete
+object-verification scan during construction.

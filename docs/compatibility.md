@@ -271,6 +271,13 @@ roots, first-parent merge differences and a 600-path change producing the conser
 filter. Path history is compared with `git log --first-parent --format=%H -- path`. No upstream
 implementation or test source is used.
 
+Graph construction reads verified commit objects and calculates generations independently of
+attached auxiliary indexes. Standalone and incremental encoders emit both object formats, octopus
+edges, corrected-date overflow and base-file positional references. Git CLI verification accepts
+original girt-written standalone and chained fixtures. New layers omit Bloom filters; construction
+refuses shallow history and unrepresentable timestamps. Encoding is an artifact API and does not
+publish files. Incremental construction currently verifies the full selected object closure.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger
