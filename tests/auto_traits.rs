@@ -12,6 +12,9 @@ fn public_cache_owners_preserve_auto_traits() {
 
     assert_traits::<Objects>();
     assert_traits::<KnownHistory>();
+    // Both share the repository's parsed `packed-refs`.
+    assert_traits::<girt::Repository>();
+    assert_traits::<girt::refs::References<'static>>();
 }
 
 #[test]

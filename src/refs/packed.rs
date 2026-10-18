@@ -7,15 +7,118 @@
     reason = "parses untrusted repository or network input (#103)"
 )]
 use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-use super::store::malformed;
+use super::store::{check_path, io_error, malformed};
 use super::{RefName, ReferenceError};
 use crate::ObjectId;
 
-// Keep all records for duplicate and namespace checks. The first implementation deliberately
-// validates the complete file, even for one lookup; it has no cached snapshot to invalidate.
+// Keep all records for duplicate and namespace checks. Every parse validates the complete file,
+// even for one lookup; `PackedCache` keeps that cost to once per version of the file.
 pub(super) type Packed = BTreeMap<RefName, PackedRecord>;
+
+/// One version of `packed-refs`: its bytes and their validated records.
+#[derive(Debug, Default)]
+pub(super) struct Snapshot {
+    pub bytes: Vec<u8>,
+    pub records: Packed,
+}
+
+impl std::ops::Deref for Snapshot {
+    type Target = Packed;
+
+    fn deref(&self) -> &Packed {
+        &self.records
+    }
+}
+
+/// The last `packed-refs` a repository parsed, reused while the file keeps its identity.
+///
+/// Git and girt replace `packed-refs` by renaming a complete new file over it, never by writing
+/// in place, so an unchanged device, inode, size, modification time and change time identify
+/// unchanged contents. Git relies on the same assumption. Each load still opens the file and
+/// checks its identity, so a replaced file is always read again. Without inode numbers (on
+/// Windows), every load parses the file.
+#[derive(Debug, Default)]
+pub(crate) struct PackedCache(Mutex<Option<(Identity, Arc<Snapshot>)>>);
+
+/// What identifies one version of a file that is only ever replaced, never edited.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Identity {
+    format: crate::ObjectFormat,
+    device: u64,
+    inode: u64,
+    len: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl Identity {
+    #[cfg(unix)]
+    fn of(format: crate::ObjectFormat, file: &File) -> io::Result<Option<Self>> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = file.metadata()?;
+        Ok(Some(Self {
+            format,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            len: metadata.len(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        }))
+    }
+
+    #[cfg(not(unix))]
+    fn of(_format: crate::ObjectFormat, _file: &File) -> io::Result<Option<Self>> {
+        Ok(None)
+    }
+}
+
+impl PackedCache {
+    /// Returns the current contents of `path`, parsing them only when the file has changed.
+    pub(super) fn load(
+        &self,
+        format: crate::ObjectFormat,
+        path: &Path,
+    ) -> Result<Arc<Snapshot>, ReferenceError> {
+        check_path(path)?;
+        let mut file = match File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Arc::default());
+            }
+            Err(source) => return Err(io_error(path, source)),
+        };
+        let identity = Identity::of(format, &file).map_err(|source| io_error(path, source))?;
+        let mut cached = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let (Some(identity), Some((known, snapshot))) = (identity, cached.as_ref())
+            && identity == *known
+        {
+            return Ok(Arc::clone(snapshot));
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|source| io_error(path, source))?;
+        let records = parse(format, &bytes, path)?;
+        let snapshot = Arc::new(Snapshot { bytes, records });
+        *cached = identity.map(|identity| (identity, Arc::clone(&snapshot)));
+        Ok(snapshot)
+    }
+}
+
+/// Reads and parses `path` without a cache.
+pub(super) fn load(
+    format: crate::ObjectFormat,
+    path: &Path,
+) -> Result<Arc<Snapshot>, ReferenceError> {
+    PackedCache::default().load(format, path)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct PackedRecord {
@@ -174,6 +277,31 @@ mod tests {
 
     use super::*;
     const ID: &str = "1111111111111111111111111111111111111111";
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_reuses_an_unchanged_file_and_rereads_a_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        // Reference paths refuse symlinks, including the one above macOS temporary directories.
+        let directory = root.path().canonicalize().unwrap();
+        let path = directory.join("packed-refs");
+        let format = crate::ObjectFormat::Sha1;
+        std::fs::write(&path, format!("{ID} refs/heads/a\n")).unwrap();
+        let cache = PackedCache::default();
+        let first = cache.load(format, &path).unwrap();
+        assert!(Arc::ptr_eq(&first, &cache.load(format, &path).unwrap()));
+
+        // Same size and, on coarse clocks, the same modification time: only the inode differs.
+        let replacement = directory.join("packed-refs.new");
+        std::fs::write(&replacement, format!("{ID} refs/heads/b\n")).unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        let second = cache.load(format, &path).unwrap();
+        assert!(second.contains_key(&RefName::new("refs/heads/b").unwrap()));
+        assert!(!second.contains_key(&RefName::new("refs/heads/a").unwrap()));
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(cache.load(format, &path).unwrap().is_empty());
+    }
 
     #[rstest]
     #[case::sha1_lower(crate::ObjectFormat::Sha1, "0123456789abcdef0123456789abcdef01234567")]

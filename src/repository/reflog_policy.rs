@@ -18,6 +18,20 @@ pub enum ReflogPolicyError {
     Reference(#[source] ReferenceError),
 }
 
+/// Namespaces `core.logAllRefUpdates = true` logs, besides `HEAD`.
+pub(crate) const CONVENTIONAL: [&[u8]; 3] = [b"refs/heads/", b"refs/remotes/", b"refs/notes/"];
+
+/// Which references get new reflogs; a reference with an existing log is always logged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReflogScope {
+    /// `always`: every reference.
+    All,
+    /// `true`, or unset in a non-bare repository: `HEAD` and the [`CONVENTIONAL`] namespaces.
+    Conventional,
+    /// `false`, or unset in a bare repository: only references that already have a log.
+    Existing,
+}
+
 impl Repository {
     /// Returns whether Git would record an update of `name` in its reflog.
     ///
@@ -37,6 +51,24 @@ impl Repository {
     /// Returns [`ReflogPolicyError::Config`] for a value Git rejects, including a variable
     /// without `=`, and [`ReflogPolicyError::Reference`] when the existing log can't be checked.
     pub fn logs_updates_to(&self, name: &RefName) -> Result<bool, ReflogPolicyError> {
+        let logged = match self.reflog_scope()? {
+            ReflogScope::All => true,
+            ReflogScope::Conventional => {
+                let bytes = name.as_bytes();
+                bytes == b"HEAD" || CONVENTIONAL.iter().any(|prefix| bytes.starts_with(prefix))
+            }
+            ReflogScope::Existing => false,
+        };
+        if logged {
+            return Ok(true);
+        }
+        self.references()
+            .and_then(|references| references.has_reflog(name))
+            .map_err(ReflogPolicyError::Reference)
+    }
+
+    /// Which references `core.logAllRefUpdates` logs, before counting existing logs.
+    pub(crate) fn reflog_scope(&self) -> Result<ReflogScope, ReflogPolicyError> {
         let config = self.config();
         let enabled = match config.value("core", None, "logallrefupdates") {
             None => !self.is_bare(),
@@ -48,23 +80,19 @@ impl Repository {
                     None,
                 )));
             }
-            Some(Some(value)) if value.eq_ignore_ascii_case(b"always") => return Ok(true),
+            Some(Some(value)) if value.eq_ignore_ascii_case(b"always") => {
+                return Ok(ReflogScope::All);
+            }
             Some(Some(_)) => config
                 .boolean("core", None, "logallrefupdates")
                 .map_err(ReflogPolicyError::Config)?
                 .unwrap_or(false),
         };
-        let bytes = name.as_bytes();
-        let conventional = bytes == b"HEAD"
-            || [&b"refs/heads/"[..], b"refs/remotes/", b"refs/notes/"]
-                .iter()
-                .any(|prefix| bytes.starts_with(prefix));
-        if enabled && conventional {
-            return Ok(true);
-        }
-        self.references()
-            .and_then(|references| references.has_reflog(name))
-            .map_err(ReflogPolicyError::Reference)
+        Ok(if enabled {
+            ReflogScope::Conventional
+        } else {
+            ReflogScope::Existing
+        })
     }
 
     /// Chooses the reflog policy Git would use for an update of `name`.

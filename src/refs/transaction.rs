@@ -4,9 +4,7 @@ use std::io::{self, Write};
 use std::sync::atomic::AtomicBool;
 
 use super::lock_wait::check_cancelled;
-use super::store::{
-    Lock, check_expected, conflicts, io_error, read_optional, remove_loose, validate_target,
-};
+use super::store::{Lock, check_expected, conflicts, io_error, remove_loose, validate_target};
 use super::{
     Expected, FilesTransactionOptions, LockWait, RefName, ReferenceError, References, Reflog,
     ReflogEntry, Target, packed, reflog,
@@ -750,10 +748,8 @@ impl References<'_> {
                 cancel,
             )
             .map_err(batch_error)?;
-            let bytes = read_optional(&packed_lock.destination)
-                .map_err(batch_error)?
-                .unwrap_or_default();
-            let packed = packed::parse(self.object_format, &bytes, &packed_lock.destination)
+            let packed = self
+                .packed_at(&packed_lock.destination)
                 .map_err(batch_error)?;
             let mut plans = Vec::new();
             let mut names = BTreeSet::new();
@@ -917,11 +913,15 @@ impl References<'_> {
                     }
                 }
             }
-            let mut replacement = bytes;
-            for operation in &operations {
-                if operation.packed_removed {
-                    replacement =
-                        packed::without_ref(self.object_format, &replacement, &operation.name);
+            // Publication rewrites `packed-refs` only when an operation removes a record.
+            let mut replacement = Vec::new();
+            if operations.iter().any(|operation| operation.packed_removed) {
+                replacement.clone_from(&packed.bytes);
+                for operation in &operations {
+                    if operation.packed_removed {
+                        replacement =
+                            packed::without_ref(self.object_format, &replacement, &operation.name);
+                    }
                 }
             }
             Ok(Prepared {

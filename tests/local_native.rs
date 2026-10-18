@@ -1386,3 +1386,91 @@ fn configured_clone_no_checkout_is_portable_and_checkout_preserves_platform_scop
         assert!(!root.path().join("checkout").exists());
     }
 }
+
+/// Names of the reflogs under `git_dir`, relative to its `logs` directory.
+fn reflog_names(git_dir: &std::path::Path) -> std::collections::BTreeSet<String> {
+    fn walk(
+        root: &std::path::Path,
+        directory: &std::path::Path,
+        names: &mut std::collections::BTreeSet<String>,
+    ) {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(root, &path, names);
+            } else {
+                let name = path.strip_prefix(root).unwrap().to_string_lossy();
+                names.insert(name.replace('\\', "/"));
+            }
+        }
+    }
+    let mut names = std::collections::BTreeSet::new();
+    let root = git_dir.join("logs");
+    walk(&root, &root, &mut names);
+    names
+}
+
+#[rstest]
+#[case::default(None, false)]
+#[case::always(Some("always"), false)]
+#[case::disabled(Some("false"), false)]
+#[case::existing_tag_log(None, true)]
+fn workflow_fetch_reflogs_follow_core_log_all_ref_updates_like_git(
+    #[case] setting: Option<&str>,
+    #[case] existing_tag_log: bool,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", ObjectFormat::Sha1, Backend::Files);
+    commit(&source);
+    git_in(source.git_dir(), &["tag", "v1", "main"]);
+    let url = source.git_dir().to_str().unwrap();
+    let refspecs = [
+        "+refs/heads/*:refs/remotes/origin/*",
+        "+refs/tags/*:refs/tags/*",
+        "+refs/tags/*:refs/remote-tags/origin/*",
+    ];
+    let prepare = |name: &str| {
+        let path = root.path().join(name);
+        git_in(root.path(), &["init", "-q", name]);
+        git_in(&path, &["remote", "add", "origin", url]);
+        if let Some(setting) = setting {
+            git_in(&path, &["config", "core.logAllRefUpdates", setting]);
+        }
+        if existing_tag_log {
+            let log = path.join(".git/logs/refs/tags/v1");
+            std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+            std::fs::write(log, b"").unwrap();
+        }
+        path
+    };
+
+    let with_git = prepare("git");
+    let mut fetch = vec!["fetch", "-q", "--no-auto-maintenance", "origin"];
+    fetch.extend(refspecs);
+    git_in(&with_git, &fetch);
+
+    let with_girt = Repository::open(prepare("girt")).unwrap();
+    let person = Signature {
+        name: b"Local Test".to_vec(),
+        email: b"local@example.invalid".to_vec(),
+        seconds: 1_700_000_000,
+        offset_minutes: 0,
+    };
+    girt::workflow::fetch(
+        &with_girt,
+        "origin",
+        &girt::workflow::FetchOptions::new(refspecs)
+            .with_tag_namespace(RefName::new("refs/remote-tags/origin").unwrap())
+            .with_reflog(person, "fetch origin"),
+        &girt::workflow::Environment::default(),
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap();
+
+    let expected = reflog_names(&with_git.join(".git"));
+    assert!(expected.contains("refs/remotes/origin/main") == (setting != Some("false")));
+    assert_eq!(reflog_names(with_girt.git_dir()), expected);
+}

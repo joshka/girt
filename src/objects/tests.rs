@@ -125,3 +125,49 @@ fn independently_refreshed_clones_share_new_pack_damage() {
     );
     assert_eq!(counters::OS_READS.with(|reads| reads.get()), healthy_reads);
 }
+
+#[test]
+fn listed_lookups_open_only_loose_files_present_when_their_directory_was_listed() {
+    let root = tempfile::tempdir().unwrap();
+    let loose = LooseObjects::new(root.path(), ObjectFormat::Sha1);
+    let before = loose.write_blob(b"before listing").unwrap();
+    let objects = Objects::open(
+        ObjectFormat::Sha1,
+        root.path(),
+        crate::PackLimits::default(),
+        AlternateLimits::default(),
+    )
+    .unwrap();
+    let listing = LooseListing::default();
+    let cancel = AtomicBool::new(false);
+    let limits = ReadLimits::default();
+    let located = |id| {
+        objects
+            .locate_listed(id, limits, &cancel, &listing)
+            .unwrap()
+    };
+    assert_eq!(located(before), Some((ObjectKind::Blob, 14)));
+    // A file written into an already listed directory stays unseen by this listing only.
+    let mut after = None;
+    for n in 0.. {
+        let id = loose
+            .write_blob(format!("after listing {n}").as_bytes())
+            .unwrap();
+        if id.as_bytes().first() == before.as_bytes().first() {
+            after = Some(id);
+            break;
+        }
+    }
+    let after = after.unwrap();
+    assert_eq!(located(after), None);
+    assert!(objects.locate(after, limits, &cancel).unwrap().is_some());
+    assert!(
+        objects
+            .transfer_object_listed(after, limits, &cancel, &LooseListing::default())
+            .unwrap()
+            .is_some()
+    );
+    // The empty tree is synthesized without a listed file.
+    let empty = ObjectFormat::Sha1.empty_tree();
+    assert_eq!(located(empty), Some((ObjectKind::Tree, 0)));
+}
