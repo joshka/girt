@@ -1,9 +1,10 @@
 # Working-Tree Status and Checkout
 
 Use these operations when the application owns literal byte and POSIX-mode policy. They run on
-macOS/Linux; Windows status traversal and tree materialization are unsupported. Neither operation
-applies Git attributes, filters, EOL conversion, or configuration normalization. Only
-`Repository::status` applies ignore rules, and only to untracked paths.
+macOS/Linux; Windows status traversal and tree materialization are unsupported. Raw status and
+checkout apply no Git attributes, filters, EOL conversion, or configuration normalization;
+`Repository::status_with_filters` compares working files after the conversions of a
+`filter::Pipeline`. Only `Repository::status` applies ignore rules, and only to untracked paths.
 
 ## Inspect Raw Status
 

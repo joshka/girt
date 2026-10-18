@@ -13,8 +13,12 @@
 //! rules, `core.filemode`, `core.symlinks`, or ambient configuration. This is useful for consumers
 //! that own normalization policy, and is **not Git-default status**.
 //!
-//! [`Repository::status`](crate::Repository::status) compares tracked content the same way but
-//! lists untracked paths as `git status` does: pass it the rules from
+//! [`Repository::status_with_filters`](crate::Repository::status_with_filters) converts each
+//! working file it reads through a [`filter::Pipeline`](crate::filter::Pipeline) before hashing,
+//! as `git status` does for line-ending conversion, `ident` and filter drivers such as Git LFS.
+//!
+//! [`Repository::status`](crate::Repository::status) compares tracked content as raw status does
+//! but lists untracked paths as `git status` does: pass it the rules from
 //! [`Repository::ignore_rules`](crate::Repository::ignore_rules) and an [`UntrackedFiles`] listing,
 //! and read [`Report::untracked`].
 //! As in Git, a working file is not read when its `lstat` matches every cached index stat word and

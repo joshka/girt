@@ -68,9 +68,11 @@ entry whose modification time is not older than the index file itself as suspect
 
 A full status also has to apply the same [filters](/girt/how-git-works/combining-work/#filters)
 checkout used, such as line-ending conversion, before comparing contents, or every converted file
-looks modified.
+looks modified. Git only does that when it reads a file: a file whose size no longer matches the
+size recorded in the index is reported as modified without conversion, so changing only a file's
+line endings shows up in `git status` even though `git diff` is empty.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/534">macOS/Linux only. No filters, `attr:` pathspecs or monitor caches; refuses sparse/intent-to-add flags and some valid paths, and lacks Git policy for assume-unchanged, executable bits, symlink placeholders and path-case identity. The tracker links each gap.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/534">macOS/Linux only. Filters apply only through `Repository::status_with_filters` ([#496](https://github.com/joshka/girt/issues/496)); no `attr:` pathspecs or monitor caches; refuses sparse/intent-to-add flags and some valid paths, and lacks Git policy for assume-unchanged, executable bits, symlink placeholders and path-case identity. The tracker links each gap.</GirtStatus>
 
 ## Ignore rules
 

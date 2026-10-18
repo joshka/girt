@@ -333,6 +333,9 @@ impl Default for Limits {
 pub enum Comparison {
     /// Literal bytes, owner executable bit and native symlinks; no normalization/config policy.
     RawBytesAndPosixModes,
+    /// Working files converted by a [`filter::Pipeline`](crate::filter::Pipeline) before hashing,
+    /// with owner executable bit and native symlinks.
+    ConvertedContent,
 }
 
 /// A read-only observation, not an atomic snapshot or an authorization to overwrite files.
@@ -578,6 +581,17 @@ pub enum Change {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// Converting a working file for comparison failed, for example because a required filter
+    /// driver failed or a command would run under
+    /// [`filter::Commands::Refuse`](crate::filter::Commands::Refuse).
+    #[error("converting {path:?} for comparison")]
+    Filter {
+        /// Relative byte path.
+        path: Vec<u8>,
+        /// The conversion failure, boxed to keep this error small.
+        #[source]
+        source: Box<crate::filter::Error>,
+    },
     /// Platform, bare repository, filename, or filesystem feature outside the supported scope.
     #[error("unsupported status observation at {path:?}: {reason}")]
     Unsupported {

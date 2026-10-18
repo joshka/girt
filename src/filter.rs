@@ -748,6 +748,23 @@ impl Pipeline {
     }
 }
 
+// Only the macOS/Linux status walk converts files for comparison.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Pipeline {
+    /// [`Self::to_repository`] without `core.safecrlf`, as Git compares files for status.
+    pub(crate) fn stored_for_status<'a>(
+        &mut self,
+        path: &[u8],
+        file: &'a [u8],
+        staged: Staged<'_>,
+    ) -> Result<Cow<'a, [u8]>, Error> {
+        let mut plan = self.plan(path)?;
+        plan.safecrlf = SafeCrlf::Allow;
+        let (bytes, _) = self.drive(&plan, path, Direction::Clean, None, Cow::Borrowed(file))?;
+        Ok(plan.builtin_to_repository(path, bytes, staged)?.0)
+    }
+}
+
 impl Repository {
     /// Loads the conversions Git applies in this repository.
     ///

@@ -107,7 +107,9 @@ impl Tracked<'_> {
         }
         match observed[position] {
             Some(Observed::Leaf(actual)) if actual == value(entry) => None,
-            Some(Observed::Leaf(actual)) => Some(Change::Modified(actual)),
+            Some(Observed::Leaf(actual) | Observed::Resized(actual)) => {
+                Some(Change::Modified(actual))
+            }
             Some(_) => Some(Change::Obstructed {
                 path: entry.path.clone(),
             }),
