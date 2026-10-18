@@ -247,6 +247,14 @@ limits and has no caller cancellation, tracked for all fetch callers in
 captured environment and automatic protocol origin; file transport requires caller authorization.
 Metadata is never moved, replaced or automatically removed. Population is not an atomic transaction.
 
+Initial checkout with an absent baseline and empty index now retains validated gitlinks and creates
+empty child directories. `tests/checkout_gitlinks.rs` compares ordinary clone and newly populated
+children with Git in both hashes: staged index entries, empty directories and clean Git status.
+Gitlink IDs are not read as local objects or filtered. Unit checks cover external missing IDs,
+obstructions, late directory-content changes and retained refusal of general gitlink transitions.
+All child paths still participate in path protection, namespace checks and directory identity/budget
+checks. Nonempty child directories and volume-name collisions involving gitlinks are refused.
+
 ## Mailmap
 
 `tests/mailmap_git.rs` compares original temporary maps with the installed Git executable's

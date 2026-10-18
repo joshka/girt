@@ -228,7 +228,6 @@ fn create_obstruction(path: &Path, directory: bool) {
 }
 
 #[rstest]
-#[case::gitlink(b"sub", EntryMode::Gitlink)]
 #[case::metadata_alias(b".GIT/config", EntryMode::Blob)]
 #[case::short_name(b"git~1/config", EntryMode::Blob)]
 #[case::trailing_dot(b".git./config", EntryMode::Blob)]
@@ -1315,4 +1314,69 @@ fn cancellation_in_removed_path_verification_preserves_the_old_index() {
     assert_eq!(f.index_bytes(), index);
     assert!(!f.root().join("dir-095/old").exists());
     assert!(!f.repo.git_dir().join("index.lock").exists());
+}
+
+#[test]
+fn initial_gitlink_does_not_read_a_local_commit_and_general_transitions_stay_refused() {
+    let f = Fixture::new();
+    let id: ObjectId = "1111111111111111111111111111111111111111".parse().unwrap();
+    let tree = f.entry_tree(b"sub", EntryMode::Gitlink, id);
+    let report = f.checkout(None, Some(tree)).unwrap();
+    assert_eq!(report.applied, [op(b"sub", Action::CreateDirectory)]);
+    let index = f.repo.read_index(Default::default()).unwrap().unwrap();
+    assert_eq!(index.entries()[0].mode, index::Mode::Gitlink);
+    assert_eq!(index.entries()[0].id, id);
+    let bytes = f.index_bytes();
+    let failure = f.checkout(Some(tree), None).unwrap_err();
+    assert!(failure.report.applied.is_empty());
+    assert_eq!(f.index_bytes(), bytes);
+    assert!(f.root().join("sub").is_dir());
+}
+
+#[rstest]
+#[case::file(0)]
+#[case::nonempty_directory(1)]
+#[case::symlink(2)]
+fn initial_gitlink_refuses_obstructions_without_mutation(#[case] obstruction: u8) {
+    let f = Fixture::new();
+    let target = f.tree(b"sub", EntryMode::Gitlink, b"external identity");
+    match obstruction {
+        0 => fs::write(f.root().join("sub"), b"keep").unwrap(),
+        1 => {
+            fs::create_dir(f.root().join("sub")).unwrap();
+            fs::write(f.root().join("sub/keep"), b"keep").unwrap();
+        }
+        _ => symlink("elsewhere", f.root().join("sub")).unwrap(),
+    }
+    let failure = f.checkout(None, Some(target)).unwrap_err();
+    assert!(failure.report.applied.is_empty());
+    assert!(!failure.report.index_published);
+    assert!(!f.repo.git_dir().join("index").exists());
+}
+
+#[test]
+fn initial_gitlink_rechecks_empty_directory_before_index_publication() {
+    let f = Fixture::new();
+    let target = f.tree(b"sub", EntryMode::Gitlink, b"external identity");
+    let failure = run(
+        &f.repo,
+        None,
+        Some(target),
+        Limits::default(),
+        &AtomicBool::new(false),
+        &mut |event, _| {
+            if event == "before publication" {
+                fs::write(f.root().join("sub/user"), b"keep").unwrap();
+            }
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        failure.report.applied,
+        [op(b"sub", Action::CreateDirectory)]
+    );
+    assert!(!failure.report.index_published);
+    assert!(!f.repo.git_dir().join("index").exists());
+    assert_eq!(fs::read(f.root().join("sub/user")).unwrap(), b"keep");
 }

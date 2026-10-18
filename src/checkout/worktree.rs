@@ -361,6 +361,7 @@ impl<'a> Plan<'a> {
         let objects = repo.objects_with(limits.packs)?;
         let mut target = flatten(&objects, target, limits, cancel)?;
         let entries = edit.index().entries();
+        let initial = baseline.is_none() && local == Local::Refuse && entries.is_empty();
         let mut old = match local {
             Local::Refuse => flatten(&objects, baseline, limits, cancel)?,
             Local::Discard => tracked(entries, cancel)?,
@@ -427,6 +428,21 @@ impl<'a> Plan<'a> {
         let old_resolved = policy.resolve(&old).map_err(collide)?;
         let resolved = policy.resolve(&target).map_err(collide)?;
         let collisions = resolved.collisions;
+        for collision in &collisions {
+            if std::iter::once(&collision.written)
+                .chain(&collision.shadowed)
+                .any(|path| {
+                    target
+                        .get(path)
+                        .is_some_and(|leaf| leaf.mode == EntryMode::Gitlink)
+                })
+            {
+                return Err(refused(
+                    &collision.written,
+                    "gitlink shares a name on this volume",
+                ));
+            }
+        }
         let old_disk = old_resolved.disk;
         let target_disk = resolved.disk;
         let sources = [old_resolved.sources, resolved.sources];
@@ -464,7 +480,10 @@ impl<'a> Plan<'a> {
         {
             check(cancel)?;
             if leaf.mode == EntryMode::Gitlink {
-                return Err(refused(b"", "gitlinks are unsupported"));
+                if initial {
+                    continue;
+                }
+                return Err(refused(b"", "gitlink transitions are unsupported"));
             }
             if blobs.contains_key(&leaf.id) {
                 continue;
@@ -492,6 +511,9 @@ impl<'a> Plan<'a> {
             .flat_map(Leaves::values)
             .chain(target.values())
         {
+            if leaf.mode == EntryMode::Gitlink {
+                continue;
+            }
             let bytes = &blobs[&leaf.id];
             if leaf.mode == EntryMode::Symlink
                 && (bytes.is_empty() || bytes.contains(&0) || bytes.len() > 1024)
@@ -523,7 +545,7 @@ impl<'a> Plan<'a> {
                 for (side, leaves) in pass {
                     for (path, leaf) in leaves {
                         check(cancel)?;
-                        if leaf.mode == EntryMode::Symlink {
+                        if matches!(leaf.mode, EntryMode::Symlink | EntryMode::Gitlink) {
                             continue;
                         }
                         let written = pipeline
@@ -562,6 +584,9 @@ impl<'a> Plan<'a> {
         }
         let mut target_budget = limits.max_worktree_bytes;
         for (path, leaf) in &target_disk {
+            if leaf.mode == EntryMode::Gitlink {
+                continue;
+            }
             let length = converted[Side::Target as usize]
                 .get(&(path.clone(), leaf.id))
                 .map_or(blobs[&leaf.id].len(), Vec::len);
@@ -759,6 +784,16 @@ impl<'a> Plan<'a> {
         let target_dirs = directories(&self.target);
         let mut remove_dirs = BTreeSet::new();
         for path in self.target.keys() {
+            if self.target[path].mode == EntryMode::Gitlink {
+                if self.expected[path]
+                    .as_ref()
+                    .is_some_and(|stat| kind(stat) == FileType::Directory)
+                {
+                    let parent = self.parent(path, cancel)?;
+                    self.verify_empty_gitlink(&parent, path, cancel)?;
+                }
+                continue;
+            }
             if self.old.contains_key(path) {
                 continue;
             }
@@ -810,6 +845,9 @@ impl<'a> Plan<'a> {
             }
         }
         for (path, leaf) in &self.target {
+            if leaf.mode == EntryMode::Gitlink {
+                continue;
+            }
             if self.old.get(path) != Some(leaf)
                 || self.dirty.contains(path)
                 || self.missing.contains(path)
@@ -1322,6 +1360,22 @@ impl<'a> Plan<'a> {
         }
     }
 
+    // A gitlink is an external commit identity, never a blob or a repository we may enter.
+    // Initial checkout only creates its empty directory and verifies that it stayed empty.
+    fn verify_empty_gitlink(
+        &self,
+        parent: &OwnedFd,
+        path: &[u8],
+        cancel: &AtomicBool,
+    ) -> Result<(), Error> {
+        let directory = self.open_expected(parent, path)?;
+        let mut budget = self.limits.max_directory_entries;
+        if !names(&directory, path, &mut budget, cancel)?.is_empty() {
+            return Err(refused(path, "initial gitlink directory is not empty"));
+        }
+        Ok(())
+    }
+
     fn verify_target(&self, cancel: &AtomicBool, hook: &mut Hook<'_>) -> Result<(), Error> {
         self.begin_phase(true);
         let mut budget = self.limits.max_worktree_bytes;
@@ -1329,6 +1383,10 @@ impl<'a> Plan<'a> {
             check(cancel)?;
             let fd = self.parent(path, cancel)?;
             self.check_name(&fd, path, cancel)?;
+            if leaf.mode == EntryMode::Gitlink {
+                self.verify_empty_gitlink(&fd, path, cancel)?;
+                continue;
+            }
             if self.kept_raw.contains(path) {
                 let (mode, bytes) = self.read_tracked(&fd, path, *leaf, &mut budget, cancel)?;
                 if mode != leaf.mode || bytes != self.blobs[&leaf.id] {
@@ -1508,10 +1566,18 @@ fn prefixes(path: &[u8]) -> impl Iterator<Item = &[u8]> {
 }
 fn directories(leaves: &Leaves) -> BTreeSet<Vec<u8>> {
     leaves
-        .keys()
-        .flat_map(|p| prefixes(parent_path(p)).map(<[u8]>::to_vec))
+        .iter()
+        .flat_map(|(path, leaf)| {
+            let directory = if leaf.mode == EntryMode::Gitlink {
+                path.as_slice()
+            } else {
+                parent_path(path)
+            };
+            prefixes(directory).map(<[u8]>::to_vec)
+        })
         .collect()
 }
+
 fn joined(parent: &[u8], name: &[u8]) -> Vec<u8> {
     let mut path = parent.to_vec();
     if !path.is_empty() {
