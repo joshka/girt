@@ -146,7 +146,7 @@ pub(crate) use http::send_http_preparing;
 #[cfg(feature = "http")]
 pub use http::{HttpPushOutcome, send_http, send_http_checked, send_http_checked_with_progress};
 
-mod graph;
+pub(crate) mod graph;
 mod hooks;
 mod local;
 mod local_native;

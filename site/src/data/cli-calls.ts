@@ -292,6 +292,13 @@ export const calls: Record<string, CliCalls> = {
       method('PushReport', 'push/struct.PushReport.html', 'all_succeeded'),
     ],
   },
+  'upload-pack': {
+    git: 'git upload-pack',
+    api: [
+      unreleased('serve::UploadPack::serve', 520),
+      unreleased('serve::Protocol::from_parameters', 520),
+    ],
+  },
 
   // Packs and maintenance.
   'pack list': {

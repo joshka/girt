@@ -28,7 +28,7 @@ use crate::{Commit, IdMap, IdSet, Object, ObjectId, ObjectKind, Objects, ReadLim
 const SKEW_SLOP: usize = 5;
 
 /// Objects to send, and the receiver roots that omitted objects rely on.
-pub(super) struct Selection {
+pub(crate) struct Selection {
     pub objects: Vec<ObjectId>,
     pub receiver_roots: Vec<ObjectId>,
     /// Verified graph marks identify possible external blob and tree bases.
@@ -52,9 +52,45 @@ pub(super) fn select(
     }
     let mut walk = Walk::new(store, limits, cancel, observe);
     walk.mark_roots(roots)?;
-    walk.resolve_tips(commands)?;
+    walk.resolve_tips(
+        commands
+            .iter()
+            .filter(|command| !command.deletes())
+            .map(|command| {
+                let kind = command
+                    .name
+                    .as_bytes()
+                    .starts_with(b"refs/heads/")
+                    .then_some(ObjectKind::Commit);
+                (command.new, kind)
+            }),
+    )?;
     walk.walk_commits()?;
     walk.check_fast_forwards(commands)?;
+    walk.mark_boundary_trees()?;
+    walk.select_trees()?;
+    Ok(walk.finish())
+}
+
+/// Selects objects reachable from `wants` that are not proven to be in the closure of a locally
+/// present `haves` entry, as upload-pack does when serving a fetch.
+///
+/// Uses [`select`]'s walk and bounds without any fast-forward proof.
+pub(crate) fn select_wants(
+    store: &Objects,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    limits: PushLimits,
+    cancel: &AtomicBool,
+    observe: impl FnMut(u64),
+) -> Result<Selection, Error> {
+    if haves.len() > limits.max_refs {
+        return Err(Error::Limit("common objects"));
+    }
+    let mut walk = Walk::new(store, limits, cancel, observe);
+    walk.mark_roots(haves)?;
+    walk.resolve_tips(wants.iter().map(|&id| (id, None)))?;
+    walk.walk_commits()?;
     walk.mark_boundary_trees()?;
     walk.select_trees()?;
     Ok(walk.finish())
@@ -385,20 +421,15 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
     }
 
     /// Reads tips and pushed tags. Commits join the walk; trees and blobs wait for tree marking.
-    fn resolve_tips(&mut self, commands: &[PushCommand]) -> Result<(), Error> {
+    fn resolve_tips(
+        &mut self,
+        tips: impl IntoIterator<Item = (ObjectId, Option<ObjectKind>)>,
+    ) -> Result<(), Error> {
         let mut pending = VecDeque::new();
-        for command in commands {
+        for (id, kind) in tips {
             check_cancelled(self.cancel)?;
-            if command.deletes() {
-                continue;
-            }
-            let kind = command
-                .name
-                .as_bytes()
-                .starts_with(b"refs/heads/")
-                .then_some(ObjectKind::Commit);
-            if self.discover(command.new, kind)? {
-                pending.push_back(command.new);
+            if self.discover(id, kind)? {
+                pending.push_back(id);
             }
         }
         while let Some(id) = pending.pop_front() {

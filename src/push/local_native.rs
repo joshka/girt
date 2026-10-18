@@ -7,6 +7,7 @@ use std::path::Path;
 use super::{PreparedPush, PushError, PushFailure, PushReport, RejectionOrigin, Status};
 use crate::config::ConfigInputs;
 use crate::fetch::{Advertisement, FetchError, FetchLimits, KnownHistory, ReceivedFetch};
+use crate::hide_refs::HideRules;
 use crate::refs::{
     Expected, RefEdit, RefName, RefOutcome, ReferenceError, References, Reflog, Target,
     TransactionError,
@@ -94,7 +95,8 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
     let deny_non_fast_forwards =
         configured_boolean(&repository, "receive", "denynonfastforwards")?.unwrap_or(false);
     let log_policy = log_policy(&repository)?;
-    let hide = HideRules::parse(&repository)?;
+    let hide = HideRules::parse(&repository, "receive")
+        .map_err(|reason| PushError::NotSent(PushFailure::Unsupported(reason)))?;
     if repository
         .config()
         .value("receive", None, "procreceiverefs")
@@ -635,57 +637,6 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
     match quarantine {
         Some(quarantine) => quarantine.finish(result, pending),
         None => result,
-    }
-}
-
-struct HideRules(Vec<(Vec<u8>, bool)>);
-
-impl HideRules {
-    fn parse(repository: &Repository) -> Result<Self, PushError> {
-        let mut rules = Vec::new();
-        for entry in repository.config().entries() {
-            if entry.subsection.is_some()
-                || !entry.name.eq_ignore_ascii_case(b"hiderefs")
-                || !(entry.section.eq_ignore_ascii_case(b"transfer")
-                    || entry.section.eq_ignore_ascii_case(b"receive"))
-            {
-                continue;
-            }
-            let value =
-                entry
-                    .value
-                    .as_deref()
-                    .ok_or(PushError::NotSent(PushFailure::Unsupported(
-                        "implicit hideRefs pattern",
-                    )))?;
-            let (visible, pattern) = if let Some(pattern) = value.strip_prefix(b"!") {
-                (true, pattern)
-            } else {
-                (false, value)
-            };
-            // Namespace rewriting is not active in the native adapter, so ^ matches the same
-            // spelling as an ordinary pattern. Reject an empty pattern rather than hiding all refs.
-            let pattern = pattern.strip_prefix(b"^").unwrap_or(pattern);
-            if pattern.is_empty() {
-                return Err(PushError::NotSent(PushFailure::Unsupported(
-                    "empty hideRefs pattern",
-                )));
-            }
-            rules.push((pattern.to_vec(), visible));
-        }
-        Ok(Self(rules))
-    }
-
-    fn matches(&self, name: &RefName) -> bool {
-        let mut hidden = false;
-        for (pattern, visible) in &self.0 {
-            let pattern = pattern.strip_suffix(b"/").unwrap_or(pattern);
-            let rest = name.as_bytes().strip_prefix(pattern);
-            if rest.is_some_and(|rest| rest.is_empty() || rest.starts_with(b"/")) {
-                hidden = !visible;
-            }
-        }
-        hidden
     }
 }
 

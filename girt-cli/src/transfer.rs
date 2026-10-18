@@ -14,6 +14,7 @@ use girt::push::{ForcePolicy, PushCommand, RejectionOrigin, Status};
 use girt::refs::RefName;
 use girt::remote::RefSource;
 use girt::revision::Resolver;
+use girt::serve::{Protocol, UploadLimits, UploadPack};
 use girt::workflow::{self, Environment, FetchOptions, PushOptions};
 use girt::{InitKind, ObjectId, Repository};
 
@@ -53,6 +54,42 @@ pub struct FetchArgs {
     /// Configured remote name.
     #[arg(default_value = "origin", add = ArgValueCandidates::new(complete::remotes))]
     remote: String,
+}
+
+/// Serve fetches from a repository.
+#[derive(Debug, clap::Args)]
+pub struct UploadPackArgs {
+    /// Repository to serve.
+    directory: PathBuf,
+}
+
+/// Serve one upload-pack session on stdin and stdout.
+pub fn upload_pack(args: UploadPackArgs, context: &Context) -> Result<ExitCode> {
+    let repository = Repository::open_with_config(&args.directory, &context.config_inputs()?)
+        .wrap_err_with(|| format!("opening {}", args.directory.display()))?;
+    let protocol = context
+        .environment
+        .get("GIT_PROTOCOL")
+        .map_or(Protocol::V0, |value| {
+            Protocol::from_parameters(value.as_encoded_bytes())
+        });
+    // The served repository is trusted; the client's request isn't.
+    let request = UploadLimits::default();
+    let limits = UploadLimits::trusted()
+        .with_max_request_bytes(request.max_request_bytes)
+        .with_max_wants(request.max_wants)
+        .with_max_haves(request.max_haves);
+    let upload = UploadPack::new(&repository)?.with_limits(limits);
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    upload
+        .serve(
+            protocol,
+            &mut std::io::stdin().lock(),
+            &mut std::io::BufWriter::new(std::io::stdout().lock()),
+            &cancel,
+        )
+        .wrap_err("serving upload-pack")?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Push refs to a remote, printing `<status>\t<ref>[\t<reason>]` per ref.

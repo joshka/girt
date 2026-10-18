@@ -78,6 +78,39 @@ impl<R: Read> Wire<'_, R> {
         }
         Ok(Frame::Data(bytes))
     }
+    /// Reads one frame, or `None` when the stream ends cleanly before a header starts.
+    pub(crate) fn frame_or_end(&mut self) -> Result<Option<Frame>, Error> {
+        check_cancelled(self.cancel)?;
+        let mut first = [0; 1];
+        let read = loop {
+            match self.reader.read(&mut first) {
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                result => break result?,
+            }
+        };
+        if read == 0 {
+            return Ok(None);
+        }
+        self.charge(4)?;
+        let mut header = [0; 4];
+        header[0] = first[0];
+        self.exact(
+            header
+                .get_mut(1..)
+                .ok_or(Error::Protocol("pkt-line header"))?,
+        )?;
+        let length = match frame_length(&header)? {
+            0 => return Ok(Some(Frame::Flush)),
+            1 => return Ok(Some(Frame::Delim)),
+            2 => return Ok(Some(Frame::ResponseEnd)),
+            length => length,
+        };
+        self.charge(length - 4)?;
+        let mut bytes = vec![0; length - 4];
+        self.exact(&mut bytes)?;
+        Ok(Some(Frame::Data(bytes)))
+    }
+
     fn charge(&mut self, bytes: usize) -> Result<(), Error> {
         self.remaining = self
             .remaining
