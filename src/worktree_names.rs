@@ -27,6 +27,12 @@ pub(crate) struct Protection {
 }
 
 impl Protection {
+    /// Metadata aliases forbidden by fsck on every platform.
+    pub(crate) const ALL: Self = Self {
+        ntfs: true,
+        hfs: true,
+    };
+
     /// Reads both options, using Git's defaults when unset: NTFS protection everywhere, HFS+
     /// protection on macOS.
     ///
@@ -51,7 +57,7 @@ impl Protection {
             .any(|component| self.refuses_component(component))
     }
 
-    fn refuses_component(self, component: &[u8]) -> bool {
+    pub(crate) fn refuses_component(self, component: &[u8]) -> bool {
         if component.eq_ignore_ascii_case(b".git") {
             return true;
         }
