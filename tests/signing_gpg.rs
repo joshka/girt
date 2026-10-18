@@ -4,6 +4,12 @@
 //! `SSH_AUTH_SOCK` is absent, and `HOME` and `GNUPGHOME` point into the test's temporary
 //! directory. Keys are generated per test, and the agents started for those keyrings are stopped
 //! when the test ends. Tests skip when `gpg` or `gpgsm` is not installed.
+
+// Unix only: Git for Windows' MSYS gpg reads a native `GNUPGHOME` as a relative POSIX path and
+// cannot generate keys. Running these on Windows needs MSYS path translation:
+// https://github.com/joshka/girt/issues/690.
+#![cfg(unix)]
+
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
