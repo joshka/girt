@@ -32,7 +32,8 @@ pub(super) struct Observation {
 /// Conversion applied to tracked regular files before comparing them with the index.
 pub(crate) trait Convert: Sync {
     /// The stored form of `file` at `path`, whose index entry names `staged`.
-    fn convert(&self, path: &[u8], file: &[u8], staged: ObjectId) -> Result<Vec<u8>, Error>;
+    fn convert(&self, path: &[u8], file: &[u8], staged: Option<ObjectId>)
+    -> Result<Vec<u8>, Error>;
 }
 
 /// A shared pipeline with the objects `text=auto` reads staged blobs from.
@@ -42,12 +43,19 @@ pub(crate) struct Shared<'a> {
 }
 
 impl Convert for Shared<'_> {
-    fn convert(&self, path: &[u8], file: &[u8], staged: ObjectId) -> Result<Vec<u8>, Error> {
+    fn convert(
+        &self,
+        path: &[u8],
+        file: &[u8],
+        staged: Option<ObjectId>,
+    ) -> Result<Vec<u8>, Error> {
         let mut pipeline = self
             .pipeline
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let staged = crate::filter::Staged::Object(self.objects, staged);
+        let staged = staged.map_or(crate::filter::Staged::Absent, |id| {
+            crate::filter::Staged::Object(self.objects, id)
+        });
         pipeline
             .stored_for_status(path, file, staged)
             .map(std::borrow::Cow::into_owned)
@@ -66,7 +74,12 @@ pub(super) enum Listing {
     Raw(Untracked),
     /// Ignore-aware status: these rules plus each visited directory's `.gitignore`, and Git's
     /// name policy.
-    Ignoring(Box<Ignore>, UntrackedFiles, GitNames),
+    Ignoring {
+        rules: Box<Ignore>,
+        files: UntrackedFiles,
+        names: GitNames,
+        environment: Box<crate::workflow::Environment>,
+    },
 }
 
 /// How Git's `core.precomposeUnicode` and `core.ignoreCase` relate working-tree names to index
@@ -155,7 +168,13 @@ fn scan_with_hook(
     cancel: &AtomicBool,
     after_read: &(dyn Fn(&[u8]) + Sync),
 ) -> Result<Observation, Error> {
-    let configured = matches!(listing, Listing::Ignoring(..));
+    let configured = matches!(listing, Listing::Ignoring { .. });
+    let ignored_gitlinks = if configured {
+        crate::submodule::ignored_gitlinks(repo, entries, limits, paths)
+            .map_err(|error| Error::Submodules(Box::new(error)))?
+    } else {
+        HashSet::new()
+    };
     let file_mode = !configured
         || repo
             .config()
@@ -200,9 +219,12 @@ fn scan_with_hook(
     directories.sort_unstable();
     let (policy, rules, names) = match listing {
         Listing::Raw(policy) => (Policy::Raw(policy), None, None),
-        Listing::Ignoring(rules, files, names) => {
-            (Policy::Ignoring(files), Some(Arc::new(*rules)), Some(names))
-        }
+        Listing::Ignoring {
+            rules,
+            files,
+            names,
+            ..
+        } => (Policy::Ignoring(files), Some(Arc::new(*rules)), Some(names)),
     };
     let ignore_limits = rules.as_ref().map(|rules| rules.limits());
     let ignore_usage = rules.as_ref().map(|rules| rules.usage());
@@ -211,6 +233,7 @@ fn scan_with_hook(
         tracked: Tracked::new(entries, directories, names.is_some()),
         names,
         configured,
+        ignored_gitlinks,
         file_mode,
         symlinks,
         metadata,
@@ -262,10 +285,20 @@ fn scan_with_hook(
     for (position, entry) in entries.iter().enumerate() {
         check(cancel)?;
         if entry.stage != index::Stage::Normal
-            || entry.mode == index::Mode::Gitlink
             || (configured && (entry.assume_valid || entry.skip_worktree))
         {
             continue;
+        }
+        if entry.mode == index::Mode::Gitlink {
+            let replaced_by_file = match observed[position] {
+                Some(Observed::Leaf(value) | Observed::Resized(value)) => {
+                    matches!(value.mode, EntryMode::Blob | EntryMode::Executable)
+                }
+                _ => false,
+            };
+            if !configured || !replaced_by_file {
+                continue;
+            }
         }
         let difference = if configured && entry.intent_to_add {
             match observed[position] {
@@ -360,6 +393,7 @@ impl Found {
 struct Scan<'a> {
     format: crate::ObjectFormat,
     configured: bool,
+    ignored_gitlinks: HashSet<Vec<u8>>,
     file_mode: bool,
     symlinks: bool,
     tracked: Tracked<'a>,
@@ -670,7 +704,8 @@ impl Scan<'_> {
                 }
             }
             if tracked.is_some_and(|(_, entry)| {
-                entry.mode == index::Mode::Gitlink
+                (entry.mode == index::Mode::Gitlink
+                    && (!self.configured || self.ignored_gitlinks.contains(&entry.path)))
                     || (self.configured
                         && (entry.assume_valid || entry.skip_worktree)
                         && self.policy != Policy::Ignoring(UntrackedFiles::All))
@@ -684,6 +719,11 @@ impl Scan<'_> {
             let stat = statat(&**fd, OsStr::from_bytes(name), AtFlags::SYMLINK_NOFOLLOW)
                 .map_err(|source| io(&child, source))?;
             let kind = FileType::from_raw_mode(stat.st_mode);
+            if tracked.is_some_and(|(_, entry)| entry.mode == index::Mode::Gitlink)
+                && kind != FileType::RegularFile
+            {
+                continue;
+            }
             if kind != FileType::Directory {
                 if !selected {
                     // A selected tracked path below this one is still obstructed by it.
@@ -920,7 +960,8 @@ impl Scan<'_> {
             found.observe(slots, Observed::Leaf(TreeValue { id, mode }));
             return Ok(());
         };
-        let id = ObjectId::for_blob(self.format, &filters.convert(path, &bytes, entry.id)?);
+        let staged = (entry.mode != index::Mode::Gitlink).then_some(entry.id);
+        let id = ObjectId::for_blob(self.format, &filters.convert(path, &bytes, staged)?);
         let value = TreeValue { id, mode };
         let cached = entry.stat.size;
         let resized = cached != 0 && cached != stat.st_size as u32;

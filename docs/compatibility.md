@@ -81,6 +81,31 @@ endpoints. Worktree symlinks and relative traversal past the remote path are exp
 where Git init accepts them. Git refuses inserting a symlink `.gitmodules` index entry; an
 independently constructed imported entry verifies girt's refusal too.
 
+`tests/submodule_status.rs` builds original local-file submodules with absorbed Git directories.
+SHA-1/SHA-256 cases compare listing prefixes/IDs, inactive and unpopulated checkouts, conflicted
+stages, tracked/untracked dirtiness and new commits against Git 2.56.0. Ignore cases compare local
+submodule, `.gitmodules` and `diff.ignoreSubmodules` precedence. Global filter fixtures compare
+nested Git status with inherited non-local configuration, excluded parent-local settings,
+child-local overrides, child-specific conditional includes and explicit command/environment
+overrides. Nested untracked content retains its kind through recursion; depth/count limits,
+cancellation and symlink-ancestor refusal are separate library checks. Configured status inspects
+submodules; raw status remains unchecked. Inspection is macOS/Linux-only and inherits
+repository-opening trust assumptions. Standalone listing reads nested metadata even under
+`ignore=all`; configured parent status leaves those paths unchecked and unopened. Staged gitlink
+changes remain visible. Branch/tag description suffixes are not implemented. Init/update and clone
+recursion remain outside this increment.
+
+Captured `XDG_CONFIG_HOME` attributes and ignores reach child status. Regular files replacing
+recorded gitlinks produce type changes through the parent's filters; `ignore=all` suppresses those
+reads and changes. Git 2.56.0 itself refuses symlink replacements with exit 128, and girt likewise
+refuses them. A populated child with an unborn HEAD is a known difference: Git reports it clean and
+prints the recorded ID with a space prefix; girt returns a typed configuration error rather than
+misrepresenting the child's HEAD. [Issue 688](https://github.com/joshka/girt/issues/688) tracks an
+explicit unborn-checkout representation. Standalone listing rechecks the parent index, which
+supplies recorded IDs; it does not depend on or recheck the parent HEAD. Configured parent status
+retains its index and HEAD rechecks after nested inspection. File/configuration observations are not
+atomic.
+
 ## Mailmap
 
 `tests/mailmap_git.rs` compares original temporary maps with the installed Git executable's

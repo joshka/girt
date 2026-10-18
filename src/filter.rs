@@ -553,6 +553,24 @@ impl std::fmt::Debug for Pipeline {
 }
 
 impl Pipeline {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn environment(&self) -> Option<&Environment> {
+        match &self.rules {
+            Rules::Lookup(lookup) => Some(lookup.environment()),
+            Rules::Attributes(_) => None,
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn driver_policy(&self) -> (Commands, Limits) {
+        (self.drivers.commands, self.drivers.limits)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn set_driver_limits(&mut self, limits: Limits) {
+        self.drivers.limits = limits;
+    }
+
     /// Uses attribute files read on demand by `lookup`.
     pub fn new(lookup: Lookup, settings: Settings, drivers: Drivers) -> Self {
         Self {

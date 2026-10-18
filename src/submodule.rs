@@ -9,7 +9,8 @@
 //! Parsing preserves names and paths for inspection. Call [`Definition::validate`] before using
 //! either in a filesystem operation. Validation is lexical; it does not establish that existing
 //! directories are free of symlinks or that a concurrent writer cannot replace them. This module
-//! does not yet initialize, update, or inspect a submodule checkout.
+//! does not yet initialize or update a submodule checkout. [`status()`] inspects existing
+//! checkouts; configured parent status includes these observations in [`crate::status::Report`].
 //!
 //! ```
 //! use girt::submodule::{Modules, Update};
@@ -24,8 +25,12 @@
 //! ```
 
 mod load;
+mod status;
 mod url;
 pub use load::{LoadError, Source};
+pub use status::{Checkout, StatusError, status, status_with};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use status::{complete_status, ignored_gitlinks};
 pub use url::UrlError;
 
 use crate::config::{Config, ConfigError};

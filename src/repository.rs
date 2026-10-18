@@ -18,8 +18,11 @@
 //! retaining private [`Repository::git_dir`] metadata. Use these accessors instead of appending
 //! `.git` to a path. [`Repository::worktree`] returns `None` for bare repositories.
 //!
-//! A handle retains metadata, configuration, and shallow roots read at opening. It is not a lock
-//! or a complete validation of stored objects. Reopen to refresh metadata; open an
+//! A handle retains metadata, configuration, and shallow roots read at opening. For submodule
+//! inspection it also retains the caller's non-local configuration source inputs: children reread
+//! those sources with their own local settings and conditional-include context. This does not
+//! refresh the parent's captured configuration. It is not a lock or a complete validation of
+//! stored objects. Reopen to refresh metadata; open an
 //! [`Objects`](crate::Objects) reader separately to retain a pack snapshot. Loose objects and
 //! reference reads have their own visibility rules.
 //!
@@ -440,6 +443,7 @@ pub struct RepositoryMetadata {
     worktree: Option<PathBuf>,
     bare: bool,
     config: Config,
+    inherited_config: ConfigInputs,
     format_version: u32,
     object_format: ObjectFormat,
     reference_backend: crate::refs::Backend,
@@ -542,6 +546,7 @@ impl RepositoryMetadata {
             worktree: self.worktree,
             bare: self.bare,
             config: self.config,
+            inherited_config: self.inherited_config,
             format_version: self.format_version,
             object_format: self.object_format,
             shallow,
@@ -600,6 +605,16 @@ impl RepositoryMetadata {
             Some(Some(b"reftable")) => crate::refs::Backend::Reftable,
             _ => crate::refs::Backend::Files,
         };
+        let mut inherited_config = inputs.clone();
+        inherited_config
+            .files
+            .retain(|file| !matches!(file.scope, ConfigScope::Local | ConfigScope::Worktree));
+        for file in &mut inherited_config.files {
+            file.path =
+                std::path::absolute(&file.path).map_err(|source| io_error(&file.path, source))?;
+        }
+        inherited_config.context.git_dirs.clear();
+        inherited_config.context.branch = None;
         let mut inputs = inputs.clone();
         inputs.context.git_dirs.push(git_dir.clone());
         if let Some(logical_git_dir) = logical_git_dir {
@@ -687,6 +702,7 @@ impl RepositoryMetadata {
             worktree,
             bare,
             config,
+            inherited_config,
             format_version,
             object_format,
             reference_backend,
@@ -761,6 +777,7 @@ pub struct Repository {
     worktree: Option<PathBuf>,
     bare: bool,
     config: Config,
+    inherited_config: ConfigInputs,
     format_version: u32,
     object_format: ObjectFormat,
     shallow: ShallowRoots,
@@ -780,6 +797,7 @@ impl std::fmt::Debug for Repository {
             .field("bare", &self.bare)
             .field("object_format", &self.object_format)
             .field("reference_backend", &self.reference_backend)
+            .field("inherited_config_files", &self.inherited_config.files.len())
             .finish_non_exhaustive()
     }
 }
@@ -858,6 +876,11 @@ pub enum OpenError {
 }
 
 impl Repository {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn inherited_config(&self) -> &ConfigInputs {
+        &self.inherited_config
+    }
+
     /// Internal receive storage shares metadata but owns a separate object directory.
     pub(crate) fn with_private_object_directory(&self, directory: &Path) -> Self {
         let mut repository = self.clone();

@@ -562,3 +562,40 @@ fn intent_to_add_metadata_reads_the_empty_index_blob() {
             .is_empty()
     );
 }
+
+#[test]
+fn submodule_status_cancellation_precedes_inspection() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = girt::Repository::init(
+        girt::ObjectFormat::Sha1,
+        directory.path().join("parent"),
+        girt::InitKind::Worktree,
+    )
+    .unwrap();
+    let result = girt::submodule::status_with(
+        &repository,
+        girt::filter::Commands::Refuse,
+        girt::status::Limits::default(),
+        &std::sync::atomic::AtomicBool::new(true),
+    );
+    assert!(matches!(
+        result,
+        Err(girt::submodule::StatusError::Cancelled)
+    ));
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[test]
+fn submodule_status_explicitly_refuses_unsupported_platforms() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = girt::Repository::init(
+        girt::ObjectFormat::Sha1,
+        directory.path().join("parent"),
+        girt::InitKind::Worktree,
+    )
+    .unwrap();
+    assert!(matches!(
+        girt::submodule::status(&repository),
+        Err(girt::submodule::StatusError::Unsupported)
+    ));
+}

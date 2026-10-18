@@ -409,7 +409,12 @@ fn shared_pattern_budget_admits_exactly_the_limit(#[case] gitignore: &[u8], #[ca
         root,
         &entries,
         None,
-        Listing::Ignoring(Box::new(rules), UntrackedFiles::All, GitNames::default()),
+        Listing::Ignoring {
+            rules: Box::new(rules),
+            files: UntrackedFiles::All,
+            names: GitNames::default(),
+            environment: Box::default(),
+        },
         &Pathspec::all(),
         None,
         Limits::default(),

@@ -1,6 +1,6 @@
 ---
-title: Working with submodule definitions
-description: Read and validate caller-selected .gitmodules bytes without fetching or changing a checkout.
+title: Working with submodules
+description: Read submodule definitions and inspect existing checkouts without fetching or changing them.
 ---
 
 A submodule stores a commit ID as a gitlink (tree mode `160000`) in its parent repository. The
@@ -66,6 +66,49 @@ the remote path, helper URLs and bases containing queries or fragments. Git can 
 or scp host in unusual parent traversals; girt refuses those endpoint changes explicitly. Transport
 selection and network access remain caller decisions.
 
-Nested HEAD/dirtiness inspection, initialization, checkout updates and clone recursion remain
-unsupported. Parent status continues to expose gitlinks through `unchecked_gitlinks`. Track those
-operations in [the submodules issue](https://github.com/joshka/girt/issues/507).
+## Inspect existing checkouts
+
+`girt::submodule::status(&repository)` returns one `Checkout` per gitlink. `recorded` is the
+parent's index commit and `head` is the populated checkout's HEAD. A logical `name` can differ from
+the gitlink `path`. `registered` reports active configuration independently of checkout presence. A
+populated but unregistered submodule can still make the parent dirty.
+
+`Checkout::prefix` supplies the structural prefix of `git submodule status`: `U` for unresolved
+index stages, `-` for inactive or unpopulated submodules, `+` for a different HEAD, and a space for
+a matching HEAD. `display_id` supplies the printed identity (zero for conflicts). Branch/tag
+annotation suffixes are not computed. Dirtiness does not change this prefix; `tracked_dirty`,
+`untracked_dirty` and `is_modified` describe changes relevant to parent status.
+
+Configured `Repository::status` and `status_with_filters` populate `Report::submodules` and add
+visible gitlink modifications to `unstaged`, including dirtiness with an unchanged commit ID. Raw
+status retains `unchecked_gitlinks` and does not enter nested repositories. Ignore precedence is
+effective `submodule.<name>.ignore`, then `.gitmodules`, then `diff.ignoreSubmodules`, then `none`.
+`untracked` hides untracked content; `dirty` hides content changes but retains new commits; `all`
+suppresses unstaged parent changes and leaves those paths in `unchecked_gitlinks` without opening
+them. Standalone listing still reads HEAD under `all`; it does not hide malformed nested metadata.
+Staged gitlink changes remain visible.
+
+Nested status reads each child's own attributes, filters and ignore rules. It inherits the same
+explicit system/global/environment/command sources the parent was opened with, adds the child's
+local/worktree configuration, and reevaluates conditional includes for the child. Parent-local
+settings are excluded. The captured attribute/ignore environment is retained, including
+`XDG_CONFIG_HOME`, while parent repository-location overrides are removed. No ambient configuration
+is added. Configured parent status without a filter pipeline refuses nested filter commands;
+filtered status propagates its pipeline's command permission and per-command output limit.
+`submodule::status_with` accepts command permission explicitly and uses the default per-command
+limit.
+
+`status::Limits::max_submodule_depth` defaults to 8 (with a hard ceiling of 64), and
+`max_submodules` defaults to 1024 paths across the complete recursive scan. Other worktree budgets
+apply separately to each repository. A limit or cancellation returns an error, never a partial clean
+result. Inspection supports macOS/Linux, refuses symlink ancestors, and requires exclusion of
+concurrent repository-metadata or directory replacement. It performs no index refresh, fetch, hook
+or update command.
+
+A populated child with an unborn HEAD currently returns a typed configuration error. Git treats it
+as clean; [issue 688](https://github.com/joshka/girt/issues/688) tracks an explicit representation.
+Regular-file replacements are type changes, subject to `ignore=all`. Symlink replacements are
+refused, as Git itself refuses them.
+
+Initialization, checkout updates and clone recursion remain unsupported. Track those operations in
+[the submodules issue](https://github.com/joshka/girt/issues/507).
