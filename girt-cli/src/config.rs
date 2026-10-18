@@ -321,19 +321,23 @@ fn remote_show(name: &str, context: &Context) -> Result<ExitCode> {
 }
 
 fn remote_heads(target: &str, context: &Context) -> Result<ExitCode> {
-    // A configured remote name wins; otherwise the argument is a URL or path.
-    let url = context
-        .repository()
-        .ok()
-        .and_then(|repository| {
-            Remote::find(repository.config(), target.as_bytes())
-                .ok()
-                .flatten()
-                .and_then(|remote| remote.fetch_url().map(<[u8]>::to_vec))
-        })
-        .map(|url| String::from_utf8_lossy(&url).into_owned())
-        .unwrap_or_else(|| target.to_owned());
-    let discovery = discover(&url, context)?;
+    // A configured remote name wins, and is listed like a fetch: URL rewrites, `http.*` settings,
+    // credential helpers and askpass all apply. Otherwise the argument is a URL or path.
+    let repository = context.repository().ok();
+    let configured = repository.as_ref().filter(|repository| {
+        Remote::find(repository.config(), target.as_bytes())
+            .ok()
+            .flatten()
+            .is_some()
+    });
+    let discovery = match configured {
+        Some(repository) => {
+            let mut progress = crate::progress::Progress::new(context.progress);
+            girt::workflow::remote_refs(repository, target, &context.environment, &mut progress)
+                .wrap_err_with(|| format!("listing {target}"))?
+        }
+        None => discover(target, context)?,
+    };
     let mut out = stdout();
     for reference in &discovery.advertisement.refs {
         write!(out, "{}\t", reference.id)?;

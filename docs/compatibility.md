@@ -386,6 +386,11 @@ turning askpass off, an empty answer, a failing program, a configured `credentia
 `<user>@` for an empty username. A failing program leaves the question to the next prompt: Git's
 terminal, girt's `TransferCallbacks::credential`. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
 
+`girt-cli/tests/http_remote.rs` lists a configured remote on the same kind of server with
+`girt remote heads origin` and `git ls-remote origin`, using one recording askpass script. The
+output, including a peeled annotated tag, and the questions asked are identical. The CLI reaches the
+remote through `workflow::remote_refs`. Evidence: macOS arm64, Git 2.56.0, 2026-10-18.
+
 ## Git Capability Audit: Transfer
 
 The audit baseline is `2e67ff57` (the merged Git guide), with original fixtures observed using Git

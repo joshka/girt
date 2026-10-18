@@ -100,9 +100,11 @@ c050596ed88f5a60d7f41dbfd80735065ccd05ff	refs/heads/main
 
 </Example>
 
-Over HTTP(S), `remote heads` is anonymous; `fetch`, `clone` and `push` use configured credential
-helpers, including `store`. SSH remotes are written `ssh://[user@]host[:port]/path` or
-`[user@]host:path`, and girt runs `GIT_SSH_COMMAND`, `core.sshCommand`, `GIT_SSH` or `ssh` from
-`PATH`, in that order. A configured command string runs through `/bin/sh`, so configuration that
-sets one must be trusted. Non-OpenSSH variants, percent-encoded SSH URLs, query or fragment parts
-and `~` paths are refused.
+Over HTTP(S), `remote heads <remote>`, `fetch`, `clone` and `push` use configured credential
+helpers, including `store`, then `GIT_ASKPASS`, `core.askPass` or `SSH_ASKPASS`, and apply `http.*`
+settings. `remote heads` with a bare HTTP(S) URL is still anonymous
+([issue 721](https://github.com/joshka/girt/issues/721)). SSH remotes are written
+`ssh://[user@]host[:port]/path` or `[user@]host:path`, and girt runs `GIT_SSH_COMMAND`,
+`core.sshCommand`, `GIT_SSH` or `ssh` from `PATH`, in that order. A configured command string runs
+through `/bin/sh`, so configuration that sets one must be trusted. Non-OpenSSH variants,
+percent-encoded SSH URLs, query or fragment parts and `~` paths are refused.
