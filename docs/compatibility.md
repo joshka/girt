@@ -263,6 +263,14 @@ prefix, checksum corruption and resource limits. Unit fixtures independently enc
 documented by `git help gitformat-commit-graph`; checksum-preserving malformed chunk, fanout and
 parent records must fail. The suite is portable and selected for Windows validation.
 
+The Bloom hash implementation follows independent Git CLI observations. The installed Git 2.56.0
+`git help gitformat-commit-graph` manual prints the second Murmur seed as `0x7e646e2`; Git-generated
+filter bytes for `notes` and `other` instead match `0x7e646e2c`. Tests exercise both filter
+versions, UTF-8 and raw high-byte paths, long paths and every directory prefix, empty and nonempty
+roots, first-parent merge differences and a 600-path change producing the conservative all-ones
+filter. Path history is compared with `git log --first-parent --format=%H -- path`. No upstream
+implementation or test source is used.
+
 ## Imported Object Decoding and Tag Peeling
 
 R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger

@@ -126,6 +126,16 @@ impl Objects {
                 let parent_commit = self
                     .read_commit_with(*parent, limits.read)
                     .map_err(crate::Error::from)?;
+                if current.parents().len() == 1
+                    && self
+                        .commit_graph
+                        .as_ref()
+                        .and_then(|graph| graph.might_change_path(state.commit, &state.path))
+                        == Some(false)
+                {
+                    parents.push((*parent, state.path.clone(), id, priority(&parent_commit)));
+                    continue;
+                }
                 if let Some((path, old_id)) =
                     walk.predecessor(parent_commit.tree(), current.tree(), &state.path)?
                 {

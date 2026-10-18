@@ -63,3 +63,22 @@ The index is owned and immutable. Clones share it, and refreshing pack storage r
 commits absent from the index use object reads. Load and attach a new graph when the application
 needs newer indexed coverage. Split chains are loaded as a fixed collection of bytes; a concurrent
 replacement can cause a load error, after which callers may retain the old index or use objects.
+
+## Changed-path queries
+
+`CommitGraph::might_change_path` returns a conservative first-parent filter answer: `Some(false)`
+can skip comparison, `Some(true)` can be a false positive, and `None` requires ordinary comparison.
+Version 1 filters are ignored for queries containing non-ASCII bytes. Version 2 supports byte paths.
+Missing filters, unknown versions, unsupported hash counts and malformed offsets return unknown;
+they do not invalidate otherwise usable commit metadata.
+
+`Objects::walk_path_first_parent` follows only the first-parent chain and returns commits whose
+literal file or directory entry changes identity or mode. It includes additions and deletions;
+shallow boundaries compare with an empty snapshot. It does not perform pathspec matching, rename
+following or general merge-history simplification. Bloom negatives avoid tree comparisons, and
+single-parent blame uses the same optimization. Merge blame still examines all parents.
+
+A filter in a merge describes the first-parent difference only. Empty-change and oversized-change
+filters remain conservative, and explicit object verification checks commit metadata rather than
+recomputing Bloom filters. Applications requiring object-backed path correctness can leave the index
+detached.
