@@ -125,8 +125,21 @@ impl Objects {
         limits: WriteLimits,
         cancel: &AtomicBool,
     ) -> Result<Vec<u8>, WriteError> {
+        self.encode_multi_pack_index_selected(options, limits, cancel, |_| true)
+    }
+
+    // Expiry can publish the existing encoder's format while excluding its verified deletion set.
+    // The public encoder still selects every primary pack and retains all its validation.
+    pub(crate) fn encode_multi_pack_index_selected(
+        &self,
+        options: WriteOptions,
+        limits: WriteLimits,
+        cancel: &AtomicBool,
+        include: impl Fn(&Path) -> bool,
+    ) -> Result<Vec<u8>, WriteError> {
         check(cancel)?;
         let mut packs = self.primary_packs_with_paths();
+        packs.retain(|(path, _)| include(path));
         packs.sort_unstable_by_key(|(path, _)| *path);
         if packs.len() > limits.max_packs || packs.len() > u32::MAX as usize {
             return Err(WriteError::Limit("packs"));

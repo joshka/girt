@@ -384,12 +384,9 @@ fn inventory(
 }
 
 #[cfg(test)]
-#[path = "../../tests/support/maintenance_git.rs"]
-mod oracle;
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::maintenance_git as oracle;
 
     fn fixture() -> (tempfile::TempDir, Repository) {
         let root = tempfile::tempdir().unwrap();

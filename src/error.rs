@@ -132,6 +132,8 @@ from_domain_errors! {
     crate::multi_pack_index::Error,
     crate::multi_pack_index::WriteError,
     crate::multi_pack_index::InstallError,
+    crate::multi_pack_index::ExpireCause,
+    crate::multi_pack_index::ExpireFailure,
     crate::submodule::Error,
     crate::submodule::LoadError,
     crate::submodule::UrlError,

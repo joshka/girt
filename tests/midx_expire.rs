@@ -215,3 +215,94 @@ fn pack_absent_from_starting_index_is_never_expired() {
     assert!(unlisted.exists());
     git(fixture.repo.git_dir(), &["fsck", "--full"], b"");
 }
+
+#[test]
+fn aggregate_survivor_budget_refuses_before_publication() {
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    let mut limits = ExpireLimits::default();
+    limits.max_bytes = 0;
+    let failure = fixture
+        .repo
+        .expire_multi_pack_index(&mut PrivateFixture, limits, &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(!failure.report.index_published);
+    assert!(failure.report.removed.is_empty());
+    assert!(fixture.old.exists());
+}
+
+#[test]
+fn replacement_preserves_source_index_permissions() {
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    let path = fixture.repo.object_dir().join("pack/multi-pack-index");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    fixture
+        .repo
+        .expire_multi_pack_index(
+            &mut PrivateFixture,
+            ExpireLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(
+        fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}
+
+#[test]
+fn shadowed_incremental_chain_refuses_before_publication() {
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    let directory = fixture.repo.object_dir().join("pack/multi-pack-index.d");
+    fs::create_dir(&directory).unwrap();
+    fs::write(
+        directory.join("multi-pack-index-chain"),
+        b"fixture chain marker\n",
+    )
+    .unwrap();
+    let failure = fixture
+        .repo
+        .expire_multi_pack_index(
+            &mut PrivateFixture,
+            ExpireLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        failure.cause,
+        girt::multi_pack_index::ExpireCause::IncrementalChain
+    ));
+    assert!(!failure.report.index_published);
+    assert!(fixture.old.exists());
+}
+
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn missing_primary_index_refuses_even_with_complete_alternate(#[case] use_alternate: bool) {
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    let alternate = Fixture::new(ObjectFormat::Sha1);
+    if use_alternate {
+        fs::write(
+            fixture.repo.object_dir().join("info/alternates"),
+            format!("{}\n", alternate.repo.object_dir().display()),
+        )
+        .unwrap();
+    }
+    fs::remove_file(fixture.old.with_extension("idx")).unwrap();
+    let before = fs::read(fixture.repo.object_dir().join("pack/multi-pack-index")).unwrap();
+    let failure = fixture
+        .repo
+        .expire_multi_pack_index(
+            &mut PrivateFixture,
+            ExpireLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(!failure.report.index_published);
+    assert!(failure.report.removed.is_empty());
+    assert!(fixture.old.exists());
+    assert_eq!(
+        before,
+        fs::read(fixture.repo.object_dir().join("pack/multi-pack-index")).unwrap()
+    );
+}

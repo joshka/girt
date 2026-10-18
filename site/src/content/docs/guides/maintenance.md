@@ -17,16 +17,17 @@ the operation.
 
 ## Choose an operation
 
-| Task                    | API                       | What changes                                        |
-| ----------------------- | ------------------------- | --------------------------------------------------- |
-| Explain retention       | `plan_retention`          | Read-only plan and typed outcome                    |
-| Add packed storage      | `repack_retained`         | New/reused indexed pack; old storage remains        |
-| Expire history          | `expire_reflogs`          | Eligible reflog records, with durable replacement   |
-| Reclaim old loose files | `prune_unreachable_loose` | Eligible unreachable primary loose files            |
-| Remove loose duplicates | `prune_packed`            | Verified loose copies already held in primary packs |
-| Replace old packs       | `retire_old_packs`        | Verified replacement, then eligible old artifacts   |
-| Expire and prune        | `collect_garbage`         | Reflogs, pack consolidation if due, loose pruning   |
-| Run all phases          | `run_maintenance`         | Expiry, pack retirement, then loose pruning         |
+| Task                     | API                       | What changes                                             |
+| ------------------------ | ------------------------- | -------------------------------------------------------- |
+| Explain retention        | `plan_retention`          | Read-only plan and typed outcome                         |
+| Add packed storage       | `repack_retained`         | New/reused indexed pack; old storage remains             |
+| Expire history           | `expire_reflogs`          | Eligible reflog records, with durable replacement        |
+| Reclaim old loose files  | `prune_unreachable_loose` | Eligible unreachable primary loose files                 |
+| Remove loose duplicates  | `prune_packed`            | Verified loose copies already held in primary packs      |
+| Replace old packs        | `retire_old_packs`        | Verified replacement, then eligible old artifacts        |
+| Expire and prune         | `collect_garbage`         | Reflogs, pack consolidation if due, loose pruning        |
+| Expire unused MIDX packs | `expire_multi_pack_index` | Verified redundant primary packs after index replacement |
+| Run all phases           | `run_maintenance`         | Expiry, pack retirement, then loose pruning              |
 
 `collect_garbage` consolidates packs only when there are more of them than Git's `gc.autoPackLimit`
 allows (50 by default; 0 turns it off), counting indexed packs without a `.keep` file as
@@ -40,6 +41,12 @@ The standalone prune and retirement operations retain all observed reflog histor
 policy contains expiry cutoffs. The composed operations expire reflogs first, update their
 observation to match the rewritten reflogs, and then reclaim data, all under one isolation guard. A
 successful additive repack doesn't make its inputs safe to delete.
+
+`expire_multi_pack_index` removes only old packs named in a standalone multi-pack index that own no
+indexed objects. It verifies packed survivors and publishes a replacement index before removing
+redundant artifacts. The operation requires isolation, preserves protected and unlisted storage, and
+currently refuses incremental-chain expiry and non-Unix destructive publication. The unreleased API
+is tracked in [automatic maintenance](https://github.com/joshka/girt/issues/531).
 
 ## Understand roots and plan outcomes
 

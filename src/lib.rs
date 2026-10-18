@@ -297,3 +297,7 @@ pub use tree_compare::{ChangeStatus, TreeChange, TreeCompareError, TreeCompareLi
 
 #[cfg(feature = "tracing")]
 mod trace;
+
+#[cfg(test)]
+#[path = "../tests/support/maintenance_git.rs"]
+mod maintenance_git;
