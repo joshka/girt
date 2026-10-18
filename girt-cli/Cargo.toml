@@ -1,6 +1,6 @@
 [package]
 name = "girt-cli"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2024"
 authors = ["Josh McKinney"]
 description = "Command-line tool for inspecting and benchmarking Git repositories with girt"
@@ -24,7 +24,7 @@ clap_complete = { version = "~4.6.11", features = ["unstable-dynamic"] }
 clap_mangen = "0.3.3"
 color-eyre = "0.6"
 indicatif = { version = "0.18", default-features = false, features = ["unicode-width"] }
-girt = { path = "..", version = "0.14.0", features = ["http", "ssh", "tracing"] }
+girt = { path = "..", version = "0.15.0", features = ["http", "ssh", "tracing"] }
 tokio = { version = "1.4", features = ["rt-multi-thread"] }
 tracing = "0.1.40"
 tracing-error = "0.2"
