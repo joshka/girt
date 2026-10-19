@@ -522,3 +522,11 @@ skip-flag spellings in configuration order, invalid overridden values, implicit 
 booleans, unrelated-entry charging, inclusive byte and count limits, cancellation before inspection,
 and borrowed name storage. Empty section headers do not create remotes. Inventory admission does not
 resolve URLs, parse refspecs or authorize prefetch execution; those phases require separate bounds.
+
+## Capped Loose Input
+
+The private maintenance reader caps compressed loose input before inflation, including valid zlib
+streams padded with empty DEFLATE blocks. Exact input limits succeed; smaller limits refuse with a
+typed limit error. Cancellation returns no partial object. Existing public readers retain their
+output-only loose-object limit contract. Framing, stream completion and object identity remain
+verified, and pack-first lookup and alternate precedence stay unchanged.

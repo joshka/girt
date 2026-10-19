@@ -205,3 +205,54 @@ fn read_error_stays_small() {
             <= std::mem::size_of::<PackArtifacts>() + std::mem::align_of::<PackArtifacts>()
     );
 }
+
+
+/// Empty DEFLATE blocks consume compressed input without increasing the decoded payload.
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn capped_loose_input_refuses_padding_before_inflation(#[case] format: ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let loose = LooseObjects::new(root.path(), format);
+    let id = ObjectId::for_blob(format, b"");
+    let compressed = padded_empty_blob();
+    let hex = id.to_string();
+    let path = root.path().join(&hex[..2]).join(&hex[2..]);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, &compressed).unwrap();
+    let objects = Objects::open(format, root.path(), PackLimits::default(), AlternateLimits::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let limits = ReadLimits::default().with_max_input_bytes(compressed.len() - 1);
+
+    assert_eq!(loose.read_blob(id, 0).unwrap(), b"");
+    assert_eq!(objects.read_controlled(id, limits, &cancel).unwrap().unwrap().data(), b"");
+    assert!(matches!(
+        objects.read_capped(id, limits, &cancel),
+        Err(ObjectReadError::Limit("loose compressed bytes"))
+    ));
+    assert_eq!(
+        objects.read_capped(id, limits.with_max_input_bytes(compressed.len()), &cancel)
+            .unwrap().unwrap().data(),
+        b""
+    );
+    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(matches!(objects.read_capped(id, limits, &cancel), Err(ObjectReadError::Cancelled)));
+}
+
+/// A hand-built zlib stream: 10,000 empty stored blocks followed by the canonical empty blob.
+fn padded_empty_blob() -> Vec<u8> {
+    let payload = b"blob 0\0";
+    let mut compressed = vec![0x78, 0x01];
+    for _ in 0..10_000 {
+        compressed.extend_from_slice(&[0, 0, 0, 0xff, 0xff]);
+    }
+    compressed.extend_from_slice(&[1, 7, 0, 0xf8, 0xff]);
+    compressed.extend_from_slice(payload);
+    let (mut a, mut b) = (1_u32, 0_u32);
+    for byte in payload {
+        a = (a + u32::from(*byte)) % 65521;
+        b = (b + a) % 65521;
+    }
+    compressed.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    compressed
+}
