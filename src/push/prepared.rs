@@ -62,6 +62,8 @@ pub struct PreparedPush {
     pub(super) progress: bool,
     /// Whether the commands came from a remote client, with Git's receive-pack semantics.
     pub(super) received: bool,
+    /// Whether every update succeeds or none does.
+    pub(super) atomic: bool,
 }
 impl PreparedPush {
     /// Validates commands, selects outgoing reachable objects, proves permitted branch ancestry,
@@ -214,6 +216,7 @@ impl PreparedPush {
                     options: vec![],
                     progress: false,
                     received: false,
+                    atomic: false,
                 });
             }
             let mut selection = graph::select(
@@ -285,6 +288,7 @@ impl PreparedPush {
                 options: vec![],
                 progress: false,
                 received: false,
+                atomic: false,
             })
         };
         #[cfg(feature = "tracing")]
@@ -314,6 +318,7 @@ impl PreparedPush {
         pack: crate::fetch::Bytes,
         limits: PushLimits,
         options: Option<Vec<Vec<u8>>>,
+        atomic: bool,
     ) -> Self {
         Self {
             format,
@@ -327,6 +332,7 @@ impl PreparedPush {
             options: options.unwrap_or_default(),
             progress: false,
             received: true,
+            atomic,
         }
     }
 

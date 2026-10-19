@@ -22,7 +22,9 @@ use crate::{ObjectFormat, ObjectId, Repository, Signature};
 /// Updates follow the repository's receive policy: `receive.denyCurrentBranch`,
 /// `receive.denyDeletes`, `receive.denyNonFastForwards`, `receive.hideRefs` and
 /// `transfer.hideRefs`. With `receive.denyCurrentBranch=updateInstead` on macOS and Linux, a clean
-/// checked-out working tree is updated to the pushed commit. Atomic pushes are refused for now.
+/// checked-out working tree is updated to the pushed commit. An atomic push updates every
+/// reference or none, and reports `atomic push failure` for the others when one is rejected, as
+/// Git does.
 ///
 /// The pushed pack is validated before any reference changes. When a `pre-receive` hook exists,
 /// the objects stay in quarantine until it accepts them; `update`, `post-receive` and
@@ -65,6 +67,7 @@ struct Request {
     report_status: bool,
     sideband: bool,
     push_options: bool,
+    atomic: bool,
 }
 
 impl ReceivePack {
@@ -139,7 +142,8 @@ impl ReceivePack {
         let hide = HideRules::parse(&repository, "receive").map_err(ServeError::Config)?;
         let refs = repository.references()?;
         let mut capabilities =
-            b"report-status report-status-v2 delete-refs side-band-64k quiet ofs-delta".to_vec();
+            b"report-status report-status-v2 delete-refs side-band-64k quiet atomic ofs-delta"
+                .to_vec();
         if config_boolean(&repository, "advertisepushoptions")? {
             capabilities.extend_from_slice(b" push-options");
         }
@@ -258,6 +262,7 @@ impl ReceivePack {
             options,
             self.limits,
             self.identity.as_ref(),
+            request.atomic,
             TransportControl::new(cancel),
         );
         let report = match result {
@@ -301,7 +306,7 @@ impl ReceivePack {
                         b"report-status" | b"report-status-v2" => request.report_status = true,
                         b"side-band-64k" => request.sideband = true,
                         b"push-options" => request.push_options = true,
-                        b"atomic" => return Err(ServeError::Unsupported("atomic push")),
+                        b"atomic" => request.atomic = true,
                         _ => {}
                     }
                 }

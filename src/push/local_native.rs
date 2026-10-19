@@ -470,7 +470,18 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 report: Box::new(report.clone()),
             })?;
         }
+        let mut atomic_edits = Vec::new();
         for (index, command) in prepared.commands.iter().enumerate() {
+            // Like Git, an atomic push stops checking at the first rejection; the rest then report
+            // `atomic push failure` without running their hooks.
+            if prepared.atomic
+                && report
+                    .refs
+                    .iter()
+                    .any(|reference| matches!(reference.status, Some(Status::Rejected(_))))
+            {
+                break;
+            }
             if let Err(error) = control.check() {
                 return Err(PushError::Uncertain {
                     cause: error.into(),
@@ -622,6 +633,11 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                     }
                 })?,
             };
+            // An atomic push publishes every edit together after all checks pass.
+            if prepared.atomic {
+                atomic_edits.push((index, edit));
+                continue;
+            }
             match refs.transaction(&[edit]) {
                 Ok(outcomes) => {
                     report.refs[index].status = Some(Status::Ok);
@@ -657,6 +673,9 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                     });
                 }
             }
+        }
+        if prepared.atomic {
+            publish_atomic(&refs, atomic_edits, &mut report)?;
         }
         let updated =
             |index: usize| !up_to_date[index] && report.refs[index].status == Some(Status::Ok);
@@ -952,9 +971,10 @@ pub(crate) fn receive(
     options: Option<Vec<Vec<u8>>>,
     limits: super::PushLimits,
     identity: Option<&Signature>,
+    atomic: bool,
     control: TransportControl<'_>,
 ) -> Result<PushReport, PushError> {
-    let prepared = PreparedPush::received(format, commands, pack, limits, options);
+    let prepared = PreparedPush::received(format, commands, pack, limits, options, atomic);
     send_preparing(
         destination,
         format,
@@ -964,4 +984,62 @@ pub(crate) fn receive(
         |_| Ok(prepared),
         |_| {},
     )
+}
+
+/// Publishes an atomic push's edits in one transaction, or rejects them all.
+///
+/// Like Git, when any reference was already rejected the others report `atomic push failure`
+/// and nothing is published, and a transaction that can't be prepared reports `atomic transaction
+/// failed` for every reference.
+fn publish_atomic(
+    refs: &References<'_>,
+    edits: Vec<(usize, RefEdit)>,
+    report: &mut PushReport,
+) -> Result<(), PushError> {
+    let fail_others = |report: &mut PushReport, except: Option<usize>| {
+        for (index, reference) in report.refs.iter_mut().enumerate() {
+            if Some(index) != except && !matches!(reference.status, Some(Status::Rejected(_))) {
+                reference.status = Some(Status::Rejected(b"atomic push failure".to_vec()));
+                reference.rejection_origin = Some(RejectionOrigin::Receiver);
+            }
+        }
+    };
+    if report
+        .refs
+        .iter()
+        .any(|reference| matches!(reference.status, Some(Status::Rejected(_))))
+    {
+        fail_others(report, None);
+        return Ok(());
+    }
+    let (indexes, edits): (Vec<usize>, Vec<RefEdit>) = edits.into_iter().unzip();
+    match refs.transaction(&edits) {
+        Ok(outcomes) => {
+            for (index, outcome) in indexes.into_iter().zip(outcomes) {
+                report.refs[index].status = Some(Status::Ok);
+                report.refs[index].effects = Some(outcome);
+            }
+            Ok(())
+        }
+        // Like Git, a transaction that can't be prepared fails every reference the same way.
+        Err(TransactionError::Prepare { .. }) => {
+            for reference in &mut report.refs {
+                reference.status = Some(Status::Rejected(b"atomic transaction failed".to_vec()));
+                reference.rejection_origin = Some(RejectionOrigin::Receiver);
+            }
+            Ok(())
+        }
+        Err(TransactionError::Publish { source, outcomes }) => {
+            for (index, outcome) in indexes.into_iter().zip(outcomes) {
+                if outcome.reference == RefOutcome::Published {
+                    report.refs[index].status = Some(Status::Ok);
+                }
+                report.refs[index].effects = Some(outcome);
+            }
+            Err(PushError::Uncertain {
+                cause: PushFailure::reference(source),
+                report: Box::new(report.clone()),
+            })
+        }
+    }
 }
