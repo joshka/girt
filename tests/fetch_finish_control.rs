@@ -574,6 +574,17 @@ fn controlled_files_transaction_limits_preserve_refs_after_installation() {
                 .unwrap_err();
             assert!(failure.report.installed.is_some());
             assert!(failure.report.references.is_empty());
+            if limits.max_edits == 0 {
+                assert!(matches!(
+                    failure.source.as_ref(),
+                    FetchFinishFailure::Safety(FetchPlanError::PrepareLimit("reference edits"))
+                ));
+            } else {
+                assert!(matches!(
+                    failure.source.as_ref(),
+                    FetchFinishFailure::Publication(girt::refs::TransactionError::Prepare { .. })
+                ));
+            }
             assert!(
                 repo.references()
                     .unwrap()
@@ -726,5 +737,44 @@ fn completed_controlled_prunes_survive_later_update_preparation_failure() {
                 .is_none()
         );
         assert_eq!(fs::read(lock).unwrap(), b"foreign update lock");
+    }
+}
+
+#[test]
+fn controlled_reftable_publication_charges_existing_and_new_records() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        let (_source, bytes, _) = bundle(format);
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init_with_backend(
+            format,
+            root.path().join("r.git"),
+            InitKind::Bare,
+            girt::refs::Backend::Reftable,
+        )
+        .unwrap();
+        // The initial unborn HEAD record fits. Adding the remote ref would exceed the shared
+        // existing-plus-new stack record budget, after the pack is already installed.
+        let mut preparation = FetchPrepareLimits::default();
+        preparation.reftable = preparation
+            .reftable
+            .with_records(girt::refs::reftable::Limits::default().with_records(1));
+        let failure = FetchFinishOptions::default()
+            .with_admission_limits(FetchFinishLimits::default().with_preparation(preparation))
+            .finish(ready(&repo, &bytes), &AtomicBool::new(false))
+            .unwrap_err();
+        assert!(failure.report.installed.is_some());
+        assert!(failure.report.references.is_empty());
+        assert!(matches!(
+            failure.source.as_ref(),
+            FetchFinishFailure::Publication(girt::refs::TransactionError::Prepare { .. })
+        ));
+        assert!(
+            repo.references()
+                .unwrap()
+                .read(&RefName::new("refs/remotes/origin/main").unwrap())
+                .unwrap()
+                .is_none()
+        );
+        git(repo.git_dir(), &["fsck", "--strict"], b"");
     }
 }

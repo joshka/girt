@@ -1515,6 +1515,28 @@ impl FetchReady {
             validation.map_err(FetchFinishFailure::Update)?;
         }
         super::check_cancelled(cancel).map_err(FetchFinishFailure::BeforePublication)?;
+        if CONTROLLED {
+            let maximum = match self.request.repository.reference_backend() {
+                crate::refs::Backend::Files => admission.files_transaction.max_edits,
+                crate::refs::Backend::Reftable => admission.preparation.reftable.records.records,
+            };
+            let mut changes = 0;
+            for (position, update) in report.updates.iter().enumerate() {
+                if position % 64 == 0 {
+                    super::check_cancelled(cancel)
+                        .map_err(FetchFinishFailure::BeforePublication)?;
+                }
+                if update.kind.changes_ref() {
+                    if changes >= maximum {
+                        return Err(FetchFinishFailure::Safety(FetchPlanError::PrepareLimit(
+                            "reference edits",
+                        ))
+                        .into());
+                    }
+                    changes += 1;
+                }
+            }
+        }
         let edits: Vec<_> = report
             .updates
             .iter()
@@ -1547,14 +1569,39 @@ impl FetchReady {
             .references()
             .map_err(FetchPlanError::from)
             .map_err(FetchFinishFailure::Safety)?;
+        let refs = if CONTROLLED {
+            refs.with_reftable_limits(admission.preparation.reftable)
+        } else {
+            refs
+        };
         // Like `git fetch --prune`, prune before updating so a pruned name can become a
         // namespace for new references (or the reverse).
         let (prunes, updates): (Vec<_>, Vec<_>) =
             edits.into_iter().partition(|edit| edit.target.is_none());
-        report.references = refs
-            .transaction(&prunes)
-            .map_err(FetchFinishFailure::Publication)?;
-        match refs.transaction(&updates) {
+        report.references = if CONTROLLED {
+            super::finish::transaction(
+                &refs,
+                self.request.repository.reference_backend(),
+                &prunes,
+                admission,
+                cancel,
+            )
+        } else {
+            refs.transaction(&prunes)
+        }
+        .map_err(FetchFinishFailure::Publication)?;
+        let updated = if CONTROLLED {
+            super::finish::transaction(
+                &refs,
+                self.request.repository.reference_backend(),
+                &updates,
+                admission,
+                cancel,
+            )
+        } else {
+            refs.transaction(&updates)
+        };
+        match updated {
             Ok(outcomes) => report.references.extend(outcomes),
             Err(crate::refs::TransactionError::Prepare { source, .. })
                 if !report.references.is_empty() =>
