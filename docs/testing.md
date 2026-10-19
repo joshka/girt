@@ -560,3 +560,14 @@ store-backed incremental transfer, exhausted attempts and payload limits, retry 
 The first controlled path omits optional tree-boundary discovery and checks connectivity within the
 shared budget. The legacy path retains its existing boundary optimisation. Controlled connectivity
 cost must be measured on medium and Linux repositories before prefetch task wiring.
+
+### Capped source selection and transfer reads
+
+Controlled source selection, transfer metadata and pack-writer rereads must admit compressed loose
+input before inflation. A valid padded zlib stream tests the inclusive byte boundary for the private
+selection and location hooks in both object formats. Cancellation refuses before those reads.
+
+The hooks retain pack-first precedence, packed read limits, verified loose identities and damaged
+pack fallback checks. Existing trusted entry points retain their direct legacy specialisations.
+These hooks alone do not establish bounded native receive: workers and every writer reread must use
+them before maintenance prefetch is enabled.
