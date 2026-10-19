@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use super::{LogRecord, LogValue, RefRecord, Snapshot, StackLimits, Table, stack};
-use crate::refs::store::{Lock, check_expected, conflicts};
+use crate::refs::store::{Lock, check_expected};
 use crate::refs::{
     Expected, LogOutcome, RefEdit, RefEditOutcome, RefName, RefOutcome, ReferenceError, References,
     Reflog, ReflogEntry, Target, TransactionError,
@@ -385,11 +385,7 @@ fn prepare_controlled(
                 )));
             }
         }
-        if values
-            .keys()
-            .chain(used.iter())
-            .any(|other| conflicts(name.as_bytes(), other.as_bytes()))
-        {
+        if namespace_conflict(&name, &values, &used, || stack::cancelled(cancel)).map_err(error)? {
             return Err(error(ReferenceError::Conflict(directory(refs, &name))));
         }
         let old = terminal_id(&values, &chain, refs.object_format);
@@ -546,6 +542,49 @@ fn prepare_controlled(
 
 fn group_mut<'a>(groups: &'a mut [Group], root: &std::path::Path) -> &'a mut Group {
     groups.iter_mut().find(|group| group.root == root).unwrap()
+}
+
+/// Uses ordered-structure queries: ancestors are exact keys, and descendants start at `name/`.
+/// Both the snapshot and earlier batch dependencies participate, including on deletion. Equality
+/// is handled separately by expected-value/overlap checks. Check cancellation before each lookup;
+/// stack input/output budgets continue to account for the same records and bytes.
+fn namespace_conflict(
+    name: &RefName,
+    values: &BTreeMap<RefName, Target>,
+    used: &BTreeSet<RefName>,
+    mut step: impl FnMut() -> Result<(), ReferenceError>,
+) -> Result<bool, ReferenceError> {
+    let bytes = name.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'/' {
+            continue;
+        }
+        let ancestor = RefName::lookup_key(bytes[..index].to_vec());
+        step()?;
+        if values.contains_key(&ancestor) {
+            return Ok(true);
+        }
+        step()?;
+        if used.contains(&ancestor) {
+            return Ok(true);
+        }
+    }
+    let mut dir = bytes.to_vec();
+    dir.push(b'/');
+    let dir = RefName::lookup_key(dir);
+    step()?;
+    if values
+        .range(&dir..)
+        .next()
+        .is_some_and(|(key, _)| key.as_bytes().starts_with(dir.as_bytes()))
+    {
+        return Ok(true);
+    }
+    step()?;
+    Ok(used
+        .range(&dir..)
+        .next()
+        .is_some_and(|key| key.as_bytes().starts_with(dir.as_bytes())))
 }
 
 fn resolve(
@@ -711,5 +750,24 @@ mod tests {
         assert_eq!(outcomes[0].logs[1].1, LogOutcome::Appended);
         assert_eq!(refs.reflog(&head).unwrap(), before);
         assert!(refs.resolve_with(&head, 32).unwrap().id.is_none());
+    }
+    #[test]
+    fn namespace_probes_interleave_cancellation() {
+        let name = RefName::new("refs/tags/a").unwrap();
+        let values = BTreeMap::new();
+        let used = BTreeSet::from([RefName::new("refs/tags/a/child").unwrap()]);
+        let cancel = AtomicBool::new(false);
+        let mut probes = 0;
+        let result = namespace_conflict(&name, &values, &used, || {
+            stack::cancelled(&cancel)?;
+            probes += 1;
+            // Cancel after the map's child-range probe, before the set's matching child.
+            if probes == 5 {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            Ok(())
+        });
+        assert!(matches!(result, Err(ReferenceError::Cancelled)));
+        assert_eq!(probes, 5);
     }
 }
