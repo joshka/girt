@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-18",
+  "command": [
+    "jj",
+    "log",
+    "-r",
+    "all()",
+    "--no-graph",
+    "-T",
+    "commit_id ++ \"\\n\""
+  ],
+  "phase_extra_argument": "--ignore-working-copy",
+  "girt_release": "0.17.0",
+  "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+  "adapter_baseline_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+  "adapter_candidate_commit": "2dd192dfdde003448e94634c7970da013226bf71",
+  "stock_commit": "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+  "binary_sha256": {
+    "baseline": "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d",
+    "stock": "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1",
+    "candidate": "d5fa7027a032a3588aff462bb36d997fe9a8fe53e56a89c7fefd7fed85188b51"
+  },
+  "fixtures": {
+    "linux-v6.1": {
+      "reachable_commits": 1138794
+    },
+    "git-matrix": {
+      "head_commits": 82500,
+      "objects": 421375,
+      "refs": 3100
+    }
+  },
+  "method": {
+    "copies": "fresh filesystem clones, prepared before the lock, removed after releasing it",
+    "timing_lock": "shlock, ten-second retries bounded to ten minutes",
+    "max_load_1m": 40,
+    "cache_eviction": false,
+    "output": "discarded",
+    "working_copy_op_heads": "asserted unchanged"
+  }
+}

@@ -11,6 +11,9 @@ later source changes do not inherit earlier timing evidence. Paths under
 with this repository. The linked CSVs and source manifests under `docs/benchmarks/` are
 repository-retained artifacts.
 
+The [full-history jj log investigation](jj-log-large.md) records the packed commit-read profile and
+a bounded adapter pipeline experiment for the Linux `log` / `large` row.
+
 ## Reproduce
 
 - Run `just bench`, or `cargo bench --bench blobs`. Criterion writes reports and statistical
