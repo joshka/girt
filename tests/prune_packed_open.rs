@@ -62,7 +62,16 @@ fn configuration_budget_is_applied_to_the_fresh_repository() {
             &AtomicBool::new(false),
         )
         .unwrap_err();
-    assert!(matches!(failure.cause, PrunePackedCause::Open(_)));
+    let PrunePackedCause::Open(error) = &failure.cause else {
+        panic!("expected refresh failure: {failure:?}");
+    };
+    let OpenError::Resolve(error) = error.as_ref() else {
+        panic!("expected configuration resolution failure: {failure:?}");
+    };
+    assert!(matches!(
+        &error.source,
+        girt::config::ResolveFailure::Limit(_)
+    ));
     assert!(failure.report.deleted.is_empty());
     assert!(repo.loose_objects().read_blob(id, 1024).is_ok());
 }
