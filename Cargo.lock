@@ -748,6 +748,7 @@ dependencies = [
  "flate2",
  "girt",
  "indicatif",
+ "rstest",
  "tempfile",
  "tokio",
  "tracing",
