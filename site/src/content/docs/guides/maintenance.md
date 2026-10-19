@@ -383,6 +383,17 @@ that a lock is abandoned. Inspect unpublished contents before removing it; ordin
 refuses an existing lock, and `cleanup` does not scan for stale locks. Don't accept new work until
 all old writers are joined, because cleanup allows new acquisitions after it returns.
 
+## Construct commit-graph metadata with cancellation
+
+`CommitGraph::from_objects_controlled` takes explicit history/read bounds and a cancellation flag.
+It produces the same verified graph as the existing constructor and writes no files. The controlled
+path polls once per batch and at phase boundaries; bounded reads, sorting and validation can finish
+before the next check. Cancellation returns no partial graph. Existing constructors keep polling
+compiled out. Installation remains a separate operation with its own publication report.
+
+The unreleased constructor is tracked in
+[automatic maintenance](https://github.com/joshka/girt/issues/531).
+
 ## API reference
 
 - [Retention policy, outcomes, reports and errors](https://docs.rs/girt/latest/girt/retention/)
