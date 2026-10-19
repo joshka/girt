@@ -514,3 +514,11 @@ SHA-1 and SHA-256 finish fixtures prove that the new update kind keeps installed
 an intact unrelated tip replaces the old ref, while damage to the new commit's zlib checksum leaves
 the old ref unchanged. The Git fixture commands clear inherited `GIT_*`, isolate configuration, fix
 identities and dates, disable signing and automatic maintenance, and use local repositories.
+
+### Controlled prefetch configuration inventory
+
+The private inventory borrows exact remote names in their first-entry order. Tests cover both
+skip-flag spellings in configuration order, invalid overridden values, implicit and numeric Git
+booleans, unrelated-entry charging, inclusive byte and count limits, cancellation before inspection,
+and borrowed name storage. Empty section headers do not create remotes. Inventory admission does not
+resolve URLs, parse refspecs or authorize prefetch execution; those phases require separate bounds.
