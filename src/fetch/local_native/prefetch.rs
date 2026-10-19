@@ -213,3 +213,73 @@ fn payload_bytes(outcome: &Outcome) -> usize {
         .and_then(|fetched| fetched.payload.as_ref())
         .map_or(0, |payload| payload.data().len())
 }
+
+#[cfg(test)]
+mod capped_tests {
+    use super::*;
+    use crate::{AlternateLimits, ObjectFormat, PackLimits};
+
+    /// Empty blocks make compressed input exceed the cap while decoding to a valid empty blob.
+    fn padded_source(format: ObjectFormat) -> (tempfile::TempDir, Objects, ObjectId, usize) {
+        let root = tempfile::tempdir().unwrap();
+        let id = ObjectId::for_blob(format, b"");
+        let payload = b"blob 0\0";
+        let mut compressed = vec![0x78, 0x01];
+        for _ in 0..10_000 {
+            compressed.extend_from_slice(&[0, 0, 0, 0xff, 0xff]);
+        }
+        compressed.extend_from_slice(&[1, 7, 0, 0xf8, 0xff]);
+        compressed.extend_from_slice(payload);
+        let (mut a, mut b) = (1_u32, 0_u32);
+        for byte in payload {
+            a = (a + u32::from(*byte)) % 65521;
+            b = (b + a) % 65521;
+        }
+        compressed.extend_from_slice(&((b << 16) | a).to_be_bytes());
+        let hex = id.to_string();
+        let path = root.path().join(&hex[..2]).join(&hex[2..]);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, &compressed).unwrap();
+        let objects = Objects::open(
+            format,
+            root.path(),
+            PackLimits::default(),
+            AlternateLimits::default(),
+        )
+        .unwrap();
+        (root, objects, id, compressed.len())
+    }
+
+    #[rstest::rstest]
+    #[case::sha1_metadata(crate::ObjectFormat::Sha1, None)]
+    #[case::sha1_blob(crate::ObjectFormat::Sha1, Some(ObjectKind::Blob))]
+    #[case::sha1_payload(crate::ObjectFormat::Sha1, Some(ObjectKind::Tree))]
+    #[case::sha256_metadata(crate::ObjectFormat::Sha256, None)]
+    #[case::sha256_blob(crate::ObjectFormat::Sha256, Some(ObjectKind::Blob))]
+    #[case::sha256_payload(crate::ObjectFormat::Sha256, Some(ObjectKind::Tree))]
+    fn controlled_workers_cap_source_input(
+        #[case] format: ObjectFormat,
+        #[case] kind: Option<ObjectKind>,
+        #[values(1, 2)] threads: usize,
+    ) {
+        let (_root, objects, id, length) = padded_source(format);
+        let cancel = AtomicBool::new(false);
+        let limits = ReadLimits::default().with_max_input_bytes(length - 1);
+        let outcome = with_prefetch::<true>(&objects, limits, &cancel, threads, |prefetch| {
+            prefetch.take(id, kind, &VecDeque::new(), &IdMap::default())
+        });
+        assert!(matches!(
+            outcome,
+            Err(FetchError::Limit("loose compressed bytes"))
+        ));
+        let admitted = with_prefetch::<true>(
+            &objects,
+            limits.with_max_input_bytes(length),
+            &cancel,
+            threads,
+            |prefetch| prefetch.take(id, kind, &VecDeque::new(), &IdMap::default()),
+        )
+        .unwrap();
+        assert_eq!((admitted.kind, admitted.length), (ObjectKind::Blob, 0));
+    }
+}

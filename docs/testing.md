@@ -571,3 +571,16 @@ The hooks retain pack-first precedence, packed read limits, verified loose ident
 pack fallback checks. Existing trusted entry points retain their direct legacy specialisations.
 These hooks alone do not establish bounded native receive: workers and every writer reread must use
 them before maintenance prefetch is enabled.
+
+### Capped native workers and pack-writer rereads
+
+Controlled native source reads must cap compressed loose input in metadata lookup, queued worker
+reads, transfer location and the final fresh-object reread used to construct a pack. A padded zlib
+fixture exercises synchronous and worker paths in both object formats. The writer must also refuse
+an over-budget loose replacement introduced after transfer classification, before it decodes that
+replacement. No destination data or references are published by these failures.
+
+Legacy worker and writer specialisations retain their trusted direct reads. The shared writer loop
+requires code-generation inspection and warmed instruction comparisons for medium and Linux native
+clones, plus a medium Git client using girt upload-pack, before the wiring is ready. Verify packs and
+refs outside the timing lock. Controlled connectivity still omits optional boundary discovery.

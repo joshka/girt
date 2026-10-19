@@ -1077,3 +1077,126 @@ mod tests {
         assert!(rewrite(&[&source], &selected, &[]).is_err());
     }
 }
+
+#[cfg(test)]
+mod capped_transfer_tests {
+    use super::*;
+    use crate::{AlternateLimits, LooseObjects, ObjectFormat, Objects, PackLimits};
+
+    struct Source {
+        root: tempfile::TempDir,
+        objects: Objects,
+        first: ObjectId,
+        victim: ObjectId,
+        padded: Vec<u8>,
+    }
+
+    impl Source {
+        fn new(format: ObjectFormat) -> Self {
+            let root = tempfile::tempdir().unwrap();
+            let loose = LooseObjects::new(root.path(), format);
+            let victim = loose.write_blob(b"").unwrap();
+            // Fresh transfer entries sort by identity. Put one ordinary entry before the victim
+            // so the writer observer can replace that victim after location classification.
+            let first = (0_u32..100_000)
+                .find_map(|n| {
+                    let id = loose.write_blob(&n.to_be_bytes()).unwrap();
+                    (id < victim).then_some(id)
+                })
+                .unwrap();
+            let payload = b"blob 0\0";
+            let mut padded = vec![0x78, 0x01];
+            for _ in 0..10_000 {
+                padded.extend_from_slice(&[0, 0, 0, 0xff, 0xff]);
+            }
+            padded.extend_from_slice(&[1, 7, 0, 0xf8, 0xff]);
+            padded.extend_from_slice(payload);
+            let (mut a, mut b) = (1_u32, 0_u32);
+            for byte in payload {
+                a = (a + u32::from(*byte)) % 65521;
+                b = (b + a) % 65521;
+            }
+            padded.extend_from_slice(&((b << 16) | a).to_be_bytes());
+            let objects = Objects::open(
+                format,
+                root.path(),
+                PackLimits::default(),
+                AlternateLimits::default(),
+            )
+            .unwrap();
+            Self {
+                root,
+                objects,
+                first,
+                victim,
+                padded,
+            }
+        }
+
+        fn replace_victim(&self) {
+            let hex = self.victim.to_string();
+            let path = self.root.path().join(&hex[..2]).join(&hex[2..]);
+            std::fs::rename(&path, self.root.path().join("original-victim")).unwrap();
+            std::fs::write(path, &self.padded).unwrap();
+        }
+
+        fn write(
+            &self,
+            ids: &[ObjectId],
+            observe: &mut impl FnMut(u64, u64),
+        ) -> Result<PackWritten, ReuseError> {
+            write_transfer_capped(
+                &self.objects,
+                ids,
+                &[],
+                (&mut Vec::new(), &mut Vec::new()),
+                PackWriteLimits::default(),
+                PackCompression::Ordinary,
+                (
+                    ReadLimits::default().with_max_input_bytes(self.padded.len() - 1),
+                    &AtomicBool::new(false),
+                ),
+                50,
+                DeltaFraming::Offset,
+                &mut || Ok(()),
+                observe,
+            )
+            .map(|(written, _)| written)
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn capped_transfer_refuses_padded_location_input(#[case] format: ObjectFormat) {
+        let source = Source::new(format);
+        source.replace_victim();
+        let result = source.write(&[source.victim], &mut |_, _| {});
+        assert!(matches!(
+            result,
+            Err(ReuseError::Read {
+                source: ObjectReadError::Limit("loose compressed bytes"),
+                ..
+            })
+        ));
+    }
+
+    #[rstest::rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn capped_transfer_rechecks_fresh_input_after_classification(#[case] format: ObjectFormat) {
+        let source = Source::new(format);
+        let result = source.write(&[source.first, source.victim], &mut |done, _| {
+            if done == 1 {
+                source.replace_victim();
+            }
+        });
+        assert!(matches!(
+            result,
+            Err(ReuseError::Read {
+                source: ObjectReadError::Limit("loose compressed bytes"),
+                ..
+            })
+        ));
+    }
+}
