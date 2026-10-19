@@ -35,6 +35,11 @@ mod gc;
 mod lock;
 mod policy;
 mod prefetch;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "prefetch execution follows separately")
+)]
+mod prefetch_config;
 #[cfg(test)]
 mod prefetch_config_tests;
 mod run;
