@@ -53,6 +53,8 @@ use flate2::write::ZlibEncoder;
 use flate2::{Compression, Decompress, FlushDecompress, Status};
 use tempfile::{NamedTempFile, PersistError};
 
+mod controlled;
+
 use crate::object::object_header;
 
 /// zlib level for new loose objects: best speed, Git's default when neither `core.looseCompression`

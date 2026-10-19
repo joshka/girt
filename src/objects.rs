@@ -1292,15 +1292,41 @@ impl Objects {
             let target = replacements.resolve(id)?;
             if target != id {
                 return self
-                    .read_stored(target, limits, cancelled)?
+                    .read_stored::<false>(target, limits, cancelled)?
                     .map(Some)
                     .ok_or(ObjectReadError::MissingReplacement(target));
             }
         }
-        self.read_stored(id, limits, cancelled)
+        self.read_stored::<false>(id, limits, cancelled)
     }
 
-    fn read_stored(
+    /// Caps compressed loose input as well as the existing packed and decoded budgets.
+    ///
+    /// File loading is a bounded synchronous phase; inflation polls at each input buffer refill.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "controlled known reads follow separately")
+    )]
+    pub(crate) fn read_capped(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<Object>, ObjectReadError> {
+        // Only the view inside `ReplacedObjects` carries replacements; public readers never do.
+        if let Some(replacements) = &self.replacements {
+            let target = replacements.resolve(id)?;
+            if target != id {
+                return self
+                    .read_stored::<true>(target, limits, cancelled)?
+                    .map(Some)
+                    .ok_or(ObjectReadError::MissingReplacement(target));
+            }
+        }
+        self.read_stored::<true>(id, limits, cancelled)
+    }
+
+    fn read_stored<const CAPPED: bool>(
         &self,
         id: ObjectId,
         limits: ReadLimits,
@@ -1356,15 +1382,30 @@ impl Objects {
                         }
                     }
                 }
-                match store.loose.read_raw(id, loose_limit) {
-                    Ok(object) => {
-                        check_cancelled(cancelled)?;
-                        return Ok(Some(object));
+                if CAPPED {
+                    match store.loose.read_capped(id, limits, cancelled) {
+                        Ok(object) => {
+                            check_cancelled(cancelled)?;
+                            return Ok(Some(object));
+                        }
+                        Err(ObjectReadError::Loose(crate::loose::Error::Io(error)))
+                            if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(ObjectReadError::Loose(crate::loose::Error::Corrupt(_)))
+                            if damage.is_some() => {}
+                        Err(error) => return Err(error),
                     }
-                    Err(crate::loose::Error::Io(error))
-                        if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(crate::loose::Error::Corrupt(_)) if damage.is_some() => {}
-                    Err(error) => return Err(error.into()),
+                } else {
+                    // Keep the legacy decoder and its error handling direct on this hot path.
+                    match store.loose.read_raw(id, loose_limit) {
+                        Ok(object) => {
+                            check_cancelled(cancelled)?;
+                            return Ok(Some(object));
+                        }
+                        Err(crate::loose::Error::Io(error))
+                            if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(crate::loose::Error::Corrupt(_)) if damage.is_some() => {}
+                        Err(error) => return Err(error.into()),
+                    }
                 }
             }
             check_cancelled(cancelled)?;
