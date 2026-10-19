@@ -8,6 +8,7 @@
 //!
 //! [`TaskSelection`] validates explicit tasks separately from execution and configuration. It
 //! refuses an implicit default task set; selecting a task does not run maintenance.
+//! [`MaintenanceConfig`] interprets individual settings lazily over a resolved configuration.
 //!
 //! ```
 //! use std::sync::atomic::AtomicBool;
@@ -25,6 +26,7 @@
 //! assert_eq!(decision, AutoGc::NotDue);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+mod config;
 mod gc;
 mod lock;
 mod policy;
@@ -34,6 +36,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, io};
 
+pub use config::{AutoThreshold, MaintenanceConfig, MaintenanceStrategy, TaskConfigError};
 pub use gc::{GcCoordinationError, GcLock, GcLog};
 pub use lock::{LockError, MaintenanceLock};
 pub use policy::PolicyError;

@@ -394,6 +394,26 @@ compiled out. Installation remains a separate operation with its own publication
 The unreleased constructor is tracked in
 [automatic maintenance](https://github.com/joshka/girt/issues/531).
 
+## Resolve task policy without running work
+
+`TaskSelection::explicit` accepts the six scoped maintenance tasks and rejects an implicit default
+set, duplicate tasks and unsupported names. `MaintenanceConfig` borrows a resolved `Config` and
+validates only the settings a caller reads. Explicit task selection overrides per-task enabled
+flags; `maintenance.auto` controls command-triggered invocation, not an explicit automatic run. When
+unset, it falls back to whether `gc.auto` is positive; an explicit boolean overrides that rule.
+
+The count-based auto thresholds default to 100 for loose objects and commit-graph, and 10 for
+incremental repack. Zero disables the task and a negative value requests it regardless of the count.
+Gc, prefetch and pack-refs retain separate built-in checks. Reading these values does not observe
+counts or authorize execution. `maintenance.strategy=incremental` is reported without expanding a
+task set or scheduling work. Repeated `maintenance.repo` entries remain available through
+`Config::values` without registering repositories or changing a scheduler.
+
+These unreleased policy APIs are tracked in
+[automatic maintenance](https://github.com/joshka/girt/issues/531).
+[Newer default tasks and scheduling](https://github.com/joshka/girt/issues/871) remain follow-up
+work.
+
 ## API reference
 
 - [Retention policy, outcomes, reports and errors](https://docs.rs/girt/latest/girt/retention/)
