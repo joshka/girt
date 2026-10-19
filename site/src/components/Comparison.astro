@@ -1,6 +1,6 @@
 ---
-// Everyday jj commands on the large repository: jj on girt against stock jj and Git, with a
-// diverging bar centred on parity. Below it, the biggest gaps across every repository.
+// Everyday jj commands on the large repository: jj on girt against stock jj, with a diverging bar
+// centred on parity. Below it, the biggest gaps across every repository.
 import { formatMs, ISSUES_URL } from '../data/jj-performance';
 import { biggestGaps, comparisonRepo, comparisons, measured, parity } from '../data/landing';
 
@@ -27,16 +27,15 @@ const describe = (ratio: number | null) =>
       <thead>
         <tr class="group">
           <td></td>
-          <th scope="colgroup" colspan="3">Median time</th>
-          <th scope="colgroup" colspan="2">girt vs stock jj</th>
+          <th scope="colgroup" colspan="2">Median time</th>
+          <th scope="colgroup" colspan="2">jj on girt vs stock jj</th>
         </tr>
         <tr>
           <th scope="col">Command</th>
-          <th scope="col" class="num">girt</th>
-          <th scope="col" class="num">stock jj</th>
-          <th scope="col" class="num">Git</th>
-          <th scope="col" class="num">Ratio</th>
+          <th scope="col" class="num">jj (on girt)</th>
+          <th scope="col" class="num">Stock jj (on gix/git)</th>
           <th scope="col"><span class="sr-only">Bar</span></th>
+          <th scope="col">Ratio</th>
         </tr>
       </thead>
       <tbody>
@@ -48,14 +47,6 @@ const describe = (ratio: number | null) =>
               </th>
               <td class="num girt">{row.girtMs == null ? '—' : formatMs(row.girtMs)}</td>
               <td class="num">{formatMs(row.stockMs)}</td>
-              <td class="num git">{row.gitMs == null ? '—' : formatMs(row.gitMs)}</td>
-              <td class:list={['num', 'ratio', row.ratio == null || row.ratio >= 1 ? 'slower' : 'faster']}>
-                {row.ratio == null ? (
-                  <span class="failed">times out</span>
-                ) : (
-                  describe(row.ratio)
-                )}
-              </td>
               <td class="bar-cell" aria-hidden="true">
                 <div class="track">
                   {row.ratio == null ? (
@@ -66,6 +57,13 @@ const describe = (ratio: number | null) =>
                     <span class="bar slower" style={`inset-inline-start: 50%; width: ${width(row.ratio)}`} />
                   )}
                 </div>
+              </td>
+              <td class:list={['ratio', row.ratio == null || row.ratio >= 1 ? 'slower' : 'faster']}>
+                {row.ratio == null ? (
+                  <span class="failed">times out</span>
+                ) : (
+                  describe(row.ratio)
+                )}
               </td>
             </tr>
           ))
@@ -165,10 +163,6 @@ const describe = (ratio: number | null) =>
   .girt {
     color: var(--sl-color-white);
     font-weight: 700;
-  }
-
-  .git {
-    color: var(--sl-color-gray-3);
   }
 
   .ratio {

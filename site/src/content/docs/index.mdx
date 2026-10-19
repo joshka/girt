@@ -1,11 +1,11 @@
 ---
 title: girt
-description: A Rust library for Git repositories. It reads and writes Git's own formats and refuses what it doesn't support.
+description: An experimental Rust library for reading and writing Git repositories, built to work out a replacement for jj's use of gix and git.
 template: splash
 hero:
   title: girt
   tagline: >-
-    A Rust library for Git repositories: objects, references, the index, the working tree, and fetch, clone and push. It reads and writes Git's on-disk formats and returns an error for anything it doesn't support. It is the Git backend for an experimental build of jj.
+    An experimental Rust library for reading and writing Git repositories, used to work out a good replacement for the gix and git that jj uses today. It isn't meant to replace the git tool, libgit2 or gix. MIT or Apache-2.0 licensed.
   actions:
     - text: Getting started
       link: /girt/getting-started/
@@ -26,10 +26,8 @@ Print the first ten commits in `HEAD`'s history. The [getting started](/girt/get
 builds this program step by step.
 
 ```rust title="src/main.rs"
-use girt::{HistoryLimits, PackLimits, ReadLimits, Repository};
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let repository = Repository::open(".")?;
+    let repository = girt::Repository::open(".")?;
 
     let head = repository.head()?;
     let head_id = head.id.ok_or("HEAD has no commits yet")?;
@@ -50,9 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## jj on girt compared with stock jj
 
-girt's first consumer is [jj](https://github.com/jj-vcs/jj). This table runs the same jj commands on
-girt and on stock jj, which uses gix and the `git` executable, with the closest `git` command for
-reference.
+I'm writing girt as a library for tools such as [jj](https://github.com/jj-vcs/jj). This table runs
+the same jj commands on an experimental jj build that uses girt and on stock jj, which uses gix and
+the `git` executable.
 
 <Comparison />
 
