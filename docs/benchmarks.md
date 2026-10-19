@@ -18,6 +18,9 @@ The [mutating jj command investigation](jj-mutating-index.md) records why each j
 Linux rebuilt the Git index from every tree, and the adapter change that derives it from the current
 index instead.
 
+The [pending bookmark export investigation](jj-export.md) records transaction counts and the adapter
+change that batches new bookmark creation for `git export` on small, medium and Linux.
+
 ## Reproduce
 
 - Run `just bench`, or `cargo bench --bench blobs`. Criterion writes reports and statistical
