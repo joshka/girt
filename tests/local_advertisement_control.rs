@@ -273,3 +273,76 @@ fn source_files_are_unchanged_after_success_or_refusal() {
     );
     assert_eq!(files(&source), before);
 }
+
+#[test]
+fn symbolic_depth_and_reftable_snapshot_limits_refuse() {
+    let fixture = fixture(ObjectFormat::Sha1, true);
+    let source = fixture.path().join("source.git");
+    let cancel = AtomicBool::new(false);
+    for limits in [
+        LocalAdvertisementLimits::default().with_max_symbolic_depth(0),
+        LocalAdvertisementLimits::default()
+            .with_reftable(girt::refs::reftable::StackLimits::default().with_tables(0)),
+    ] {
+        assert!(matches!(
+            LocalAdvertisementOptions::default()
+                .with_limits(limits)
+                .advertise(&source, &cancel),
+            Err(FetchError::LocalReferences(_))
+        ));
+    }
+}
+
+#[test]
+fn exact_output_bytes_and_entry_boundaries_admit() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        let fixture = fixture(format, false);
+        let source = fixture.path().join("source.git");
+        let cancel = AtomicBool::new(false);
+        let expected = LocalAdvertisementOptions::default()
+            .advertise(&source, &cancel)
+            .unwrap();
+        let bytes = expected
+            .refs
+            .iter()
+            .map(|reference| {
+                reference.name.as_bytes().len() + reference.id.as_bytes().len() * 2 + 8
+            })
+            .sum::<usize>()
+            + expected
+                .capabilities
+                .iter()
+                .map(|value| value.len() + 1)
+                .sum::<usize>();
+        let limits = LocalAdvertisementLimits::default()
+            .with_max_refs(expected.refs.len())
+            .with_max_bytes(bytes);
+        let result = LocalAdvertisementOptions::default()
+            .with_limits(limits)
+            .advertise(&source, &cancel)
+            .unwrap();
+        assert_eq!(observed(result), observed(expected));
+        assert!(matches!(
+            LocalAdvertisementOptions::default()
+                .with_limits(limits.with_max_bytes(bytes - 1))
+                .advertise(&source, &cancel),
+            Err(FetchError::Limit(_))
+        ));
+    }
+}
+
+#[test]
+fn corrupt_tag_objects_are_not_advertised_as_verified_hints() {
+    let fixture = fixture(ObjectFormat::Sha1, false);
+    let source = fixture.path().join("source.git");
+    let id = String::from_utf8(git(&source, &["rev-parse", "refs/tags/v1"], b"")).unwrap();
+    let id = id.trim();
+    let object = source.join("objects").join(&id[..2]).join(&id[2..]);
+    fs::rename(&object, fixture.path().join("original-tag-object")).unwrap();
+    fs::write(&object, b"not a compressed object").unwrap();
+    assert!(matches!(
+        LocalAdvertisementOptions::default().advertise(&source, &AtomicBool::new(false)),
+        Err(FetchError::Peel(_))
+    ));
+    assert_eq!(fs::read(object).unwrap(), b"not a compressed object");
+}

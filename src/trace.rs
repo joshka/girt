@@ -115,7 +115,7 @@ fn ssh(error: &crate::transport::ssh::SshError) -> &'static str {
 pub(crate) fn fetch(error: &crate::fetch::FetchError) -> &'static str {
     use crate::fetch::FetchError::*;
     match error {
-        ObjectFormat(_) | Unsupported(_) => "unsupported",
+        ObjectFormat(_) | Unsupported(_) | LinkedWorktrees => "unsupported",
         #[cfg(feature = "http")]
         Http(e) => http(e),
         #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
@@ -136,6 +136,7 @@ pub(crate) fn fetch(error: &crate::fetch::FetchError) -> &'static str {
         Existing(_) => "conflict",
         Source(_) => "missing",
         FormatMismatch { .. } => "unsupported",
+        LocalReferences(error) => reference(error),
     }
 }
 
@@ -365,5 +366,26 @@ pub(crate) fn integrity(error: &crate::fsck::TransferError) -> &'static str {
         Rejected(_) => "corrupt",
         Limit(_) => "limit",
         Cancelled => "cancelled",
+    }
+}
+
+#[cfg(test)]
+mod controlled_local_advertisement_tests {
+    #[test]
+    fn fetch_failure_classes_preserve_reference_limits_and_cancellation() {
+        use crate::fetch::FetchError;
+        use crate::refs::ReferenceError;
+
+        assert_eq!(super::fetch(&FetchError::LinkedWorktrees), "unsupported");
+        for (source, expected) in [
+            (ReferenceError::Limit("bytes"), "limit"),
+            (ReferenceError::Cancelled, "cancelled"),
+            (ReferenceError::Depth(32), "limit"),
+        ] {
+            assert_eq!(
+                super::fetch(&FetchError::LocalReferences(Box::new(source))),
+                expected
+            );
+        }
     }
 }
