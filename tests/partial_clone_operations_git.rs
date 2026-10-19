@@ -1,6 +1,6 @@
-//! Checkout, patches, rename detection and blame on partial clones made by Git: each reports the
-//! blobs it needs as `MissingObjectsError`, and succeeds with Git's result after one explicit
-//! fetch.
+//! Checkout, patches, rename detection, merges and blame on partial clones made by Git: each
+//! reports the blobs it needs as `MissingObjectsError`, and succeeds with Git's result after
+//! explicit fetches.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "support/apply_git.rs"]
 mod support;
@@ -435,4 +435,193 @@ fn filtered_checkout_lists_missing_attribute_blobs(#[case] format: ObjectFormat)
     checkout(&source).unwrap();
     git_offline(dir, &["update-index", "-q", "--refresh"]);
     assert!(git_offline(dir, &["status", "--porcelain"]).is_empty());
+}
+
+/// Branches `ours` and `theirs` from one base: both edit different lines of `both`, `ours`
+/// renames `moved` with an edit while `theirs` edits it in place, and both rewrite `conflict`.
+/// Cloned with `--filter=blob:none --no-checkout`. Returns the clone and the full source.
+fn merge_partial_clone(format: ObjectFormat) -> (PartialClone, PathBuf) {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    let init = format!("--object-format={format}");
+    git(
+        &source,
+        &["init", "-q", "--template=", "-b", "main", &init],
+        b"",
+    );
+    git(&source, &["config", "uploadpack.allowFilter", "true"], b"");
+    let commit = |message: &str| {
+        git(&source, &["add", "-A"], b"");
+        git(
+            &source,
+            &["commit", "-q", "--no-gpg-sign", "-m", message],
+            b"",
+        );
+    };
+    let both = "1\n2\n3\n4\n5\n6\n7\n8\n";
+    std::fs::write(source.join("both"), both).unwrap();
+    std::fs::write(source.join("moved"), MOVED).unwrap();
+    std::fs::write(source.join("conflict"), "base\n").unwrap();
+    std::fs::write(source.join("kept"), "kept\n").unwrap();
+    commit("base");
+    git(&source, &["checkout", "-q", "-b", "ours"], b"");
+    std::fs::write(source.join("both"), both.replace('1', "ONE")).unwrap();
+    std::fs::remove_file(source.join("moved")).unwrap();
+    std::fs::write(source.join("renamed"), MOVED.replace("five", "FIVE")).unwrap();
+    std::fs::write(source.join("conflict"), "ours\n").unwrap();
+    commit("ours");
+    git(&source, &["checkout", "-q", "-b", "theirs", "main"], b"");
+    std::fs::write(source.join("both"), both.replace('8', "EIGHT")).unwrap();
+    std::fs::write(source.join("moved"), MOVED.replace("two", "TWO")).unwrap();
+    std::fs::write(source.join("conflict"), "theirs\n").unwrap();
+    commit("theirs");
+    let clone = root.path().join("clone");
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            "--template=",
+            "--no-local",
+            "--filter=blob:none",
+            "--no-checkout",
+            &format!("file://{}", source.display()),
+            clone.to_str().unwrap(),
+        ],
+        b"",
+    );
+    (PartialClone { _root: root, clone }, source)
+}
+
+/// The leaves under `tree`, reading generated trees from `generated` before the repository.
+fn leaves(
+    objects: &girt::Objects,
+    generated: &[girt::Tree],
+    tree: ObjectId,
+    prefix: &str,
+    out: &mut BTreeSet<(String, ObjectId)>,
+) {
+    let tree = match generated.iter().find(|candidate| candidate.id() == tree) {
+        Some(tree) => tree.clone(),
+        None => objects.read_tree(tree).unwrap(),
+    };
+    for entry in tree.entries() {
+        let path = format!("{prefix}{}", String::from_utf8_lossy(&entry.name));
+        if entry.mode == girt::EntryMode::Tree {
+            leaves(objects, generated, entry.id, &format!("{path}/"), out);
+        } else {
+            out.insert((path, entry.id));
+        }
+    }
+}
+
+/// A rename-aware merge lists the rename candidates and both-sides blobs before merging content,
+/// then the content that rename alignment pairs up; after those fetches it matches
+/// `git merge-tree --write-tree`, conflict stages included.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn merge_lists_missing_blobs_then_matches_git(#[case] format: ObjectFormat) {
+    let (partial, source) = merge_partial_clone(format);
+    let dir = &partial.clone;
+    let base = rev(dir, "origin/main^{tree}");
+    let ours = rev(dir, "origin/ours^{tree}");
+    let theirs = rev(dir, "origin/theirs^{tree}");
+    let merge = || {
+        Repository::open(dir)
+            .unwrap()
+            .objects()
+            .unwrap()
+            .merge_trees(base, ours, theirs)
+    };
+
+    // Rename candidates on the ours side, and every side of the paths both branches changed.
+    let Err(girt::merge::RenameError::MissingObjects(first)) = merge() else {
+        panic!("expected missing objects");
+    };
+    let needed = [
+        "origin/main:moved",
+        "origin/ours:renamed",
+        "origin/main:both",
+        "origin/ours:both",
+        "origin/theirs:both",
+        "origin/main:conflict",
+        "origin/ours:conflict",
+        "origin/theirs:conflict",
+    ];
+    assert_lists(&first, &ids(&needed, dir));
+    // Commit merges report the same blobs through their own variant.
+    let commits = Repository::open(dir)
+        .unwrap()
+        .objects()
+        .unwrap()
+        .merge_commits(rev(dir, "origin/ours"), rev(dir, "origin/theirs"));
+    let Err(girt::merge::CommitError::MissingObjects(from_commits)) = commits else {
+        panic!("expected missing objects from the commit merge");
+    };
+    assert_eq!(from_commits, first);
+    fetch(dir, &first);
+
+    // Once renames are known, theirs' edit of the rename source is the only content left.
+    let Err(girt::merge::RenameError::MissingObjects(second)) = merge() else {
+        panic!("expected the aligned rename content");
+    };
+    assert_lists(&second, &ids(&["origin/theirs:moved"], dir));
+    fetch(dir, &second);
+
+    let result = merge().unwrap();
+    let output = support::git_output(
+        &source,
+        &["merge-tree", "--write-tree", "ours", "theirs"],
+        b"",
+    );
+    assert_eq!(output.status.code(), Some(1), "one conflict");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let mut lines = stdout.lines();
+    let git_tree: ObjectId = lines.next().unwrap().parse().unwrap();
+    // Conflicted file info: `<mode> <object> <stage>\t<path>`, up to the blank line.
+    let git_stages: BTreeSet<(String, ObjectId, u8)> = lines
+        .take_while(|line| !line.is_empty())
+        .map(|line| {
+            let (info, path) = line.split_once('\t').unwrap();
+            let fields: Vec<_> = info.split(' ').collect();
+            (
+                path.to_owned(),
+                fields[1].parse().unwrap(),
+                fields[2].parse().unwrap(),
+            )
+        })
+        .collect();
+    let stages: BTreeSet<(String, ObjectId, u8)> = result
+        .conflicts
+        .iter()
+        .flat_map(|conflict| conflict.index_entries().unwrap())
+        .map(|entry| {
+            let path = String::from_utf8(entry.path).unwrap();
+            (path, entry.id, entry.stage as u8)
+        })
+        .collect();
+    assert_eq!(stages, git_stages);
+    assert_eq!(result.conflicts.len(), 1);
+
+    // Outside the conflict, where Git stores a marker blob, the trees agree path by path.
+    let objects = Repository::open(dir).unwrap().objects().unwrap();
+    let mut ours_leaves = BTreeSet::new();
+    leaves(
+        &objects,
+        &result.trees,
+        result.tree.id(),
+        "",
+        &mut ours_leaves,
+    );
+    let source_objects = Repository::open(&source).unwrap().objects().unwrap();
+    let mut git_leaves = BTreeSet::new();
+    leaves(&source_objects, &[], git_tree, "", &mut git_leaves);
+    let clean = |set: BTreeSet<(String, ObjectId)>| -> BTreeSet<_> {
+        set.into_iter()
+            .filter(|(path, _)| path != "conflict")
+            .collect()
+    };
+    assert_eq!(clean(ours_leaves), clean(git_leaves));
 }

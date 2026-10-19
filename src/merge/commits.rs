@@ -85,6 +85,20 @@ pub enum CommitError {
     /// Caller cancelled between ancestry/tree operations.
     #[error("commit merge cancelled")]
     Cancelled,
+    /// In a partial clone, blobs a base or final tree merge would read are not stored. Each tree
+    /// merge lists every blob it needs before merging content, so a merge that synthesizes
+    /// virtual bases may report missing blobs again after a fetch. Fetch them, for example with
+    /// [`workflow::fetch_needed`](crate::workflow::fetch_needed), and merge again.
+    #[error("merge needs objects the repository does not store")]
+    MissingObjects(#[source] crate::MissingObjectsError),
+}
+
+/// Lifts missing objects out of a tree merge failure, so callers match one variant.
+fn trees(error: RenameError) -> CommitError {
+    match error {
+        RenameError::MissingObjects(missing) => CommitError::MissingObjects(missing),
+        error => CommitError::Trees(error),
+    }
 }
 
 impl Objects {
@@ -236,7 +250,8 @@ fn merge_with_driver<'a, 'd>(
         cancel,
         &mut merger.memory,
         merger.driver.as_deref_mut(),
-    )?;
+    )
+    .map_err(trees)?;
     result.blobs.extend(merger.memory.blobs);
     Ok(CommitMerge {
         parents: [ours, theirs],
@@ -320,7 +335,8 @@ impl Bases<'_, '_> {
                 self.cancel,
                 &mut self.memory,
                 self.driver.as_deref_mut(),
-            )?;
+            )
+            .map_err(trees)?;
             if !result.is_clean() {
                 result.blobs.extend(
                     self.memory
