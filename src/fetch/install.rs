@@ -559,14 +559,14 @@ impl ReceivedFetch {
             .ok_or(FetchError::Unsupported("retention requires a pack"))
     }
 
-    pub(super) fn install_for_workflow(
+    pub(super) fn install_for_workflow<const CONTROLLED: bool>(
         &self,
         repository: &Repository,
         snapshot_limits: crate::PackLimits,
         cancel: &AtomicBool,
         shallow_locked: bool,
     ) -> Result<FetchInstalled, FetchError> {
-        self.install_bytes(
+        self.install_bytes_with::<CONTROLLED>(
             repository,
             snapshot_limits,
             cancel,
@@ -577,6 +577,25 @@ impl ReceivedFetch {
     }
 
     pub(crate) fn install_bytes(
+        &self,
+        repository: &Repository,
+        snapshot_limits: crate::PackLimits,
+        cancel: &AtomicBool,
+        pack_bytes: PackInput<'_>,
+        index_bytes: &[u8],
+        allow_shallow: bool,
+    ) -> Result<FetchInstalled, FetchError> {
+        self.install_bytes_with::<false>(
+            repository,
+            snapshot_limits,
+            cancel,
+            pack_bytes,
+            index_bytes,
+            allow_shallow,
+        )
+    }
+
+    fn install_bytes_with<const CONTROLLED: bool>(
         &self,
         repository: &Repository,
         snapshot_limits: crate::PackLimits,
@@ -620,9 +639,12 @@ impl ReceivedFetch {
                 objects: self.objects,
             };
             if !self.dependencies.is_empty() {
-                let objects = repository
-                    .objects_with(snapshot_limits)
-                    .map_err(FetchError::Destination)?;
+                let objects = if CONTROLLED {
+                    repository.objects_controlled(snapshot_limits, Default::default(), cancel)
+                } else {
+                    repository.objects_with(snapshot_limits)
+                }
+                .map_err(FetchError::Destination)?;
                 // Presence and header kind only: publication reads unproven dependencies with
                 // checked reads, and existing references make the rest complete.
                 let mut bytes = self.limits.max_known_bytes as u64;
