@@ -416,7 +416,7 @@ fn planning_failure_precedes_missing_source_payloads() {
 #[rstest::rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
-fn store_backed_knowledge_refuses_before_transfer(#[case] format: ObjectFormat) {
+fn store_backed_knowledge_uses_controlled_receive(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format);
     let cancel = AtomicBool::new(false);
     let admitted = super::super::local_native::admit_source(
@@ -434,7 +434,7 @@ fn store_backed_knowledge_refuses_before_transfer(#[case] format: ObjectFormat) 
         &cancel,
     )
     .unwrap();
-    let error = fixture
+    let ready = fixture
         .request()
         .receive_prefetch_controlled(
             admitted,
@@ -443,12 +443,209 @@ fn store_backed_knowledge_refuses_before_transfer(#[case] format: ObjectFormat) 
             FetchLimits::default(),
             &cancel,
         )
-        .unwrap_err();
+        .unwrap();
+    assert!(ready.received().object_count() > 0);
+    fixture.assert_destination_empty();
+    FetchFinishOptions::default()
+        .finish(ready, &cancel)
+        .unwrap();
+    git(
+        &fixture.destination,
+        &["fsck", "--strict", "--no-dangling"],
+        b"",
+    );
+}
+
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn store_backed_budget_failure_preserves_destination(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format);
+    let cancel = AtomicBool::new(false);
+    let admitted = super::super::local_native::admit_source(
+        fixture.source.git_dir(),
+        LocalAdvertisementLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let known = KnownHistory::from_store_roots_controlled(
+        fixture
+            .destination
+            .objects_controlled(crate::PackLimits::default(), Default::default(), &cancel)
+            .unwrap(),
+        &[],
+        FetchLimits::default(),
+        crate::PeelLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let result = fixture.request().receive_prefetch_controlled(
+        admitted,
+        &known,
+        PrefetchPlanLimits::default(),
+        FetchLimits::default().with_max_known_objects(0),
+        &cancel,
+    );
     assert!(matches!(
-        error,
-        FetchWorkflowError::Transfer(FetchError::Unsupported(
-            "store-backed maintenance knowledge"
-        ))
+        result,
+        Err(FetchWorkflowError::Transfer(FetchError::Limit(
+            "known read attempts"
+        )))
     ));
     fixture.assert_destination_empty();
+}
+
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn controlled_incremental_receive_bounds_local_dependencies(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format);
+    let cancel = AtomicBool::new(false);
+    let admit = || {
+        super::super::local_native::admit_source(
+            fixture.source.git_dir(),
+            LocalAdvertisementLimits::default(),
+            &cancel,
+        )
+        .unwrap()
+    };
+    let initial = fixture
+        .request()
+        .receive_prefetch_controlled(
+            admit(),
+            &KnownHistory::default(),
+            PrefetchPlanLimits::default(),
+            FetchLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+    FetchFinishOptions::default()
+        .finish(initial, &cancel)
+        .unwrap();
+    let known = KnownHistory::from_store_roots_controlled(
+        fixture
+            .destination
+            .objects_controlled(crate::PackLimits::default(), Default::default(), &cancel)
+            .unwrap(),
+        &[fixture.first],
+        FetchLimits::default(),
+        crate::PeelLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let loose = fixture.source.loose_objects();
+    let blob = loose.write_blob(b"new payload").unwrap();
+    let tree = loose
+        .write_tree(
+            &crate::Tree::new(
+                format,
+                vec![crate::TreeEntry {
+                    mode: crate::EntryMode::Blob,
+                    name: b"new".to_vec(),
+                    id: blob,
+                }],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let first = fixture.first.to_string();
+    let tree_hex = tree.to_string();
+    let output = git(
+        &fixture.source,
+        &["commit-tree", &tree_hex, "-p", &first],
+        b"incremental\n",
+    );
+    let tip: ObjectId = std::str::from_utf8(&output)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    fixture
+        .source
+        .references()
+        .unwrap()
+        .update_without_reflog(
+            &name("refs/heads/main"),
+            Target::Direct(tip),
+            Expected::Value(Target::Direct(fixture.first)),
+        )
+        .unwrap();
+    let refused = fixture.request().receive_prefetch_controlled(
+        admit(),
+        &known,
+        PrefetchPlanLimits::default(),
+        FetchLimits::default()
+            .with_known_read(crate::ReadLimits::default().with_max_object_bytes(1)),
+        &cancel,
+    );
+    let summary = match &refused {
+        Ok(ready) => format!("ready with {} objects", ready.received().object_count()),
+        Err(error) => format!("{error:?}"),
+    };
+    assert!(
+        matches!(
+            refused,
+            Err(FetchWorkflowError::Transfer(FetchError::Limit(
+                "object bytes"
+            )))
+        ),
+        "{summary}"
+    );
+    assert!(
+        fixture
+            .destination
+            .objects()
+            .unwrap()
+            .read(tip)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fixture
+            .destination
+            .references()
+            .unwrap()
+            .read(&name("refs/prefetch/remotes/origin/main"))
+            .unwrap(),
+        Some(Target::Direct(fixture.first))
+    );
+    let ready = fixture
+        .request()
+        .receive_prefetch_controlled(
+            admit(),
+            &known,
+            PrefetchPlanLimits::default(),
+            FetchLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+    assert!(ready.received().dependencies().contains(&fixture.first));
+    FetchFinishOptions::default()
+        .finish(ready, &cancel)
+        .unwrap();
+    assert_eq!(
+        fixture
+            .destination
+            .objects()
+            .unwrap()
+            .read(blob)
+            .unwrap()
+            .unwrap()
+            .data(),
+        b"new payload"
+    );
+    assert_eq!(
+        fixture
+            .destination
+            .references()
+            .unwrap()
+            .read(&name("refs/prefetch/remotes/origin/main"))
+            .unwrap(),
+        Some(Target::Direct(tip))
+    );
+    git(
+        &fixture.destination,
+        &["fsck", "--strict", "--no-dangling"],
+        b"",
+    );
 }

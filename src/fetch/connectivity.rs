@@ -645,3 +645,48 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod controlled_known_tests {
+    use super::*;
+
+    struct Refused {
+        payload: bool,
+    }
+    impl KnownObjects for Refused {
+        fn get(&self, _: ObjectId) -> Option<Cow<'_, Object>> {
+            panic!("legacy fallback must not be used");
+        }
+        fn try_get(&self, _: ObjectId) -> Result<Option<Cow<'_, Object>>, FetchError> {
+            Err(FetchError::Limit("controlled known payload"))
+        }
+        fn try_known_kind(&self, _: ObjectId) -> Result<Option<ObjectKind>, FetchError> {
+            if self.payload {
+                Ok(Some(ObjectKind::Tree))
+            } else {
+                Err(FetchError::Cancelled)
+            }
+        }
+    }
+
+    #[test]
+    fn controlled_known_failures_reach_connectivity_callers() {
+        let missing = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing");
+        let run = |payload| {
+            validate_with_boundaries(
+                &IdMap::<Object>::default(),
+                &Refused { payload },
+                &[missing],
+                &[],
+                None,
+                FetchLimits::default(),
+                &AtomicBool::new(false),
+            )
+        };
+        assert!(matches!(run(false), Err(FetchError::Cancelled)));
+        assert!(matches!(
+            run(true),
+            Err(FetchError::Limit("controlled known payload"))
+        ));
+    }
+}
