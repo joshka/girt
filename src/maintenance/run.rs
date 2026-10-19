@@ -10,7 +10,9 @@ use crate::refs::{PackRefsLimits, PackRefsOptions, PackRefsReport, Target};
 use crate::retention::{MaintenanceIsolation, PrunePackedLimits, PrunePackedSelection};
 use crate::{AlternateLimits, HistoryLimits, ObjectKind, PackLimits, PeelLimits, Repository};
 
+mod incremental;
 mod loose;
+pub use incremental::{IncrementalRepackLimits, IncrementalRepackReport};
 pub use loose::LooseObjectsReport;
 
 /// Per-task bounds for an explicit maintenance batch.
@@ -47,6 +49,8 @@ pub struct MaintenanceLimits {
     pub prune_packed: PrunePackedLimits,
     /// Additive loose packing bounds; its entry budget also bounds automatic loose counting.
     pub loose_pack: LoosePackLimits,
+    /// MIDX publication, expiry and additive batch bounds.
+    pub incremental_repack: IncrementalRepackLimits,
 }
 
 impl Default for MaintenanceLimits {
@@ -70,11 +74,19 @@ impl Default for MaintenanceLimits {
             shallow_bytes: 16 * 1024 * 1024,
             prune_packed,
             loose_pack: LoosePackLimits::default(),
+            incremental_repack: IncrementalRepackLimits::default(),
         }
     }
 }
 
 impl MaintenanceLimits {
+    /// Replaces incremental-repack task bounds.
+    #[must_use]
+    pub fn with_incremental_repack(mut self, value: IncrementalRepackLimits) -> Self {
+        self.incremental_repack = value;
+        self
+    }
+
     /// Replaces [`Self::packs`].
     #[must_use]
     pub fn with_packs(mut self, value: PackLimits) -> Self {
@@ -177,6 +189,9 @@ pub enum TaskOutcome {
     /// Verified duplicate pruning followed by additive packing, including completed earlier phases
     /// when a later phase fails. The failure source retains the failed primitive's partial report.
     LooseObjects(Box<LooseObjectsReport>),
+    /// Completed MIDX write, expiry and additive repack phases, retained on later failure.
+    /// The failure source retains the failed primitive's partial report.
+    IncrementalRepack(Box<IncrementalRepackReport>),
 }
 
 /// One selected task and its result, in execution order.
@@ -262,7 +277,8 @@ impl MaintenanceRunError {
 
 /// An explicitly selected batch; construction performs no repository I/O.
 ///
-/// Pack-refs, commit-graph and loose-objects execute. Other selected tasks are refused before
+/// Pack-refs, commit-graph, loose-objects and (on Unix) incremental-repack execute.
+/// Other selected tasks are refused before
 /// acquiring isolation or a lock. This never reads enabled flags, strategy or `maintenance.auto`,
 /// starts background work, or inserts command triggers. The caller supplies a repository/config
 /// snapshot and isolation excluding concurrent changes for the complete batch.
@@ -376,12 +392,15 @@ impl<'a> MaintenanceRun<'a> {
                 return Err(MaintenanceRunError::Selection);
             }
             for &task in self.selection.tasks() {
-                if !matches!(
-                    task,
-                    MaintenanceTask::PackRefs
-                        | MaintenanceTask::CommitGraph
-                        | MaintenanceTask::LooseObjects
-                ) {
+                if (task == MaintenanceTask::IncrementalRepack && !cfg!(unix))
+                    || !matches!(
+                        task,
+                        MaintenanceTask::PackRefs
+                            | MaintenanceTask::CommitGraph
+                            | MaintenanceTask::LooseObjects
+                            | MaintenanceTask::IncrementalRepack
+                    )
+                {
                     return Err(MaintenanceRunError::Unsupported(task));
                 }
             }
@@ -399,6 +418,8 @@ impl<'a> MaintenanceRun<'a> {
                     failed_task = Some(task.task);
                     if task.task == MaintenanceTask::LooseObjects {
                         loose::run(&self, &_isolation, &mut task.outcome, cancel)?;
+                    } else if task.task == MaintenanceTask::IncrementalRepack {
+                        incremental::run(&self, &_isolation, &mut task.outcome, cancel)?;
                     } else {
                         task.outcome = self.task(task.task, cancel)?;
                     }
@@ -578,6 +599,17 @@ fn checkpoint(cancel: &AtomicBool) -> Result<(), MaintenanceRunError> {
     if cancel.load(Ordering::Relaxed) {
         Err(MaintenanceRunError::Cancelled)
     } else {
+        Ok(())
+    }
+}
+
+// Only constructed from the batch's live guard, for the same repository's primitives.
+struct BorrowedIsolation<'a, G> {
+    _guard: &'a G,
+}
+impl<G> MaintenanceIsolation for BorrowedIsolation<'_, G> {
+    type Guard = ();
+    fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
         Ok(())
     }
 }

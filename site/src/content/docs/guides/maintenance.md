@@ -19,8 +19,8 @@ the operation.
 
 `MaintenanceRun` executes an explicit `TaskSelection` under one caller-provided
 `MaintenanceIsolation` guard and Git's `objects/maintenance.lock`. The executor supports pack-refs,
-commit-graph and loose-objects. Selecting gc, prefetch or incremental-repack refuses the whole batch
-before locking or changing files. An empty default selection is also refused.
+commit-graph, loose-objects and (on Unix) incremental-repack. Selecting gc or prefetch refuses the
+whole batch before locking or changing files. An empty default selection is also refused.
 
 Use `with_limits` to choose finite per-task budgets and `with_auto(true)` to check each task's
 threshold. Explicit selection overrides task enabled flags; `maintenance.auto` only controls
@@ -543,3 +543,21 @@ start an automatic task or enable background work; runner integration remains
 - [Retention policy, outcomes, reports and errors](https://docs.rs/girt/latest/girt/retention/)
 - [Reftable codec, snapshots and compaction](https://docs.rs/girt/latest/girt/refs/reftable/)
 - [Interrupt-safe cleanup in normal thread context](https://docs.rs/girt/latest/girt/locks/)
+
+## Run incremental repacking
+
+Explicit incremental-repack writes a MIDX, expires verified zero-owned packs, then selects an
+additive batch using the surviving packs. Its target is one byte above the second-largest pack, or
+one byte when fewer than two remain. `IncrementalRepackLimits` groups each phase's limits; defaults
+admit the Linux fixture with 512 MiB index budgets and 20 million input occurrences. The
+`IncrementalRepack` outcome preserves completed phases and the computed target on later failure.
+
+Automatic checks count primary packs absent from the current MIDX. The configured threshold defaults
+to ten; zero disables it, negative values always run, and positive values are inclusive. Explicit
+non-automatic execution ignores this setting. Windows refuses the entire task before locking.
+
+Expiry deliberately preserves packs at least as new as the MIDX, even when they own no objects. Git
+was observed deleting future-dated zero-owned packs. Girt keeps those copies because extra disk use
+is safer than deleting a pack another writer may just have published. The expiry subreport lists
+preserved paths. Caller isolation, verified survivors and the existing promisor protections remain
+required. See [automatic maintenance](https://github.com/joshka/girt/issues/531).
