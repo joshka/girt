@@ -434,97 +434,113 @@ fn commit_chain_does_not_walk_unchanged_subtrees(#[case] format: ObjectFormat) {
     assert_eq!(small, large, "{large} dependencies for 400 unchanged blobs");
 }
 
+#[derive(Clone, Copy, Debug)]
+enum TransferSelection {
+    Empty,
+    Full,
+    KnownOnly,
+}
+
 #[rstest]
-#[case::sha1(ObjectFormat::Sha1)]
-#[case::sha256(ObjectFormat::Sha256)]
-fn admitted_transfer_matches_legacy_bytes_and_notifications(#[case] format: ObjectFormat) {
+#[case::sha1_empty(ObjectFormat::Sha1, TransferSelection::Empty)]
+#[case::sha1_full(ObjectFormat::Sha1, TransferSelection::Full)]
+#[case::sha1_known(ObjectFormat::Sha1, TransferSelection::KnownOnly)]
+#[case::sha256_empty(ObjectFormat::Sha256, TransferSelection::Empty)]
+#[case::sha256_full(ObjectFormat::Sha256, TransferSelection::Full)]
+#[case::sha256_known(ObjectFormat::Sha256, TransferSelection::KnownOnly)]
+fn admitted_transfer_matches_legacy_bytes_and_notifications(
+    #[case] format: ObjectFormat,
+    #[case] selection: TransferSelection,
+) {
     use std::io::Read;
 
     let (_root, repo, id) = source(format);
     let cancel = AtomicBool::new(false);
     let limits = FetchLimits::default();
-    for mode in 0..3 {
-        let known = if mode == 2 {
-            KnownHistory::new(
-                &repo.objects_with(limits.source_packs).unwrap(),
-                &[id],
-                limits,
-                &cancel,
-            )
-            .unwrap()
-        } else {
-            KnownHistory::default()
-        };
-        let wants = if mode == 0 { Vec::new() } else { vec![id, id] };
-        let mut legacy_messages = Vec::new();
-        let mut legacy_construction = Vec::new();
-        let mut legacy_validation = Vec::new();
-        let legacy = receive_depth_observed(
-            &repo,
-            |_| wants.clone(),
-            &known,
-            None,
-            false,
+    let known = if matches!(selection, TransferSelection::KnownOnly) {
+        KnownHistory::new(
+            &repo.objects_with(limits.source_packs).unwrap(),
+            &[id],
             limits,
-            TransportControl::new(&cancel),
-            |message| {
-                legacy_messages.push(message.to_vec());
-                ControlFlow::Continue(())
-            },
-            |event| legacy_construction.push(event),
-            |event| legacy_validation.push(event),
+            &cancel,
         )
+        .unwrap()
+    } else {
+        KnownHistory::default()
+    };
+    let wants = if matches!(selection, TransferSelection::Empty) {
+        Vec::new()
+    } else {
+        vec![id, id]
+    };
+    let mut legacy_messages = Vec::new();
+    let mut legacy_construction = Vec::new();
+    let mut legacy_validation = Vec::new();
+    let legacy = receive_depth_observed(
+        &repo,
+        |_| wants.clone(),
+        &known,
+        None,
+        false,
+        limits,
+        TransportControl::new(&cancel),
+        |message| {
+            legacy_messages.push(message.to_vec());
+            ControlFlow::Continue(())
+        },
+        |event| legacy_construction.push(event),
+        |event| legacy_validation.push(event),
+    )
+    .unwrap();
+    let store = repo.objects_with(limits.source_packs).unwrap();
+    let advertisement =
+        advertise_store(&repo, &store, limits, TransportControl::new(&cancel)).unwrap();
+    let mut messages = Vec::new();
+    let mut construction = Vec::new();
+    let mut validation = Vec::new();
+    let admitted = receive_advertised_observed(
+        &repo,
+        store,
+        advertisement,
+        |_| wants.clone(),
+        &known,
+        None,
+        false,
+        limits,
+        TransportControl::new(&cancel),
+        |message| {
+            messages.push(message.to_vec());
+            ControlFlow::Continue(())
+        },
+        |event| construction.push(event),
+        |event| validation.push(event),
+    )
+    .unwrap();
+    let mut legacy_bytes = Vec::new();
+    legacy
+        .pack
+        .reader()
+        .unwrap()
+        .read_to_end(&mut legacy_bytes)
         .unwrap();
-        let store = repo.objects_with(limits.source_packs).unwrap();
-        let advertisement =
-            advertise_store(&repo, &store, limits, TransportControl::new(&cancel)).unwrap();
-        let mut messages = Vec::new();
-        let mut construction = Vec::new();
-        let mut validation = Vec::new();
-        let admitted = receive_advertised_observed(
-            &repo,
-            store,
-            advertisement,
-            |_| wants.clone(),
-            &known,
-            None,
-            false,
-            limits,
-            TransportControl::new(&cancel),
-            |message| {
-                messages.push(message.to_vec());
-                ControlFlow::Continue(())
-            },
-            |event| construction.push(event),
-            |event| validation.push(event),
-        )
+    let mut admitted_bytes = Vec::new();
+    admitted
+        .pack
+        .reader()
+        .unwrap()
+        .read_to_end(&mut admitted_bytes)
         .unwrap();
-        let mut legacy_bytes = Vec::new();
-        legacy
-            .pack
-            .reader()
-            .unwrap()
-            .read_to_end(&mut legacy_bytes)
-            .unwrap();
-        let mut admitted_bytes = Vec::new();
-        admitted
-            .pack
-            .reader()
-            .unwrap()
-            .read_to_end(&mut admitted_bytes)
-            .unwrap();
-        assert_eq!(admitted_bytes, legacy_bytes);
-        assert_eq!(admitted.index, legacy.index);
-        assert_eq!(admitted.wants(), legacy.wants());
-        assert_eq!(admitted.dependencies(), legacy.dependencies());
-        assert_eq!(
-            admitted.complete_dependencies(),
-            legacy.complete_dependencies()
-        );
-        assert_eq!(admitted.shallow_roots(), legacy.shallow_roots());
-        assert_eq!(admitted.object_count(), legacy.object_count());
-        assert_eq!(messages, legacy_messages);
-        assert_eq!(construction, legacy_construction);
-        assert_eq!(validation, legacy_validation);
-    }
+    assert_eq!(admitted_bytes, legacy_bytes);
+    assert_eq!(admitted.index, legacy.index);
+    assert_eq!(admitted.wants(), legacy.wants());
+    assert_eq!(admitted.dependencies(), legacy.dependencies());
+    assert_eq!(
+        admitted.complete_dependencies(),
+        legacy.complete_dependencies()
+    );
+    assert_eq!(admitted.shallow_roots(), legacy.shallow_roots());
+    assert_eq!(admitted.object_count(), legacy.object_count());
+    assert_eq!(messages, legacy_messages);
+    assert_eq!(construction, legacy_construction);
+    assert_eq!(validation, legacy_validation);
 }
