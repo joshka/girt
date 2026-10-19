@@ -104,6 +104,13 @@ fn git_offline(dir: &Path, args: &[&str]) -> Vec<u8> {
     let output = command
         .current_dir(dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        // Fixture commands must not start background maintenance that writes into `objects/`
+        // while a test inspects it.
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "maintenance.auto")
+        .env("GIT_CONFIG_VALUE_0", "false")
+        .env("GIT_CONFIG_KEY_1", "gc.auto")
+        .env("GIT_CONFIG_VALUE_1", "0")
         .env("GIT_CONFIG_GLOBAL", dir.join("absent-config"))
         .env("GIT_NO_LAZY_FETCH", "1")
         .args(args)
