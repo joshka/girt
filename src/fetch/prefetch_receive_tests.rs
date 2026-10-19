@@ -2,10 +2,7 @@
 use super::prefetch_plan::PrefetchPlanLimits;
 use super::*;
 use crate::fetch::{FetchFinishOptions, LocalAdvertisementLimits, ObjectFilter};
-use crate::{InitKind, ObjectFormat};
-
-#[path = "../../tests/support/maintenance_git.rs"]
-mod oracle;
+use crate::{InitKind, ObjectFormat, maintenance_git as oracle};
 
 fn git(repository: &Repository, args: &[&str], input: &[u8]) -> Vec<u8> {
     let mut options = vec!["-c", "maintenance.auto=false", "-c", "gc.auto=0"];
@@ -84,14 +81,16 @@ impl Fixture {
                 .unwrap()
                 .is_empty()
         );
-        assert!(
-            self.destination
-                .objects()
-                .unwrap()
-                .read(self.first)
-                .unwrap()
-                .is_none()
-        );
+        if self.destination.object_format() == self.first.format() {
+            assert!(
+                self.destination
+                    .objects()
+                    .unwrap()
+                    .read(self.first)
+                    .unwrap()
+                    .is_none()
+            );
+        }
         let packs = self.destination.common_dir().join("objects/pack");
         if packs.exists() {
             assert_eq!(std::fs::read_dir(packs).unwrap().count(), 0);
@@ -221,7 +220,9 @@ fn known_tip_needs_no_new_pack(#[case] format: ObjectFormat) {
     let report = FetchFinishOptions::default()
         .finish(second, &cancel)
         .unwrap();
-    assert!(report.installed.is_none());
+    let installed = report.installed.unwrap();
+    assert_eq!(installed.objects, 0);
+    assert_eq!(installed.checksum, None);
     git(
         &fixture.destination,
         &["fsck", "--strict", "--no-dangling"],
@@ -310,6 +311,104 @@ fn unsupported_request_policy_has_no_effects(#[case] depth: bool) {
             &cancel,
         ),
         Err(FetchWorkflowError::Transfer(FetchError::Unsupported(_)))
+    ));
+    fixture.assert_destination_empty();
+}
+
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn source_format_mismatch_refuses_before_transfer(#[case] format: ObjectFormat) {
+    let mut fixture = Fixture::new(format);
+    let other = match format {
+        ObjectFormat::Sha1 => ObjectFormat::Sha256,
+        ObjectFormat::Sha256 => ObjectFormat::Sha1,
+    };
+    fixture.destination = Repository::init(
+        other,
+        fixture._root.path().join("other.git"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let admitted = super::super::local_native::admit_source(
+        fixture.source.git_dir(),
+        LocalAdvertisementLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert!(matches!(fixture.request().receive_prefetch_controlled(
+        admitted, &KnownHistory::default(), PrefetchPlanLimits::default(), FetchLimits::default(), &cancel,
+    ), Err(FetchWorkflowError::Transfer(FetchError::FormatMismatch { remote, local }))
+        if remote == format && local == other));
+    fixture.assert_destination_empty();
+}
+
+#[test]
+fn shallow_source_refuses_before_transfer() {
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    std::fs::write(
+        fixture.source.git_dir().join("shallow"),
+        format!("{}\n", fixture.first),
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let admitted = super::super::local_native::admit_source(
+        fixture.source.git_dir(),
+        LocalAdvertisementLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert!(matches!(
+        fixture.request().receive_prefetch_controlled(
+            admitted,
+            &KnownHistory::default(),
+            PrefetchPlanLimits::default(),
+            FetchLimits::default(),
+            &cancel,
+        ),
+        Err(FetchWorkflowError::Transfer(FetchError::Unsupported(
+            "shallow local source"
+        )))
+    ));
+    fixture.assert_destination_empty();
+}
+
+#[test]
+fn planning_failure_precedes_missing_source_payloads() {
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    let cancel = AtomicBool::new(false);
+    let admitted = super::super::local_native::admit_source(
+        fixture.source.git_dir(),
+        LocalAdvertisementLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let id = fixture.first.to_string();
+    std::fs::remove_file(
+        fixture
+            .source
+            .common_dir()
+            .join("objects")
+            .join(&id[..2])
+            .join(&id[2..]),
+    )
+    .unwrap();
+    let planning = PrefetchPlanLimits {
+        max_updates: 0,
+        ..PrefetchPlanLimits::default()
+    };
+    assert!(matches!(
+        fixture.request().receive_prefetch_controlled(
+            admitted,
+            &KnownHistory::default(),
+            planning,
+            FetchLimits::default(),
+            &cancel,
+        ),
+        Err(FetchWorkflowError::Plan(FetchPlanError::Mapping(
+            MappingError::Limit("prefetch updates")
+        )))
     ));
     fixture.assert_destination_empty();
 }
