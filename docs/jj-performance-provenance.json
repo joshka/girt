@@ -20990,6 +20990,74 @@
         "jj-historic/git export/100-pending-bookmarks",
         "linux-v6.1/git export/100-pending-bookmarks"
       ]
+    },
+    {
+      "girt_version": "0.18.0",
+      "girt_commit": "f133cbe487b9ac78c87361b206e73761c97481f5",
+      "jj_adapter_commit": "591187f9bff9545ea39fb2382ff345c9f13f4aea",
+      "binaries": {
+        "girt": "1cb5011d881dc1b2ee225eb6686bb0adb2a8af43ca1ea2d340167538d45a69a0",
+        "stock": "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
+      },
+      "run_epochs": [
+        {
+          "started": "2026-10-19T09:08:26-0700",
+          "argv": [
+            "--matrix",
+            "--resume",
+            "--fsck-scope",
+            "operation-type",
+            "--girt-jj",
+            "/Users/joshka/tmp/girt-bench/bin/jj-girt-0.18.0",
+            "--stock-jj",
+            "/Users/joshka/tmp/girt-bench/bin/jj-stock",
+            "--girt-rev",
+            "f133cbe487b9ac78c87361b206e73761c97481f5",
+            "--jj-rev",
+            "591187f9bff9545ea39fb2382ff345c9f13f4aea",
+            "--stock-rev",
+            "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+            "--repo",
+            "medium:git-git=/Users/joshka/tmp/girt-fixtures/git-matrix.git",
+            "--runs",
+            "6",
+            "--ops",
+            "diff-git,annotate,rebase-1,edit",
+            "--adaptive",
+            "--bounded-disk",
+            "--fresh-read-copies",
+            "--max-load",
+            "24",
+            "--work",
+            "/Users/joshka/tmp/girt-bench/matrix-0.18.0/run",
+            "--out",
+            "/Users/joshka/tmp/girt-bench/matrix-0.18.0/jj-bench-matrix.json"
+          ],
+          "adaptive": true,
+          "load_average_at_start": [
+            24.9384765625,
+            31.52734375,
+            29.20166015625
+          ]
+        }
+      ],
+      "load_1m": {
+        "min": 14.3,
+        "median": 15.6,
+        "max": 25.3,
+        "cores": 12
+      },
+      "fsck": {
+        "scope": "operation-type",
+        "checks": 3,
+        "failures": 0
+      },
+      "cells": [
+        "git-git/diff/git",
+        "git-git/edit/default",
+        "git-git/file annotate/large-old-file",
+        "git-git/rebase/1"
+      ]
     }
   ]
 }
