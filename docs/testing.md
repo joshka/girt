@@ -495,6 +495,14 @@ budgets refuse without returning a partial advertisement. Corrupt tags, symbolic
 cancellation and linked sources/registrations refuse; source bytes remain unchanged on success and
 failure. A unit test checks the batch cancellation boundary.
 
+### Native Admitted Transfer Equivalence
+
+The `fetch::local_native::tests` library tests compare legacy receive with its admitted-source
+transfer helper in SHA-1 and SHA-256. Empty, full and known-only selections preserve pack/index
+bytes, wants, dependencies, shallow boundaries, messages and construction/validation progress.
+Existing local fetch and clone integration suites continue to exercise publication and Git
+interoperability.
+
 ## Controlled maintenance prefetch planning
 
 `cargo test --lib prefetch` covers the internal, read-only maintenance planner. Prefetch
