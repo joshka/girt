@@ -1,5 +1,6 @@
 //! Verified graph construction and standalone/split artifact encoding.
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{Checksum, Chunks, CommitGraph, GraphCommit, GraphError, GraphLimits, bad, id};
 use crate::{HistoryError, HistoryLimits, IdMap, ObjectFormat, ObjectId, Objects};
@@ -29,6 +30,9 @@ pub enum GraphWriteError {
     /// Shallow history cannot supply the complete parent closure required by the format.
     #[error("cannot construct a commit-graph from shallow history")]
     Shallow,
+    /// Caller cancellation was observed during controlled construction; no graph is returned.
+    #[error("commit-graph construction cancelled")]
+    Cancelled,
 }
 
 impl CommitGraph {
@@ -58,18 +62,73 @@ impl CommitGraph {
         roots: &[ObjectId],
         limits: HistoryLimits,
     ) -> Result<Self, GraphWriteError> {
+        Self::build::<false>(objects, roots, limits, &AtomicBool::new(false))
+    }
+
+    /// Builds metadata with caller cancellation and explicit history/read bounds.
+    ///
+    /// Produces the same verified graph as [`Self::from_objects_with`], without publishing files.
+    /// Cancellation is checked once per batch of up to 64 graph work items (roots, commits and
+    /// parent edges), and at phase boundaries. A bounded object read, sort, encoding subphase or
+    /// final graph validation can finish before the next check. This is cooperative cancellation,
+    /// not a deadline. Existing constructors use a specialization with polling compiled out.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphWriteError::Cancelled`] when cancellation is observed, or the input and
+    /// limit errors of [`Self::from_objects_with`]. No partial graph is returned.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::commit_graph::CommitGraph;
+    /// use girt::{HistoryLimits, InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repository = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let graph = CommitGraph::from_objects_controlled(
+    ///     &repository.objects()?,
+    ///     &[],
+    ///     HistoryLimits::default(),
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// assert!(graph.commits().is_empty());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_objects_controlled(
+        objects: &Objects,
+        roots: &[ObjectId],
+        limits: HistoryLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, GraphWriteError> {
+        Self::build::<true>(objects, roots, limits, cancel)
+    }
+
+    fn build<const CONTROLLED: bool>(
+        objects: &Objects,
+        roots: &[ObjectId],
+        limits: HistoryLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, GraphWriteError> {
+        let mut poll = Poll::<CONTROLLED>::new(cancel);
+        poll.phase()?;
         if !objects.shallow_roots().is_empty() {
             return Err(GraphWriteError::Shallow);
         }
         let mut ids = Vec::new();
         let mut positions = IdMap::default();
         for root in roots {
+            poll.step()?;
             discover(*root, &mut ids, &mut positions, limits.max_commits)?;
         }
         let mut commits = Vec::new();
         let mut remaining = limits.max_parents;
         let mut index = 0;
         while index < ids.len() {
+            poll.step()?;
             let id = ids[index];
             let commit = objects
                 .read_commit_with(id, limits.read)
@@ -86,6 +145,7 @@ impl CommitGraph {
                 .checked_sub(commit.parents().len())
                 .ok_or(HistoryError::Limit("parent occurrences"))?;
             for parent in commit.parents() {
+                poll.step()?;
                 discover(*parent, &mut ids, &mut positions, limits.max_commits)?;
             }
             commits.push(GraphCommit {
@@ -98,7 +158,9 @@ impl CommitGraph {
             });
             index += 1;
         }
-        set_generations(&mut commits, &positions)?;
+        poll.phase()?;
+        set_generations(&mut commits, &positions, &mut poll)?;
+        poll.phase()?;
         commits.sort_unstable_by_key(|record| record.id);
 
         // Graphs are read from file bytes, so encode the records and check them like a file.
@@ -115,13 +177,17 @@ impl CommitGraph {
             })
             .collect::<Result<_, _>>()?;
         let records: Vec<_> = commits.iter().collect();
-        let bytes = encode_records(format, &records, &positions, &[])?;
+        poll.phase()?;
+        let bytes = encode_controlled(format, &records, &positions, &[], &mut poll)?;
+        poll.phase()?;
         let limits = GraphLimits {
             max_commits: usize::MAX,
             max_parents: usize::MAX,
             ..GraphLimits::default()
         };
-        Ok(Self::parse_owned(bytes, format, limits, Checksum::Verify)?)
+        let graph = Self::parse_owned(bytes, format, limits, Checksum::Verify)?;
+        poll.phase()?;
+        Ok(graph)
     }
 
     /// Encodes a standalone graph with generation v1/v2 and no Bloom filters.
@@ -219,18 +285,22 @@ fn discover(
     Ok(())
 }
 
-fn set_generations(
+fn set_generations<const CONTROLLED: bool>(
     commits: &mut [GraphCommit],
     positions: &IdMap<usize>,
-) -> Result<(), HistoryError> {
+    poll: &mut Poll<'_, CONTROLLED>,
+) -> Result<(), GraphWriteError> {
     let mut state = vec![0; commits.len()];
     for root in 0..commits.len() {
+        poll.step()?;
         let mut stack = vec![(root, false)];
         while let Some((index, exiting)) = stack.pop() {
+            poll.step()?;
             if exiting {
                 let mut generation = 1;
                 let mut date = commits[index].commit_time;
                 for parent in &commits[index].parents {
+                    poll.step()?;
                     let parent = &commits[positions[parent]];
                     generation =
                         generation.max(parent.generation.saturating_add(1).min(0x3fffffff));
@@ -250,11 +320,12 @@ fn set_generations(
                 continue;
             }
             if state[index] == 1 {
-                return Err(HistoryError::Cycle);
+                return Err(HistoryError::Cycle.into());
             }
             state[index] = 1;
             stack.push((index, true));
             for parent in commits[index].parents.iter().rev() {
+                poll.step()?;
                 stack.push((positions[parent], false));
             }
         }
@@ -268,10 +339,28 @@ pub(super) fn encode_records(
     positions: &IdMap<u32>,
     hashes: &[u8],
 ) -> Result<Vec<u8>, GraphWriteError> {
+    encode_controlled(
+        format,
+        commits,
+        positions,
+        hashes,
+        &mut Poll::<false>::new(&AtomicBool::new(false)),
+    )
+}
+
+fn encode_controlled<const CONTROLLED: bool>(
+    format: ObjectFormat,
+    commits: &[&GraphCommit],
+    positions: &IdMap<u32>,
+    hashes: &[u8],
+    poll: &mut Poll<'_, CONTROLLED>,
+) -> Result<Vec<u8>, GraphWriteError> {
     let mut fanout = Vec::with_capacity(1024);
     let mut count = 0;
     for bucket in 0..256 {
+        poll.step()?;
         while count < commits.len() && usize::from(commits[count].id.as_bytes()[0]) <= bucket {
+            poll.step()?;
             count += 1;
         }
         fanout.extend_from_slice(&(count as u32).to_be_bytes());
@@ -282,6 +371,7 @@ pub(super) fn encode_records(
     let mut generation = Vec::new();
     let mut overflow = Vec::new();
     for commit in commits {
+        poll.step()?;
         ids.extend_from_slice(commit.id.as_bytes());
         data.extend_from_slice(commit.tree.as_bytes());
         let parents: Vec<_> = commit
@@ -298,6 +388,7 @@ pub(super) fn encode_records(
         let second = if parents.len() > 2 {
             let start = edges.len() / 4;
             for (index, parent) in parents[1..].iter().enumerate() {
+                poll.step()?;
                 let last = if index + 2 == parents.len() {
                     0x80000000
                 } else {
@@ -377,4 +468,69 @@ pub(super) fn encode_records(
     }
     bytes.extend_from_slice(format.checksum(&bytes).as_bytes());
     Ok(bytes)
+}
+
+// Existing entry points compile out polling; the false specialization never uses the counter.
+struct Poll<'a, const CONTROLLED: bool> {
+    cancel: &'a AtomicBool,
+    remaining: usize,
+}
+
+impl<'a, const CONTROLLED: bool> Poll<'a, CONTROLLED> {
+    fn new(cancel: &'a AtomicBool) -> Self {
+        Self {
+            cancel,
+            remaining: 0,
+        }
+    }
+
+    #[inline]
+    fn phase(&mut self) -> Result<(), GraphWriteError> {
+        if CONTROLLED {
+            self.remaining = 0;
+        }
+        self.step()
+    }
+
+    #[inline]
+    fn step(&mut self) -> Result<(), GraphWriteError> {
+        if CONTROLLED {
+            if self.remaining == 0 {
+                if self.cancel.load(Ordering::Relaxed) {
+                    return Err(GraphWriteError::Cancelled);
+                }
+                self.remaining = 64;
+            }
+            self.remaining -= 1;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod polling_tests {
+    use super::*;
+
+    #[test]
+    fn cancellation_is_observed_at_the_next_batch() {
+        let cancel = AtomicBool::new(false);
+        let mut poll = Poll::<true>::new(&cancel);
+        poll.step().unwrap();
+        cancel.store(true, Ordering::Relaxed);
+        for _ in 1..64 {
+            poll.step().unwrap();
+        }
+        assert!(matches!(poll.step(), Err(GraphWriteError::Cancelled)));
+    }
+
+    #[test]
+    fn old_specialization_does_not_consult_cancellation() {
+        let cancel = AtomicBool::new(true);
+        let mut poll = Poll::<false>::new(&cancel);
+        for _ in 0..128 {
+            poll.step().unwrap();
+        }
+        poll.phase().unwrap();
+        assert_eq!(poll.remaining, 0);
+    }
 }
