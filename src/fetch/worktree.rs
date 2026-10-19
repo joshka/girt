@@ -39,3 +39,56 @@ fn check_head(repository: &Repository) -> Result<(), FetchPlanError> {
     }
     Err(ReferenceError::Depth(32).into())
 }
+
+// Inspect at most one registration. Even malformed entries require admission, so never open them.
+pub(super) fn admit_controlled(
+    repository: &Repository,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(), FetchPlanError> {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(FetchPlanError::Cancelled);
+    }
+    if repository.git_dir() != repository.common_dir() {
+        return Err(FetchPlanError::LinkedWorktrees);
+    }
+    match fs::read_dir(repository.common_dir().join("worktrees")) {
+        Ok(mut entries) => {
+            if let Some(entry) = entries.next() {
+                entry?;
+                return Err(FetchPlanError::LinkedWorktrees);
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+pub(super) fn check_head_controlled(
+    repository: &Repository,
+    listed: &[crate::refs::Reference],
+    limits: super::workflow::FetchPrepareLimits,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(), FetchPlanError> {
+    let refs = repository
+        .references()?
+        .with_reftable_limits(limits.reftable);
+    let mut target = refs.head_controlled(limits.max_head_bytes, cancel)?;
+    for _ in 0..=32 {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(FetchPlanError::Cancelled);
+        }
+        match target {
+            Some(Target::Symbolic(next)) if next.as_bytes().starts_with(b"refs/heads/") => {
+                target = listed
+                    .binary_search_by(|reference| reference.name.cmp(&next))
+                    .ok()
+                    .and_then(|index| listed.get(index))
+                    .map(|reference| reference.target.clone());
+            }
+            Some(Target::Symbolic(next)) => return Err(FetchPlanError::Head(next)),
+            _ => return Ok(()),
+        }
+    }
+    Err(ReferenceError::Depth(32).into())
+}

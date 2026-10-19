@@ -236,8 +236,9 @@ pub use update::{FetchUpdateError, FetchUpdateLimits};
 mod workflow;
 mod worktree;
 pub use workflow::{
-    FetchFinishError, FetchFinishFailure, FetchPlanError, FetchReady, FetchReport, FetchRequest,
-    FetchUpdate, FetchUpdateKind, FetchWorkflowError, RetainedFetchFinishError, RetainedFetchReady,
+    FetchFinishError, FetchFinishFailure, FetchPlanError, FetchPrepareLimits, FetchReady,
+    FetchReport, FetchRequest, FetchUpdate, FetchUpdateKind, FetchWorkflowError,
+    RetainedFetchFinishError, RetainedFetchReady,
 };
 
 mod boundaries;

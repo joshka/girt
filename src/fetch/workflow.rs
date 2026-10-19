@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
     Advertisement, FetchError, FetchInstalled, FetchLimits, FetchUpdateLimits, KnownHistory,
@@ -13,6 +13,39 @@ use crate::refs::{Expected, RefEdit, RefEditOutcome, RefName, ReferenceError, Re
 use crate::remote::{Direction, Mapping, MappingError, Refspecs};
 use crate::transport::TransportControl;
 use crate::{ObjectId, Repository};
+
+/// Resource budgets for controlled fetch preparation on an already-open repository.
+///
+/// Linked worktrees are not admitted yet; see [`FetchPlanError::LinkedWorktrees`]. Filesystem
+/// calls and bounded parsing complete before cancellation is observed. These limits do not
+/// control later advertisement mapping, transport, object verification or publication. Repository
+/// opening and its already-loaded shallow metadata are caller work, outside these budgets.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct FetchPrepareLimits {
+    /// Directory entries and packed names visited by the destination inventory.
+    pub max_ref_entries: usize,
+    /// Aggregate files-backend reference input bytes, excluding HEAD.
+    pub max_ref_bytes: usize,
+    /// Files-backend HEAD input bytes.
+    pub max_head_bytes: usize,
+    /// Maximum declared shallow roots copied into the request.
+    pub max_shallow_roots: usize,
+    /// Encoded/decoded reftable limits, separately for inventory and HEAD snapshots.
+    pub reftable: crate::refs::reftable::StackLimits,
+}
+
+impl Default for FetchPrepareLimits {
+    fn default() -> Self {
+        Self {
+            max_ref_entries: 100_000,
+            max_ref_bytes: 16 * 1024 * 1024,
+            max_head_bytes: 4096,
+            max_shallow_roots: 100_000,
+            reftable: crate::refs::reftable::StackLimits::default(),
+        }
+    }
+}
 
 /// A synchronous destination snapshot and explicit policy for one fetch.
 ///
@@ -203,9 +236,85 @@ impl FetchRequest {
         authorized_force: BTreeSet<RefName>,
         reflog: Reflog,
     ) -> Result<Self, FetchPlanError> {
-        Self::prepare_from(repository, specs, authorized_force, reflog, |repository| {
-            Ok(repository.references()?.list()?)
-        })
+        Self::prepare_from::<false>(
+            repository,
+            specs,
+            authorized_force,
+            reflog,
+            FetchPrepareLimits::default(),
+            &AtomicBool::new(false),
+            |repository| Ok(repository.references()?.list()?),
+        )
+    }
+
+    /// Captures destinations with bounded inventory and cooperative cancellation.
+    ///
+    /// Uses the caller's already-open handle; it does not reopen repository metadata. Requires
+    /// the same exclusion of checkout, HEAD/branch, registration and GC changes as
+    /// [`Self::prepare`]. Linked callers and any registered linked worktree return
+    /// [`FetchPlanError::LinkedWorktrees`] before their metadata is opened. HEAD chains use the
+    /// bounded inventory, stop after 32 symbolic edges and must stay inside `refs/heads/`.
+    /// Cancellation is checked between inventory entries and every 64 copied records. A single
+    /// bounded parse or filesystem call can finish before cancellation. No files, refs or
+    /// objects are written.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::BTreeSet;
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::fetch::{FetchPrepareLimits, FetchRequest};
+    /// use girt::refs::Reflog;
+    /// use girt::remote::{Direction, Refspecs};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let specs = Refspecs::parse(Direction::Fetch, ["refs/heads/*:refs/remotes/origin/*"])?;
+    /// let request = FetchRequest::prepare_controlled(
+    ///     repo,
+    ///     specs,
+    ///     BTreeSet::new(),
+    ///     Reflog::Preserve,
+    ///     FetchPrepareLimits::default(),
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// # let _ = request;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns typed admission, cancellation, reference-limit and HEAD-chain failures with no
+    /// partial request. Shallow roots exceeding the selected count return
+    /// [`FetchPlanError::PrepareLimit`].
+    pub fn prepare_controlled(
+        repository: Repository,
+        specs: Refspecs,
+        authorized_force: BTreeSet<RefName>,
+        reflog: Reflog,
+        limits: FetchPrepareLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, FetchPlanError> {
+        Self::prepare_from::<true>(
+            repository,
+            specs,
+            authorized_force,
+            reflog,
+            limits,
+            cancel,
+            |repository| {
+                let refs = repository
+                    .references()?
+                    .with_reftable_limits(limits.reftable);
+                Ok(refs.list_controlled(limits.max_ref_entries, limits.max_ref_bytes, cancel)?)
+            },
+        )
     }
 
     /// Prepares like [`Self::prepare`] from a reference listing the caller already took.
@@ -219,28 +328,71 @@ impl FetchRequest {
         reflog: Reflog,
         references: Vec<crate::refs::Reference>,
     ) -> Result<Self, FetchPlanError> {
-        Self::prepare_from(repository, specs, authorized_force, reflog, |_| {
-            Ok(references)
-        })
+        Self::prepare_from::<false>(
+            repository,
+            specs,
+            authorized_force,
+            reflog,
+            FetchPrepareLimits::default(),
+            &AtomicBool::new(false),
+            |_| Ok(references),
+        )
     }
 
-    fn prepare_from(
+    fn prepare_from<const CONTROLLED: bool>(
         repository: Repository,
         specs: Refspecs,
         authorized_force: BTreeSet<RefName>,
         reflog: Reflog,
+        limits: FetchPrepareLimits,
+        cancel: &AtomicBool,
         list: impl FnOnce(&Repository) -> Result<Vec<crate::refs::Reference>, FetchPlanError>,
     ) -> Result<Self, FetchPlanError> {
+        if CONTROLLED && cancel.load(Ordering::Relaxed) {
+            return Err(FetchPlanError::Cancelled);
+        }
         if specs.direction() != Direction::Fetch {
             return Err(FetchPlanError::Mapping(MappingError::Direction));
         }
-        super::worktree::check(&repository)?;
+        if CONTROLLED {
+            super::worktree::admit_controlled(&repository, cancel)?;
+        } else {
+            super::worktree::check(&repository)?;
+        }
         let references = list(&repository)?;
-        let snapshot = references
-            .into_iter()
-            .map(|reference| (reference.name, reference.target))
-            .collect();
-        let shallow_before = repository.shallow_roots().iter().collect();
+        if CONTROLLED {
+            super::worktree::check_head_controlled(&repository, &references, limits, cancel)?;
+            if repository.shallow_roots().iter().len() > limits.max_shallow_roots {
+                return Err(FetchPlanError::PrepareLimit("shallow roots"));
+            }
+        }
+        let (snapshot, shallow_before) = if CONTROLLED {
+            let mut snapshot = BTreeMap::new();
+            for (index, reference) in references.into_iter().enumerate() {
+                if index % 64 == 0 && cancel.load(Ordering::Relaxed) {
+                    return Err(FetchPlanError::Cancelled);
+                }
+                snapshot.insert(reference.name, reference.target);
+            }
+            let mut shallow_before = Vec::new();
+            for (index, id) in repository.shallow_roots().iter().enumerate() {
+                if index % 64 == 0 && cancel.load(Ordering::Relaxed) {
+                    return Err(FetchPlanError::Cancelled);
+                }
+                shallow_before.push(id);
+            }
+            (snapshot, shallow_before)
+        } else {
+            let snapshot = references
+                .into_iter()
+                .map(|reference| (reference.name, reference.target))
+                .collect();
+            let shallow_before = repository.shallow_roots().iter().collect();
+            (snapshot, shallow_before)
+        };
+        if CONTROLLED && cancel.load(Ordering::Relaxed) {
+            return Err(FetchPlanError::Cancelled);
+        }
         Ok(Self {
             repository,
             specs,
@@ -1719,6 +1871,19 @@ pub enum FetchPlanError {
     /// HEAD or its symbolic branch chain escapes the protected branch namespace.
     #[error("unsupported HEAD chain at {0:?}")]
     Head(RefName),
+    /// Controlled preparation observed cancellation; no request or filesystem effects remain.
+    #[error("fetch preparation cancelled")]
+    Cancelled,
+    /// Controlled preparation exceeded a non-reference metadata budget.
+    #[error("fetch preparation limit exceeded: {0}")]
+    PrepareLimit(&'static str),
+    /// Controlled preparation cannot safely admit linked worktrees yet.
+    ///
+    /// Maintenance callers may report this as skipped. The legacy entry point still supports
+    /// linked worktrees with trusted metadata. Bounded opening is tracked in
+    /// [#896](https://github.com/joshka/girt/issues/896).
+    #[error("controlled fetch preparation does not admit linked worktrees")]
+    LinkedWorktrees,
 }
 
 /// A failure before any installation or reference publication.
