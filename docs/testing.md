@@ -502,3 +502,15 @@ transfer helper in SHA-1 and SHA-256. Empty, full and known-only selections pres
 bytes, wants, dependencies, shallow boundaries, messages and construction/validation progress.
 Existing local fetch and clone integration suites continue to exercise publication and Git
 interoperability.
+
+## Controlled maintenance prefetch planning
+
+`cargo test --lib prefetch` covers the internal, read-only maintenance planner. Prefetch
+replacements accept unrelated tips without force intent, while generic planning keeps its existing
+namespace restrictions. Tests cover namespace escape refusal, symbolic and excluded prune targets,
+retained missing sources, cancellation and destination, output and reverse-mapping budgets.
+
+SHA-1 and SHA-256 finish fixtures prove that the new update kind keeps installed-object validation:
+an intact unrelated tip replaces the old ref, while damage to the new commit's zlib checksum leaves
+the old ref unchanged. The Git fixture commands clear inherited `GIT_*`, isolate configuration, fix
+identities and dates, disable signing and automatic maintenance, and use local repositories.

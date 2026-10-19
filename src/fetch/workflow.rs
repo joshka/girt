@@ -1811,6 +1811,12 @@ pub enum FetchUpdateKind {
     ForcedTag,
     /// Delete a stale direct remote-tracking reference in the requested prune scope.
     Prune,
+    /// Replace a tip below `refs/prefetch/` without an ancestry or force requirement.
+    ///
+    /// Only the internal maintenance prefetch planner produces this outcome. Generic fetch
+    /// planning and public receive entry points never produce it. Installed-object validation still
+    /// runs before publication.
+    PrefetchReplace,
 }
 impl FetchUpdateKind {
     fn changes_ref(self) -> bool {
@@ -1822,6 +1828,7 @@ impl FetchUpdateKind {
                 | Self::ForcedTracking
                 | Self::ForcedTag
                 | Self::Prune
+                | Self::PrefetchReplace
         )
     }
 }
@@ -2098,3 +2105,17 @@ mod tests;
 #[cfg(test)]
 #[path = "single_pass_tests.rs"]
 mod single_pass_tests;
+
+#[cfg(test)]
+#[path = "prefetch_plan_tests.rs"]
+mod prefetch_plan_tests;
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "internal prefetch transfer composition follows separately"
+    )
+)]
+#[path = "prefetch_plan.rs"]
+mod prefetch_plan;

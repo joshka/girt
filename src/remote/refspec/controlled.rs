@@ -211,6 +211,85 @@ impl<'a> MappingOptions<'a> {
         self.map_admitted(&sources, &mut budget)
     }
 
+    /// Reverse matching for maintenance pruning, under one budget for the complete phase.
+    /// Borrow output names; the planner admits its own result clones separately.
+    pub(crate) fn prune_candidates<'n>(
+        self,
+        destinations: &[&'n crate::refs::RefName],
+        advertisement: &Advertisement,
+        retained: &std::collections::BTreeSet<Vec<u8>>,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<&'n crate::refs::RefName>, MappingError> {
+        let mut budget = Budget::new(self.limits, cancel)?;
+        if self.specs.direction != Direction::Fetch {
+            return Err(MappingError::Direction);
+        }
+        let count = advertisement
+            .refs
+            .len()
+            .checked_add(destinations.len())
+            .and_then(|count| count.checked_add(retained.len()))
+            .ok_or(MappingError::Limit("sources"))?;
+        self.admit(
+            count,
+            advertisement
+                .refs
+                .iter()
+                .map(|reference| reference.name.as_bytes())
+                .chain(destinations.iter().map(|name| name.as_bytes()))
+                .chain(retained.iter().map(Vec::as_slice)),
+            &mut budget,
+        )?;
+        let mut advertised = std::collections::HashSet::new();
+        for reference in &advertisement.refs {
+            budget.step()?;
+            if reference.kind == AdvertisementKind::Tip {
+                budget.comparison(b"", reference.name.as_bytes())?;
+                advertised.insert(reference.name.as_bytes());
+            }
+        }
+        let mut pruned = Vec::new();
+        for &destination in destinations {
+            budget.step()?;
+            let mut owned = false;
+            let mut protected = false;
+            for spec in &self.specs.specs {
+                budget.step()?;
+                let Some(source) = reverse_source(spec, destination, &mut budget)? else {
+                    continue;
+                };
+                let mut excluded = false;
+                for negative in &self.specs.specs {
+                    budget.step()?;
+                    if !negative.negative {
+                        continue;
+                    }
+                    budget.comparison(&negative.source, &source)?;
+                    if negative.capture(&source).is_some() {
+                        excluded = true;
+                        break;
+                    }
+                }
+                if excluded {
+                    continue;
+                }
+                owned = true;
+                budget.comparison(b"", &source)?;
+                if advertised.contains(source.as_slice()) || retained.contains(source.as_slice()) {
+                    protected = true;
+                    break;
+                }
+            }
+            if owned && !protected {
+                pruned.push(destination);
+            }
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Err(MappingError::Cancelled);
+        }
+        Ok(pruned)
+    }
+
     fn admit<'b>(
         self,
         count: usize,
@@ -317,6 +396,52 @@ fn mapping(
             ForceIntent::Normal
         },
     })
+}
+
+/// The controlled counterpart of `source_for_destination`: charge the constructed source
+/// before allocating it. Keep the trusted implementation unchanged.
+fn reverse_source(
+    spec: &Refspec,
+    destination: &crate::refs::RefName,
+    budget: &mut Budget<'_>,
+) -> Result<Option<Vec<u8>>, MappingError> {
+    if spec.negative {
+        return Ok(None);
+    }
+    let Some(pattern) = &spec.destination else {
+        return Ok(None);
+    };
+    budget.comparison(pattern, destination.as_bytes())?;
+    let capture = if let Some(star) = pattern.iter().position(|byte| *byte == b'*') {
+        let Some(capture) = destination
+            .as_bytes()
+            .strip_prefix(&pattern[..star])
+            .and_then(|capture| capture.strip_suffix(&pattern[star + 1..]))
+        else {
+            return Ok(None);
+        };
+        capture
+    } else if pattern == destination.as_bytes() {
+        b""
+    } else {
+        return Ok(None);
+    };
+    budget.comparison(&spec.source, capture)?;
+    if let Some(star) = spec.source.iter().position(|byte| *byte == b'*') {
+        let bytes = spec
+            .source
+            .len()
+            .checked_sub(1)
+            .and_then(|bytes| bytes.checked_add(capture.len()))
+            .ok_or(MappingError::Limit("output bytes"))?;
+        budget.report(bytes)?;
+        Ok(Some(
+            [&spec.source[..star], capture, &spec.source[star + 1..]].concat(),
+        ))
+    } else {
+        budget.report(spec.source.len())?;
+        Ok(Some(spec.source.clone()))
+    }
 }
 
 struct Budget<'a> {
