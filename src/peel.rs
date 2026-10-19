@@ -296,7 +296,7 @@ impl Objects {
     }
 }
 
-fn peel(
+pub(crate) fn peel(
     original: ObjectId,
     limits: PeelLimits,
     cancel: &AtomicBool,

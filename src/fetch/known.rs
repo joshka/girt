@@ -1366,3 +1366,15 @@ mod tests {
         assert_eq!(dependencies, [commit]);
     }
 }
+
+#[cfg(test)]
+mod read_tests;
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "controlled receive composition follows separately"
+    )
+)]
+pub(super) mod controlled;
