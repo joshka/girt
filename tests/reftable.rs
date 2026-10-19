@@ -674,3 +674,174 @@ fn case_distinct_reference_names_match_git(#[case] spelling: &str, #[case] forma
     }
     git(root.path(), &["refs", "verify"]);
 }
+
+#[rstest]
+#[case::child_of_existing("refs/tags/a/b", "refs/tags/a/b/c", true)]
+#[case::grandchild_of_existing("refs/tags/a", "refs/tags/a/b/c", true)]
+#[case::parent_of_existing("refs/tags/a/b/c", "refs/tags/a/b", true)]
+#[case::grandparent_of_existing("refs/tags/a/b/c", "refs/tags/a", true)]
+#[case::byte_prefix_sibling_existing("refs/tags/a/b-c", "refs/tags/a/b", false)]
+#[case::byte_prefix_sibling_new("refs/tags/a/b", "refs/tags/a/b-c", false)]
+#[case::dot_sibling_existing("refs/tags/a.b/c", "refs/tags/a", false)]
+#[case::digit_sibling_existing("refs/tags/a0", "refs/tags/a", false)]
+#[case::shared_directory("refs/tags/a/b", "refs/tags/a/c", false)]
+fn namespace_conflicts_follow_path_prefixes(
+    #[values("sha1", "sha256")] spelling: &str,
+    #[values(false, true)] controlled: bool,
+    #[values(false, true)] in_batch: bool,
+    #[case] existing: &str,
+    #[case] new: &str,
+    #[case] conflict: bool,
+) {
+    let root = fixture(spelling);
+    let repo = Repository::open(root.path()).unwrap();
+    let id = tip(root.path(), repo.object_format());
+    if !in_batch {
+        git(root.path(), &["update-ref", existing, &id.to_string()]);
+    }
+    // Neighbours ensure the range probe must distinguish a byte prefix from a path prefix.
+    git(
+        root.path(),
+        &["update-ref", "refs/tags/a00", &id.to_string()],
+    );
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/z", &id.to_string()],
+    );
+    let before = git(
+        root.path(),
+        &["for-each-ref", "--format=%(refname) %(objectname)"],
+    );
+    let refs = repo.references().unwrap();
+    let mut edits = Vec::new();
+    if in_batch {
+        edits.push(RefEdit::create(
+            name(existing.as_bytes()),
+            id,
+            Reflog::Preserve,
+        ));
+    }
+    edits.push(RefEdit::create(name(new.as_bytes()), id, Reflog::Preserve));
+    let result = if controlled {
+        refs.transaction_controlled(&edits, &std::sync::atomic::AtomicBool::new(false))
+    } else {
+        refs.transaction(&edits)
+    };
+    if conflict {
+        assert!(
+            matches!(
+                result,
+                Err(girt::refs::TransactionError::Prepare {
+                    operation: Some(_),
+                    source: girt::refs::ReferenceError::Conflict(_),
+                })
+            ),
+            "{result:?}"
+        );
+        assert_eq!(
+            git(
+                root.path(),
+                &["for-each-ref", "--format=%(refname) %(objectname)"]
+            ),
+            before
+        );
+    } else {
+        result.unwrap();
+        assert_eq!(
+            refs.read(&name(new.as_bytes())).unwrap(),
+            Some(Target::Direct(id))
+        );
+    }
+    let listing: String = refs
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|entry| {
+            let Target::Direct(id) = entry.target else {
+                panic!("unexpected symbolic ref")
+            };
+            format!("{} {id}\n", String::from_utf8_lossy(entry.name.as_bytes()))
+        })
+        .collect();
+    assert_eq!(
+        listing.as_bytes(),
+        git(
+            root.path(),
+            &["for-each-ref", "--format=%(refname) %(objectname)"]
+        )
+    );
+}
+
+#[rstest]
+fn deleting_child_does_not_allow_parent_in_same_transaction(
+    #[values("sha1", "sha256")] spelling: &str,
+    #[values(false, true)] controlled: bool,
+) {
+    let root = fixture(spelling);
+    let repo = Repository::open(root.path()).unwrap();
+    let id = tip(root.path(), repo.object_format());
+    git(
+        root.path(),
+        &["update-ref", "refs/tags/a/b", &id.to_string()],
+    );
+    let before = git(root.path(), &["for-each-ref"]);
+    let edits = [
+        RefEdit::delete(name(b"refs/tags/a/b"), id, Reflog::Preserve),
+        RefEdit::create(name(b"refs/tags/a"), id, Reflog::Preserve),
+    ];
+    let refs = repo.references().unwrap();
+    let result = if controlled {
+        refs.transaction_controlled(&edits, &std::sync::atomic::AtomicBool::new(false))
+    } else {
+        refs.transaction(&edits)
+    };
+    assert!(
+        matches!(
+            result,
+            Err(girt::refs::TransactionError::Prepare {
+                operation: Some(1),
+                source: girt::refs::ReferenceError::Conflict(_),
+            })
+        ),
+        "{result:?}"
+    );
+    assert_eq!(git(root.path(), &["for-each-ref"]), before);
+}
+
+#[rstest]
+fn symbolic_reflog_dependency_reserves_its_namespace(
+    #[values("sha1", "sha256")] spelling: &str,
+    #[values(false, true)] controlled: bool,
+) {
+    let root = fixture(spelling);
+    let repo = Repository::open(root.path()).unwrap();
+    let id = tip(root.path(), repo.object_format());
+    let before = git(root.path(), &["for-each-ref"]);
+    // The unborn target enters `used` through reflog resolution, without entering `values`.
+    let edits = [
+        RefEdit::new(
+            name(b"refs/tags/alias"),
+            Some(Target::Symbolic(name(b"refs/tags/a/b"))),
+            Expected::Absent,
+            log(),
+        ),
+        RefEdit::create(name(b"refs/tags/a"), id, Reflog::Preserve),
+    ];
+    let refs = repo.references().unwrap();
+    let result = if controlled {
+        refs.transaction_controlled(&edits, &std::sync::atomic::AtomicBool::new(false))
+    } else {
+        refs.transaction(&edits)
+    };
+    assert!(
+        matches!(
+            result,
+            Err(girt::refs::TransactionError::Prepare {
+                operation: Some(1),
+                source: girt::refs::ReferenceError::Conflict(_),
+            })
+        ),
+        "{result:?}"
+    );
+    assert_eq!(git(root.path(), &["for-each-ref"]), before);
+}

@@ -91,6 +91,32 @@ fn benchmarks(c: &mut Criterion) {
             },
         );
     }
+    for count in [256, 4096] {
+        let edits: Vec<_> = (0..200)
+            .map(|index| {
+                RefEdit::new(
+                    RefName::new(format!("refs/tags/fixture-{index:06}")).unwrap(),
+                    Some(Target::Direct(ObjectId::Sha1([2; 20]))),
+                    Expected::Any,
+                    Reflog::Preserve,
+                )
+            })
+            .collect();
+        group.bench_with_input(
+            BenchmarkId::new("publish-200-warm", count),
+            &count,
+            |b, _| {
+                b.iter_batched(
+                    || fixture(count, 1),
+                    |(root, repo)| {
+                        repo.references().unwrap().transaction(&edits).unwrap();
+                        (root, repo)
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
     group.finish();
 }
 criterion_group!(benches, benchmarks);
