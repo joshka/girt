@@ -51,9 +51,11 @@ impl PromisedObjects {
 ///
 /// A partial clone's promisor remotes can supply objects it left out. Operations that read many
 /// objects, such as checkout, patch rendering and rename detection, collect every needed object
-/// they find missing before failing, so one batch fetch can supply them all. Blame reads history
-/// one version at a time and reports the first missing blob. In other repositories a missing
-/// object is damage, and each operation reports it with its own error instead.
+/// they find missing before failing, so one batch fetch can supply them all. Tree merges list
+/// rename candidates with the blobs of paths changed on both sides, then any content that rename
+/// alignment pairs up. Blame reads history one version at a time and reports the first missing
+/// blob. In other repositories a missing object is damage, and each operation reports it with
+/// its own error instead.
 ///
 /// Object reads never fetch. Pass [`Self::ids`] to
 /// [`workflow::fetch_promised`](crate::workflow::fetch_promised), or use

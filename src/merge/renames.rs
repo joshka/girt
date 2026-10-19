@@ -42,6 +42,26 @@ pub enum RenameError {
     /// Non-root empty trees cannot be preserved by this leaf-based normalization.
     #[error("rename normalization does not support stored empty subdirectories")]
     EmptyDirectory(Vec<u8>),
+    /// In a partial clone, blobs the merge would read are not stored. Every missing rename
+    /// candidate is listed together with the blobs of paths changed on both sides, before any
+    /// content is merged. Content that only rename alignment pairs up is listed by a later
+    /// attempt once the candidates are stored. Fetch them, for example with
+    /// [`workflow::fetch_needed`](crate::workflow::fetch_needed), and merge again.
+    #[error("merge needs objects the repository does not store")]
+    MissingObjects(#[source] crate::MissingObjectsError),
+}
+
+impl RenameError {
+    /// Lifts missing objects out of the wrapped error, so callers match one variant.
+    fn lift(self) -> Self {
+        match self {
+            Self::Tree(TreeError::MissingObjects(missing))
+            | Self::Inference(crate::tree_diff::Error::Rewrites(
+                crate::rewrites::Error::MissingObjects(missing),
+            )) => Self::MissingObjects(missing),
+            error => error,
+        }
+    }
 }
 
 impl Objects {
@@ -138,8 +158,26 @@ pub(super) fn merge_with_memory_and_driver<'a, 'd>(
     driver: Option<&'a mut (dyn super::TreeDriver + 'd)>,
 ) -> Result<TreeMerge, RenameError> {
     let [base, ours, theirs] = roots;
-    let left = infer(objects, base, ours, options, cancel, memory)?;
-    let right = infer(objects, base, theirs, options, cancel, memory)?;
+    let left = infer(objects, base, ours, options, cancel, memory).map_err(RenameError::lift);
+    let right = infer(objects, base, theirs, options, cancel, memory).map_err(RenameError::lift);
+    let (left, right) = match (left, right) {
+        (Ok(left), Ok(right)) => (left, right),
+        (Err(RenameError::MissingObjects(left)), Err(RenameError::MissingObjects(right))) => {
+            return Err(missing(
+                objects,
+                roots,
+                options,
+                cancel,
+                memory,
+                [left, right],
+            ));
+        }
+        (Err(RenameError::MissingObjects(one)), Ok(_))
+        | (Ok(_), Err(RenameError::MissingObjects(one))) => {
+            return Err(missing(objects, roots, options, cancel, memory, [one]));
+        }
+        (Err(error), _) | (_, Err(error)) => return Err(error),
+    };
     let mut reader = FlatReader::new(objects, options, cancel, memory);
 
     let mut b = reader.read(base, &[], 0)?;
@@ -209,7 +247,8 @@ pub(super) fn merge_with_memory_and_driver<'a, 'd>(
         cancel,
         memory,
         driver,
-    )?;
+    )
+    .map_err(|error| RenameError::from(error).lift())?;
     for conflict in &mut result.conflicts {
         if let Some((source, _)) = left
             .iter()
@@ -232,6 +271,30 @@ pub(super) fn merge_with_memory_and_driver<'a, 'd>(
         return Err(TreeError::Cancelled.into());
     }
     Ok(result)
+}
+
+/// Combines the rename candidates each side lacks with the blobs of paths changed on both sides,
+/// which the merge compares whatever renames are found, so one fetch supplies both.
+fn missing<const N: usize>(
+    objects: &Objects,
+    roots: [ObjectId; 3],
+    options: TreeMergeOptions,
+    cancel: &AtomicBool,
+    memory: &Memory,
+    candidates: [crate::MissingObjectsError; N],
+) -> RenameError {
+    let both = match super::tree::missing_blobs(objects, roots, options.trees, cancel, memory) {
+        Ok(both) => both,
+        Err(error) => return error.into(),
+    };
+    let mut seen = crate::IdSet::default();
+    let objects = candidates
+        .into_iter()
+        .flat_map(|missing| missing.objects)
+        .chain(both)
+        .filter(|(id, _)| seen.insert(*id))
+        .collect();
+    RenameError::MissingObjects(crate::MissingObjectsError::new(objects))
 }
 
 fn infer(

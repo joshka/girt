@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{ContentMerge, ContentOptions, MarkerOptions, content_with};
-use crate::{EntryMode, ObjectId, Objects, Tree, TreeEntry, TreeValue};
+use crate::{EntryMode, IdSet, ObjectId, ObjectKind, Objects, Tree, TreeEntry, TreeValue};
 
 /// Policy and traversal bounds for path-based tree merging.
 ///
@@ -179,6 +179,11 @@ pub enum TreeError {
     /// Directory conflicts need explicit path expansion before index representation.
     #[error("directory conflicts cannot be represented as leaf index stages")]
     DirectoryStages,
+    /// In a partial clone, blobs the merge would compare are not stored. Every missing blob is
+    /// listed before any content is merged; fetch them, for example with
+    /// [`workflow::fetch_needed`](crate::workflow::fetch_needed), and merge again.
+    #[error("merge needs objects the repository does not store")]
+    MissingObjects(#[source] crate::MissingObjectsError),
 }
 
 impl Objects {
@@ -273,17 +278,13 @@ pub(super) fn merge_prepared_with_driver<'a, 'd>(
     memory: &'a super::memory::Memory,
     driver: Option<&'a mut (dyn super::TreeDriver + 'd)>,
 ) -> Result<TreeMerge, TreeError> {
-    let mut merger = Merger {
-        objects,
-        options,
-        cancel,
-        memory,
-        driver,
-        remaining: options.max_entries,
-        conflicts: Vec::new(),
-        blobs: Vec::new(),
-        trees: Vec::new(),
-    };
+    let missing = missing_blobs(objects, roots, options, cancel, memory)?;
+    if !missing.is_empty() {
+        return Err(TreeError::MissingObjects(crate::MissingObjectsError::new(
+            missing,
+        )));
+    }
+    let mut merger = Merger::new(objects, options, cancel, memory, driver);
     let [base, ours, theirs] = roots;
     let tree = merger.directory(Some(base), Some(ours), Some(theirs), &[], 0)?;
     merger.check()?;
@@ -293,6 +294,39 @@ pub(super) fn merge_prepared_with_driver<'a, 'd>(
         blobs: merger.blobs,
         trees: merger.trees,
     })
+}
+
+/// In a partial clone, lists every blob a path merge of `roots` would compare that is not
+/// stored, in traversal order. Other repositories skip this pass and return an empty list: a
+/// missing blob there is damage, reported where it is read.
+///
+/// The survey walks the same paths as the merge, so it lists exactly the base, ours and theirs
+/// blobs of paths changed on both sides, without reading any blob.
+pub(super) fn missing_blobs(
+    objects: &Objects,
+    roots: [ObjectId; 3],
+    options: TreeOptions,
+    cancel: &AtomicBool,
+    memory: &super::memory::Memory,
+) -> Result<Vec<(ObjectId, ObjectKind)>, TreeError> {
+    if !objects.partial_clone {
+        return Ok(Vec::new());
+    }
+    let mut survey = Merger::new(objects, options, cancel, memory, None);
+    survey.survey = Some(Survey::default());
+    let [base, ours, theirs] = roots;
+    survey.directory(Some(base), Some(ours), Some(theirs), &[], 0)?;
+    Ok(survey
+        .survey
+        .map(|survey| survey.missing)
+        .unwrap_or_default())
+}
+
+/// Missing-blob collection in place of content merging.
+#[derive(Default)]
+struct Survey {
+    seen: IdSet,
+    missing: Vec<(ObjectId, ObjectKind)>,
 }
 
 struct Merger<'a, 'd> {
@@ -305,9 +339,51 @@ struct Merger<'a, 'd> {
     conflicts: Vec<TreeConflict>,
     blobs: Vec<(ObjectId, Vec<u8>)>,
     trees: Vec<Tree>,
+    /// When set, records missing blobs instead of merging content.
+    survey: Option<Survey>,
 }
 
-impl Merger<'_, '_> {
+impl<'a, 'd> Merger<'a, 'd> {
+    fn new(
+        objects: &'a Objects,
+        options: TreeOptions,
+        cancel: &'a AtomicBool,
+        memory: &'a super::memory::Memory,
+        driver: Option<&'a mut (dyn super::TreeDriver + 'd)>,
+    ) -> Self {
+        Self {
+            objects,
+            options,
+            cancel,
+            memory,
+            driver,
+            remaining: options.max_entries,
+            conflicts: Vec::new(),
+            blobs: Vec::new(),
+            trees: Vec::new(),
+            survey: None,
+        }
+    }
+
+    /// Records the blobs of `values` that are neither generated nor stored.
+    fn note_missing(&mut self, values: [Option<TreeValue>; 3]) -> Result<(), TreeError> {
+        let Some(survey) = self.survey.as_mut() else {
+            return Ok(());
+        };
+        for value in values.into_iter().flatten() {
+            if self.memory.blobs.contains_key(&value.id) || !survey.seen.insert(value.id) {
+                continue;
+            }
+            let stored = self
+                .objects
+                .contains(value.id)
+                .map_err(crate::ReadBlobError::from)?;
+            if !stored {
+                survey.missing.push((value.id, ObjectKind::Blob));
+            }
+        }
+        Ok(())
+    }
     fn check(&self) -> Result<(), TreeError> {
         if self.cancel.load(Ordering::Relaxed) {
             Err(TreeError::Cancelled)
@@ -453,6 +529,10 @@ impl Merger<'_, '_> {
             } else {
                 (ours.mode, true)
             };
+        if self.survey.is_some() {
+            self.note_missing([conflict.base, Some(ours), Some(theirs)])?;
+            return Ok(Some(ours));
+        }
         let base = match conflict.base {
             Some(b) => self.memory.read_blob(self.objects, b.id)?,
             None => Vec::new(),

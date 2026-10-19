@@ -207,7 +207,7 @@ pub fn fetch_promised(
 
 /// Fetches, in one batch, the objects an operation reported missing, so it can run again.
 ///
-/// Library operations never fetch. Checkout, patch rendering and blame fail with
+/// Library operations never fetch. Checkout, patch rendering, tree merges and blame fail with
 /// [`MissingObjectsError`] when a partial clone lacks objects they need; checkout and patches list
 /// every missing blob at once. Pass that error here, then repeat the operation with a new
 /// [`Objects`](crate::Objects) reader or a reopened repository. This is [`fetch_promised`] for
