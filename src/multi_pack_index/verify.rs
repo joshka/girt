@@ -87,7 +87,7 @@ impl Repository {
     }
 }
 
-fn read(path: &Path, max_bytes: usize) -> Result<Option<Vec<u8>>, Error> {
+pub(super) fn read(path: &Path, max_bytes: usize) -> Result<Option<Vec<u8>>, Error> {
     let at = |source| Error::Path {
         path: path.to_owned(),
         source,
