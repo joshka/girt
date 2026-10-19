@@ -64,12 +64,15 @@ fn every_specification_consumes_the_limits(#[case] resource: usize) {
         limits,
         &AtomicBool::new(false),
     );
-    assert!(matches!(
-        result,
-        Err(PrefetchRefspecsError::SpecLimit
-            | PrefetchRefspecsError::InputByteLimit
-            | PrefetchRefspecsError::OutputByteLimit)
-    ));
+    match resource {
+        0 => assert!(matches!(result, Err(PrefetchRefspecsError::SpecLimit))),
+        1 => assert!(matches!(result, Err(PrefetchRefspecsError::InputByteLimit))),
+        2 => assert!(matches!(
+            result,
+            Err(PrefetchRefspecsError::OutputByteLimit)
+        )),
+        _ => unreachable!(),
+    }
 }
 
 #[test]
@@ -268,4 +271,39 @@ fn negative_selectors_consume_output_bytes() {
         PrefetchRefspecs::parse(["^refs/heads/skip"], limits, &AtomicBool::new(false)),
         Err(PrefetchRefspecsError::OutputByteLimit)
     ));
+}
+
+#[test]
+fn exact_budgets_succeed_and_one_less_refuses() {
+    let specs = [
+        "refs/heads/main:refs/cache/main",
+        "^refs/heads/skip",
+        "refs/tags/v1:refs/tags/v1",
+    ];
+    let mut limits = PrefetchLimits::default();
+    limits.max_specs = specs.len();
+    limits.max_input_bytes = specs.iter().map(|value| value.len()).sum();
+    limits.max_output_bytes = specs[0].len() + b"prefetch/".len() + specs[1].len();
+    let prepared = PrefetchRefspecs::parse(specs, limits, &AtomicBool::new(false)).unwrap();
+    assert_eq!(prepared.refspecs().specs().len(), 2);
+    assert_eq!(prepared.skipped().len(), 1);
+    for resource in 0..3 {
+        let mut short = limits;
+        match resource {
+            0 => short.max_specs -= 1,
+            1 => short.max_input_bytes -= 1,
+            2 => short.max_output_bytes -= 1,
+            _ => unreachable!(),
+        }
+        let result = PrefetchRefspecs::parse(specs, short, &AtomicBool::new(false));
+        match resource {
+            0 => assert!(matches!(result, Err(PrefetchRefspecsError::SpecLimit))),
+            1 => assert!(matches!(result, Err(PrefetchRefspecsError::InputByteLimit))),
+            2 => assert!(matches!(
+                result,
+                Err(PrefetchRefspecsError::OutputByteLimit)
+            )),
+            _ => unreachable!(),
+        }
+    }
 }
