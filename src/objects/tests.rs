@@ -330,20 +330,7 @@ fn capped_source_reads_admit_compressed_bytes_inclusively(#[case] format: Object
 
 /// A hand-built zlib stream: 10,000 empty stored blocks followed by the canonical empty blob.
 fn padded_empty_blob() -> Vec<u8> {
-    let payload = b"blob 0\0";
-    let mut compressed = vec![0x78, 0x01];
-    for _ in 0..10_000 {
-        compressed.extend_from_slice(&[0, 0, 0, 0xff, 0xff]);
-    }
-    compressed.extend_from_slice(&[1, 7, 0, 0xf8, 0xff]);
-    compressed.extend_from_slice(payload);
-    let (mut a, mut b) = (1_u32, 0_u32);
-    for byte in payload {
-        a = (a + u32::from(*byte)) % 65521;
-        b = (b + a) % 65521;
-    }
-    compressed.extend_from_slice(&((b << 16) | a).to_be_bytes());
-    compressed
+    crate::zlib_fixture::padded(b"blob 0\0")
 }
 
 #[rstest::rstest]

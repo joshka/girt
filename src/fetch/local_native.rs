@@ -287,7 +287,7 @@ fn receive_advertised_from<const CONTROLLED: bool>(
             objects: selected.len() as u64,
         });
     } else {
-        prefetch::with_prefetch(
+        prefetch::with_prefetch::<CONTROLLED, _>(
             &store,
             read,
             control.cancel,
@@ -355,10 +355,16 @@ fn receive_advertised_from<const CONTROLLED: bool>(
                     } else if let Some(object) = payload {
                         object
                     } else {
-                        store
-                            .read_unverified(id, read, control.cancel)
-                            .map_err(|source| FetchError::LocalRead { id, source })?
-                            .ok_or(FetchError::Missing(id))?
+                        if CONTROLLED {
+                            store
+                                .read_unverified_capped(id, read, control.cancel)
+                                .map_err(|source| prefetch::source_error(id, source))
+                        } else {
+                            store
+                                .read_unverified(id, read, control.cancel)
+                                .map_err(|source| FetchError::LocalRead { id, source })
+                        }?
+                        .ok_or(FetchError::Missing(id))?
                     };
                     if !CONTROLLED && depth.is_none() {
                         match object_kind {
@@ -476,7 +482,7 @@ fn receive_advertised_from<const CONTROLLED: bool>(
     let mut index = Vec::new();
     let written = {
         let mut sink = std::io::BufWriter::with_capacity(64 * 1024, temporary.as_file_mut());
-        let (written, _) = crate::pack::write_transfer(
+        let (written, _) = crate::pack::write_transfer_controlled::<CONTROLLED>(
             &store,
             &selected,
             &[],
@@ -513,6 +519,9 @@ fn receive_advertised_from<const CONTROLLED: bool>(
             },
         )
         .map_err(|error| match error {
+            crate::pack::ReuseError::Read { id, source } if CONTROLLED => {
+                prefetch::source_error(id, source)
+            }
             crate::pack::ReuseError::Read { id, source } => FetchError::LocalRead { id, source },
             crate::pack::ReuseError::Write(crate::PackWriteError::Io(error))
                 if crate::transport::interruption(&error).is_some() =>
@@ -577,7 +586,8 @@ fn bitmap_selection<const CONTROLLED: bool>(
     limits: FetchLimits,
     control: TransportControl<'_>,
 ) -> Result<Option<Vec<ObjectId>>, FetchError> {
-    if depth.is_some() || !known.history().shallow.is_empty() {
+    // Bitmap query fallback reads are trusted. Strict receive uses the capped ordinary walk.
+    if CONTROLLED || depth.is_some() || !known.history().shallow.is_empty() {
         return Ok(None);
     }
     let query = crate::bitmap::QueryLimits {

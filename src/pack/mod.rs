@@ -110,7 +110,9 @@ pub(crate) use reader::Pack;
 pub use rebuild::{
     IndexRebuildError, IndexRebuildLimits, IndexRebuildOutcome, IndexRebuilt, rebuild_index,
 };
-pub(crate) use reuse::{DeltaFraming, Packed, ReuseError, write_reusing, write_transfer};
+pub(crate) use reuse::{
+    DeltaFraming, Packed, ReuseError, write_reusing, write_transfer, write_transfer_controlled,
+};
 pub use write::{
     PackObject, PackWriteError, PackWriteLimits, PackWritten, write_pack,
     write_pack_with_compression,

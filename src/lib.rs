@@ -302,3 +302,7 @@ mod trace;
 #[cfg(test)]
 #[path = "../tests/support/maintenance_git.rs"]
 mod maintenance_git;
+
+#[cfg(test)]
+#[path = "../tests/support/zlib_fixture.rs"]
+mod zlib_fixture;

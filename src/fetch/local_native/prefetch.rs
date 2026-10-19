@@ -67,6 +67,48 @@ pub(super) fn read(
     }
 }
 
+/// Keeps the legacy read body direct; controlled workers use only capped source hooks.
+fn read_source<const CAPPED: bool>(
+    store: &Objects,
+    id: ObjectId,
+    kind: Option<ObjectKind>,
+    limits: ReadLimits,
+    cancel: &AtomicBool,
+) -> Outcome {
+    if !CAPPED {
+        return read(store, id, kind, limits, cancel);
+    }
+    if kind.is_some_and(|kind| kind != ObjectKind::Blob) {
+        let object = store
+            .read_unverified_capped(id, limits, cancel)
+            .map_err(|source| source_error(id, source))?
+            .ok_or(FetchError::Missing(id))?;
+        Ok(Fetched {
+            kind: object.kind(),
+            length: object.data().len(),
+            payload: Some(object),
+        })
+    } else {
+        let (kind, length, _) = store
+            .transfer_object_capped(id, limits, cancel)
+            .map_err(|source| source_error(id, source))?
+            .ok_or(FetchError::Missing(id))?;
+        Ok(Fetched {
+            kind,
+            length,
+            payload: None,
+        })
+    }
+}
+
+pub(super) fn source_error(id: ObjectId, source: crate::ObjectReadError) -> FetchError {
+    match source {
+        crate::ObjectReadError::Cancelled => FetchError::Cancelled,
+        crate::ObjectReadError::Limit(reason) => FetchError::Limit(reason),
+        source => FetchError::LocalRead { id, source },
+    }
+}
+
 /// Channels to the read workers: jobs out, finished reads back.
 struct Workers {
     jobs: Sender<Job>,
@@ -74,7 +116,7 @@ struct Workers {
 }
 
 /// Hands the walk each object's read, reading queued objects ahead on workers when available.
-pub(super) struct Prefetch<'a> {
+pub(super) struct Prefetch<'a, const CAPPED: bool> {
     store: &'a Objects,
     limits: ReadLimits,
     cancel: &'a AtomicBool,
@@ -97,12 +139,12 @@ pub(super) struct Prefetch<'a> {
 /// Runs `walk` with a prefetcher whose workers live until `walk` returns.
 ///
 /// Uses at most `max_threads` workers, and none when fewer than two are allowed or available.
-pub(super) fn with_prefetch<R>(
+pub(super) fn with_prefetch<const CAPPED: bool, R>(
     store: &Objects,
     limits: ReadLimits,
     cancel: &AtomicBool,
     max_threads: usize,
-    walk: impl FnOnce(&mut Prefetch<'_>) -> R,
+    walk: impl FnOnce(&mut Prefetch<'_, CAPPED>) -> R,
 ) -> R {
     let threads = std::thread::available_parallelism()
         .map_or(1, std::num::NonZeroUsize::get)
@@ -136,7 +178,7 @@ pub(super) fn with_prefetch<R>(
                         return;
                     };
                     if results
-                        .send((id, read(store, id, kind, limits, cancel)))
+                        .send((id, read_source::<CAPPED>(store, id, kind, limits, cancel)))
                         .is_err()
                     {
                         return;
@@ -153,7 +195,7 @@ pub(super) fn with_prefetch<R>(
     })
 }
 
-impl Prefetch<'_> {
+impl<const CAPPED: bool> Prefetch<'_, CAPPED> {
     /// Notes that the walk removed the entry at the queue's front.
     pub fn popped(&mut self) {
         self.scanned = self.scanned.saturating_sub(1);
@@ -169,7 +211,7 @@ impl Prefetch<'_> {
         observed: &IdMap<ObjectKind>,
     ) -> Outcome {
         let Some(Workers { jobs, done }) = &self.workers else {
-            return read(self.store, id, kind, self.limits, self.cancel);
+            return read_source::<CAPPED>(self.store, id, kind, self.limits, self.cancel);
         };
         if self.submitted.insert(id) {
             // Nothing read it ahead, so the walk's own kind decides the read.
@@ -212,4 +254,67 @@ fn payload_bytes(outcome: &Outcome) -> usize {
         .ok()
         .and_then(|fetched| fetched.payload.as_ref())
         .map_or(0, |payload| payload.data().len())
+}
+
+#[cfg(test)]
+mod capped_tests {
+    use super::*;
+    use crate::{AlternateLimits, ObjectFormat, PackLimits};
+
+    /// Empty blocks make compressed input exceed the cap while decoding to a valid empty blob.
+    fn padded_source(format: ObjectFormat) -> (tempfile::TempDir, Objects, ObjectId, usize) {
+        let root = tempfile::tempdir().unwrap();
+        let id = ObjectId::for_blob(format, b"");
+        let compressed = crate::zlib_fixture::padded(b"blob 0\0");
+        let hex = id.to_string();
+        let path = root.path().join(&hex[..2]).join(&hex[2..]);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, &compressed).unwrap();
+        let objects = Objects::open(
+            format,
+            root.path(),
+            PackLimits::default(),
+            AlternateLimits::default(),
+        )
+        .unwrap();
+        (root, objects, id, compressed.len())
+    }
+
+    #[rstest::rstest]
+    #[case::sha1_metadata(crate::ObjectFormat::Sha1, None)]
+    #[case::sha1_blob(crate::ObjectFormat::Sha1, Some(ObjectKind::Blob))]
+    #[case::sha1_payload(crate::ObjectFormat::Sha1, Some(ObjectKind::Tree))]
+    #[case::sha256_metadata(crate::ObjectFormat::Sha256, None)]
+    #[case::sha256_blob(crate::ObjectFormat::Sha256, Some(ObjectKind::Blob))]
+    #[case::sha256_payload(crate::ObjectFormat::Sha256, Some(ObjectKind::Tree))]
+    fn controlled_workers_cap_source_input(
+        #[case] format: ObjectFormat,
+        #[case] kind: Option<ObjectKind>,
+        #[values(1, 2)] threads: usize,
+    ) {
+        let (_root, objects, id, length) = padded_source(format);
+        let cancel = AtomicBool::new(false);
+        let limits = ReadLimits::default().with_max_input_bytes(length - 1);
+        let outcome = with_prefetch::<true, _>(&objects, limits, &cancel, threads, |prefetch| {
+            prefetch.take(id, kind, &VecDeque::new(), &IdMap::default())
+        });
+        assert!(matches!(
+            outcome,
+            Err(FetchError::Limit("loose compressed bytes"))
+        ));
+        let admitted = with_prefetch::<true, _>(
+            &objects,
+            limits.with_max_input_bytes(length),
+            &cancel,
+            threads,
+            |prefetch| prefetch.take(id, kind, &VecDeque::new(), &IdMap::default()),
+        )
+        .unwrap();
+        assert_eq!((admitted.kind, admitted.length), (ObjectKind::Blob, 0));
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        let cancelled = with_prefetch::<true, _>(&objects, limits, &cancel, threads, |prefetch| {
+            prefetch.take(id, kind, &VecDeque::new(), &IdMap::default())
+        });
+        assert!(matches!(cancelled, Err(FetchError::Cancelled)));
+    }
 }

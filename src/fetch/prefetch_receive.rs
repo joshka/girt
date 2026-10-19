@@ -18,8 +18,8 @@ impl FetchRequest {
     /// Store-backed lookups share caller read controls and aggregate fallback budgets through
     /// selection, import and connectivity. Retained knowledge is admitted before transfer;
     /// optional tree-boundary discovery is omitted in favour of full bounded connectivity.
-    /// Source loose-object compressed-input admission remains a separate prerequisite for task
-    /// wiring. This entry point supports neither requested depth nor filtering; shallow sources
+    /// Controlled worker and pack-writer reads also cap compressed loose-object input.
+    /// This entry point supports neither requested depth nor filtering; shallow sources
     /// refuse. Cancellation is checked between phases and at most every 64 planned updates.
     /// The existing native transfer's read, graph, compression and import bounds still apply.
     ///
