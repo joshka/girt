@@ -4,6 +4,9 @@ use crate::ObjectId;
 use crate::fetch::Advertisement;
 use crate::refs::RefName;
 
+mod controlled;
+pub use controlled::{MappingLimits, MappingOptions};
+
 /// Which side supplies source names and which refspec grammar applies.
 ///
 /// The same text means different things in each direction. A fetch refspec maps remote names to
@@ -462,6 +465,12 @@ pub enum MappingError {
     /// Advertisement mapping is only defined for fetch specifications.
     #[error("advertisement selection requires fetch refspecs")]
     Direction,
+    /// An explicit controlled mapping budget was exceeded.
+    #[error("refspec mapping limit exceeded: {0}")]
+    Limit(&'static str),
+    /// Controlled mapping observed cancellation before returning a plan.
+    #[error("refspec mapping cancelled")]
+    Cancelled,
 }
 
 impl Refspecs {
