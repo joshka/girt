@@ -9,6 +9,7 @@
 //! [`TaskSelection`] validates explicit tasks separately from execution and configuration. It
 //! refuses an implicit default task set; selecting a task does not run maintenance.
 //! [`MaintenanceConfig`] interprets individual settings lazily over a resolved configuration.
+//! [`PrefetchRefspecs`] prepares bounded cache mappings without selecting a remote or transport.
 //!
 //! ```
 //! use std::sync::atomic::AtomicBool;
@@ -30,6 +31,7 @@ mod config;
 mod gc;
 mod lock;
 mod policy;
+mod prefetch;
 mod tasks;
 
 use std::path::Path;
@@ -40,6 +42,10 @@ pub use config::{AutoThreshold, MaintenanceConfig, MaintenanceStrategy, TaskConf
 pub use gc::{GcCoordinationError, GcLock, GcLog};
 pub use lock::{LockError, MaintenanceLock};
 pub use policy::PolicyError;
+pub use prefetch::{
+    PrefetchLimits, PrefetchRefspecs, PrefetchRefspecsError, PrefetchSkipReason,
+    SkippedPrefetchSpec,
+};
 pub use tasks::{MaintenanceTask, TaskSelection, TaskSelectionError};
 
 use crate::{Config, Repository};

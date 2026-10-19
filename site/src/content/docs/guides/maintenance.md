@@ -56,6 +56,20 @@ selects none. The report explains protected and omitted packs. Promisor and cruf
 these batches. Execution must repeat selection under isolation; the returned paths do not authorize
 retirement. Incremental-chain selection is currently refused.
 
+## Prepare prefetch mappings
+
+`PrefetchRefspecs::parse` prepares configured fetch refspec values for a prefetch cache. A
+destination such as `refs/remotes/origin/main` becomes `refs/prefetch/remotes/origin/main`. It
+preserves negative selectors and force intent, and reports skipped destination-less and literal
+tag-source mappings. Broad sources such as `refs/*` can still select tags, matching Git's prefetch
+behavior.
+
+`PrefetchLimits` bounds occurrences and aggregate input/output bytes, including skipped input.
+Preparation is cancellable and uses the existing full-name fetch grammar. It reads no config, opens
+no transport and authorizes no reference update. Callers inspect the result and compose controlled
+low-level fetch; the `workflow::fetch` convenience wrapper retains its trusted transfer limits.
+[Prefetch task execution](https://github.com/joshka/girt/issues/531) remains separate work.
+
 ## Understand roots and plan outcomes
 
 `RetentionPolicy` defaults to retaining every reflog record, loose object and pack regardless of
