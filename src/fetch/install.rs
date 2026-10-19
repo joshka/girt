@@ -1,8 +1,7 @@
 mod integrity;
 
-use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::Path;
+use std::fs;
+use std::io::Write;
 use std::sync::atomic::AtomicBool;
 
 use super::bytes::Bytes;
@@ -110,18 +109,12 @@ impl PackInput<'_> {
             Self::Slice(bytes) => Ok(Box::new(std::io::Cursor::new(*bytes))),
         }
     }
+    #[cfg(feature = "tracing")]
     fn len(&self) -> usize {
         match self {
             Self::Stored(b) => b.len(),
             #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
             Self::Slice(b) => b.len(),
-        }
-    }
-    fn reader(&self) -> Result<Box<dyn Read + Send + '_>, FetchError> {
-        match self {
-            Self::Stored(b) => b.reader(),
-            #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-            Self::Slice(b) => Ok(Box::new(*b)),
         }
     }
     fn copy_to(&self, output: &mut impl Write, cancel: &AtomicBool) -> Result<(), FetchError> {
@@ -666,27 +659,27 @@ impl ReceivedFetch {
             index.as_file().sync_all()?;
             let basename = directory.join(format!("pack-{checksum}"));
             check_cancelled(cancel)?;
-            if self.filter_applied || self.promisor {
-                // Readers treat objects missing from a promisor pack's closure as promised, so the
-                // marker must exist before the pack becomes visible.
-                publish_promisor(&basename.with_extension("promisor"), &self.promisor_lines())?;
-            }
-            publish(
-                pack,
-                &basename.with_extension("pack"),
-                pack_bytes.reader()?,
-                pack_bytes.len(),
+            // Readers treat objects missing from a promisor pack's closure as promised, so the
+            // shared publisher makes the marker durable before the pack becomes visible.
+            let marker = (self.filter_applied || self.promisor).then(|| self.promisor_lines());
+            crate::pack::publish::pair_checked(
+                crate::pack::publish::Pair {
+                    pack,
+                    index,
+                    basename: &basename,
+                    marker: marker.as_deref(),
+                },
                 cancel,
-            )?;
-            #[cfg(feature = "tracing")]
-            span.record("effects", "pack_visible");
-            check_cancelled(cancel)?;
-            publish(
-                index,
-                &basename.with_extension("idx"),
-                Box::new(index_bytes),
-                index_bytes.len(),
-                cancel,
+                &mut crate::pack::publish::Progress::default(),
+                |step| {
+                    #[cfg(feature = "tracing")]
+                    if step == crate::pack::publish::Step::Index {
+                        span.record("effects", "pack_visible");
+                    }
+                    #[cfg(not(feature = "tracing"))]
+                    let _ = step;
+                    Ok::<_, FetchError>(())
+                },
             )?;
             #[cfg(feature = "tracing")]
             span.record("effects", "pack_and_index_visible");
@@ -730,70 +723,9 @@ pub struct FetchInstalled {
     pub objects: usize,
 }
 
-/// Creates a `.promisor` marker holding `contents`, or keeps an existing one from an identical
-/// earlier pack.
-fn publish_promisor(path: &Path, contents: &[u8]) -> Result<(), FetchError> {
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
-        Ok(mut file) => {
-            file.write_all(contents)?;
-            Ok(file.sync_all()?)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            if fs::symlink_metadata(path)?.is_file() {
-                Ok(())
-            } else {
-                Err(FetchError::Existing(path.into()))
-            }
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn publish(
-    temporary: tempfile::NamedTempFile,
-    path: &Path,
-    mut expected: Box<dyn Read + Send + '_>,
-    expected_len: usize,
-    cancel: &AtomicBool,
-) -> Result<(), FetchError> {
-    match temporary.persist_noclobber(path) {
-        Ok(_) => Ok(()),
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let mut file = File::open(path)?;
-            if file.metadata()?.len() != expected_len as u64 {
-                return Err(FetchError::Existing(path.into()));
-            }
-            let mut position = 0;
-            let mut buffer = [0; 8192];
-            let mut reference = [0; 8192];
-            loop {
-                check_cancelled(cancel)?;
-                let count = file.read(&mut buffer)?;
-                if count == 0 {
-                    break;
-                }
-                expected.read_exact(&mut reference[..count])?;
-                if reference[..count] != buffer[..count] {
-                    return Err(FetchError::Existing(path.into()));
-                }
-                position += count;
-            }
-            if position != expected_len {
-                return Err(FetchError::Existing(path.into()));
-            }
-            Ok(())
-        }
-        Err(error) => Err(error.error.into()),
-    }
-}
-
 #[cfg(test)]
 impl ReceivedFetch {
-    pub(crate) fn temporary_pack_path(&self) -> Option<&Path> {
+    pub(crate) fn temporary_pack_path(&self) -> Option<&std::path::Path> {
         self.pack.path()
     }
 }

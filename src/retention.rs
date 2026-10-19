@@ -34,7 +34,11 @@
 //! A partial clone, precious-object repository or unsupported recent-object hook refuses a
 //! complete plan rather than treating unknown objects as disposable.
 //! [`PartialClonePolicy::Promised`] instead plans a partial clone, stopping at objects its
-//! promisor remote promised; maintenance that changes storage still refuses partial clones.
+//! promisor remote promised. Under that policy,
+//! [`Repository::repack_retained_isolated`](crate::Repository::repack_retained_isolated) repacks
+//! a partial clone into a promisor pack and an ordinary pack, as `git gc` does, and retires old
+//! promisor packs after proving their objects in the new one. Other maintenance that changes
+//! storage still refuses partial clones.
 //!
 //! Default [`RetentionPolicy`] keeps all reflog records, loose objects and packs regardless of
 //! age. Choose a recent cutoff to enable reclamation; choose reflog expiry separately. Loose
@@ -244,6 +248,10 @@ mod expire;
 pub use expire::{ExpireCause, ExpireFailure, ExpireReport};
 mod retire;
 pub use retire::{RetireCause, RetireFailure, RetireReport};
+mod promisor;
+#[cfg(all(test, unix))]
+mod promisor_tests;
+pub use promisor::{IsolatedRepackFailure, IsolatedRepackReport, RetainReason, RetainedPack};
 mod compose;
 mod consolidate;
 pub use consolidate::PackConsolidation;
@@ -435,8 +443,11 @@ pub enum PartialClonePolicy {
     /// nothing promised remain [`RetentionError::MissingObject`]. The promised set is built only
     /// when the first missing object needs classifying, and nothing is ever fetched.
     ///
-    /// Maintenance that deletes or writes storage still refuses a partial clone under this
-    /// policy: [`Repository::repack_retained`], [`Repository::retire_old_packs`],
+    /// [`Repository::repack_retained_isolated`] is the one maintenance operation this policy
+    /// unlocks: it repacks a partial clone into a promisor pack and an ordinary pack and retires
+    /// old promisor packs once their objects are proven in the new one. Every other operation
+    /// that deletes or writes storage still refuses a partial clone under this policy:
+    /// [`Repository::repack_retained`], [`Repository::retire_old_packs`],
     /// [`Repository::prune_unreachable_loose`], [`Repository::run_maintenance`] and the
     /// `collect_garbage` methods return [`RetentionError::PartialClone`] before changing
     /// anything.

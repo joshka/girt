@@ -475,3 +475,69 @@ fn recent_unreachable_commit_keeps_its_old_dependencies() {
 fn age_packs(root: &Path, by: Duration) {
     packs(root).iter().for_each(|pack| age(pack, by));
 }
+
+/// Consolidation never folds a promisor pack's objects into an ordinary pack: after consolidating
+/// old packs, every object that was only in the promisor pack is still only in a marked pack.
+#[test]
+fn consolidation_never_merges_promisor_and_ordinary_packs() {
+    let root = fetched_packs(4);
+    let promisor = packs(root.path())[1].clone();
+    fs::write(promisor.with_extension("promisor"), b"").unwrap();
+    let promised = pack_objects(&promisor);
+    age_packs(root.path(), Duration::from_secs(10 * 86400));
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() - Duration::from_secs(5 * 86400))
+        .with_pack_consolidation(PackConsolidation::Always);
+
+    let report = collect(root.path(), &policy);
+
+    assert!(report.consolidated);
+    for pack in packs(root.path()) {
+        let marked = pack.with_extension("promisor").exists();
+        let held = pack_objects(&pack);
+        if marked {
+            assert_eq!(pack, promisor);
+            assert_eq!(held, promised);
+        } else {
+            assert!(
+                held.is_disjoint(&promised),
+                "{} holds promisor objects",
+                pack.display()
+            );
+        }
+    }
+    git(root.path(), &["fsck", "--full", "--strict"], b"");
+}
+
+/// Without partial-clone configuration the isolated repack retires nothing, so an old `.promisor`
+/// pack and its marker stay byte for byte.
+#[test]
+fn isolated_repack_never_retires_promisor_packs_without_partial_clone_config() {
+    let root = fetched_packs(3);
+    let promisor = packs(root.path())[0].clone();
+    let marker = promisor.with_extension("promisor");
+    fs::write(&marker, b"").unwrap();
+    let promisor_bytes = fs::read(&promisor).unwrap();
+    age_packs(root.path(), Duration::from_secs(10 * 86400));
+    let repository = Repository::open(root.path()).unwrap();
+    assert!(!repository.is_partial_clone());
+    let policy = RetentionPolicy::default()
+        .with_partial_clone(girt::retention::PartialClonePolicy::Promised)
+        .with_recent_cutoff(SystemTime::now() - Duration::from_secs(5 * 86400));
+
+    let report = repository
+        .repack_retained_isolated(
+            &mut Exclusive,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+
+    assert!(report.promisor.is_none());
+    assert!(report.ordinary.is_some());
+    assert!(report.removed.is_empty() && report.retained.is_empty());
+    assert_eq!(fs::read(&promisor).unwrap(), promisor_bytes);
+    assert_eq!(fs::read(&marker).unwrap(), b"");
+    git(root.path(), &["fsck", "--full", "--strict"], b"");
+}

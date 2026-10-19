@@ -28,7 +28,11 @@ pub struct RetireReport {
     pub published: Option<RepackPublished>,
     /// Both pack and object directories synchronized after publication.
     pub durable: bool,
-    /// Old index/pack/sidecar paths and multi-pack-index artifacts removed in execution order.
+    /// Old index/pack/sidecar paths and multi-pack-index artifacts whose unlink returned success,
+    /// in execution order. Index and multi-pack-index unlinks are synchronized before the packs
+    /// they name go, which is what makes retirement safe; the final pack unlinks are not
+    /// synchronized, so after a crash a listed `.pack` can reappear as an unindexed file that
+    /// readers ignore. Girt maintenance does not remove such a file, and neither does `git gc`.
     pub removed: Vec<PathBuf>,
 }
 
@@ -129,7 +133,7 @@ pub struct RetireFailure {
 
 #[cfg(unix)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Stamp {
+pub(super) struct Stamp {
     len: u64,
     modified: SystemTime,
 }
@@ -161,8 +165,13 @@ impl Repository {
     /// reclaimed; loose roots strictly newer than `recent_cutoff` retain their complete closure.
     /// Packs exactly at the cutoff remain protected: pack protection conservatively preserves the
     /// whole pack rather than applying Git's per-loose-file expiry rule. Failure after publication
-    /// can leave the new pair and a prefix of old paths removed. An index-only removal leaves
-    /// an unindexed old pack; readers ignore it. Cancellation is checked before each pair, not
+    /// can leave the new pair and a prefix of old paths removed. Retirement is made safe by
+    /// synchronizing each index (and multi-pack-index) unlink before its pack goes; the pack
+    /// unlink itself is not synchronized. A failure or crash after an index unlink can therefore
+    /// leave an unindexed old pack file. Readers ignore it, and every object stays readable. While
+    /// it is newer than the cutoff, later planning refuses with
+    /// [`RetentionError::MissingProtectedIndex`]; once older, maintenance completes but leaves the
+    /// file in place, as `git gc` does. Cancellation is checked before each pair, not
     /// between its two unlinks. A failed unlink or directory synchronization names its
     /// uncertain path. Retry only after a fresh scan.
     ///
@@ -426,8 +435,8 @@ impl Repository {
         let replacement_pack = replacement.with_extension("pack");
         let replacement_index = replacement.with_extension("idx");
         report.published = Some(published);
-        sync_directory(&directory)
-            .map_err(|error| failed(RetireCause::Io(error), report.clone()))?;
+        // The publisher's final sync already made the pair's names durable in the pack
+        // directory; this sync makes the pack directory's own name durable in case it was new.
         sync_directory(current.object_dir())
             .map_err(|error| failed(RetireCause::Io(error), report.clone()))?;
         report.durable = true;
@@ -618,6 +627,7 @@ impl Repository {
                 report.removed.push(path);
             }
             if removed_index {
+                // Ordering: the multi-pack index must be durably gone before any pack it names.
                 sync_directory(&directory).map_err(|error| RetireFailure {
                     cause: RetireCause::Io(error),
                     report: Box::new(report.clone()),
@@ -627,7 +637,6 @@ impl Repository {
         }
         for index in retiring {
             check(cancel, &report)?;
-            let old_pack = index.with_extension("pack");
             let artifacts = retirable_paths(&index, &before);
             for path in &artifacts {
                 recheck(path, before[path]).map_err(|cause| failed(cause, report.clone()))?;
@@ -650,7 +659,8 @@ impl Repository {
                 let index_removed = path == index;
                 report.removed.push(path);
                 if index_removed {
-                    // Persist the visibility-marker unlink before removing its pack.
+                    // Ordering: the index unlink must be durable before the pack goes, so a crash
+                    // never leaves a visible index naming a missing pack.
                     sync_directory(&directory).map_err(|error| RetireFailure {
                         cause: RetireCause::Io(error),
                         report: Box::new(report.clone()),
@@ -658,18 +668,15 @@ impl Repository {
                     })?;
                 }
             }
-            sync_directory(&directory).map_err(|error| RetireFailure {
-                cause: RetireCause::Io(error),
-                report: Box::new(report.clone()),
-                uncertain: Some(old_pack),
-            })?;
+            // No sync after the pack unlink: if a crash undoes it, the pack has no index and
+            // readers ignore it. The next pair's index sync persists it.
         }
         Ok(report)
     }
 }
 
 #[cfg(unix)]
-fn snapshot(
+pub(super) fn snapshot(
     directory: &Path,
     limit: usize,
     cancel: &AtomicBool,
@@ -708,7 +715,7 @@ fn snapshot(
 }
 
 #[cfg(unix)]
-fn same_old_generation(
+pub(super) fn same_old_generation(
     before: &BTreeMap<PathBuf, Stamp>,
     after: &BTreeMap<PathBuf, Stamp>,
     replacement_paths: &[PathBuf],
@@ -809,7 +816,7 @@ fn retirable_paths(index: &Path, before: &BTreeMap<PathBuf, Stamp>) -> Vec<PathB
 }
 
 #[cfg(unix)]
-fn recheck(path: &Path, expected: Stamp) -> Result<(), RetireCause> {
+pub(super) fn recheck(path: &Path, expected: Stamp) -> Result<(), RetireCause> {
     let metadata = fs::symlink_metadata(path).map_err(RetireCause::Io)?;
     if !metadata.is_file()
         || metadata.len() != expected.len
@@ -822,7 +829,7 @@ fn recheck(path: &Path, expected: Stamp) -> Result<(), RetireCause> {
 
 // Cancellation keeps its own cause, as the per-object checks this replaced reported it.
 #[cfg(unix)]
-fn read_cause(error: crate::ObjectReadError) -> RetireCause {
+pub(super) fn read_cause(error: crate::ObjectReadError) -> RetireCause {
     match error {
         crate::ObjectReadError::Cancelled => RetireCause::Cancelled,
         error => RetireCause::Read(Box::new(error)),
@@ -1290,8 +1297,8 @@ mod tests {
     }
 
     /// Runs consolidation until an injected failure at the given removal or directory-sync call.
-    /// Removal order per old pack is index, directory sync, reverse index, pack, directory sync;
-    /// publication first syncs the pack and object directories.
+    /// Removal order per old pack is index, directory sync, reverse index, pack. The publisher
+    /// syncs the pack directory itself, so the first injected sync here is the object directory's.
     fn crash_consolidation_at(
         fail_remove: Option<usize>,
         fail_sync: Option<usize>,
@@ -1331,10 +1338,9 @@ mod tests {
     #[case::first_reverse_index_unlink(Some(2), None, "rev")]
     #[case::first_pack_unlink(Some(3), None, "pack")]
     #[case::second_index_unlink(Some(4), None, "idx")]
-    #[case::pack_directory_sync_after_publication(None, Some(1), "")]
-    #[case::object_directory_sync_after_publication(None, Some(2), "")]
-    #[case::sync_after_first_index_unlink(None, Some(3), "idx")]
-    #[case::sync_after_first_pair(None, Some(4), "pack")]
+    #[case::object_directory_sync_after_publication(None, Some(1), "")]
+    #[case::sync_after_first_index_unlink(None, Some(2), "idx")]
+    #[case::sync_after_second_index_unlink(None, Some(3), "idx")]
     fn consolidation_crash_points_keep_every_object_readable(
         #[case] fail_remove: Option<usize>,
         #[case] fail_sync: Option<usize>,
@@ -1376,14 +1382,102 @@ mod tests {
         assert!(unreadable.is_empty(), "{unreadable:?}");
     }
 
+    /// A crash right after an index unlink is synced leaves an orphan: an old `.pack` with no
+    /// index. Readers ignore it and every object stays readable after a cold reopen. While it is
+    /// recent, planning refuses it as a protected pack without an index, so later maintenance
+    /// changes nothing; once it is older than the cutoff, retirement and garbage collection
+    /// complete, Git's fsck stays clean, and the orphan file remains.
+    #[rstest::rstest]
+    #[case::orphan_after_first_index_unlink(Some(2))]
+    #[case::orphan_after_second_index_unlink(Some(5))]
+    fn orphan_pack_after_index_unlink_crash_is_safe(#[case] fail_remove: Option<usize>) {
+        let (root, before, _) = crash_consolidation_at(fail_remove, None);
+        let orphans: Vec<PathBuf> = fs::read_dir(root.path().join("objects/pack"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.extension().is_some_and(|ext| ext == "pack")
+                    && !path.with_extension("idx").exists()
+            })
+            .collect();
+        assert_eq!(orphans.len(), 1, "{orphans:?}");
+        let readable = |root: &Path, stage: &str| {
+            let objects = Repository::open(root)
+                .unwrap()
+                .objects_with(Default::default())
+                .unwrap();
+            // Before maintenance runs again every object survives; afterwards, with a cutoff that
+            // makes the fixture's unreachable blob garbage, every reachable object does.
+            let expected: Vec<String> = if matches!(stage, "crash" | "refused") {
+                before.clone()
+            } else {
+                git(root, &["rev-list", "--objects", "--all"], b"")
+                    .lines()
+                    .map(|line| line.split_whitespace().next().unwrap().to_owned())
+                    .collect()
+            };
+            for id in &expected {
+                let id: ObjectId = id.parse().unwrap();
+                assert!(
+                    objects.read_with(id, Default::default()).unwrap().is_some(),
+                    "{stage}: {id} unreadable"
+                );
+            }
+            git(root, &["fsck", "--full", "--strict"], b"");
+        };
+        readable(root.path(), "crash");
+
+        // Recent orphan: planning refuses and nothing changes.
+        let repository = Repository::open(root.path()).unwrap();
+        let cancel = AtomicBool::new(false);
+        let error = super::super::inputs::Session::new_folding(
+            &repository,
+            &RetentionPolicy::default(),
+            true,
+            &cancel,
+        )
+        .err()
+        .unwrap();
+        assert!(
+            matches!(error, RetentionError::MissingProtectedIndex),
+            "{error:?}"
+        );
+        assert!(orphans[0].exists());
+        readable(root.path(), "refused");
+
+        // Aged orphan: retirement and garbage collection complete.
+        let cutoff = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        let policy = RetentionPolicy::default().with_recent_cutoff(cutoff);
+        repository
+            .retire_old_packs_exclusive(&policy, RepackLimits::default(), &cancel)
+            .unwrap();
+        readable(root.path(), "retired");
+        struct Private;
+        impl MaintenanceIsolation for Private {
+            type Guard = ();
+            fn acquire(&mut self, _: &Repository) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        Repository::open(root.path())
+            .unwrap()
+            .collect_garbage(&mut Private, &policy, &cancel)
+            .unwrap();
+        readable(root.path(), "collected");
+        // Nothing removes the orphan: girt maintenance lists packs by index, and so does Git's gc.
+        // It stays an inert file that readers ignore.
+        assert!(orphans[0].exists());
+        git(root.path(), &["gc", "-q", "--prune=now"], b"");
+        assert!(orphans[0].exists());
+        readable(root.path(), "git gc");
+    }
+
     // A crash that leaves no unindexed old pack is finished by the next consolidation. An
     // unindexed recent pack instead stays protected, so planning refuses it until it ages.
     #[rstest::rstest]
     #[case::first_index_unlink(Some(1), None)]
     #[case::second_index_unlink(Some(4), None)]
-    #[case::pack_directory_sync_after_publication(None, Some(1))]
-    #[case::object_directory_sync_after_publication(None, Some(2))]
-    #[case::sync_after_first_pair(None, Some(4))]
+    #[case::object_directory_sync_after_publication(None, Some(1))]
     fn next_consolidation_finishes_after_a_crash(
         #[case] fail_remove: Option<usize>,
         #[case] fail_sync: Option<usize>,

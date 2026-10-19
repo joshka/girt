@@ -293,6 +293,7 @@ from_domain_errors! {
     crate::WorktreeError,
     crate::retention::ExpireCause,
     crate::retention::ExpireFailure,
+    crate::retention::IsolatedRepackFailure,
     crate::retention::MaintenanceCause,
     crate::retention::MaintenanceFailure,
     crate::retention::PruneCause,

@@ -230,11 +230,13 @@ impl Repository {
     /// `gc.autoPackLimit` (50 unless configured; 0 or a negative value turns it off). It
     /// publishes one pack holding every retained object and every object of the recent packs it
     /// replaces, synchronizes it, decodes every retained object from it, and only then retires
-    /// the old packs, as [`Self::retire_old_packs`] does. `.keep` packs, promisor packs, packs
-    /// with other sidecars and alternates stay in place. Old unreachable objects in retired packs
-    /// older than [`RetentionPolicy::recent_cutoff`] are reclaimed; with no cutoff, every packed
-    /// object is kept. Unreachable objects copied from recent packs live until the new pack is
-    /// older than the cutoff. Without consolidation, pack files stay untouched.
+    /// the old packs, as [`Self::retire_old_packs`] does: each old index unlink is synchronized
+    /// before its pack goes, and a crash can leave an unindexed old pack file that readers ignore.
+    /// `.keep` packs, promisor packs, packs with other sidecars and alternates stay in place.
+    /// Old unreachable objects in retired packs older than [`RetentionPolicy::recent_cutoff`]
+    /// are reclaimed; with no cutoff, every packed object is kept. Unreachable objects copied
+    /// from recent packs live until the new pack is older than the cutoff. Without
+    /// consolidation, pack files stay untouched.
     ///
     /// All other contracts are those of [`Self::collect_garbage`].
     ///

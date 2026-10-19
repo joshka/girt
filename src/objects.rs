@@ -1620,6 +1620,24 @@ impl Objects {
         Ok(None)
     }
 
+    /// Primary-store packs that had a `.promisor` marker when opened, with their `.pack` paths.
+    #[cfg(unix)]
+    pub(crate) fn primary_promisor_packs(&self) -> Vec<(&Path, &FilePack)> {
+        self.stores
+            .iter()
+            .take(1)
+            .flat_map(|store| {
+                store
+                    .pack_paths
+                    .iter()
+                    .zip(&store.packs)
+                    .zip(&store.pack_marks)
+                    .filter(|(_, marks)| marks.promisor)
+                    .map(|((path, pack), _)| (path.as_path(), pack.as_ref()))
+            })
+            .collect()
+    }
+
     /// Primary-store packs with their `.pack` paths, in search order.
     pub(crate) fn primary_packs_with_paths(&self) -> Vec<(&Path, &FilePack)> {
         self.stores

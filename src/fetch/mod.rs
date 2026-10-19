@@ -909,6 +909,16 @@ pub(crate) fn check_cancelled(cancel: &AtomicBool) -> Result<(), FetchError> {
 #[cfg(test)]
 mod tests;
 
+impl From<crate::pack::publish::Error> for FetchError {
+    fn from(error: crate::pack::publish::Error) -> Self {
+        match error {
+            crate::pack::publish::Error::Cancelled => Self::Cancelled,
+            crate::pack::publish::Error::Existing(path) => Self::Existing(path),
+            crate::pack::publish::Error::Io(error) => Self::from(error),
+        }
+    }
+}
+
 impl From<crate::packet::Error> for FetchError {
     fn from(error: crate::packet::Error) -> Self {
         match error {
