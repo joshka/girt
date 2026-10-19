@@ -196,6 +196,12 @@ pub enum RetentionError {
     /// Graph edges disagree about object kind.
     #[error("graph edges disagree about object kind: {0}")]
     ConflictingObjectKind(crate::ObjectId),
+    /// Promisor packs name more objects than `max_entries` allows.
+    #[error("promised object limit")]
+    PromisedObjectLimit,
+    /// The walk stopped at more promised objects than `max_promised_boundaries` allows.
+    #[error("promised boundary limit")]
+    PromisedBoundaryLimit,
 }
 
 /// Recovery category for an incomplete retention observation.
@@ -270,6 +276,8 @@ impl RetentionError {
             | Self::InputEntryOverflow
             | Self::InputByteOverflow
             | Self::ReachableByteOverflow
+            | Self::PromisedObjectLimit
+            | Self::PromisedBoundaryLimit
             | Self::ReflogLimit(..)
             | Self::PseudorefByteLimit(..) => RetentionErrorKind::Limit,
             Self::RecentObjectsHook | Self::PreciousObjects | Self::PartialClone => {

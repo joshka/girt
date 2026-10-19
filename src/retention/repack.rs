@@ -290,15 +290,32 @@ impl Repository {
     ) -> Result<RepackPublished, RepackError> {
         let _headers = crate::pack::HeaderScope::new();
         check(cancel)?;
+        // Publishing omits promised objects it cannot copy, so execution refuses partial clones
+        // whatever the planning policy allows. The configuration is read again from disk, before
+        // planning and again before publishing, so a handle opened before the repository became a
+        // partial clone still refuses.
+        self.refuse_partial_clone()?;
         let mut plan = self.plan_retention(policy, cancel);
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
             return Err(RepackError::Incomplete(reason));
         }
         after_plan();
+        self.refuse_partial_clone()?;
         // Additive repack publishes the complete retained set. Only retirement omits survivors.
         plan.protected_packs.clear();
         self.publish_required(&plan, policy, limits, cancel)
             .map(|(published, _)| published)
+    }
+
+    /// Refuses when the configuration on disk, not this handle's cached copy, marks a partial
+    /// clone.
+    fn refuse_partial_clone(&self) -> Result<(), RepackError> {
+        let current = Repository::open(self.git_dir())
+            .map_err(|error| RepackError::Incomplete(RetentionError::read(error)))?;
+        if current.is_partial_clone() {
+            return Err(RepackError::Incomplete(RetentionError::PartialClone));
+        }
+        Ok(())
     }
 
     /// Publishes the objects required by a complete scan of this repository.
@@ -719,6 +736,53 @@ mod tests {
             b"new writer"
         );
     }
+    /// Marks `repository` as a partial clone on disk, behind its cached configuration.
+    fn mark_partial_clone(repository: &Repository) {
+        let path = repository.git_dir().join("config");
+        let mut config = fs::read_to_string(&path).unwrap();
+        config.push_str("[remote \"origin\"]\n\tpromisor = true\n");
+        fs::write(path, config).unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case::before_planning(true)]
+    #[case::before_publishing(false)]
+    fn partial_clone_on_disk_refuses_repack(#[case] before_planning: bool) {
+        let root = tempfile::tempdir().unwrap();
+        let repository = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            crate::InitKind::Bare,
+        )
+        .unwrap();
+        repository.loose_objects().write_blob(b"kept").unwrap();
+        if before_planning {
+            mark_partial_clone(&repository);
+        }
+        assert!(!repository.is_partial_clone());
+        let error = repository
+            .repack_retained_after_plan(
+                &RetentionPolicy::default(),
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+                || {
+                    if !before_planning {
+                        mark_partial_clone(&repository);
+                    }
+                },
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, RepackError::Incomplete(RetentionError::PartialClone)),
+            "{error:?}"
+        );
+        let pack = repository.object_dir().join("pack");
+        assert!(
+            !pack.exists() || fs::read_dir(pack).unwrap().next().is_none(),
+            "nothing is published"
+        );
+    }
+
     #[cfg(unix)]
     #[rstest::rstest]
     #[case::truncate(true)]
