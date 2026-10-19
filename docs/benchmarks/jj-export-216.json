@@ -1,0 +1,1233 @@
+{
+  "date": "2026-10-19",
+  "command": "jj --ignore-working-copy git export",
+  "workload": "100 jj-only bookmarks, non-colocated Git store",
+  "girt_version": "0.17.0",
+  "jj_before": "5a6b4b03612d39c247eb9106ae910cd16b4c8e45",
+  "jj_after": "0f44d2fd658678eaa3acc5dafb3a90717e9561af",
+  "stock": "35dbc3623b6dd5a23daf5b5ca09b8640694a72ae",
+  "binary_sha256": {
+    "before": "728824f9a586e366dd9e7e37c77f5470e0c27aec6de040797b9990efb618b557",
+    "after": "a2690f9c05d906cd41745594761163783abbe826a5be7671c7b4df5f8544d79a",
+    "stock": "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
+  },
+  "harness_sha256": "b9391b1243246cd9da00bac516e364d5699751a8b22f1861ae8b7a902a5e820f",
+  "method": "fresh cp -cR input for every sample; copy before shlock; load below 24; warm each binary; ABBA twice for before/after and after/stock; time invokes jj directly; delete copy after releasing lock",
+  "build": "release, debug=1, strip=none, codegen-units=1, CARGO_BUILD_JOBS=4",
+  "counts": {
+    "small-permissions": {
+      "packed_ref_reads": 1,
+      "packed_ref_lock_creates": 1,
+      "packed_ref_rewrites": 0,
+      "ref_lock_creates": 100,
+      "reflog_lock_creates": 100,
+      "staged_ref_creates": 100,
+      "fsync_calls": 0,
+      "fchmod_calls": 0
+    },
+    "medium-before": {
+      "packed_ref_reads": 100,
+      "packed_ref_lock_creates": 100,
+      "packed_ref_rewrites": 0,
+      "ref_lock_creates": 100,
+      "reflog_lock_creates": 100,
+      "staged_ref_creates": 100,
+      "fsync_calls": 0,
+      "fchmod_calls": null
+    },
+    "small-stock": {
+      "packed_ref_reads": 101,
+      "packed_ref_lock_creates": 100,
+      "packed_ref_rewrites": 0,
+      "ref_lock_creates": 100,
+      "reflog_lock_creates": 0,
+      "staged_ref_creates": 0,
+      "fsync_calls": 0,
+      "fchmod_calls": 0
+    },
+    "medium-after": {
+      "packed_ref_reads": 1,
+      "packed_ref_lock_creates": 1,
+      "packed_ref_rewrites": 0,
+      "ref_lock_creates": 100,
+      "reflog_lock_creates": 100,
+      "staged_ref_creates": 100,
+      "fsync_calls": 0,
+      "fchmod_calls": null
+    },
+    "small-after": {
+      "packed_ref_reads": 1,
+      "packed_ref_lock_creates": 1,
+      "packed_ref_rewrites": 0,
+      "ref_lock_creates": 100,
+      "reflog_lock_creates": 100,
+      "staged_ref_creates": 100,
+      "fsync_calls": 0,
+      "fchmod_calls": 100
+    },
+    "medium-stock": {
+      "packed_ref_reads": 101,
+      "packed_ref_lock_creates": 100,
+      "packed_ref_rewrites": 0,
+      "ref_lock_creates": 100,
+      "reflog_lock_creates": 0,
+      "staged_ref_creates": 0,
+      "fsync_calls": 0,
+      "fchmod_calls": null
+    },
+    "linux-stock": {
+      "packed_ref_reads": 101,
+      "packed_ref_lock_creates": 100,
+      "packed_ref_rewrites": 0,
+      "ref_lock_creates": 100,
+      "reflog_lock_creates": 0,
+      "staged_ref_creates": 0,
+      "fsync_calls": 0,
+      "fchmod_calls": null
+    },
+    "linux-before": {
+      "packed_ref_reads": 100,
+      "packed_ref_lock_creates": 100,
+      "packed_ref_rewrites": 0,
+      "ref_lock_creates": 100,
+      "reflog_lock_creates": 100,
+      "staged_ref_creates": 100,
+      "fsync_calls": 0,
+      "fchmod_calls": null
+    },
+    "linux-after": {
+      "packed_ref_reads": 1,
+      "packed_ref_lock_creates": 1,
+      "packed_ref_rewrites": 0,
+      "ref_lock_creates": 100,
+      "reflog_lock_creates": 100,
+      "staged_ref_creates": 100,
+      "fsync_calls": 0,
+      "fchmod_calls": null
+    }
+  },
+  "summary": [
+    {
+      "size": "linux",
+      "before/after": {
+        "before": {
+          "ms": 197.8410209994763,
+          "user_s": 0.02,
+          "instructions": 1058849405.0,
+          "range_ms": [
+            176.72366599435918,
+            252.93874999624677
+          ]
+        },
+        "after": {
+          "ms": 211.22968751296867,
+          "user_s": 0.02,
+          "instructions": 944983517.5,
+          "range_ms": [
+            195.85120800184086,
+            218.92941699479707
+          ]
+        },
+        "ratio": 0.9366156023278198,
+        "orders": [
+          0.9751649650185208,
+          0.9957854427843554
+        ]
+      },
+      "after/stock": {
+        "after": {
+          "ms": 232.16749998391606,
+          "user_s": 0.02,
+          "instructions": 966538025.5,
+          "range_ms": [
+            172.2871249949094,
+            258.87479199445806
+          ]
+        },
+        "stock": {
+          "ms": 298.8549999863608,
+          "user_s": 0.03,
+          "instructions": 979756495.0,
+          "range_ms": [
+            257.44220899650827,
+            311.35279199224897
+          ]
+        },
+        "ratio": 0.776856669604028,
+        "orders": [
+          0.8237346857275685,
+          0.7087658247218198
+        ]
+      }
+    },
+    {
+      "size": "medium",
+      "before/after": {
+        "before": {
+          "ms": 174.5204370090505,
+          "user_s": 0.02,
+          "instructions": 825663991.0,
+          "range_ms": [
+            140.92474998324178,
+            183.19858302129433
+          ]
+        },
+        "after": {
+          "ms": 152.58850001555402,
+          "user_s": 0.02,
+          "instructions": 731986025.0,
+          "range_ms": [
+            122.67287500435486,
+            228.45754199079238
+          ]
+        },
+        "ratio": 1.1437325682555426,
+        "orders": [
+          1.0423065713143294,
+          1.0065590328528768
+        ]
+      },
+      "after/stock": {
+        "after": {
+          "ms": 159.4717919942923,
+          "user_s": 0.02,
+          "instructions": 728023747.0,
+          "range_ms": [
+            144.1149580059573,
+            273.1504999974277
+          ]
+        },
+        "stock": {
+          "ms": 168.04906248580664,
+          "user_s": 0.015,
+          "instructions": 568007273.0,
+          "range_ms": [
+            129.80462500127032,
+            211.88912499928847
+          ]
+        },
+        "ratio": 0.948959724233875,
+        "orders": [
+          1.0900763527733608,
+          1.0807775211392934
+        ]
+      }
+    },
+    {
+      "size": "small",
+      "before/after": {
+        "before": {
+          "ms": 122.51381250098348,
+          "user_s": 0.0,
+          "instructions": 669489103.0,
+          "range_ms": [
+            114.31420801091008,
+            135.69233298767358
+          ]
+        },
+        "after": {
+          "ms": 116.32670850667637,
+          "user_s": 0.0,
+          "instructions": 572209107.0,
+          "range_ms": [
+            105.27712502516806,
+            139.85529201454483
+          ]
+        },
+        "ratio": 1.0531873038765815,
+        "orders": [
+          1.0090755535087388,
+          1.0652085910546565
+        ]
+      },
+      "after/stock": {
+        "after": {
+          "ms": 100.88002050179057,
+          "user_s": 0.0,
+          "instructions": 569635223.0,
+          "range_ms": [
+            95.00304199173115,
+            112.66412498662248
+          ]
+        },
+        "stock": {
+          "ms": 78.31843798339833,
+          "user_s": 0.0,
+          "instructions": 423718893.0,
+          "range_ms": [
+            74.99029199243523,
+            94.27887501078658
+          ]
+        },
+        "ratio": 1.2880749808004952,
+        "orders": [
+          1.246056334081285,
+          1.2790561433701537
+        ]
+      }
+    }
+  ],
+  "samples": [
+    {
+      "size": "small",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 0,
+      "position": 0,
+      "ms": 114.31420801091008,
+      "load_1m": 11.55712890625,
+      "instructions": 666704469,
+      "user_s": 0.0,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 0,
+      "position": 1,
+      "ms": 107.90270799770951,
+      "load_1m": 11.55712890625,
+      "instructions": 565593958,
+      "user_s": 0.0,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 0,
+      "position": 2,
+      "ms": 105.27712502516806,
+      "load_1m": 11.55712890625,
+      "instructions": 570436980,
+      "user_s": 0.0,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 0,
+      "position": 3,
+      "ms": 115.93233398161829,
+      "load_1m": 11.55712890625,
+      "instructions": 669876677,
+      "user_s": 0.0,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 1,
+      "position": 0,
+      "ms": 135.69233298767358,
+      "load_1m": 11.55712890625,
+      "instructions": 675483276,
+      "user_s": 0.0,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 1,
+      "position": 1,
+      "ms": 139.85529201454483,
+      "load_1m": 11.55712890625,
+      "instructions": 573981234,
+      "user_s": 0.0,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 1,
+      "position": 2,
+      "ms": 124.75070901564322,
+      "load_1m": 11.55712890625,
+      "instructions": 581931319,
+      "user_s": 0.0,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 1,
+      "position": 3,
+      "ms": 129.09529102034867,
+      "load_1m": 11.55712890625,
+      "instructions": 669101529,
+      "user_s": 0.0,
+      "sys_s": 0.08,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 0,
+      "ms": 112.66412498662248,
+      "load_1m": 11.55712890625,
+      "instructions": 564687992,
+      "user_s": 0.0,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 1,
+      "ms": 83.68729197536595,
+      "load_1m": 11.55712890625,
+      "instructions": 425516235,
+      "user_s": 0.0,
+      "sys_s": 0.03,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 2,
+      "ms": 80.43770797667094,
+      "load_1m": 11.55712890625,
+      "instructions": 424068886,
+      "user_s": 0.0,
+      "sys_s": 0.03,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 3,
+      "ms": 102.71483298856765,
+      "load_1m": 11.55712890625,
+      "instructions": 561743380,
+      "user_s": 0.0,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 0,
+      "ms": 99.89924999536015,
+      "load_1m": 11.55712890625,
+      "instructions": 549821437,
+      "user_s": 0.0,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 1,
+      "ms": 94.27887501078658,
+      "load_1m": 11.83251953125,
+      "instructions": 423368900,
+      "user_s": 0.0,
+      "sys_s": 0.03,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 2,
+      "ms": 78.03783298004419,
+      "load_1m": 11.83251953125,
+      "instructions": 420246832,
+      "user_s": 0.0,
+      "sys_s": 0.03,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 3,
+      "ms": 97.65108398278244,
+      "load_1m": 11.83251953125,
+      "instructions": 569078407,
+      "user_s": 0.0,
+      "sys_s": 0.04,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 0,
+      "position": 0,
+      "ms": 183.19858302129433,
+      "load_1m": 16.25,
+      "instructions": 822839899,
+      "user_s": 0.02,
+      "sys_s": 0.07,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 0,
+      "position": 1,
+      "ms": 122.67287500435486,
+      "load_1m": 17.99169921875,
+      "instructions": 732387663,
+      "user_s": 0.02,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 0,
+      "position": 2,
+      "ms": 159.91454201866873,
+      "load_1m": 17.99169921875,
+      "instructions": 731584387,
+      "user_s": 0.02,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 0,
+      "position": 3,
+      "ms": 166.25391601701267,
+      "load_1m": 17.431640625,
+      "instructions": 828345290,
+      "user_s": 0.02,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 1,
+      "position": 0,
+      "ms": 182.78695800108835,
+      "load_1m": 17.431640625,
+      "instructions": 822982692,
+      "user_s": 0.02,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 1,
+      "position": 1,
+      "ms": 228.45754199079238,
+      "load_1m": 17.55712890625,
+      "instructions": 741474350,
+      "user_s": 0.02,
+      "sys_s": 0.08,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 1,
+      "position": 2,
+      "ms": 145.2624580124393,
+      "load_1m": 17.55712890625,
+      "instructions": 727803054,
+      "user_s": 0.02,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 1,
+      "position": 3,
+      "ms": 140.92474998324178,
+      "load_1m": 17.55712890625,
+      "instructions": 832541683,
+      "user_s": 0.02,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 0,
+      "ms": 273.1504999974277,
+      "load_1m": 19.59423828125,
+      "instructions": 747070046,
+      "user_s": 0.02,
+      "sys_s": 0.09,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 1,
+      "ms": 211.88912499928847,
+      "load_1m": 19.59423828125,
+      "instructions": 564597794,
+      "user_s": 0.02,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 2,
+      "ms": 129.80462500127032,
+      "load_1m": 21.14794921875,
+      "instructions": 571416752,
+      "user_s": 0.01,
+      "sys_s": 0.03,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 3,
+      "ms": 144.1149580059573,
+      "load_1m": 21.14794921875,
+      "instructions": 729461684,
+      "user_s": 0.02,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 0,
+      "ms": 156.70062499702908,
+      "load_1m": 20.0146484375,
+      "instructions": 726585810,
+      "user_s": 0.02,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 1,
+      "ms": 182.4420829943847,
+      "load_1m": 20.0146484375,
+      "instructions": 574846233,
+      "user_s": 0.02,
+      "sys_s": 0.06,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 2,
+      "ms": 153.6560419772286,
+      "load_1m": 20.0146484375,
+      "instructions": 556140060,
+      "user_s": 0.01,
+      "sys_s": 0.03,
+      "status": 0
+    },
+    {
+      "size": "medium",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 3,
+      "ms": 162.2429589915555,
+      "load_1m": 19.05224609375,
+      "instructions": 710224147,
+      "user_s": 0.02,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 0,
+      "position": 0,
+      "ms": 198.11987498542294,
+      "load_1m": 17.15380859375,
+      "instructions": 1058462618,
+      "user_s": 0.02,
+      "sys_s": 0.1,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 0,
+      "position": 1,
+      "ms": 195.85120800184086,
+      "load_1m": 17.76123046875,
+      "instructions": 946972428,
+      "user_s": 0.02,
+      "sys_s": 0.08,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 0,
+      "position": 2,
+      "ms": 212.55150000797585,
+      "load_1m": 14.3544921875,
+      "instructions": 919150878,
+      "user_s": 0.02,
+      "sys_s": 0.1,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 0,
+      "position": 3,
+      "ms": 252.93874999624677,
+      "load_1m": 23.708984375,
+      "instructions": 1074893487,
+      "user_s": 0.02,
+      "sys_s": 0.11,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 1,
+      "position": 0,
+      "ms": 197.5621670135297,
+      "load_1m": 21.4677734375,
+      "instructions": 1059236192,
+      "user_s": 0.02,
+      "sys_s": 0.09,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 1,
+      "position": 1,
+      "ms": 209.9078750179615,
+      "load_1m": 20.6826171875,
+      "instructions": 942994607,
+      "user_s": 0.02,
+      "sys_s": 0.08,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "after",
+      "pair": "before/after",
+      "block": 1,
+      "position": 2,
+      "ms": 218.92941699479707,
+      "load_1m": 23.7822265625,
+      "instructions": 959880357,
+      "user_s": 0.02,
+      "sys_s": 0.1,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "before",
+      "pair": "before/after",
+      "block": 1,
+      "position": 3,
+      "ms": 176.72366599435918,
+      "load_1m": 23.78857421875,
+      "instructions": 1021249489,
+      "user_s": 0.02,
+      "sys_s": 0.09,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 0,
+      "ms": 258.87479199445806,
+      "load_1m": 23.1982421875,
+      "instructions": 956504300,
+      "user_s": 0.02,
+      "sys_s": 0.08,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 1,
+      "ms": 307.3914999840781,
+      "load_1m": 21.84375,
+      "instructions": 971553029,
+      "user_s": 0.03,
+      "sys_s": 0.1,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 2,
+      "ms": 257.44220899650827,
+      "load_1m": 23.3642578125,
+      "instructions": 973276410,
+      "user_s": 0.03,
+      "sys_s": 0.1,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 0,
+      "position": 3,
+      "ms": 172.2871249949094,
+      "load_1m": 23.34716796875,
+      "instructions": 935522717,
+      "user_s": 0.02,
+      "sys_s": 0.07,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 0,
+      "ms": 233.47966698929667,
+      "load_1m": 23.056640625,
+      "instructions": 986000565,
+      "user_s": 0.02,
+      "sys_s": 0.1,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 1,
+      "ms": 290.31849998864345,
+      "load_1m": 21.6298828125,
+      "instructions": 986236580,
+      "user_s": 0.03,
+      "sys_s": 0.11,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 2,
+      "ms": 311.35279199224897,
+      "load_1m": 21.478515625,
+      "instructions": 997328063,
+      "user_s": 0.03,
+      "sys_s": 0.11,
+      "status": 0
+    },
+    {
+      "size": "linux",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 1,
+      "position": 3,
+      "ms": 230.85533297853544,
+      "load_1m": 23.6513671875,
+      "instructions": 976571751,
+      "user_s": 0.02,
+      "sys_s": 0.09,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 2,
+      "position": 0,
+      "ms": 101.86079100822099,
+      "load_1m": 15.57177734375,
+      "instructions": 570192039,
+      "user_s": 0.0,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 2,
+      "position": 1,
+      "ms": 78.23158398969099,
+      "load_1m": 15.57177734375,
+      "instructions": 423190845,
+      "user_s": 0.0,
+      "sys_s": 0.03,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 2,
+      "position": 2,
+      "ms": 78.40529197710566,
+      "load_1m": 15.57177734375,
+      "instructions": 424602221,
+      "user_s": 0.0,
+      "sys_s": 0.04,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 2,
+      "position": 3,
+      "ms": 95.91900001396425,
+      "load_1m": 15.57177734375,
+      "instructions": 576604689,
+      "user_s": 0.0,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 3,
+      "position": 0,
+      "ms": 95.00304199173115,
+      "load_1m": 15.57177734375,
+      "instructions": 575254862,
+      "user_s": 0.0,
+      "sys_s": 0.05,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 3,
+      "position": 1,
+      "ms": 74.99029199243523,
+      "load_1m": 15.57177734375,
+      "instructions": 424944368,
+      "user_s": 0.0,
+      "sys_s": 0.03,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "stock",
+      "pair": "after/stock",
+      "block": 3,
+      "position": 2,
+      "ms": 78.20745799108408,
+      "load_1m": 15.57177734375,
+      "instructions": 421756122,
+      "user_s": 0.0,
+      "sys_s": 0.03,
+      "status": 0
+    },
+    {
+      "size": "small",
+      "tool": "after",
+      "pair": "after/stock",
+      "block": 3,
+      "position": 3,
+      "ms": 102.66541599412449,
+      "load_1m": 15.57177734375,
+      "instructions": 575998387,
+      "user_s": 0.0,
+      "sys_s": 0.05,
+      "status": 0
+    }
+  ],
+  "validation": {
+    "jj_git_backend_tests": 123,
+    "fsck": {
+      "small": true,
+      "medium": true,
+      "linux": true
+    },
+    "fsck_linux_warnings": {
+      "kind": "historical tags missing tagger entries",
+      "count": 9,
+      "exit_status": 0,
+      "present_in_original_fixture": true
+    }
+  },
+  "all_fixtures_meet_1_2": false,
+  "rejected_permission_experiment": {
+    "base": "girt 0.17.0 plus adapter 0f44d2fd",
+    "source_patch": "diff --git a/src/refs/store.rs b/src/refs/store.rs\nindex f1d16e7ee7..9bde073392 100644\n--- a/src/refs/store.rs\n+++ b/src/refs/store.rs\n@@ -1262,16 +1262,25 @@ fn publish_replacement(&self, bytes: &[u8], sync: bool) -> Result<(), ReferenceE\n         self.check_owned()?;\n         #[expect(clippy::unwrap_used, reason = \"lock destinations lie below a root\")]\n         let parent = self.destination.parent().unwrap();\n+        let permissions = self.identity.permissions();\n         let mut temporary = tempfile::Builder::new()\n             .prefix(\".girt-packed-\")\n+            .permissions(permissions.clone())\n             .tempfile_in(parent)\n             .map_err(|source| io_error(parent, source))?;\n-        // Match ordinary lock creation permissions, including the process umask.\n-        let permissions = self.identity.permissions();\n-        temporary\n+        // Creation applies the current umask. Correct any mismatch with the captured\n+        // lock mode, without changing metadata when creation already matched it.\n+        let actual_permissions = temporary\n             .as_file()\n-            .set_permissions(permissions)\n-            .map_err(|source| io_error(temporary.path(), source))?;\n+            .metadata()\n+            .map_err(|source| io_error(temporary.path(), source))?\n+            .permissions();\n+        if actual_permissions != permissions {\n+            temporary\n+                .as_file()\n+                .set_permissions(permissions)\n+                .map_err(|source| io_error(temporary.path(), source))?;\n+        }\n         temporary\n             .write_all(bytes)\n             .map_err(|source| io_error(temporary.path(), source))?;\n",
+    "binary_sha256": "35118d677bc7ff5b22483a8812884135a67ddfd2d08fd76a47ff751feb1f30a9",
+    "samples": [
+      {
+        "ms": 185.88475001160987,
+        "status": 0,
+        "size": "small",
+        "tool": "before",
+        "load_1m": 20.45263671875,
+        "pair": "before/after",
+        "block": 0,
+        "position": 0,
+        "instructions": 555428439,
+        "user_s": 0.01,
+        "sys_s": 0.06
+      },
+      {
+        "ms": 120.01975000021048,
+        "status": 0,
+        "size": "small",
+        "tool": "after",
+        "load_1m": 20.45263671875,
+        "pair": "before/after",
+        "block": 0,
+        "position": 1,
+        "instructions": 544278775,
+        "user_s": 0.01,
+        "sys_s": 0.05
+      },
+      {
+        "ms": 179.7362079960294,
+        "status": 0,
+        "size": "small",
+        "tool": "after",
+        "load_1m": 20.45263671875,
+        "pair": "before/after",
+        "block": 0,
+        "position": 2,
+        "instructions": 541722035,
+        "user_s": 0.01,
+        "sys_s": 0.05
+      },
+      {
+        "ms": 204.32016599806957,
+        "status": 0,
+        "size": "small",
+        "tool": "before",
+        "load_1m": 20.45263671875,
+        "pair": "before/after",
+        "block": 0,
+        "position": 3,
+        "instructions": 558719424,
+        "user_s": 0.0,
+        "sys_s": 0.06
+      },
+      {
+        "ms": 115.78229200677015,
+        "status": 0,
+        "size": "small",
+        "tool": "before",
+        "load_1m": 20.45263671875,
+        "pair": "before/after",
+        "block": 1,
+        "position": 0,
+        "instructions": 554385931,
+        "user_s": 0.0,
+        "sys_s": 0.05
+      },
+      {
+        "ms": 266.8626249942463,
+        "status": 0,
+        "size": "small",
+        "tool": "after",
+        "load_1m": 20.45263671875,
+        "pair": "before/after",
+        "block": 1,
+        "position": 1,
+        "instructions": 543061873,
+        "user_s": 0.01,
+        "sys_s": 0.05
+      },
+      {
+        "ms": 242.2145000018645,
+        "status": 0,
+        "size": "small",
+        "tool": "after",
+        "load_1m": 21.857421875,
+        "pair": "before/after",
+        "block": 1,
+        "position": 2,
+        "instructions": 540581211,
+        "user_s": 0.01,
+        "sys_s": 0.06
+      },
+      {
+        "ms": 107.68262497731484,
+        "status": 0,
+        "size": "small",
+        "tool": "before",
+        "load_1m": 21.857421875,
+        "pair": "before/after",
+        "block": 1,
+        "position": 3,
+        "instructions": 561643976,
+        "user_s": 0.0,
+        "sys_s": 0.05
+      },
+      {
+        "ms": 100.10470901033841,
+        "status": 0,
+        "size": "small",
+        "tool": "after",
+        "load_1m": 21.857421875,
+        "pair": "after/stock",
+        "block": 0,
+        "position": 0,
+        "instructions": 547458702,
+        "user_s": 0.0,
+        "sys_s": 0.05
+      },
+      {
+        "ms": 78.81937501952052,
+        "status": 0,
+        "size": "small",
+        "tool": "stock",
+        "load_1m": 21.857421875,
+        "pair": "after/stock",
+        "block": 0,
+        "position": 1,
+        "instructions": 419364908,
+        "user_s": 0.0,
+        "sys_s": 0.03
+      },
+      {
+        "ms": 70.62708301236853,
+        "status": 0,
+        "size": "small",
+        "tool": "stock",
+        "load_1m": 21.857421875,
+        "pair": "after/stock",
+        "block": 0,
+        "position": 2,
+        "instructions": 421945894,
+        "user_s": 0.0,
+        "sys_s": 0.03
+      },
+      {
+        "ms": 88.86808299575932,
+        "status": 0,
+        "size": "small",
+        "tool": "after",
+        "load_1m": 21.857421875,
+        "pair": "after/stock",
+        "block": 0,
+        "position": 3,
+        "instructions": 540871583,
+        "user_s": 0.0,
+        "sys_s": 0.05
+      },
+      {
+        "ms": 117.39458300871775,
+        "status": 0,
+        "size": "small",
+        "tool": "after",
+        "load_1m": 21.857421875,
+        "pair": "after/stock",
+        "block": 1,
+        "position": 0,
+        "instructions": 542952399,
+        "user_s": 0.0,
+        "sys_s": 0.05
+      },
+      {
+        "ms": 301.50070899981074,
+        "status": 0,
+        "size": "small",
+        "tool": "stock",
+        "load_1m": 21.857421875,
+        "pair": "after/stock",
+        "block": 1,
+        "position": 1,
+        "instructions": 423612736,
+        "user_s": 0.01,
+        "sys_s": 0.06
+      },
+      {
+        "ms": 88.0297500116285,
+        "status": 0,
+        "size": "small",
+        "tool": "stock",
+        "load_1m": 21.857421875,
+        "pair": "after/stock",
+        "block": 1,
+        "position": 2,
+        "instructions": 419410504,
+        "user_s": 0.0,
+        "sys_s": 0.04
+      },
+      {
+        "ms": 104.41720800008625,
+        "status": 0,
+        "size": "small",
+        "tool": "after",
+        "load_1m": 21.857421875,
+        "pair": "after/stock",
+        "block": 1,
+        "position": 3,
+        "instructions": 544377206,
+        "user_s": 0.0,
+        "sys_s": 0.05
+      }
+    ],
+    "fchmod_before": 100,
+    "fchmod_after": 0,
+    "decision": "Not included: no latency improvement in both before/after orders."
+  }
+}
