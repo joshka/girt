@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tempfile::NamedTempFile;
 
 use super::{RetentionError, RetentionPolicy};
-use crate::pack::publish::pair_checked as publish_pair_checked;
+use crate::pack::publish::{Pair, Progress, Step, pair_checked as publish_pair_checked};
 use crate::pack::{
     PackObject, PackWriteError, PackWriteLimits, PackWritten, Packed, ReuseError, write_reusing,
 };
@@ -123,6 +123,30 @@ pub enum BitmapOutcome {
     },
     /// Bitmap work failed after complete pair publication; the typed error carries its cause.
     Failed,
+    /// A partial clone's packs omit promised objects, so no full-DAG bitmap can be established.
+    SkippedPartialClone,
+}
+
+/// How far one leg's publication got, kept when a later step fails.
+#[derive(Debug, Default)]
+pub(super) struct LegProgress {
+    /// The written pack's identity and sizes, once its temporary files are complete.
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only Unix isolated repack reports partial legs")
+    )]
+    pub(super) written: Option<PackWritten>,
+    /// Names the publisher made visible and the name whose sync failed.
+    pub(super) publish: Progress,
+}
+
+/// One pack a repack publishes: its objects and whether it is a promisor pack.
+pub(super) struct Leg<'a> {
+    pub(super) ids: &'a std::collections::BTreeSet<ObjectId>,
+    /// `.promisor` marker contents, published durably before the pack.
+    pub(super) marker: Option<&'a [u8]>,
+    /// The repository is a partial clone, so no bitmap is written.
+    pub(super) partial_clone: bool,
 }
 
 /// Repack failure, retaining complete pair publication when later bitmap work fails.
@@ -253,10 +277,9 @@ impl Repository {
     /// replacing an existing artifact. Failure after pack publication can leave an unindexed pack;
     /// readers ignore it and a retry may reuse it. Cancellation after index publication reports
     /// success. Temporary files are cleaned up on ordinary failure but can survive process death.
-    /// On Unix, the pack directory is synchronized before index publication. Additive
-    /// publication does not promise durability of the index name; retirement synchronizes both
-    /// names before removing old storage. Publication assumes a trusted local filesystem with no
-    /// in-place artifact edits.
+    /// On Unix, the pack directory is synchronized before index publication and again after it,
+    /// so a successful return leaves both names durable. Publication assumes a trusted local
+    /// filesystem with no in-place artifact edits.
     ///
     /// # Add a pack without deleting loose objects
     ///
@@ -354,6 +377,39 @@ impl Repository {
         cancel: &AtomicBool,
         after_write: impl FnOnce(),
     ) -> Result<(RepackPublished, std::collections::BTreeSet<ObjectId>), RepackError> {
+        let leg = Leg {
+            ids: &plan.required,
+            marker: None,
+            partial_clone: false,
+        };
+        self.publish_leg(
+            plan,
+            leg,
+            policy,
+            limits,
+            cancel,
+            after_write,
+            &mut LegProgress::default(),
+            |_| Ok(()),
+        )
+    }
+
+    /// Publishes `leg.ids` as one pack, read through the plan's pinned store.
+    ///
+    /// Objects the plan did not size, such as unreachable promisor-pack objects, are sized from
+    /// their pack entry headers. `step` runs before each publisher step, after the input check.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn publish_leg(
+        &self,
+        plan: &super::RetentionPlan,
+        leg: Leg<'_>,
+        policy: &RetentionPolicy,
+        limits: RepackLimits,
+        cancel: &AtomicBool,
+        after_write: impl FnOnce(),
+        progress: &mut LegProgress,
+        mut step: impl FnMut(Step) -> Result<(), RepackError>,
+    ) -> Result<(RepackPublished, std::collections::BTreeSet<ObjectId>), RepackError> {
         let _headers = crate::pack::HeaderScope::new();
         check(cancel)?;
         let write_bitmaps = configured_bitmaps(self, limits.write_bitmaps)?;
@@ -362,7 +418,7 @@ impl Repository {
             .store
             .as_ref()
             .ok_or_else(|| RepackError::Incomplete(RetentionError::MissingPinnedPlanStore))?;
-        let required = &plan.required;
+        let required = leg.ids;
         let protected = &plan.protected_packs;
         let protected_names: std::collections::BTreeSet<_> = protected
             .iter()
@@ -408,7 +464,16 @@ impl Repository {
                     .find(id)
                     .map_err(|source| RepackError::Read { id, source })?;
                 if let Some(position) = found {
-                    charge_input(plan.object_info[&id].size, &mut bytes, limits.write)?;
+                    let size = match plan.object_info.get(&id) {
+                        Some(info) => info.size,
+                        None => {
+                            source
+                                .locate(position, policy.read, cancel)
+                                .map_err(|source| RepackError::Read { id, source })?
+                                .1
+                        }
+                    };
+                    charge_input(size, &mut bytes, limits.write)?;
                     packed.push(Packed { id, pack, position });
                     continue 'required;
                 }
@@ -467,15 +532,20 @@ impl Repository {
         index.as_file().sync_all()?;
         after_write();
         let basename = directory.join(format!("pack-{}", written.checksum));
+        progress.written = Some(written);
         publish_pair_checked(
-            pack,
-            index,
-            &basename,
+            Pair {
+                pack,
+                index,
+                basename: &basename,
+                marker: leg.marker,
+            },
             cancel,
-            || {},
-            || {
+            &mut progress.publish,
+            |next| {
                 plan.check_packs_unchanged(cancel)
-                    .map_err(RepackError::from)
+                    .map_err(RepackError::from)?;
+                step(next)
             },
         )?;
         let mut published = RepackPublished {
@@ -483,7 +553,9 @@ impl Repository {
             bitmap: BitmapOutcome::Disabled,
         };
         if write_bitmaps {
-            published.bitmap = if !self.shallow_roots().is_empty() {
+            published.bitmap = if leg.partial_clone {
+                BitmapOutcome::SkippedPartialClone
+            } else if !self.shallow_roots().is_empty() {
                 BitmapOutcome::SkippedShallow
             } else if !held.is_empty() {
                 BitmapOutcome::SkippedProtected
@@ -572,7 +644,25 @@ fn publish_pair(
     cancel: &AtomicBool,
     after_pack: impl FnOnce(),
 ) -> Result<(), RepackError> {
-    publish_pair_checked(pack, index, basename, cancel, after_pack, || Ok(()))
+    let mut after_pack = Some(after_pack);
+    publish_pair_checked(
+        Pair {
+            pack,
+            index,
+            basename,
+            marker: None,
+        },
+        cancel,
+        &mut Progress::default(),
+        |step| {
+            if step == Step::Index
+                && let Some(after_pack) = after_pack.take()
+            {
+                after_pack();
+            }
+            Ok(())
+        },
+    )
 }
 
 fn check(cancel: &AtomicBool) -> Result<(), RepackError> {
