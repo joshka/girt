@@ -152,7 +152,9 @@ pub use imported::{
 };
 pub use lock_wait::{FilesTransactionOptions, LockWait};
 pub use name::{InvalidRefName, RefName};
-pub use pack::{PackRefsError, PackRefsOptions, PackRefsReport, PackScope, PackTrigger};
+pub use pack::{
+    PackRefsError, PackRefsLimits, PackRefsOptions, PackRefsReport, PackScope, PackTrigger,
+};
 pub use reflog::{Reflog, ReflogEntry, ReflogRecord};
 pub use store::{
     Backend, Expected, ReferenceError, ReferenceObservation, References, Resolution, Target,

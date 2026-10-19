@@ -145,3 +145,61 @@ fn packed_values_and_peels_match_git(#[case] format: ObjectFormat) {
     );
     oracle::git(root.path(), &["fsck", "--strict"], b"");
 }
+
+#[test]
+fn existing_packed_records_consume_the_reference_budget() {
+    let (root, repo) = fixture(ObjectFormat::Sha1);
+    oracle::git(root.path(), &["pack-refs", "--all"], b"");
+    let before = fs::read(root.path().join("packed-refs")).unwrap();
+    let mut limits = PackRefsLimits::default();
+    limits.max_refs = 1;
+    let result = repo.references().unwrap().pack_controlled(
+        &repo.objects_with(PackLimits::default()).unwrap(),
+        PackRefsOptions::ALL,
+        limits,
+        &AtomicBool::new(false),
+    );
+    assert!(matches!(
+        result,
+        Err(PackRefsError::Limit {
+            resource: "references",
+            ..
+        })
+    ));
+    assert_eq!(fs::read(root.path().join("packed-refs")).unwrap(), before);
+    oracle::git(root.path(), &["fsck", "--strict"], b"");
+}
+
+#[test]
+fn locked_prune_rechecks_consume_the_same_input_budget() {
+    let (root, repo) = fixture(ObjectFormat::Sha1);
+    let initial_bytes = fs::read(root.path().join("refs/heads/main")).unwrap().len()
+        + fs::read(root.path().join("refs/tags/annotated"))
+            .unwrap()
+            .len();
+    let mut limits = PackRefsLimits::default();
+    limits.max_input_bytes = initial_bytes;
+    let result = repo.references().unwrap().pack_controlled(
+        &repo.objects_with(PackLimits::default()).unwrap(),
+        PackRefsOptions::ALL,
+        limits,
+        &AtomicBool::new(false),
+    );
+    if cfg!(unix) {
+        let Err(PackRefsError::Limit {
+            resource: "input bytes",
+            report,
+        }) = result
+        else {
+            panic!("expected prune budget: {result:?}");
+        };
+        assert!(report.rewritten);
+        assert_eq!(report.pruned, 0);
+        assert_eq!(report.retained.len(), 2);
+    } else {
+        assert_eq!(result.unwrap().retained.len(), 2);
+    }
+    oracle::git(root.path(), &["fsck", "--strict"], b"");
+    assert!(root.path().join("refs/heads/main").exists());
+    assert!(root.path().join("refs/tags/annotated").exists());
+}

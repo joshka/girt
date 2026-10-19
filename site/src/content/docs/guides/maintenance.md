@@ -414,6 +414,21 @@ These unreleased policy APIs are tracked in
 [Newer default tasks and scheduling](https://github.com/joshka/girt/issues/871) remain follow-up
 work.
 
+## Bound reference packing
+
+Use `References::pack_controlled` for caller-controlled maintenance. `PackRefsLimits` bounds
+directory entries, considered references, aggregate reference-file input, encoded output and each
+verified tag peel. Cancellation is checked at phase boundaries and once per batch of at most 64
+entries or records. A bounded read, peel, parse, encode or durable publication can finish before the
+next check.
+
+The operation keeps the existing packed-refs lock and per-reference current-value checks. It makes
+the replacement durable before pruning loose copies. Cancellation or a limit reached during pruning
+returns a typed partial report, including the unprocessed loose names retained. Non-Unix hosts keep
+all loose copies. The existing `References::pack` behavior is unchanged. This primitive does not
+start an automatic task or enable background work; runner integration remains
+[tracked separately](https://github.com/joshka/girt/issues/531).
+
 ## API reference
 
 - [Retention policy, outcomes, reports and errors](https://docs.rs/girt/latest/girt/retention/)
