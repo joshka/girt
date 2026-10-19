@@ -91,7 +91,7 @@ match. `git format-patch` turns commits into mail-ready patch files, and `git am
 and recreates the commits with their authors and messages. Patch-based review, moving changes
 between repositories, and tools that edit code by generating diffs all depend on applying them.
 
-<GirtStatus status="supported" href="https://github.com/joshka/girt/issues/506">Unreleased: bounded text/binary patches, reverse, tree/index/guarded working-file application, diffstat, format-patch series/cover letters, mailbox/mailinfo and am commit/sequencer recovery. Publication and repository mutations stay explicit. Further matching, platform and mail-policy extensions are tracked in the issue.</GirtStatus>
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/apply/index.html">Bounded text/binary patches, reverse, tree/index/guarded working-file application, diffstat, format-patch series/cover letters, mailbox/mailinfo and am commit/sequencer recovery. Publication and repository mutations stay explicit. Further matching, platform and mail-policy extensions are tracked in the issue.</GirtStatus>
 
 ## Submodules
 
@@ -108,7 +108,7 @@ commit ID from the other repository, and `.gitmodules` says where to fetch it:
 `git submodule update --init` clones the submodule and checks out the recorded commit. Status
 reports whether a submodule's checkout matches the recorded commit.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/507">Read and lexically validate `.gitmodules` from explicit worktree/index/commit sources and resolve relative URLs with `girt::submodule`. Inspect gitlink registration, HEAD and nested dirtiness with ignore precedence; configured parent status includes visible changes. Plan and publish initialization config, and apply filtered recorded-commit checkout updates to populated children. Initial clone retains gitlinks and creates empty child directories. Explicitly clone missing children into absorbed modules storage or fetch absent commits before checkout. Opt into bounded recursive population after clone. Other update methods and general checkout/switch gitlink transitions remain incomplete.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/submodule/index.html">Read and lexically validate `.gitmodules` from explicit worktree/index/commit sources and resolve relative URLs with `girt::submodule`. Inspect gitlink registration, HEAD and nested dirtiness with ignore precedence; configured parent status includes visible changes. Plan and publish initialization config, and apply filtered recorded-commit checkout updates to populated children. Initial clone retains gitlinks and creates empty child directories. Explicitly clone missing children into absorbed modules storage or fetch absent commits before checkout. Opt into bounded recursive population after clone. Other update methods and general checkout/switch gitlink transitions remain incomplete.</GirtStatus>
 
 ## Notes
 
@@ -117,7 +117,7 @@ ordinary commit history under `refs/notes/commits`, whose trees map commit IDs t
 into fanout directories (`ab/cdef…`) once there are many. Review sign-offs, CI results and links to
 review pages are stored this way.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/508">Read arbitrary fanout; compose and store flat notes histories. Fanout writes, merges and automatic rewrite propagation remain.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/notes/index.html">Read arbitrary fanout; compose and store flat notes histories. Fanout writes, merges and automatic rewrite propagation remain.</GirtStatus>
 
 ## Mailmap
 
@@ -130,7 +130,7 @@ Jane Doe <jane@example.com> <jdoe@old-employer.example>
 
 `git log`, `git blame` and `git shortlog` use it, so one person doesn't appear as several.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/509">Identity mapping and configured sources; home-prefixed paths require caller expansion.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/mailmap/index.html">Identity mapping and configured sources; home-prefixed paths require caller expansion.</GirtStatus>
 
 ## Signatures
 
@@ -140,14 +140,14 @@ commit or appended to the tag message. Signing calls `gpg`, or `ssh-keygen -Y si
 against trusted keys: the GPG keyring, or for SSH the allowed signers file in
 `gpg.ssh.allowedSignersFile`. Forges and security-conscious tools need verification.
 
-<GirtStatus status="supported" href="https://github.com/joshka/girt/issues/510">Signing and verifying commits and tags with gpg, gpgsm and ssh-keygen, configured as Git configures them.</GirtStatus>
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/signing/index.html">Signing and verifying commits and tags with gpg, gpgsm and ssh-keygen, configured as Git configures them.</GirtStatus>
 
 ## Describe
 
 `git describe` names a commit by the nearest earlier tag: `v1.2.0-14-gabc1234` means 14 commits
 after `v1.2.0`, at commit `abc1234`. Build tools use it for version strings.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/511">`Repository::describe` with tag kinds, patterns, candidates and first-parent; counts are exact where Git estimates. `girt history describe --dirty` marks local changes; no `--contains` yet.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/describe/index.html">`Repository::describe` with tag kinds, patterns, candidates and first-parent; counts are exact where Git estimates. `girt history describe --dirty` marks local changes; no `--contains` yet.</GirtStatus>
 
 ## Pathspecs
 
@@ -175,7 +175,7 @@ lines. **Trailers** are the `Key: value` lines at the end of a message, such as 
 `Co-authored-by:`; `git interpret-trailers` parses and adds them. Both are pure text functions that
 commit tools need.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/512">Cleanup and trailers are in `girt::message`; `trailer.<name>.command` is refused.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/message/index.html">Cleanup and trailers are in `girt::message`; `trailer.<name>.command` is refused.</GirtStatus>
 
 ## Ahead/behind counts
 
@@ -185,7 +185,7 @@ from their [merge base](/girt/how-git-works/config-and-revisions/#merge-bases)
 Counted naively, it walks both histories; a
 [commit-graph](/girt/how-git-works/scale-and-serving/#commit-graph) lets the walk stop early.
 
-<GirtStatus status="supported" href="https://github.com/joshka/girt/issues/513">`Objects::ahead_behind` stops early with a commit-graph; without one it reads both full histories.</GirtStatus>
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.ahead_behind">`Objects::ahead_behind` stops early with a commit-graph; without one it reads both full histories.</GirtStatus>
 
 ## Reset modes
 
@@ -195,7 +195,7 @@ Counted naively, it walks both histories; a
 combination of [ref updates](/girt/how-git-works/references/#conditional-ref-transactions), index
 writes and [checkout](/girt/how-git-works/working-tree/#checkout-of-a-tree), done in a safe order.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/514">Soft, mixed, hard, keep and merge resets and path resets in `girt::reset`, with `ORIG_HEAD` and reflog messages as Git writes them; an untracked directory with files in a hard reset's way is refused rather than deleted.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/reset/index.html">Soft, mixed, hard, keep and merge resets and path resets in `girt::reset`, with `ORIG_HEAD` and reflog messages as Git writes them; an untracked directory with files in a hard reset's way is refused rather than deleted.</GirtStatus>
 
 ## Pluggable backends
 
@@ -214,4 +214,4 @@ credentials their own way. Git does this with `remote-<scheme>` helper programs,
 `http.sslCAInfo` and SSH configuration; a library needs callbacks for the same decisions. Enterprise
 networks, custom authentication and tests depend on them.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/516">HTTP proxies, client certificates, `http.extraHeader` and `http.userAgent` are configurable, and a certificate check can accept or reject TLS servers; an application transport can serve a custom URL scheme for listing, fetch, clone and push; SSH host keys follow a typed policy (known_hosts files, reject or accept new) rather than a callback.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/transport/index.html">HTTP proxies, client certificates, `http.extraHeader` and `http.userAgent` are configurable, and a certificate check can accept or reject TLS servers; an application transport can serve a custom URL scheme for listing, fetch, clone and push; SSH host keys follow a typed policy (known_hosts files, reject or accept new) rather than a callback.</GirtStatus>
