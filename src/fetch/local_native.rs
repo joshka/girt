@@ -1,9 +1,12 @@
 //! Native local advertisement and reachable-pack construction.
 
+mod advertisement;
 use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
+
+pub use advertisement::{LocalAdvertisementLimits, LocalAdvertisementOptions};
 
 use super::{
     AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, LocalFetchProgress,

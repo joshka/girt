@@ -292,6 +292,7 @@ pub use install::{FetchInstalled, ReceivedFetch};
 pub use known::KnownHistory;
 pub use local::receive_local;
 mod local_request;
+pub use local_native::{LocalAdvertisementLimits, LocalAdvertisementOptions};
 pub use local_request::{LocalFetchObserver, LocalFetchRequest};
 pub(crate) use progress::ValidationObserver;
 pub use protocol::{
@@ -901,6 +902,12 @@ pub enum FetchError {
     /// never overwrites or removes these files; inspect them before deciding what to keep.
     #[error("existing pack artifact differs: {0}")]
     Existing(std::path::PathBuf),
+    /// Controlled source advertisement refused linked worktree admission.
+    #[error("linked worktrees are not admitted for controlled local advertisement")]
+    LinkedWorktrees,
+    /// Controlled source reference inventory or symbolic resolution failed.
+    #[error("local source references")]
+    LocalReferences(#[source] Box<crate::refs::ReferenceError>),
 }
 
 use crate::ObjectId;

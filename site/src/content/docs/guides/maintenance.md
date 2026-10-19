@@ -555,6 +555,19 @@ results later collapse. Existing `Refspecs` mapping methods retain their trusted
 This controls pure mapping only. Advertisement acquisition and the full prefetch composition remain
 separate work tracked in [#531](https://github.com/joshka/girt/issues/531).
 
+## Bound local advertisement
+
+`fetch::LocalAdvertisementOptions::default().with_limits(limits).advertise(path, &cancel)` opens a
+local source under explicit `LocalAdvertisementLimits`. It bounds source opening, object snapshots,
+reference inventory, HEAD resolution, each verified tag peel and advertisement output. Symbolic
+references resolve against the captured inventory without per-reference filesystem rereads. Linked
+sources or registrations return `FetchError::LinkedWorktrees`; no partial advertisement escapes.
+
+Defaults admit Linux-sized ref/tag inventories and 512 MiB of pack indexes. The limits apply per
+phase and per tag peel, not as one aggregate payload budget. This primitive reads a local source;
+transfer and full prefetch composition remain tracked in
+[#531](https://github.com/joshka/girt/issues/531).
+
 ## API reference
 
 - [Retention policy, outcomes, reports and errors](https://docs.rs/girt/latest/girt/retention/)
