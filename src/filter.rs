@@ -579,6 +579,10 @@ impl Pipeline {
 
     /// The `.gitattributes` blobs a partial clone lacks that converting `paths` would read; see
     /// [`Lookup::missing_blobs`].
+    ///
+    /// Only the descriptor-relative checkout in `checkout::worktree` reads them, so this is gated
+    /// the same way.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn missing_attribute_blobs<'p>(
         &mut self,
         paths: impl IntoIterator<Item = &'p [u8]>,
