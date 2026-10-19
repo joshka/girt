@@ -98,8 +98,8 @@ and serving (`blob:none`, `blob:limit`, `tree:<depth>`, `object:type`, `combine:
 packs and Git's promisor configuration, and explicit batched fetches of missing objects. Library
 reads never fetch: checkout, diff, blame and merges report every missing blob they need, and the
 CLI's checkout, diff, blame and object commands fetch them on demand. fsck and object walks allow
-promised objects. gc refuses partial clones unless the caller opts in to promisor-aware planning.
-Promisor-aware repacking, `repack --filter` and `sparse:oid` remain.</GirtStatus>
+promised objects. gc refuses partial clones; callers can opt in to promisor-aware planning and to a
+repack that keeps promisor and ordinary packs apart. `repack --filter` and `sparse:oid` remain.</GirtStatus>
 
 ## Bundles
 
