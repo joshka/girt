@@ -9024,40 +9024,40 @@
     "variant": "large",
     "girt_samples": 3,
     "girt_attempts": 3,
-    "girt_ms": 10885.661416999938,
-    "girt_rss_mb": 601.515625,
+    "girt_ms": 15112.955457996577,
+    "girt_rss_mb": 608.640625,
     "stock_samples": 3,
     "stock_attempts": 3,
-    "stock_ms": 8124.045374999696,
-    "stock_rss_mb": 971.421875,
+    "stock_ms": 11225.247875001514,
+    "stock_rss_mb": 987.953125,
     "git_samples": 3,
     "git_attempts": 3,
-    "git_ms": 6406.8694159941515,
-    "git_rss_mb": 1181.25,
-    "ratio_vs_stock": 1.3399311444638928,
+    "git_ms": 9928.086791012902,
+    "git_rss_mb": 1180.53125,
+    "ratio_vs_stock": 1.3463360120227668,
     "sample_policy": "adaptive",
-    "stock_vs_git_ratio": 1.268021064190691,
+    "stock_vs_git_ratio": 1.1306556954319567,
     "jj_level_gap": false,
-    "notes": "full output consumed to /dev/null; girt n=3 range=10863.652..11252.054ms; stock n=3 range=8122.122..9383.501ms; git n=3 range=6372.859..6716.314ms",
+    "notes": "full output consumed to /dev/null; girt n=3 range=13682.288..15400.948ms; stock n=3 range=10640.170..12724.782ms; git n=3 range=9898.302..17656.186ms",
     "harness_op": "log-large",
     "status": "ok",
     "sample_ranges_ms": {
       "girt": [
-        10863.651750005374,
-        11252.054000004136
+        13682.28816599003,
+        15400.948499998776
       ],
       "stock": [
-        8122.121833002893,
-        9383.501249998517
+        10640.170083992416,
+        12724.782124976628
       ],
       "git": [
-        6372.8592909974395,
-        6716.314165998483
+        9898.30199998687,
+        17656.18595900014
       ]
     },
     "binary_fingerprints": {
       "girt": [
-        "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+        "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
       ],
       "stock": [
         "7837af89eb9233d7273605f52722549fece6ba87b01426fde6c43ed4bb7414d1"
@@ -9072,23 +9072,23 @@
     "profiles": [
       {
         "tool": "girt",
-        "path": "/Users/joshka/tmp/girt-bench/matrix-0.11.1/jj-matrix-profiles/linux-v6.1-log-large.json.gz",
-        "binary_sha256": "dd20e6d95d0db5bf7b9e363503f008a14471612f556ab7876d1262400c102c16"
+        "path": "/Users/joshka/tmp/girt-bench/matrix-0.17.0/jj-matrix-profiles/linux-v6.1-log-large.json.gz",
+        "binary_sha256": "d15e82f55c38a296c1ca641745d5dd951871f4c12ddbe50f4ab054879856365d"
       }
     ],
     "run_epochs": [
-      "2026-10-17T07:34:49-0700"
+      "2026-10-18T13:43:52-0700"
     ],
-    "girt_version": "0.11.1",
-    "girt_commit": "69e3985c68e488a5975f1ad634873106ec2db18a",
-    "jj_adapter_commit": "88ed7e9e286cffeedacf910930792c9b8ef5a990",
-    "measured_on": "2026-10-17",
+    "girt_version": "0.17.0",
+    "girt_commit": "472d99b329ee0811971dc50474b6fc6d5cb0e315",
+    "jj_adapter_commit": "3d19cf69f53b040f8c3b637a83b5f7035d376f30",
+    "measured_on": "2026-10-18",
     "load_1m_range": [
-      17.4,
-      20.7
+      19.1,
+      30.7
     ],
     "issues": [
-      222
+      880
     ]
   },
   {
