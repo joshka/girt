@@ -477,3 +477,11 @@ and source bytes; skipping payload work never skips complete input-claim verific
 `maintenance_incremental_repack` checks explicit phase composition, surviving-pack batch targets,
 future-pack preservation, automatic thresholds, phase reports and limits. Unix executes the task;
 Windows asserts refusal before isolation or effects. Both object formats round-trip through Git.
+
+### Controlled Refspec Mapping
+
+`refspec_mapping_control` runs in Windows interoperability CI. It checks trusted-result equivalence
+in both object formats, input/output and comparison budgets, exact byte boundaries, peeled hints,
+missing reports, duplicate attempts, collisions and cancellation before validation. Unit tests cover
+batch cancellation and work charged for skipped exclusion entries. These pure tests perform no Git
+commands or repository writes.

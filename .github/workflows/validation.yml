@@ -280,6 +280,7 @@ jobs:
           --test loose_pack_names
           --test pack_loose
           --test incremental_repack_write
+          --test refspec_mapping_control
           --test fetch_finish_control
           --test prune_packed_open --test repository_open_control
           --test files_transaction_control

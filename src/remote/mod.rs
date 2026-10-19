@@ -260,8 +260,8 @@ pub use credential_store::CredentialStore;
 pub use endpoint::{Destination, EndpointError, Protocol, ProtocolEnvironment, ProtocolOrigin};
 pub use name::{InvalidRemoteName, RemoteNameError, validate_name};
 pub use refspec::{
-    Direction, ForceIntent, Mapping, MappingError, RefSource, Refspec, RefspecError, Refspecs,
-    RefspecsError,
+    Direction, ForceIntent, Mapping, MappingError, MappingLimits, MappingOptions, RefSource,
+    Refspec, RefspecError, Refspecs, RefspecsError,
 };
 pub use url::{ParsedUrl, UrlError};
 pub use user_url::{UserUrlError, UserUrlParseError, UserUrlPathError, canonicalize_user_url};
