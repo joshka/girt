@@ -18,9 +18,9 @@ the operation.
 ## Run selected maintenance tasks
 
 `MaintenanceRun` executes an explicit `TaskSelection` under one caller-provided
-`MaintenanceIsolation` guard and Git's `objects/maintenance.lock`. The first executor supports
-pack-refs and commit-graph. Selecting gc, prefetch, loose-objects or incremental-repack refuses the
-whole batch before locking or changing files. An empty default selection is also refused.
+`MaintenanceIsolation` guard and Git's `objects/maintenance.lock`. The executor supports pack-refs,
+commit-graph and loose-objects. Selecting gc, prefetch or incremental-repack refuses the whole batch
+before locking or changing files. An empty default selection is also refused.
 
 Use `with_limits` to choose finite per-task budgets and `with_auto(true)` to check each task's
 threshold. Explicit selection overrides task enabled flags; `maintenance.auto` only controls
@@ -33,6 +33,19 @@ including `GraphInstallError::index_published`. `failed_task` identifies an atte
 failed; `cleanup_error` preserves a secondary lock-release failure. Primitive cancellation retains
 its typed source and partial report. An automatic pack-refs threshold skip is reported by
 `PackRefsReport::rewritten=false`. Retry from fresh observations under isolation.
+
+The loose-objects task prunes verified packed duplicates before packing new loose objects. It keeps
+newly packed loose copies until a later run. Defaults select at most 50,000 verified prune
+candidates, then at most 50,000 objects and 512 MiB of payload for packing. Each phase has separate
+budgets; `with_prune_packed` and `with_loose_pack` select them. `TaskOutcome::LooseObjects` contains
+named completed-phase reports. If packing fails after pruning, the prune report still records its
+deletions; the failure source retains the failed packing attempt's partial report. Inspect
+`more_candidates` and `more_loose` before scheduling another isolated pass.
+
+Automatic loose-object checks count canonical regular loose files, including indexed duplicates,
+under the loose-packing entry budget. The `maintenance.loose-objects.auto` threshold defaults to
+100, is inclusive, and accepts zero to disable or a negative value to run regardless of count.
+Explicit runs without automatic checks do not consult that setting.
 
 This unreleased executor is tracked in
 [automatic maintenance](https://github.com/joshka/girt/issues/531).
@@ -48,8 +61,8 @@ input, decoded payloads and output; the report identifies partial publication on
 Every loose copy remains after packing. A later isolated `prune_packed` can remove verified packed
 duplicates. This matches the grace period observed in Git's loose-objects task: new packed copies
 are not pruned in the same run. This standalone primitive does not run the maintenance task or
-install triggers. Follow [automatic maintenance](https://github.com/joshka/girt/issues/531) for the
-remaining task composition.
+install triggers. Select the loose-objects task through `MaintenanceRun` to compose both phases
+under one guard and lock.
 
 ## Choose an operation
 

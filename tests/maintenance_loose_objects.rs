@@ -268,3 +268,25 @@ fn automatic_inventory_limits_refuse_before_pruning() {
     assert_eq!(count(&repo, "count"), 3);
     assert!(!repo.object_dir().join("maintenance.lock").exists());
 }
+
+#[test]
+fn non_directory_fanout_has_a_typed_pre_prune_refusal() {
+    let (_root, repo, _, _) = fixture(ObjectFormat::Sha1);
+    let path = (0..256)
+        .map(|prefix| repo.object_dir().join(format!("{prefix:02x}")))
+        .find(|path| !path.exists())
+        .unwrap();
+    std::fs::write(&path, b"not a directory").unwrap();
+    let failure = MaintenanceRun::new(&repo, selection())
+        .with_auto(true)
+        .run(&mut Isolation::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        failure.source,
+        girt::maintenance::MaintenanceRunError::NonRegularLoose(ref found) if found == &path
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), b"not a directory");
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(count(&repo, "count"), 3);
+    assert!(!repo.object_dir().join("maintenance.lock").exists());
+}
