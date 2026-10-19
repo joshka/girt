@@ -278,6 +278,68 @@ mod tests {
     use super::*;
     const ID: &str = "1111111111111111111111111111111111111111";
 
+    #[test]
+    fn controlled_load_admits_cold_and_cached_snapshots_against_both_limits() {
+        use std::sync::atomic::AtomicBool;
+
+        for format in [crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().canonicalize().unwrap().join("packed-refs");
+            let id = "1".repeat(format.digest_len() * 2);
+            let bytes = format!("# pack-refs with: peeled\n{id} refs/tags/a\n^{id}\n{id} refs/heads/b\n");
+            std::fs::write(&path, &bytes).unwrap();
+            let cancel = AtomicBool::new(false);
+            let cache = PackedCache::default();
+            for warm in [false, true] {
+                if warm {
+                    cache.load(format, &path).unwrap();
+                }
+                assert!(matches!(
+                    cache.load_controlled(format, &path, bytes.len() - 1, 2, &cancel),
+                    Err(ReferenceError::Limit("reference bytes"))
+                ));
+                assert!(matches!(
+                    cache.load_controlled(format, &path, bytes.len(), 1, &cancel),
+                    Err(ReferenceError::Limit("reference entries"))
+                ));
+                let snapshot = cache
+                    .load_controlled(format, &path, bytes.len(), 2, &cancel)
+                    .unwrap();
+                assert_eq!(snapshot.bytes, bytes.as_bytes());
+                assert_eq!(snapshot.len(), 2);
+            }
+            // A refused controlled load must not poison ordinary trusted loading.
+            assert_eq!(cache.load(format, &path).unwrap().len(), 2);
+        }
+    }
+
+    #[test]
+    fn controlled_load_checks_cancellation_before_opening_or_using_a_cached_snapshot() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().canonicalize().unwrap().join("packed-refs");
+        let cache = PackedCache::default();
+        let cancel = AtomicBool::new(true);
+        assert!(matches!(
+            cache.load_controlled(crate::ObjectFormat::Sha1, &path, 100, 1, &cancel),
+            Err(ReferenceError::Cancelled)
+        ));
+        std::fs::write(&path, format!("{ID} refs/heads/a\n")).unwrap();
+        cache.load(crate::ObjectFormat::Sha1, &path).unwrap();
+        assert!(matches!(
+            cache.load_controlled(crate::ObjectFormat::Sha1, &path, 100, 1, &cancel),
+            Err(ReferenceError::Cancelled)
+        ));
+        cancel.store(false, Ordering::Relaxed);
+        assert_eq!(
+            cache.load_controlled(crate::ObjectFormat::Sha1, &path, 100, 1, &cancel)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn cache_reuses_an_unchanged_file_and_rereads_a_replacement() {
