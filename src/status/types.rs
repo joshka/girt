@@ -213,10 +213,12 @@ pub struct Limits {
     pub read: crate::ReadLimits,
     /// HEAD commit payload bytes (default 256 MiB); index blobs are not read.
     pub max_object_bytes: usize,
-    /// Maximum bytes in one working file (default 16 MiB). Symlink targets additionally have a
+    /// Maximum bytes in one working file (default 128 MiB; the largest Linux kernel file is
+    /// 24 MB). Symlink targets additionally have a
     /// fixed one-MiB ceiling; reads use one extra byte to detect truncation.
     pub max_file_bytes: usize,
-    /// Total bytes hashed from working files/links (default 256 MiB). Files whose cached stat
+    /// Total bytes hashed from working files/links (default 8 GiB on 64-bit; a Linux kernel
+    /// working tree is about 1.3 GB). A work bound. Files whose cached stat
     /// data is trusted are not read and cost nothing.
     pub max_worktree_bytes: usize,
     /// Directory entries visited, including unrelated names and metadata (default 1,000,000).
@@ -335,8 +337,8 @@ impl Default for Limits {
             packs: crate::PackLimits::default(),
             read: crate::ReadLimits::default(),
             max_object_bytes: 256 * 1024 * 1024,
-            max_file_bytes: 16 * 1024 * 1024,
-            max_worktree_bytes: 256 * 1024 * 1024,
+            max_file_bytes: 128 * 1024 * 1024,
+            max_worktree_bytes: usize::try_from(8_u64 << 30).unwrap_or(usize::MAX),
             max_directory_entries: 1_000_000,
             max_path_bytes: 64 * 1024 * 1024,
             max_depth: 64,

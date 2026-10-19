@@ -82,6 +82,11 @@ impl VerifiedObjects {
         );
     }
 
+    /// Distinct entry targets named by received trees.
+    pub fn tree_targets(&self) -> usize {
+        self.trees.kinds.len()
+    }
+
     /// Received objects, their payload bytes and their typed edges, for walk budgets.
     pub fn totals(&self) -> (usize, usize, usize) {
         let bytes = self.objects.values().map(|object| object.bytes).sum();

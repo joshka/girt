@@ -68,11 +68,15 @@ pub struct Limits {
     pub packs: crate::PackLimits,
     /// Per-object decode bounds, also capped by remaining payload and file budgets.
     pub read: crate::ReadLimits,
-    /// Retained unique baseline/target blob payload bytes (default 256 MiB).
+    /// Retained unique baseline/target blob payload bytes (default 4 GiB on 64-bit).
+    ///
+    /// This is retained memory. A Linux kernel checkout holds about 1.3 GB of blobs.
     pub max_object_bytes: usize,
-    /// Bytes in one blob/working file (default 16 MiB); links have a 1024-byte ceiling.
+    /// Bytes in one blob/working file (default 128 MiB; the largest Linux kernel file is 24 MB);
+    /// links have a 1024-byte ceiling.
     pub max_file_bytes: usize,
-    /// Total bytes per full baseline/target verification pass (default 256 MiB). Each removal
+    /// Total bytes per full baseline/target verification pass (default 8 GiB on 64-bit; a Linux
+    /// kernel working tree is about 1.3 GB). Each removal
     /// recheck independently uses the same ceiling.
     pub max_worktree_bytes: usize,
     /// Entries per directory enumeration (default 1,000,000); includes unrelated names.
@@ -163,9 +167,9 @@ impl Default for Limits {
             trees: crate::TreeCompareLimits::default(),
             packs: crate::PackLimits::default(),
             read: crate::ReadLimits::default(),
-            max_object_bytes: 256 * 1024 * 1024,
-            max_file_bytes: 16 * 1024 * 1024,
-            max_worktree_bytes: 256 * 1024 * 1024,
+            max_object_bytes: usize::try_from(4_u64 << 30).unwrap_or(usize::MAX),
+            max_file_bytes: 128 * 1024 * 1024,
+            max_worktree_bytes: usize::try_from(8_u64 << 30).unwrap_or(usize::MAX),
             max_directory_entries: 1_000_000,
             max_path_bytes: 64 * 1024 * 1024,
             max_depth: 64,

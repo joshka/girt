@@ -16,7 +16,8 @@ pub use loose::LooseObjectsReport;
 /// Per-task bounds for an explicit maintenance batch.
 ///
 /// Defaults permit 100,000 reference inventory entries and 16 MiB of reference input,
-/// two million commits and eight million parent edges, and 512 MiB of pack indexes.
+/// five million commits and 20 million parent edges (the Linux kernel has 1.1 million commits),
+/// and [`PackLimits::default`] pack indexes.
 /// Each task gets its own budget; graph loading/publication also uses the graph primitive's
 /// fixed default bounds. Reference-backend metadata uses the repository opener's limits.
 /// Loose-object defaults prune a verified prefix of at most 50,000 duplicates, then pack at most
@@ -51,7 +52,7 @@ pub struct MaintenanceLimits {
 
 impl Default for MaintenanceLimits {
     fn default() -> Self {
-        let packs = PackLimits::default().with_max_index_bytes(512 * 1024 * 1024);
+        let packs = PackLimits::default();
         let mut prune_packed =
             PrunePackedLimits::default().with_selection(PrunePackedSelection::Prefix {
                 max_objects: 50_000,
@@ -62,8 +63,8 @@ impl Default for MaintenanceLimits {
             alternates: AlternateLimits::default(),
             pack_refs: PackRefsLimits::default(),
             history: HistoryLimits::default()
-                .with_max_commits(2_000_000)
-                .with_max_parents(8_000_000),
+                .with_max_commits(5_000_000)
+                .with_max_parents(20_000_000),
             reference_entries: 100_000,
             reference_bytes: 16 * 1024 * 1024,
             peel: PeelLimits::default(),

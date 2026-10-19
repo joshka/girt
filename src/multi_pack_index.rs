@@ -72,20 +72,21 @@ pub struct MultiPackIndex<'a> {
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Limits {
-    /// Maximum file size, including the checksum (default 64 MiB).
+    /// Maximum file size, including the checksum (default 2 GiB on 64-bit, enough for about 40
+    /// million objects).
     pub max_bytes: usize,
     /// Maximum number of named packs (default 4096).
     pub max_packs: usize,
-    /// Maximum number of indexed objects (default 5 million).
+    /// Maximum number of indexed objects (default 40 million, about four times the Linux kernel).
     pub max_objects: usize,
 }
 
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            max_bytes: 64 * 1024 * 1024,
+            max_bytes: usize::try_from(2_u64 << 30).unwrap_or(usize::MAX),
             max_packs: 4096,
-            max_objects: 5_000_000,
+            max_objects: 40_000_000,
         }
     }
 }

@@ -446,7 +446,9 @@ impl FetchOptions {
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct FetchLimits {
-    /// Total received pkt-line bytes, framing included (default 512 MiB).
+    /// Total received pkt-line bytes, framing included (default 16 GiB on 64-bit).
+    ///
+    /// Bounds the spooled response file. A full Linux kernel clone receives about 4.4 GB.
     pub max_wire_bytes: usize,
     /// Advertisement bytes including framing (default 4 MiB).
     pub max_advertisement_bytes: usize,
@@ -460,46 +462,65 @@ pub struct FetchLimits {
     pub max_haves: usize,
     /// Shallow boundary IDs retained and sent in one negotiation (default 100,000).
     pub max_shallow_roots: usize,
-    /// Objects retained while verifying local history (default one million).
+    /// Objects retained while verifying local history (default 40 million).
+    ///
+    /// Bounds verification metadata; the Linux kernel has about 9.1 million objects.
     pub max_known_objects: usize,
-    /// Aggregate local payload bytes retained (default 256 MiB).
+    /// Aggregate local payload bytes read while verifying history (default 256 MiB).
+    ///
+    /// [`KnownHistory::new`] retains the payloads it reads, so this bounds memory there. Finish
+    /// verification reads every new object without retaining it, so
+    /// [`FetchUpdateLimits::default`] raises its own copy to 512 GiB.
     pub max_known_bytes: usize,
-    /// Local history edge occurrences (default 4 million).
+    /// Local history edge occurrences (default 2 billion).
+    ///
+    /// A work bound; a full Linux kernel history has roughly 460 million tree and commit edges.
+    /// Received trees' distinct targets are separately capped during import at `max_objects`
+    /// plus `max_known_objects`.
     pub max_known_edges: usize,
     /// Per-read decoding limits for local verification and installation rechecks.
     /// Total decoding work is bounded by this budget times `max_known_objects`.
     pub known_read: crate::ReadLimits,
-    /// Received pack bytes, including header and trailer (default 256 MiB).
+    /// Received pack bytes, including header and trailer (default 16 GiB on 64-bit).
+    ///
+    /// Bounds the spooled pack file. A full Linux kernel pack is about 4.4 GB.
     pub max_pack_bytes: usize,
-    /// Objects in the pack (default one million). Native selection also bounds distinct examined
-    /// source IDs, including known boundaries; their descendants are skipped.
+    /// Objects in the pack (default 40 million, about four times the Linux kernel). Native
+    /// selection also bounds distinct examined source IDs, including known boundaries; their
+    /// descendants are skipped.
     pub max_objects: usize,
-    /// Bytes in each decoded object (default 64 MiB).
+    /// Bytes in each decoded object (default 128 MiB). The largest Linux kernel blob is 24 MB.
     pub max_object_bytes: usize,
-    /// Bytes in each inflated delta program (default 64 MiB).
+    /// Bytes in each inflated delta program (default 128 MiB).
     pub max_delta_bytes: usize,
     /// Aggregate inflated programs, ordinary payloads, delta results and appended external bases
-    /// (default 512 MiB). Includes repeated decoding after cache eviction and connectivity reads.
-    /// Native source selection and writing each apply a separate allowance of this size to the
-    /// sum of selected logical payload lengths, including copied entries. Known boundaries are
-    /// excluded; avoiding blob inflation does not exempt their declared result sizes.
+    /// (default 512 GiB on 64-bit). This is a CPU-work bound: buffers are released as reads
+    /// finish. A full clone inflates every object, about 8.3 GB for git.git and 118 GB for the
+    /// Linux kernel, plus repeats after cache eviction. Includes repeated decoding after cache
+    /// eviction and connectivity reads. Native source selection and writing each apply a
+    /// separate allowance of this size to the sum of selected logical payload lengths,
+    /// including copied entries. Known boundaries are excluded; avoiding blob inflation does
+    /// not exempt their declared result sizes.
     pub max_decode_bytes: usize,
     /// Delta edges from any object to an ordinary base (default 64).
     pub max_delta_depth: usize,
-    /// Entry/edge visits and external-base probes during queued base resolution (default 10
-    /// million).
+    /// Entry/edge visits and external-base probes during queued base resolution (default 2
+    /// billion). A work bound; a full Linux kernel pack has about 9.1 million entries.
     pub max_resolution_steps: usize,
-    /// Reachable edge occurrences, including duplicates (default 4 million).
+    /// Reachable edge occurrences, including duplicates (default 2 billion).
+    ///
+    /// Graph metadata grows with this count, but each edge needs at least one tree entry or
+    /// commit header in decoded input, so `max_decode_bytes` bounds it in practice. A full Linux
+    /// kernel clone has roughly 460 million edges.
     pub max_connectivity_edges: usize,
     /// Worker threads one transfer may add for reading and validation (default 8). Zero or one
     /// runs everything on the calling thread. Fewer are used when the host has fewer.
     pub max_threads: usize,
     /// Bounds for opening a native local source repository's object store (default
-    /// [`PackLimits::default`](crate::PackLimits::default), which admits 64 MiB of pack index).
-    ///
-    /// Git-scale sources exceed the default: a Linux kernel clone has a 300 MB index. Use
-    /// [`PackLimits::trusted`](crate::PackLimits::trusted), as [`Self::trusted`] does, for
-    /// repositories the caller trusts. Network fetches open no source store and ignore this.
+    /// [`PackLimits::default`](crate::PackLimits::default), which admits 1 GiB of pack index,
+    /// enough for a Linux kernel clone's 300 MB index). [`Self::trusted`] uses
+    /// [`PackLimits::trusted`](crate::PackLimits::trusted). Network fetches open no source store
+    /// and ignore this.
     pub source_packs: crate::PackLimits,
 }
 
@@ -647,25 +668,26 @@ impl FetchLimits {
 
 impl Default for FetchLimits {
     fn default() -> Self {
+        let gib = |n: u64| usize::try_from(n << 30).unwrap_or(usize::MAX);
         Self {
-            max_wire_bytes: 512 * 1024 * 1024,
+            max_wire_bytes: gib(16),
             max_advertisement_bytes: 4 * 1024 * 1024,
             max_refs: 100_000,
             max_wants: 100_000,
             max_haves: 256,
             max_shallow_roots: 100_000,
-            max_known_objects: 1_000_000,
+            max_known_objects: 40_000_000,
             max_known_bytes: 256 * 1024 * 1024,
-            max_known_edges: 4_000_000,
+            max_known_edges: 2_000_000_000,
             known_read: crate::ReadLimits::default(),
-            max_pack_bytes: 256 * 1024 * 1024,
-            max_objects: 1_000_000,
-            max_object_bytes: 64 * 1024 * 1024,
-            max_delta_bytes: 64 * 1024 * 1024,
-            max_decode_bytes: 512 * 1024 * 1024,
+            max_pack_bytes: gib(16),
+            max_objects: 40_000_000,
+            max_object_bytes: 128 * 1024 * 1024,
+            max_delta_bytes: 128 * 1024 * 1024,
+            max_decode_bytes: gib(512),
             max_delta_depth: 64,
-            max_resolution_steps: 10_000_000,
-            max_connectivity_edges: 4_000_000,
+            max_resolution_steps: 2_000_000_000,
+            max_connectivity_edges: 2_000_000_000,
             max_threads: 8,
             source_packs: crate::PackLimits::default(),
         }
@@ -676,8 +698,8 @@ impl FetchLimits {
     /// Returns limits for a transfer the caller trusts as Git trusts the user's own remotes.
     ///
     /// [`crate::workflow::fetch`] uses these limits. Choose them when the user picked the remote,
-    /// or when opening a large local source repository you control: the default
-    /// [`Self::source_packs`] refuses Git-scale repositories.
+    /// or when the repository may be larger than the defaults admit (about four times the Linux
+    /// kernel).
     ///
     /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
     /// that only available memory bounds the work, while keeping headroom for internal arithmetic.

@@ -40,8 +40,11 @@ pub struct FetchUpdateLimits {
     /// Bounds for verifying the installed selected-tip graph through destination lookup.
     /// Uses `max_wants`, `max_known_objects`, `max_known_bytes`, `max_known_edges`, `max_haves`
     /// and `known_read` through [`super::KnownHistory::new`]; other fields do not apply to
-    /// this phase. Byte-bound receive evidence avoids repeated decoding, while preserving these
-    /// counts and per-read bounds. Other destination representations use ordinary checked reads.
+    /// this phase. The default raises `max_known_bytes` to 512 GiB on 64-bit: verifying a full
+    /// clone reads every new object, about 8.3 GB for git.git and 118 GB for the Linux kernel,
+    /// one at a time. Peak memory for a default Linux clone was about 7 GB. Byte-bound receive
+    /// evidence avoids repeated decoding, while preserving these counts and per-read bounds.
+    /// Other destination representations use ordinary checked reads.
     pub verification: FetchLimits,
     /// Commit/edge/per-read bounds for each ancestry decision.
     /// The verified breadth-first walk stops at the old tip. Commits discovered before that match
@@ -86,7 +89,8 @@ impl Default for FetchUpdateLimits {
     fn default() -> Self {
         Self {
             snapshot: PackLimits::default(),
-            verification: FetchLimits::default(),
+            verification: FetchLimits::default()
+                .with_max_known_bytes(usize::try_from(512_u64 << 30).unwrap_or(usize::MAX)),
             history: HistoryLimits::default(),
             max_tag_depth: 32,
         }
