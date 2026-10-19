@@ -7,6 +7,10 @@ use super::MaintenanceIsolation;
 use crate::{ObjectId, PackLimits, ReadLimits, Repository};
 
 /// Work bounds for removing loose copies already held in installed primary packs.
+///
+/// Defaults include [`crate::OpenLimits::default`] for repository admission under isolation.
+/// Exhausting any metadata, configuration, shallow-data or reference-stack budget refuses
+/// the refresh before deletion, preserving the opener's typed error.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct PrunePackedLimits {
@@ -19,6 +23,8 @@ pub struct PrunePackedLimits {
     pub packs: PackLimits,
     /// Per-object payload, compressed-input, decoding and delta-depth bounds.
     pub read: ReadLimits,
+    /// Bounds the fresh repository admission before observing or deleting loose copies.
+    pub open: crate::OpenLimits,
 }
 
 impl Default for PrunePackedLimits {
@@ -28,7 +34,17 @@ impl Default for PrunePackedLimits {
             max_bytes: 1024 * 1024 * 1024,
             packs: PackLimits::default(),
             read: ReadLimits::default(),
+            open: crate::OpenLimits::default(),
         }
+    }
+}
+
+impl PrunePackedLimits {
+    /// Replaces repository-refresh limits, applied under isolation before any deletion.
+    #[must_use]
+    pub fn with_open(mut self, open: crate::OpenLimits) -> Self {
+        self.open = open;
+        self
     }
 }
 
@@ -223,7 +239,9 @@ impl Repository {
         checkpoints: (impl FnOnce(), impl FnMut()),
     ) -> Result<(), PrunePackedCause> {
         let (after_proof, mut after_delete) = checkpoints;
-        let current = Repository::open(self.git_dir())
+        let current = crate::OpenOptions::default()
+            .with_limits(limits.open)
+            .open(self.git_dir(), cancel)
             .map_err(|error| PrunePackedCause::Open(Box::new(error)))?;
         if current.object_dir() != self.object_dir()
             || current.object_format() != self.object_format()
