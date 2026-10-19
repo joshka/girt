@@ -4265,4 +4265,6 @@ sessions remain unsupported.
 formats/ref backends. It checks HEAD identity and symbolic target, staged entries, cleanliness and
 operation retirement. Changed checkpoint/original HEAD, queued continuation, independently born or
 retargeted HEAD, foreign repository and changed metadata preserve source mail. This covers a
-still-unborn destination; abort after earlier commits and queued unborn progression remain refused.
+still-unborn destination. Queued root continuation/unborn skip compare exact next-mail artifacts and
+Git resumption in both formats/ref backends. Missing mail, extraction limits, cancellation and stale
+inputs retain the original progress and checkpoint. Abort after earlier commits remains refused.

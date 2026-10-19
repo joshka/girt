@@ -35,6 +35,17 @@ impl State {
         limits: mailinfo::Limits,
         cancel: &AtomicBool,
     ) -> Result<Recovery, Error> {
+        self.prepare_next_am_inner(repository, action, Some(head), limits, cancel)
+    }
+
+    fn prepare_next_am_inner(
+        &self,
+        repository: &crate::Repository,
+        action: Action,
+        head: Option<ObjectId>,
+        limits: mailinfo::Limits,
+        cancel: &AtomicBool,
+    ) -> Result<Recovery, Error> {
         if repository.git_dir() != self.git_dir || repository.object_format() != self.format {
             return Err(Error::Changed);
         }
@@ -53,7 +64,7 @@ impl State {
             return Err(Error::Unsupported(PathBuf::from("rebase-apply/next")));
         }
         let options = self.am_mailinfo_options(repository)?;
-        let mut plan = self.prepare_inner(action, Some(head), true)?;
+        let mut plan = self.prepare_inner(action, head, true)?;
         let name = PathBuf::from(format!("rebase-apply/{:04}", next + 1));
         let raw = self
             .files
@@ -115,7 +126,11 @@ impl State {
             ("next", format!("{}\n", next + 1).into_bytes()),
             (
                 "abort-safety",
-                format!("{}\n", plan.destination).into_bytes(),
+                if head.is_none() && plan.destination.is_null() {
+                    Vec::new()
+                } else {
+                    format!("{}\n", plan.destination).into_bytes()
+                },
             ),
             ("author-script", script),
             ("final-commit", message),
@@ -193,7 +208,7 @@ impl State {
     }
 }
 
-/// Final-mail recovery on a branch that has no commit yet.
+/// Recovery on a branch that has no commit yet.
 ///
 /// A continuation names a root commit; skip/abort retain an unborn branch. The caller owns
 /// checkout/index restoration, object installation and conditional branch creation. Publish the
@@ -209,8 +224,9 @@ impl State {
     /// Prepares final am recovery while HEAD still names an unborn branch.
     ///
     /// Requires no original HEAD and an exactly empty abort-safety checkpoint. Continue names a
-    /// caller-prepared root commit; skip/abort keep the branch unborn. Queued continuation and
-    /// abort after earlier commits are unsupported. No repository data is changed here.
+    /// caller-prepared root commit; skip/abort keep the branch unborn. Queued continuation uses
+    /// [`Self::prepare_next_unborn_am`]. Abort after earlier commits is unsupported. No repository
+    /// data is changed here.
     ///
     /// # Errors
     ///
@@ -221,6 +237,42 @@ impl State {
         repository: &crate::Repository,
         action: Action,
     ) -> Result<UnbornAmRecovery, Error> {
+        let branch = self.unborn_am_branch(repository, action)?;
+        let recovery = self.prepare_inner(action, None, false)?;
+        Ok(UnbornAmRecovery { recovery, branch })
+    }
+
+    /// Prepares exactly one queued am message while the current branch is still unborn.
+    ///
+    /// Continue names a caller-prepared root commit; skip keeps HEAD unborn. Captures the symbolic
+    /// branch and extracts the next numbered mail with the same policy and bounds as
+    /// [`Self::prepare_next_am`]. All numbered source mail is retained. Publish caller-owned
+    /// checkout/object/reference changes before the returned metadata, then stage the next patch.
+    /// A skipped message retains an empty abort-safety checkpoint; continuation records the root
+    /// commit. Abort uses [`Self::prepare_unborn_am`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for born/foreign/detached state, original HEAD, unsupported
+    /// action/options, absent queued mail, malformed extraction, limits, cancellation or an
+    /// unsafe checkpoint.
+    pub fn prepare_next_unborn_am(
+        &self,
+        repository: &crate::Repository,
+        action: Action,
+        limits: mailinfo::Limits,
+        cancel: &AtomicBool,
+    ) -> Result<UnbornAmRecovery, Error> {
+        let branch = self.unborn_am_branch(repository, action)?;
+        let recovery = self.prepare_next_am_inner(repository, action, None, limits, cancel)?;
+        Ok(UnbornAmRecovery { recovery, branch })
+    }
+
+    fn unborn_am_branch(
+        &self,
+        repository: &crate::Repository,
+        action: Action,
+    ) -> Result<crate::refs::RefName, Error> {
         if repository.git_dir() != self.git_dir || repository.object_format() != self.format {
             return Err(Error::Changed);
         }
@@ -237,8 +289,7 @@ impl State {
         else {
             return Err(Error::Unsupported(PathBuf::from("HEAD")));
         };
-        let recovery = self.prepare_inner(action, None, false)?;
-        Ok(UnbornAmRecovery { recovery, branch })
+        Ok(branch)
     }
 }
 
