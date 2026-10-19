@@ -1,12 +1,17 @@
 //! Explicit composition of bounded maintenance primitives.
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{AutoThreshold, MaintenanceConfig, MaintenanceTask, TaskSelection};
 use crate::commit_graph::{CommitGraph, GraphInstallReport, GraphWriteMode};
+use crate::pack::LoosePackLimits;
 use crate::refs::{PackRefsLimits, PackRefsOptions, PackRefsReport, Target};
-use crate::retention::MaintenanceIsolation;
+use crate::retention::{MaintenanceIsolation, PrunePackedLimits, PrunePackedSelection};
 use crate::{AlternateLimits, HistoryLimits, ObjectKind, PackLimits, PeelLimits, Repository};
+
+mod loose;
+pub use loose::LooseObjectsReport;
 
 /// Per-task bounds for an explicit maintenance batch.
 ///
@@ -14,7 +19,11 @@ use crate::{AlternateLimits, HistoryLimits, ObjectKind, PackLimits, PeelLimits, 
 /// two million commits and eight million parent edges, and 512 MiB of pack indexes.
 /// Each task gets its own budget; graph loading/publication also uses the graph primitive's
 /// fixed default bounds. Reference-backend metadata uses the repository opener's limits.
-/// Cancellation cannot interrupt an individual bounded publication phase.
+/// Loose-object defaults prune a verified prefix of at most 50,000 duplicates, then pack at most
+/// 50,000 objects and 512 MiB of payload, retaining newly packed loose copies. Pruning and packing
+/// have separate budgets. Automatic counting uses the loose-packing directory-entry budget.
+/// This type is `Copy`, so future fields must also be `Copy`. Cancellation cannot interrupt an
+/// individual bounded publication phase.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct MaintenanceLimits {
@@ -34,12 +43,22 @@ pub struct MaintenanceLimits {
     pub peel: PeelLimits,
     /// Maximum bytes read from current shallow metadata before graph admission.
     pub shallow_bytes: usize,
+    /// Verified loose-duplicate pruning bounds, including a fresh repository admission.
+    pub prune_packed: PrunePackedLimits,
+    /// Additive loose packing bounds; its entry budget also bounds automatic loose counting.
+    pub loose_pack: LoosePackLimits,
 }
 
 impl Default for MaintenanceLimits {
     fn default() -> Self {
+        let packs = PackLimits::default().with_max_index_bytes(512 * 1024 * 1024);
+        let mut prune_packed =
+            PrunePackedLimits::default().with_selection(PrunePackedSelection::Prefix {
+                max_objects: 50_000,
+            });
+        prune_packed.packs = packs;
         Self {
-            packs: PackLimits::default().with_max_index_bytes(512 * 1024 * 1024),
+            packs,
             alternates: AlternateLimits::default(),
             pack_refs: PackRefsLimits::default(),
             history: HistoryLimits::default()
@@ -49,6 +68,8 @@ impl Default for MaintenanceLimits {
             reference_bytes: 16 * 1024 * 1024,
             peel: PeelLimits::default(),
             shallow_bytes: 16 * 1024 * 1024,
+            prune_packed,
+            loose_pack: LoosePackLimits::default(),
         }
     }
 }
@@ -109,6 +130,20 @@ impl MaintenanceLimits {
         self.shallow_bytes = value;
         self
     }
+
+    /// Replaces verified duplicate-pruning bounds.
+    #[must_use]
+    pub fn with_prune_packed(mut self, value: PrunePackedLimits) -> Self {
+        self.prune_packed = value;
+        self
+    }
+
+    /// Replaces additive packing and automatic loose-inventory bounds.
+    #[must_use]
+    pub fn with_loose_pack(mut self, value: LoosePackLimits) -> Self {
+        self.loose_pack = value;
+        self
+    }
 }
 
 /// Why a selected task did no work.
@@ -139,6 +174,9 @@ pub enum TaskOutcome {
     PackRefs(PackRefsReport),
     /// A commit graph was published.
     CommitGraph(GraphInstallReport),
+    /// Verified duplicate pruning followed by additive packing, including completed earlier phases
+    /// when a later phase fails. The failure source retains the failed primitive's partial report.
+    LooseObjects(Box<LooseObjectsReport>),
 }
 
 /// One selected task and its result, in execution order.
@@ -202,6 +240,18 @@ pub enum MaintenanceRunError {
     /// A composed primitive failed; inspect its typed source and partial report.
     #[error("maintenance primitive failed")]
     Primitive(#[source] Box<crate::Error>),
+    /// A task's input metadata could not be inspected.
+    #[error("cannot inspect maintenance input {path}")]
+    InputIo {
+        /// Input whose directory or metadata operation failed.
+        path: PathBuf,
+        /// Underlying filesystem diagnostic.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A canonical loose-object name or fanout is not regular storage.
+    #[error("maintenance refuses non-regular loose storage: {0}")]
+    NonRegularLoose(PathBuf),
 }
 
 impl MaintenanceRunError {
@@ -212,7 +262,7 @@ impl MaintenanceRunError {
 
 /// An explicitly selected batch; construction performs no repository I/O.
 ///
-/// Only pack-refs and commit-graph execute currently. Other selected tasks are refused before
+/// Pack-refs, commit-graph and loose-objects execute. Other selected tasks are refused before
 /// acquiring isolation or a lock. This never reads enabled flags, strategy or `maintenance.auto`,
 /// starts background work, or inserts command triggers. The caller supplies a repository/config
 /// snapshot and isolation excluding concurrent changes for the complete batch.
@@ -220,7 +270,7 @@ impl MaintenanceRunError {
 /// ```
 /// use std::sync::atomic::AtomicBool;
 ///
-/// use girt::maintenance::{MaintenanceRun, MaintenanceTask, TaskSelection};
+/// use girt::maintenance::{MaintenanceRun, MaintenanceTask, TaskOutcome, TaskSelection};
 /// use girt::retention::MaintenanceIsolation;
 /// use girt::{InitKind, ObjectFormat, Repository};
 /// struct ExclusiveFixture;
@@ -237,10 +287,22 @@ impl MaintenanceRunError {
 ///     directory.path().join("r"),
 ///     InitKind::Bare,
 /// )?;
-/// let tasks = TaskSelection::explicit(&[MaintenanceTask::PackRefs])?;
-/// let report =
-///     MaintenanceRun::new(&repo, tasks).run(&mut ExclusiveFixture, &AtomicBool::new(false))?;
-/// assert_eq!(report.tasks.len(), 1);
+/// let id = repo.loose_objects().write_blob(b"unreachable payload")?;
+/// let tasks = TaskSelection::explicit(&[MaintenanceTask::LooseObjects])?;
+/// let cancel = AtomicBool::new(false);
+/// let report = MaintenanceRun::new(&repo, tasks.clone()).run(&mut ExclusiveFixture, &cancel)?;
+/// let TaskOutcome::LooseObjects(phases) = &report.tasks[0].outcome else {
+///     return Err("unexpected task outcome".into());
+/// };
+/// assert_eq!(phases.pack.as_ref().unwrap().selected, [id]);
+/// assert_eq!(
+///     repo.loose_objects().read_blob(id, 1024)?,
+///     b"unreachable payload"
+/// );
+///
+/// // A later pass removes the loose duplicate, keeping the verified packed copy.
+/// MaintenanceRun::new(&repo, tasks).run(&mut ExclusiveFixture, &cancel)?;
+/// assert!(repo.objects()?.read(id)?.is_some());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug)]
@@ -281,6 +343,10 @@ impl<'a> MaintenanceRun<'a> {
     /// Graph roots come from references, including jj keep refs, rather than detached HEAD.
     /// Config-disabled graphs and shallow repositories are skipped. Existing object/ref data is
     /// never pruned by the graph task. Reference packing uses its existing controlled primitive.
+    /// Loose-objects prunes verified duplicates before packing; newly packed loose copies survive
+    /// until a later run. Its automatic inclusive threshold counts all canonical regular loose
+    /// files, including indexed duplicates. Failed primitives retain partial reports in the source;
+    /// the task outcome preserves completed earlier phases.
     ///
     /// # Errors
     ///
@@ -312,7 +378,9 @@ impl<'a> MaintenanceRun<'a> {
             for &task in self.selection.tasks() {
                 if !matches!(
                     task,
-                    MaintenanceTask::PackRefs | MaintenanceTask::CommitGraph
+                    MaintenanceTask::PackRefs
+                        | MaintenanceTask::CommitGraph
+                        | MaintenanceTask::LooseObjects
                 ) {
                     return Err(MaintenanceRunError::Unsupported(task));
                 }
@@ -329,7 +397,11 @@ impl<'a> MaintenanceRun<'a> {
                 for task in &mut report.tasks {
                     checkpoint(cancel)?;
                     failed_task = Some(task.task);
-                    task.outcome = self.task(task.task, cancel)?;
+                    if task.task == MaintenanceTask::LooseObjects {
+                        loose::run(&self, &_isolation, &mut task.outcome, cancel)?;
+                    } else {
+                        task.outcome = self.task(task.task, cancel)?;
+                    }
                     failed_task = None;
                 }
                 Ok(())

@@ -65,7 +65,6 @@ fn unsupported_tasks_refuse_before_isolation_or_lock() {
     for task in [
         MaintenanceTask::Gc,
         MaintenanceTask::Prefetch,
-        MaintenanceTask::LooseObjects,
         MaintenanceTask::IncrementalRepack,
     ] {
         let selected = TaskSelection::explicit(&[MaintenanceTask::PackRefs, task]).unwrap();

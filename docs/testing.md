@@ -405,6 +405,12 @@ selection, isolation and lock ownership, bounded graph inventory, partial result
 thresholds, shallow/configuration skips and jj keep refs with a detached HEAD. Git verifies
 generated graphs and object readability in SHA-1 and SHA-256 repositories.
 
+`maintenance_loose_objects` is portable and selected by Windows interoperability CI. It checks Git's
+two-run loose-copy grace period and object counts in both formats, one outer isolation guard,
+duplicate-inclusive automatic thresholds, bounded prefix draining, foreign locks, cancellation,
+inventory limits and completed pruning reports surviving a later packing refusal. Git fsck verifies
+readability after successful and partial operations.
+
 ### Additive Loose Packing
 
 `pack_loose` runs in the Windows interoperability suite. It preserves newly packed loose copies,
