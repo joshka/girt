@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.11](https://github.com/joshka/girt/compare/girt-cli-v0.2.10...girt-cli-v0.2.11) - 2026-10-19
+
+### Other
+
+- Admit Linux-kernel-sized repositories with default limits ([#935](https://github.com/joshka/girt/pull/935))
+- Receive atomic pushes in girt receive-pack ([#864](https://github.com/joshka/girt/pull/864))
+- Update a clean checked-out worktree on push with updateInstead ([#867](https://github.com/joshka/girt/pull/867))
+- Test partial clone interop between Git and girt ([#883](https://github.com/joshka/girt/pull/883))
+- Report and prefetch missing promised blobs in checkout, diff and blame ([#870](https://github.com/joshka/girt/pull/870))
+- Serve partial-clone filters from girt upload-pack ([#853](https://github.com/joshka/girt/pull/853))
+- Clone with object filters and add --filter to clone and fetch ([#856](https://github.com/joshka/girt/pull/856))
+- Receive pushes with girt receive-pack ([#842](https://github.com/joshka/girt/pull/842))
+- Prune loose objects with verified packed copies ([#838](https://github.com/joshka/girt/pull/838))
+- Fetch missing promised objects in one explicit batch ([#848](https://github.com/joshka/girt/pull/848))
+- Serve protocol v0 fetches from girt upload-pack ([#823](https://github.com/joshka/girt/pull/823))
+- Serve shallow clones and fetches from girt upload-pack ([#819](https://github.com/joshka/girt/pull/819))
+- Serve protocol v2 fetches with girt upload-pack ([#814](https://github.com/joshka/girt/pull/814))
+- Add girt rerere and run rerere on the index after conflicts ([#818](https://github.com/joshka/girt/pull/818))
+- Check annotated tag header conventions ([#816](https://github.com/joshka/girt/pull/816))
+- Bisect history with Git's state files and next-commit choice ([#812](https://github.com/joshka/girt/pull/812))
+- Validate fsck identity and date syntax ([#815](https://github.com/joshka/girt/pull/815))
+- Report commit header integrity diagnostics ([#813](https://github.com/joshka/girt/pull/813))
+- Expose fsck reports and dangling object recovery ([#801](https://github.com/joshka/girt/pull/801))
+- Export trees as tar and zip archives as git archive does ([#807](https://github.com/joshka/girt/pull/807))
+- Search file contents as git grep does ([#796](https://github.com/joshka/girt/pull/796))
+- Create, graft and delete replace references ([#772](https://github.com/joshka/girt/pull/772))
+- Read through replace references and grafts with an opt-in view ([#771](https://github.com/joshka/girt/pull/771))
+- Refresh index stat data explicitly, as git update-index --refresh does ([#703](https://github.com/joshka/girt/pull/703))
+
 ## [0.2.10](https://github.com/joshka/girt/compare/girt-cli-v0.2.9...girt-cli-v0.2.10) - 2026-10-18
 
 ### Other

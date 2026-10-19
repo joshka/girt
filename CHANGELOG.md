@@ -7,6 +7,181 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.0](https://github.com/joshka/girt/compare/girt-v0.17.0...girt-v0.18.0) - 2026-10-19
+
+### Breaking
+
+- `fetch::FetchOptions` gains a `filter` field for partial fetches and is no longer `Copy`.
+  ([#843](https://github.com/joshka/girt/pull/843))
+- Config booleans are parsed exactly as Git 2.56 does: leading whitespace before a number (`" 1"`)
+  is accepted, and numbers outside the C `int` range (`2147483648`, `0x80000000`) are rejected
+  instead of read as true. `config::parse_boolean` is now public.
+  ([#848](https://github.com/joshka/girt/pull/848))
+- gc and retention refuse every partial clone (promisor remote, `remote.<name>.partialclonefilter`
+  or `extensions.partialClone`), including Git `--filter` clones they previously processed.
+  ([#846](https://github.com/joshka/girt/pull/846))
+- The shared pack publisher syncs the pack directory again after the index is published, so every
+  pack girt installs (fetch, clone, repack, gc) survives a crash. This costs a few milliseconds per
+  pack, about 57 to 63 ms for `girt maintenance repack` on a small repository.
+  ([#886](https://github.com/joshka/girt/pull/886))
+- Default resource limits (`FetchLimits`, `PackLimits`, object reads, checkout and status,
+  multi-pack index and bitmap reads, maintenance) now admit repositories up to about four times the
+  Linux kernel, and `CloneOptions::default()` clones git.git and Linux. They stay finite; retained
+  known-object memory stays at 256 MiB, a new import cap bounds distinct tree targets, and write,
+  repack and bitmap limits are unchanged. Applications that relied on the old defaults as a policy
+  should set explicit limits. ([#935](https://github.com/joshka/girt/pull/935))
+
+### Changed
+
+- Default repository opening no longer hashes the whole commit-graph file, as Git does; structural
+  checks still run. Corruption that leaves the structure valid is found only by `CommitGraph::open`,
+  `CommitGraph::parse` or `CommitGraph::verify`. `CommitGraph::open_checked` takes a
+  `commit_graph::Checksum` to choose. ([#754](https://github.com/joshka/girt/pull/754))
+- HTTP remotes ignore libcurl-only `http.*` settings (`sslBackend`, `schannel*`, `postBuffer`,
+  `maxRequests`, `minSessions`, `version`) instead of failing.
+  ([#759](https://github.com/joshka/girt/pull/759))
+- `fetch::DownloadedFetch`, `fetch::FetchDownload` and `clone::CloneDownload` are available without
+  the `http` and `ssh` features. ([#750](https://github.com/joshka/girt/pull/750))
+- Local push rejections say `deletion prohibited` and `deny updating a hidden ref`, as Git does.
+  ([#842](https://github.com/joshka/girt/pull/842))
+- Configured status honours `core.checkStat` and `core.trustCtime`.
+  ([#703](https://github.com/joshka/girt/pull/703))
+
+### Added
+
+- Partial clone: `fetch::ObjectFilter` parses and writes filter specs; fetch and clone accept a
+  filter (`with_filter`) and write `.promisor` markers and promisor config; `girt clone` and
+  `girt fetch` accept `--filter` and `--no-filter`.
+  ([#840](https://github.com/joshka/girt/pull/840), [#843](https://github.com/joshka/girt/pull/843),
+  [#856](https://github.com/joshka/girt/pull/856))
+- Partial clone reads: `Repository::is_partial_clone`, `Objects::promised_objects` and
+  `Objects::walk_objects` with `MissingObjects`; fsck accepts missing promised objects.
+  `workflow::fetch_missing`, `fetch_promised` and `fetch_needed` fetch missing objects in one batch.
+  ([#846](https://github.com/joshka/girt/pull/846), [#848](https://github.com/joshka/girt/pull/848))
+- Checkout, patches, rename detection, blame and merges in a partial clone report every missing blob
+  up front. `girt checkout`, `diff`, `blame` and the `object` commands fetch on demand unless
+  `GIT_NO_LAZY_FETCH` is set. ([#848](https://github.com/joshka/girt/pull/848),
+  [#870](https://github.com/joshka/girt/pull/870), [#879](https://github.com/joshka/girt/pull/879))
+- Partial clone maintenance: retention can plan a partial clone with `PartialClonePolicy::Promised`,
+  and `Repository::repack_retained_isolated` repacks one into a promisor pack and an ordinary pack,
+  as `git gc` does. ([#863](https://github.com/joshka/girt/pull/863),
+  [#886](https://github.com/joshka/girt/pull/886))
+- Serving: `serve::UploadPack` and `girt upload-pack` serve protocol v0 and v2 fetches, shallow
+  clones and fetches, `object-info` and partial-clone filters. `serve::ReceivePack` and
+  `girt receive-pack` receive pushes, including atomic pushes, with the repository's receive policy,
+  quarantine and hooks. ([#814](https://github.com/joshka/girt/pull/814),
+  [#819](https://github.com/joshka/girt/pull/819), [#823](https://github.com/joshka/girt/pull/823),
+  [#839](https://github.com/joshka/girt/pull/839), [#853](https://github.com/joshka/girt/pull/853),
+  [#842](https://github.com/joshka/girt/pull/842), [#864](https://github.com/joshka/girt/pull/864))
+- `serve::http` carries upload-pack and receive-pack over smart HTTP for any web server. Pushes into
+  a clean checked-out branch with `receive.denyCurrentBranch=updateInstead` update the working tree
+  (macOS and Linux). ([#869](https://github.com/joshka/girt/pull/869),
+  [#867](https://github.com/joshka/girt/pull/867))
+- Application transports: `girt::transport` lets applications list, fetch, clone and push over their
+  own transport for custom URL schemes, and `workflow::RemoteHelpers` runs approved
+  `git-remote-<name>` helpers that offer `connect`.
+  ([#745](https://github.com/joshka/girt/pull/745), [#750](https://github.com/joshka/girt/pull/750),
+  [#753](https://github.com/joshka/girt/pull/753), [#761](https://github.com/joshka/girt/pull/761))
+- Transport settings: an SSH host-key policy (`HostKeyPolicy`, `SshRemote::with_host_keys`) for
+  pinning `known_hosts` files, and proxy credentials from credential helpers and askpass.
+  ([#757](https://github.com/joshka/girt/pull/757), [#740](https://github.com/joshka/girt/pull/740))
+- Integrity checking: bounded fsck reports with typed connectivity, commit, tag, identity and date
+  findings using Git's message IDs, configurable severity and strict mode, `girt fsck` with
+  lost-found recovery of dangling objects, and received-pack fsck policy for fetch, clone and local
+  receive. ([#790](https://github.com/joshka/girt/pull/790),
+  [#798](https://github.com/joshka/girt/pull/798), [#801](https://github.com/joshka/girt/pull/801),
+  [#811](https://github.com/joshka/girt/pull/811), [#813](https://github.com/joshka/girt/pull/813),
+  [#815](https://github.com/joshka/girt/pull/815), [#816](https://github.com/joshka/girt/pull/816))
+- Bundles: read, create and verify full and incremental Git bundles, and fetch or clone from them.
+  ([#792](https://github.com/joshka/girt/pull/792))
+- `git am` support: split mailboxes, extract single-part and multipart patch mail, recognize
+  scissors lines, read Git's am state, stage patches, prepare commits, and continue, recover or
+  abort sessions, including on unborn branches. ([#776](https://github.com/joshka/girt/pull/776),
+  [#786](https://github.com/joshka/girt/pull/786), [#787](https://github.com/joshka/girt/pull/787),
+  [#793](https://github.com/joshka/girt/pull/793), [#797](https://github.com/joshka/girt/pull/797),
+  [#802](https://github.com/joshka/girt/pull/802), [#806](https://github.com/joshka/girt/pull/806),
+  [#824](https://github.com/joshka/girt/pull/824), [#845](https://github.com/joshka/girt/pull/845),
+  [#851](https://github.com/joshka/girt/pull/851), [#855](https://github.com/joshka/girt/pull/855),
+  [#860](https://github.com/joshka/girt/pull/860), [#862](https://github.com/joshka/girt/pull/862))
+- Patch output: format-patch message framing, patch series and cover letters from stored commits,
+  binary patch payloads, `--numstat` and `--stat` rendering, and guarded patches applied to working
+  files. ([#769](https://github.com/joshka/girt/pull/769),
+  [#774](https://github.com/joshka/girt/pull/774), [#767](https://github.com/joshka/girt/pull/767),
+  [#755](https://github.com/joshka/girt/pull/755), [#762](https://github.com/joshka/girt/pull/762),
+  [#746](https://github.com/joshka/girt/pull/746), [#748](https://github.com/joshka/girt/pull/748))
+- `girt::grep` and `girt grep` search the working tree, index, trees or a directory as `git grep`
+  does. ([#796](https://github.com/joshka/girt/pull/796))
+- `girt::archive` and `girt archive` write tar (byte-identical to `git archive`), tar.gz and zip,
+  with `export-ignore`, `export-subst`, filters and prefixes.
+  ([#807](https://github.com/joshka/girt/pull/807))
+- `girt::bisect` and `girt bisect` use Git's bisect state files and next-commit choice, so girt and
+  Git can continue each other's bisections. ([#812](https://github.com/joshka/girt/pull/812))
+- `girt::rerere` records and replays conflict resolutions in Git's `rr-cache`;
+  `Rerere::run_on_index` and `girt rerere` run it after conflicts.
+  ([#817](https://github.com/joshka/girt/pull/817), [#818](https://github.com/joshka/girt/pull/818))
+- Replace references and grafts: an opt-in `ReplacedObjects` view, `Repository::replace`,
+  `replace_graft` and `delete_replacement`, `girt replace`, and replace-aware CLI `log`, `history`
+  and `object` commands with `--no-replace-objects`.
+  ([#771](https://github.com/joshka/girt/pull/771), [#772](https://github.com/joshka/girt/pull/772))
+- Hooks: `girt::hooks` runs repository hooks only when the caller opts in with `Policy::Run`;
+  commit, switch and push then run their Git hooks.
+  ([#773](https://github.com/joshka/girt/pull/773), [#788](https://github.com/joshka/girt/pull/788))
+- Status caches: `Repository::refresh_index` and `girt index refresh` record fresh stat data as
+  `git update-index --refresh` does; status reuses untracked-cache listings and opt-in
+  filesystem-monitor hooks, with readers for the UNTR and FSMN index extensions.
+  ([#703](https://github.com/joshka/girt/pull/703), [#768](https://github.com/joshka/girt/pull/768),
+  [#770](https://github.com/joshka/girt/pull/770), [#778](https://github.com/joshka/girt/pull/778),
+  [#780](https://github.com/joshka/girt/pull/780))
+- Submodules: initial checkout and clone keep gitlinks, missing submodule repositories can be
+  populated, and clone can populate nested submodules recursively.
+  ([#741](https://github.com/joshka/girt/pull/741), [#737](https://github.com/joshka/girt/pull/737),
+  [#747](https://github.com/joshka/girt/pull/747))
+- Bounded, cancellable opening and fetch: `OpenOptions` with `OpenLimits`, bounded fetch preparation
+  and completion (`FetchFinishOptions`), refspec mapping (`MappingOptions`), local advertisement
+  (`LocalAdvertisementOptions`), files transaction limits, and a fetch option to skip reference
+  packing. ([#898](https://github.com/joshka/girt/pull/898),
+  [#897](https://github.com/joshka/girt/pull/897), [#915](https://github.com/joshka/girt/pull/915),
+  [#928](https://github.com/joshka/girt/pull/928), [#929](https://github.com/joshka/girt/pull/929),
+  [#930](https://github.com/joshka/girt/pull/930), [#919](https://github.com/joshka/girt/pull/919),
+  [#894](https://github.com/joshka/girt/pull/894))
+- Bounded auto-maintenance primitives: Git lock and gc pid coordination, auto-gc thresholds,
+  configured gc expiry, lazy maintenance config, explicit task selection, and `MaintenanceRun` for
+  pack-refs, commit-graph, loose-objects and incremental-repack tasks.
+  ([#831](https://github.com/joshka/girt/pull/831), [#835](https://github.com/joshka/girt/pull/835),
+  [#830](https://github.com/joshka/girt/pull/830), [#833](https://github.com/joshka/girt/pull/833),
+  [#878](https://github.com/joshka/girt/pull/878), [#873](https://github.com/joshka/girt/pull/873),
+  [#906](https://github.com/joshka/girt/pull/906), [#921](https://github.com/joshka/girt/pull/921),
+  [#922](https://github.com/joshka/girt/pull/922))
+- Bounded maintenance building blocks with typed partial reports: reference packing, commit-graph
+  construction, verified loose-copy pruning (`prune_packed`, with prefix selection),
+  `Repository::pack_loose`, multi-pack index expiry and incremental repack batches.
+  ([#890](https://github.com/joshka/girt/pull/890), [#884](https://github.com/joshka/girt/pull/884),
+  [#838](https://github.com/joshka/girt/pull/838), [#909](https://github.com/joshka/girt/pull/909),
+  [#910](https://github.com/joshka/girt/pull/910), [#908](https://github.com/joshka/girt/pull/908),
+  [#841](https://github.com/joshka/girt/pull/841), [#911](https://github.com/joshka/girt/pull/911),
+  [#865](https://github.com/joshka/girt/pull/865), [#885](https://github.com/joshka/girt/pull/885),
+  [#914](https://github.com/joshka/girt/pull/914))
+
+### Performance
+
+- Local full-history fetches and clones select objects through the source's reachability bitmap,
+  making a local `jj git clone` of git.git about 20% faster.
+  ([#810](https://github.com/joshka/girt/pull/810))
+- Bitmap writing reads objects in pack order, indexes edge positions once, reuses verified closures
+  and skips targets already reached. ([#738](https://github.com/joshka/girt/pull/738),
+  [#742](https://github.com/joshka/girt/pull/742), [#749](https://github.com/joshka/girt/pull/749),
+  [#783](https://github.com/joshka/girt/pull/783))
+- Reference updates check namespace conflicts with ordered lookups instead of comparing against
+  every packed ref or reftable record. ([#933](https://github.com/joshka/girt/pull/933),
+  [#950](https://github.com/joshka/girt/pull/950))
+
+### Fixed
+
+- Opening pack indexes on Windows no longer fails while another process replaces the index.
+  ([#857](https://github.com/joshka/girt/pull/857))
+- Multi-pack index reading and writing accept the `loose-<checksum>.pack` files that Git's
+  loose-objects maintenance writes. ([#925](https://github.com/joshka/girt/pull/925))
+
 ## [0.17.0](https://github.com/joshka/girt/compare/girt-v0.16.0...girt-v0.17.0) - 2026-10-18
 
 ### Behaviour changes
