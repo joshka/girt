@@ -485,3 +485,12 @@ in both object formats, input/output and comparison budgets, exact byte boundari
 missing reports, duplicate attempts, collisions and cancellation before validation. Unit tests cover
 batch cancellation and work charged for skipped exclusion entries. These pure tests perform no Git
 commands or repository writes.
+
+### Controlled Local Advertisement
+
+`local_advertisement_control` runs in Windows interoperability CI. It compares native tips, symbolic
+aliases and verified peeled hints with isolated Git in both object formats and reference backends.
+Source opening, object snapshots, reference inventory, HEAD, symbolic depth, reftable and output
+budgets refuse without returning a partial advertisement. Corrupt tags, symbolic cycles,
+cancellation and linked sources/registrations refuse; source bytes remain unchanged on success and
+failure. A unit test checks the batch cancellation boundary.
