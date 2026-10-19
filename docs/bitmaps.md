@@ -132,9 +132,9 @@ Existing bitmaps are never used to construct new claims. Objects are decoded in 
 reuse delta bases; graph and selected-commit positions remain in sorted object-ID order.
 
 When repacking, a complete retention plan may supply its bounded typed graph edges to bitmap
-encoding. The replacement pack is still read and identity-checked before its sidecars are
-published; its decoded kinds must match the plan. A missing or over-budget snapshot uses the
-ordinary verified graph reader, and pack retirement keeps its independent survivor verification.
+encoding. The replacement pack is still read and identity-checked before its sidecars are published;
+its decoded kinds must match the plan. A missing or over-budget snapshot uses the ordinary verified
+graph reader, and pack retirement keeps its independent survivor verification.
 
 Supply `WriteOptions::commits` for explicit selection. An empty list chooses graph tips first, then
 samples remaining commits evenly in sorted ID order, up to `max_commits` (64 by default). Explicit

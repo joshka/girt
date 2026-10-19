@@ -152,7 +152,9 @@ retention walk, avoiding a second parse and edge-position build. The replacement
 decoded and identity-checked before bitmap publication, and each decoded kind must agree with the
 retained graph. An unavailable or over-budget snapshot falls back to the verified bitmap reader.
 Pack retirement retains its separate survivor verification at the deletion boundary; no source
-generation, cancellation or publication check is relaxed. The new timing comparison is pending.
+generation, cancellation or publication check is relaxed. The follow-up comparison is inconclusive:
+normalized cost improves in only the first ABBA half. This experiment is parked; bitmap writing
+remains opt-in. See [retention-edge evidence](evidence/bitmap-repack-retention-r3.json).
 
 ## Multi-pack indexes
 
