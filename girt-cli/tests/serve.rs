@@ -627,3 +627,168 @@ fn push_options_reach_hooks_as_with_git() {
     // Options to a receiver that doesn't advertise them are refused by the client.
     push_matches_git(true, &|_| {}, &new_commit, &["-o", "first", "main"]);
 }
+
+/// Every object in `repo`, by type and name.
+fn objects(repo: &Path) -> String {
+    String::from_utf8(git(
+        repo,
+        &[
+            "cat-file",
+            "--batch-all-objects",
+            "--batch-check=%(objecttype) %(objectname)",
+        ],
+        b"",
+    ))
+    .unwrap()
+}
+
+/// [`origin`] with blobs at several levels and sizes, serving filters.
+fn filter_origin(root: &Path, format: &str) -> std::path::PathBuf {
+    let origin = origin(root, format);
+    std::fs::create_dir_all(origin.join("a/b/c")).unwrap();
+    for (path, content) in [
+        ("small", "x"),
+        ("five", "12345"),
+        ("a/top", "top\n"),
+        ("a/b/mid", "mid\n"),
+        ("a/b/c/deep", "deep\n"),
+    ] {
+        std::fs::write(origin.join(path), content).unwrap();
+    }
+    git(&origin, &["add", "."], b"");
+    git(
+        &origin,
+        &["commit", "-q", "--no-gpg-sign", "-m", "tree"],
+        b"",
+    );
+    git(&origin, &["config", "uploadpack.allowFilter", "true"], b"");
+    origin
+}
+
+/// `git clone --filter` through girt's server gets the objects Git's server sends.
+#[test]
+fn filtered_clones_match_git() {
+    for format in ["sha1", "sha256"] {
+        let root = tempfile::tempdir().unwrap();
+        let origin = filter_origin(root.path(), format);
+        for protocol in ["protocol.version=2", "protocol.version=0"] {
+            for filter in [
+                "blob:none",
+                "blob:limit=5",
+                "tree:0",
+                "tree:1",
+                "tree:2",
+                "object:type=commit",
+                "combine:blob:limit=5+tree:3",
+            ] {
+                let by_girt = format!("{format}-{protocol}-{filter}-girt");
+                let by_git = format!("{format}-{protocol}-{filter}-git");
+                let filter_arg = format!("--filter={filter}");
+                let server = upload_pack();
+                for (name, girt) in [(&by_girt, true), (&by_git, false)] {
+                    let mut args =
+                        vec!["-c", protocol, "clone", "-q", "--no-checkout", &filter_arg];
+                    if girt {
+                        args.push(&server);
+                    }
+                    args.extend(["--no-local", origin.to_str().unwrap(), name]);
+                    git(root.path(), &args, b"");
+                    git(&root.path().join(name), &["fsck", "--strict"], b"");
+                }
+                assert_eq!(
+                    objects(&root.path().join(&by_girt)),
+                    objects(&root.path().join(&by_git)),
+                    "{format} {protocol} {filter}"
+                );
+                assert_eq!(
+                    refs(&root.path().join(&by_girt)),
+                    refs(&root.path().join(&by_git))
+                );
+            }
+        }
+    }
+}
+
+/// A partial clone whose remote runs girt's server fetches a missing blob from it when the blob
+/// is read, as Git sends `filter blob:none` with `want <blob>`, and then checks out.
+#[test]
+fn lazy_fetch_from_girt() {
+    let root = tempfile::tempdir().unwrap();
+    let origin = filter_origin(root.path(), "sha1");
+    let server = upload_pack();
+    git(
+        root.path(),
+        &[
+            "-c",
+            "protocol.version=2",
+            "clone",
+            "-q",
+            "--no-checkout",
+            "--filter=blob:none",
+            &server,
+            "--no-local",
+            origin.to_str().unwrap(),
+            "copy",
+        ],
+        b"",
+    );
+    let copy = root.path().join("copy");
+    let blob = rev_parse(&origin, "main:a/b/c/deep");
+    let listing = git(
+        &copy,
+        &["rev-list", "--objects", "--missing=print", "main"],
+        b"",
+    );
+    assert!(
+        String::from_utf8(listing)
+            .unwrap()
+            .contains(&format!("?{blob}"))
+    );
+    // Clone doesn't record `--upload-pack`; the lazy fetch reads it from the remote's settings.
+    let command = format!("'{}' upload-pack", env!("CARGO_BIN_EXE_girt"));
+    git(
+        &copy,
+        &["config", "remote.origin.uploadpack", &command],
+        b"",
+    );
+    git(&copy, &["config", "protocol.version", "2"], b"");
+    assert_eq!(git(&copy, &["cat-file", "-p", &blob], b""), b"deep\n");
+    git(&copy, &["checkout", "-q", "main"], b"");
+    assert_eq!(std::fs::read(copy.join("five")).unwrap(), b"12345");
+    git(&copy, &["fsck", "--strict"], b"");
+}
+
+/// Without `uploadpack.allowFilter`, girt doesn't advertise filtering, so Git's client warns and
+/// clones everything, as it does from Git's server.
+#[test]
+fn filter_not_allowed_clones_everything() {
+    let root = tempfile::tempdir().unwrap();
+    let origin = filter_origin(root.path(), "sha1");
+    git(&origin, &["config", "uploadpack.allowFilter", "false"], b"");
+    for protocol in ["protocol.version=2", "protocol.version=0"] {
+        let mut stderrs = Vec::new();
+        for girt in [true, false] {
+            let name = format!("{protocol}-{girt}");
+            let server = upload_pack();
+            let mut args = vec!["-c", protocol, "clone", "-q", "--filter=blob:none"];
+            if girt {
+                args.push(&server);
+            }
+            args.extend(["--no-local", origin.to_str().unwrap(), &name]);
+            let output = git_output(root.path(), &args, b"");
+            assert!(output.status.success());
+            stderrs.push(String::from_utf8(output.stderr).unwrap());
+            git(&root.path().join(&name), &["fsck", "--strict"], b"");
+        }
+        assert_eq!(stderrs[0], stderrs[1]);
+        assert!(
+            stderrs[0].contains("filtering not recognized by server"),
+            "{}",
+            stderrs[0]
+        );
+        assert_eq!(
+            objects(&root.path().join(format!("{protocol}-true"))),
+            objects(&origin),
+        );
+    }
+}
