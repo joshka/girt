@@ -241,6 +241,13 @@ fn merge(
         resolved.0 = id;
     }
     objects.verified.record(id, described);
+    // Peer-chosen tree targets are retained before connectivity charges edges, and may name
+    // objects outside the pack, so bound the table by the received and local object budgets.
+    let limits = &objects.limits;
+    if objects.verified.tree_targets() > limits.max_objects.saturating_add(limits.max_known_objects)
+    {
+        return Err(FetchError::Limit("tree targets"));
+    }
     Ok(())
 }
 

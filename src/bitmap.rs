@@ -61,13 +61,15 @@ use crate::{ObjectId, ObjectKind};
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Limits {
-    /// Maximum complete input length (default 64 MiB).
+    /// Maximum complete input length (default 1 GiB).
     pub max_bytes: usize,
-    /// Maximum objects in the associated pack/MIDX (default 5 million).
+    /// Maximum objects in the associated pack/MIDX (default 40 million, about four times the
+    /// Linux kernel).
     pub max_objects: usize,
     /// Maximum selected-commit records (default 100,000).
     pub max_entries: usize,
-    /// Maximum expanded 64-bit words per parse or decode operation (default 4 million).
+    /// Maximum expanded 64-bit words per parse or decode operation (default 64 million, 512 MB).
+    /// One uncompressed bitmap over 40 million objects is 625,000 words.
     /// Counts repeated XOR dependencies as work, not just retained output storage.
     pub max_decoded_words: usize,
 }
@@ -75,10 +77,10 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            max_bytes: 64 * 1024 * 1024,
-            max_objects: 5_000_000,
+            max_bytes: 1024 * 1024 * 1024,
+            max_objects: 40_000_000,
             max_entries: 100_000,
-            max_decoded_words: 4_000_000,
+            max_decoded_words: 64_000_000,
         }
     }
 }

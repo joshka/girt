@@ -268,7 +268,10 @@ impl UnverifiedObject {
 pub struct PackLimits {
     /// Maximum sum of pinned `.idx` and `.pack` artifact sizes (default 64 GiB on 64-bit).
     pub max_bytes: usize,
-    /// Maximum aggregate index input bytes (default 64 MiB).
+    /// Maximum aggregate index input bytes (default 1 GiB).
+    ///
+    /// Admits about 35 million objects; a Linux kernel clone's index is about 300 MB. Limits
+    /// memory from oversized or crafted index files.
     ///
     /// Opening parses and retains bounded index bytes. Input and derived allocations together
     /// are bounded by four times this value, excluding allocator overhead and path storage.
@@ -322,7 +325,7 @@ impl Default for PackLimits {
     fn default() -> Self {
         Self {
             max_bytes: usize::try_from(64_u64 * 1024 * 1024 * 1024).unwrap_or(usize::MAX),
-            max_index_bytes: 64 * 1024 * 1024,
+            max_index_bytes: 1024 * 1024 * 1024,
             max_open_files: 512,
             max_directory_entries: 1_000_000,
             max_packs: 256,
@@ -388,13 +391,17 @@ impl PackLimits {
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct ReadLimits {
-    /// Maximum bytes in each object payload (default 64 MiB).
+    /// Maximum bytes in each object payload (default 128 MiB).
+    ///
+    /// The largest Linux kernel blob is 24 MB; larger media need explicit limits.
     pub max_object_bytes: usize,
-    /// Maximum bytes in each inflated delta instruction stream (default 64 MiB).
+    /// Maximum bytes in each inflated delta instruction stream (default 128 MiB).
     pub max_delta_bytes: usize,
-    /// Maximum cumulative decoded/reconstructed bytes for one read (default 256 MiB).
+    /// Maximum cumulative decoded/reconstructed bytes for one read (default 512 MiB).
+    ///
+    /// Bounds memory and work spent rebuilding one object through its delta chain.
     pub max_decode_bytes: usize,
-    /// Maximum cumulative compressed entry bytes per packed read (default 256 MiB).
+    /// Maximum cumulative compressed entry bytes per packed read (default 512 MiB).
     ///
     /// Charges complete entry ranges before inflation, including bases; loose reads retain
     /// their existing output-size policy. This is a work bound, not retained input memory.
@@ -443,11 +450,11 @@ impl ReadLimits {
 impl Default for ReadLimits {
     fn default() -> Self {
         Self {
-            max_object_bytes: 64 * 1024 * 1024,
-            max_delta_bytes: 64 * 1024 * 1024,
-            max_decode_bytes: 256 * 1024 * 1024,
+            max_object_bytes: 128 * 1024 * 1024,
+            max_delta_bytes: 128 * 1024 * 1024,
+            max_decode_bytes: 512 * 1024 * 1024,
             max_delta_depth: 64,
-            max_input_bytes: 256 * 1024 * 1024,
+            max_input_bytes: 512 * 1024 * 1024,
         }
     }
 }
@@ -1232,7 +1239,7 @@ impl Objects {
     /// when absent.
     ///
     /// Equivalent to `self.read_with(id, ReadLimits::default())`; see [`Self::read_with`] for store
-    /// precedence and damage handling. The default limits refuse payloads over 64 MiB. Use
+    /// precedence and damage handling. The default limits refuse payloads over 128 MiB. Use
     /// [`Self::read_commit`], [`Self::read_tree`], [`Self::read_tag`] or
     /// [`Self::read_blob`] when the kind is known.
     ///

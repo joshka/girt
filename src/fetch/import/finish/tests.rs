@@ -244,3 +244,29 @@ fn corrupt_entry_with_valid_checksum_is_rejected(#[case] threads: usize) {
     pack.extend_from_slice(trailer.as_bytes());
     assert!(Imported::read(format, &pack, limits(threads), &AtomicBool::new(false)).is_err());
 }
+
+/// Received trees can name objects the pack doesn't carry. Their distinct targets are bounded
+/// during import, before connectivity runs, by the received and local object budgets.
+#[rstest]
+#[case::within(2, true)]
+#[case::beyond(1, false)]
+fn tree_targets_are_bounded_during_import(#[case] known: usize, #[case] admitted: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q", "--bare", "."], b"");
+    let entries: String = ["a", "b", "c"]
+        .iter()
+        .enumerate()
+        .map(|(n, name)| format!("100644 blob {n:040x}\t{name}\n"))
+        .collect();
+    let tree = git(dir.path(), &["mktree", "--missing"], entries.as_bytes());
+    let pack = git(dir.path(), &["pack-objects", "--stdout"], &tree);
+    let limits = FetchLimits::default()
+        .with_max_objects(1)
+        .with_max_known_objects(known);
+    let result = Imported::read(ObjectFormat::Sha1, &pack, limits, &AtomicBool::new(false));
+    if admitted {
+        assert!(result.is_ok());
+    } else {
+        assert!(matches!(result, Err(FetchError::Limit("tree targets"))));
+    }
+}

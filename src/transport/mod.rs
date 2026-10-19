@@ -88,16 +88,16 @@
 //! | [`PushLimits`](crate::push::PushLimits) | advertisement, commands, selected history, pack writing, status | `default()` | `trusted()` |
 //! | [`PackLimits`](crate::PackLimits) | opening an object store: index bytes, packs, files | `default()` | `trusted()` |
 //!
-//! `default()` suits a peer you don't control: for example, a fetch may receive at most 512 MiB
-//! on the wire and a 256 MiB pack of at most one million objects, with each object at most 64 MiB
-//! and deltas at most 64 deep. `trusted()` raises the size and count limits until available memory
+//! `default()` stays finite for a peer you don't control while admitting repositories about four
+//! times the size of the Linux kernel: for example, a fetch may receive at most 16 GiB on the wire
+//! and a pack of at most 40 million objects, with each object at most 128 MiB and deltas at most
+//! 64 deep. `trusted()` raises the size and count limits until available memory
 //! and disk are what bound the work, matching Git; [`crate::workflow`] uses it for the remotes a
 //! user configured. It keeps some finite bounds: for example, delta chains and tag chains may be at
 //! most 10,000 deep, at most 256 commits are offered during negotiation, a transfer adds at most 8
 //! worker threads, and an object store may have at most 100,000 packs and 4,096 open files.
-//! The defaults also refuse large *trusted* repositories. The default
-//! [`PackLimits`](crate::PackLimits) admits 64 MiB of pack index, while a Linux kernel clone has
-//! about 300 MB, so use `trusted()` when opening big repositories you control, as in
+//! The default [`PackLimits`](crate::PackLimits) admits 1 GiB of pack index, against about 300 MB
+//! for a Linux kernel clone; use `trusted()` for larger repositories you control, as in
 //! [`FetchLimits::source_packs`].
 //!
 //! Exceeding a [`FetchLimits`](crate::fetch::FetchLimits) bound while receiving or validating
