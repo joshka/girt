@@ -416,3 +416,14 @@ The portable `incremental_repack_write` suite runs in Windows interoperability C
 repository admission tests cover zero metadata/configuration budgets in both formats with unchanged
 MIDX bytes and pack inventory, plus cancellation acquired with isolation before any publication.
 Existing default-limit tests still verify additive publication and protected/promisor exclusions.
+
+### Controlled Fetch Completion Admission
+
+`fetch_finish_control` is portable and selected in Windows interoperability CI. It covers
+pre-install metadata/configuration/reference limits, cancellation and linked-worktree refusal;
+default full, dependency-bearing and shallow completions run in both object formats. Original Git
+bundles exercise installation and conditional refs, and Git fsck verifies successful results. A
+later admission failure checks that installed objects and published shallow metadata remain visible
+and accurately reported before reference publication. Reference transactions retain their trusted
+metadata contract; controlled files-transaction bounds remain separate work before prefetch
+execution can be called bounded.

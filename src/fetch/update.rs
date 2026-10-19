@@ -30,6 +30,8 @@ use crate::{HistoryLimits, ObjectId, ObjectKind, PackLimits, PeelLimits};
 /// that budget times the number of mappings (bounded by transfer `max_wants`). Tag reads apply the
 /// history's per-read limits. Reference enumeration/transactions retain their existing unbounded
 /// metadata contracts. These are work/input bounds, not wall-clock or process-heap limits.
+/// [`super::FetchFinishOptions`] separately controls ordinary completion's metadata admission and
+/// repository reopen; reference transactions still retain their trusted metadata contract.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct FetchUpdateLimits {

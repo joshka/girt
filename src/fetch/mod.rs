@@ -43,6 +43,10 @@
 //! planned update against its rules, then prunes in one reference transaction and updates in a
 //! second. It returns a [`FetchReport`].
 //!
+//! [`FetchFinishOptions`] adds explicit metadata admission, repository-reopen and
+//! dependency-snapshot bounds to ordinary completion. Reference transactions retain their trusted
+//! metadata contract; this builder alone does not provide a bounded prefetch task.
+//!
 //! Destinations must be remote-tracking references, tags, or a tag namespace the caller adds with
 //! [`FetchRequest::with_tag_destination_namespace`]. Branches are never fetch destinations, which
 //! protects every worktree's checked-out branch. A `+` refspec records force intent, but a
@@ -233,6 +237,8 @@ pub use workflow_network::FetchDownload;
 mod update;
 mod verified;
 pub use update::{FetchUpdateError, FetchUpdateLimits};
+mod finish;
+pub use finish::{FetchFinishLimits, FetchFinishOptions};
 mod workflow;
 mod worktree;
 pub use workflow::{
