@@ -520,4 +520,37 @@ mod tests {
         assert_eq!(report.deleted.len(), 1);
         oracle::git(repo.git_dir(), &["fsck", "--full"], b"");
     }
+
+    #[test]
+    fn prefix_verifies_every_selected_survivor_before_first_unlink() {
+        let (_root, repo) = fixture();
+        let cancel = AtomicBool::new(false);
+        let mut report = PrunePackedReport::default();
+        let ids = [
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"first"),
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"second"),
+        ];
+        let limits = PrunePackedLimits::default()
+            .with_selection(PrunePackedSelection::Prefix { max_objects: 2 });
+        let cause = repo
+            .prune_packed_exclusive(
+                limits,
+                &cancel,
+                &mut report,
+                &mut None,
+                (
+                    || {
+                        for id in ids {
+                            assert!(repo.loose_objects().read_blob(id, 1024).is_ok());
+                        }
+                        cancel.store(true, Ordering::Relaxed);
+                    },
+                    || panic!("cancellation barrier must precede every unlink"),
+                ),
+            )
+            .unwrap_err();
+        assert!(matches!(cause, PrunePackedCause::Cancelled));
+        assert_eq!(report.verified_bytes, 11);
+        assert!(report.deleted.is_empty());
+    }
 }
