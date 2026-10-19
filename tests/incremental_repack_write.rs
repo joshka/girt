@@ -224,3 +224,74 @@ fn duplicate_promisor_object_cannot_enter_an_ordinary_batch_pack() {
     );
     git(fixture.repo.git_dir(), &["fsck", "--full"], b"");
 }
+
+#[test]
+fn admission_limits_leave_midx_and_pack_inventory_unchanged() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        for open in [
+            girt::OpenLimits::default().with_metadata_bytes(0),
+            girt::OpenLimits::default()
+                .with_configuration(girt::config::ResolveLimits::default().with_bytes(0)),
+        ] {
+            let fixture = Fixture::new(format);
+            let directory = fixture.repo.object_dir().join("pack");
+            let mut before: Vec<_> = fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            before.sort();
+            let index = fs::read(directory.join("multi-pack-index")).unwrap();
+            let failure = fixture
+                .repo
+                .repack_incremental_batch(
+                    &mut PrivateFixture,
+                    0,
+                    BatchRepackLimits::default().with_open(open),
+                    &AtomicBool::new(false),
+                )
+                .unwrap_err();
+            assert!(matches!(
+                failure.cause,
+                girt::multi_pack_index::BatchRepackCause::Open(_)
+            ));
+            assert_eq!(failure.report.publication, BatchPublication::None);
+            assert!(!failure.report.index_published);
+            let mut after: Vec<_> = fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            after.sort();
+            assert_eq!(before, after);
+            assert_eq!(fs::read(directory.join("multi-pack-index")).unwrap(), index);
+        }
+    }
+}
+
+#[test]
+fn cancellation_acquired_with_isolation_reaches_batch_opener() {
+    struct CancelOnAcquire<'a>(&'a AtomicBool);
+    impl MaintenanceIsolation for CancelOnAcquire<'_> {
+        type Guard = ();
+        fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        }
+    }
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    let cancel = AtomicBool::new(false);
+    let failure = fixture
+        .repo
+        .repack_incremental_batch(
+            &mut CancelOnAcquire(&cancel),
+            0,
+            BatchRepackLimits::default(),
+            &cancel,
+        )
+        .unwrap_err();
+    let girt::multi_pack_index::BatchRepackCause::Open(source) = failure.cause else {
+        panic!("expected controlled opener cancellation");
+    };
+    assert!(matches!(*source, girt::repository::OpenError::Cancelled));
+    assert_eq!(failure.report.publication, BatchPublication::None);
+    assert!(!failure.report.index_published);
+}

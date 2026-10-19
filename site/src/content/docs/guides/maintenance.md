@@ -98,7 +98,8 @@ packs, loose objects and markers remain intact; selected IDs also present in pro
 are verified there and excluded from output. Reports distinguish no publication, a pack-only
 boundary, a complete pair and MIDX visibility, so a later error never hides an installed pair. This
 operation does not retire data or create bitmaps. It is an explicit caller request, with no implicit
-consolidation or network access.
+consolidation or network access. `BatchRepackLimits::with_open` adjusts the controlled repository
+admission budgets applied under isolation before batch observation or publication.
 
 ## Prepare prefetch mappings
 

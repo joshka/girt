@@ -12,6 +12,10 @@ use crate::{
 };
 
 /// Bounds each stage of additive incremental repacking.
+///
+/// By default, repository admission uses [`crate::OpenLimits::default`] under caller isolation,
+/// bounding metadata, configuration, shallow data and reference stacks before selection or
+/// publication. Admission failures preserve the opener's typed error in [`BatchRepackCause::Open`].
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
 pub struct BatchRepackLimits {
@@ -23,6 +27,17 @@ pub struct BatchRepackLimits {
     pub write: PackWriteLimits,
     /// Bounds encoding the replacement MIDX, including duplicate object occurrences.
     pub index: WriteLimits,
+    /// Bounds repository refresh before observing the source batch.
+    pub open: crate::OpenLimits,
+}
+
+impl BatchRepackLimits {
+    /// Replaces repository admission bounds, applied under isolation before publication.
+    #[must_use]
+    pub fn with_open(mut self, open: crate::OpenLimits) -> Self {
+        self.open = open;
+        self
+    }
 }
 
 /// Furthest confirmed artifact visibility reached by an additive batch attempt.
@@ -202,7 +217,9 @@ impl Repository {
             let _guard = isolation
                 .acquire(self)
                 .map_err(BatchRepackCause::Isolation)?;
-            let current = Repository::open(self.git_dir())
+            let current = crate::OpenOptions::default()
+                .with_limits(limits.open)
+                .open(self.git_dir(), cancel)
                 .map_err(|error| BatchRepackCause::Open(Box::new(error)))?;
             if current.object_dir() != self.object_dir()
                 || current.object_format() != self.object_format()
