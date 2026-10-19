@@ -439,3 +439,9 @@ tests remain unchanged.
 individual survivor refusal and draining a duplicate backlog across bounded passes in both formats.
 It also runs in Windows interoperability CI. A unit checkpoint verifies the complete selected prefix
 before the first unlink.
+
+The Unix `midx_expire` suite also checks controlled repository admission: zero metadata and
+configuration budgets preserve the original MIDX and packs in both formats, and cancellation set
+while acquiring isolation reaches the opener before publication or deletion. Existing default-limit
+round trips still compare expiry and storage counts with Git. Windows retains the typed platform
+refusal for destructive expiry.
