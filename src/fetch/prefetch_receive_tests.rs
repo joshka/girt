@@ -648,3 +648,75 @@ fn controlled_incremental_receive_bounds_local_dependencies(#[case] format: Obje
         b"",
     );
 }
+
+/// A valid commit with many empty DEFLATE blocks tests the receive's compressed-input admission.
+fn pad_source_commit(fixture: &Fixture) -> usize {
+    let object = fixture
+        .source
+        .objects()
+        .unwrap()
+        .read(fixture.first)
+        .unwrap()
+        .unwrap();
+    let mut raw = format!("commit {}\0", object.data().len()).into_bytes();
+    raw.extend_from_slice(object.data());
+    let compressed = crate::zlib_fixture::padded(&raw);
+    let hex = fixture.first.to_string();
+    let path = fixture.source.object_dir().join(&hex[..2]).join(&hex[2..]);
+    std::fs::rename(&path, fixture.source.git_dir().join("original-commit")).unwrap();
+    std::fs::write(path, &compressed).unwrap();
+    compressed.len()
+}
+
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn controlled_receive_caps_compressed_source_without_changing_legacy(
+    #[case] format: ObjectFormat,
+    #[values(1, 2)] threads: usize,
+) {
+    let fixture = Fixture::new(format);
+    let length = pad_source_commit(&fixture);
+    let cancel = AtomicBool::new(false);
+    let limits = FetchLimits::default()
+        .with_max_threads(threads)
+        .with_known_read(crate::ReadLimits::default().with_max_input_bytes(length - 1));
+    let admitted = super::super::local_native::admit_source(
+        fixture.source.git_dir(),
+        LocalAdvertisementLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let result = fixture.request().receive_prefetch_controlled(
+        admitted,
+        &KnownHistory::default(),
+        PrefetchPlanLimits::default(),
+        limits,
+        &cancel,
+    );
+    assert!(matches!(
+        result,
+        Err(FetchWorkflowError::Transfer(FetchError::Limit(
+            "loose compressed bytes"
+        )))
+    ));
+    fixture.assert_destination_empty();
+    let legacy_request = FetchRequest::prepare(
+        fixture.destination.clone(),
+        Refspecs::parse(Direction::Fetch, ["refs/heads/*:refs/remotes/origin/*"]).unwrap(),
+        BTreeSet::new(),
+        Reflog::Preserve,
+    )
+    .unwrap();
+    let legacy = legacy_request
+        .receive_local(
+            fixture.source.git_dir(),
+            &KnownHistory::default(),
+            limits,
+            TransportControl::new(&cancel),
+            crate::fetch::LocalFetchObserver::default(),
+        )
+        .unwrap();
+    assert_eq!(legacy.received().object_count(), 2);
+    fixture.assert_destination_empty();
+}

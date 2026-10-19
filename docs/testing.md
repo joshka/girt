@@ -582,5 +582,11 @@ replacement. No destination data or references are published by these failures.
 
 Legacy worker and writer specialisations retain their trusted direct reads. The shared writer loop
 requires code-generation inspection and warmed instruction comparisons for medium and Linux native
-clones, plus a medium Git client using girt upload-pack, before the wiring is ready. Verify packs and
-refs outside the timing lock. Controlled connectivity still omits optional boundary discovery.
+clones, plus a medium Git client using girt upload-pack, before the wiring is ready. Verify packs
+and refs outside the timing lock. Controlled connectivity still omits optional boundary discovery.
+Controlled selection also skips bitmap queries because their optional fallback walk uses trusted
+reads; legacy bitmap selection is unchanged. Include this choice in controlled-performance
+measurements before task wiring.
+
+Native receive currently supplies no external delta bases. The controlled writer caps external-base
+reads for completeness, but enabling those bases requires separate coverage of that selection path.

@@ -56,7 +56,7 @@ pub(crate) fn write_reusing(
     read: (ReadLimits, &AtomicBool),
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
 ) -> Result<PackWritten, ReuseError> {
-    write_reusing_impl(
+    write_reusing_impl::<false>(
         format,
         packs,
         packed,
@@ -99,6 +99,36 @@ pub(crate) fn write_transfer(
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
     observe: &mut impl FnMut(u64, u64),
 ) -> Result<(PackWritten, IdSet), ReuseError> {
+    write_transfer_controlled::<false>(
+        store,
+        ids,
+        known_bases,
+        outputs,
+        limits,
+        compression,
+        read,
+        max_depth,
+        framing,
+        check,
+        observe,
+    )
+}
+
+/// Writes a source transfer with compressed loose-input caps when explicitly controlled.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_transfer_controlled<const CAPPED: bool>(
+    store: &crate::Objects,
+    ids: &[ObjectId],
+    known_bases: &[(ObjectId, crate::ObjectKind)],
+    outputs: (&mut impl Write, &mut impl Write),
+    limits: PackWriteLimits,
+    compression: PackCompression,
+    read: (ReadLimits, &AtomicBool),
+    max_depth: usize,
+    framing: DeltaFraming,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+    observe: &mut impl FnMut(u64, u64),
+) -> Result<(PackWritten, IdSet), ReuseError> {
     let max_depth = match compression {
         PackCompression::Delta(options) => max_depth.min(options.max_depth),
         PackCompression::Ordinary => max_depth,
@@ -116,21 +146,24 @@ pub(crate) fn write_transfer(
     for &id in ids {
         check()?;
         // The copy below reads and limits each packed entry's header itself.
-        let location = store
-            .transfer_location(id, read.0, read.1)
-            .map_err(|source| ReuseError::Read { id, source })?
-            .ok_or(ReuseError::Read {
-                id,
-                source: ObjectReadError::Corrupt("missing transfer object"),
-            })?;
+        let location = if CAPPED {
+            store.transfer_location_capped(id, read.0, read.1)
+        } else {
+            store.transfer_location(id, read.0, read.1)
+        }
+        .map_err(|source| ReuseError::Read { id, source })?
+        .ok_or(ReuseError::Read {
+            id,
+            source: ObjectReadError::Corrupt("missing transfer object"),
+        })?;
         match location {
             Some(location) => packed.push(location),
             None => fresh.push(id),
         }
     }
     fresh.sort_unstable();
-    let mut external = ExternalBases::new(store, known_bases);
-    let written = write_reusing_impl(
+    let mut external = ExternalBases::<CAPPED>::new(store, known_bases);
+    let written = write_reusing_impl::<CAPPED>(
         store.object_format(),
         &packs,
         &packed,
@@ -150,13 +183,13 @@ pub(crate) fn write_transfer(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_reusing_impl(
+fn write_reusing_impl<const CAPPED: bool>(
     format: crate::ObjectFormat,
     packs: &[&FilePack],
     packed: &[Packed],
     fresh: &[PackObject<'_>],
     stored: Option<(&crate::Objects, &[ObjectId])>,
-    mut external: Option<&mut ExternalBases<'_>>,
+    mut external: Option<&mut ExternalBases<'_, CAPPED>>,
     outputs: (&mut impl Write, &mut impl Write),
     limits: PackWriteLimits,
     compression: PackCompression,
@@ -344,13 +377,16 @@ fn write_reusing_impl(
         check()?;
         let owned = if let Some((store, ids)) = stored {
             let id = ids[position];
-            let object = store
-                .read_controlled(id, read_limits, cancelled)
-                .map_err(|source| ReuseError::Read { id, source })?
-                .ok_or(ReuseError::Read {
-                    id,
-                    source: ObjectReadError::Corrupt("missing transfer object"),
-                })?;
+            let object = if CAPPED {
+                store.read_capped(id, read_limits, cancelled)
+            } else {
+                store.read_controlled(id, read_limits, cancelled)
+            }
+            .map_err(|source| ReuseError::Read { id, source })?
+            .ok_or(ReuseError::Read {
+                id,
+                source: ObjectReadError::Corrupt("missing transfer object"),
+            })?;
             charge_input(&mut input_bytes, object.data().len(), limits)?;
             Some((id, object))
         } else {
@@ -476,7 +512,7 @@ fn write_reusing_impl(
 
 /// Only graph-proven receiver blobs and trees are offered here. Payloads are reconstructed through
 /// normal lookup; metadata is cached, while at most one external payload is retained per search.
-struct ExternalBases<'a> {
+struct ExternalBases<'a, const CAPPED: bool> {
     store: &'a crate::Objects,
     ids: &'a [(ObjectId, crate::ObjectKind)],
     lengths: Vec<(crate::ObjectKind, usize, ObjectId)>,
@@ -484,7 +520,7 @@ struct ExternalBases<'a> {
     used: IdSet,
 }
 
-impl<'a> ExternalBases<'a> {
+impl<'a, const CAPPED: bool> ExternalBases<'a, CAPPED> {
     fn new(store: &'a crate::Objects, ids: &'a [(ObjectId, crate::ObjectKind)]) -> Self {
         Self {
             store,
@@ -527,10 +563,12 @@ impl<'a> ExternalBases<'a> {
                 if kind != object.kind {
                     continue;
                 }
-                let metadata = self
-                    .store
-                    .transfer_object(id, read.0, read.1)
-                    .map_err(|source| ReuseError::Read { id, source })?;
+                let metadata = if CAPPED {
+                    self.store.transfer_object_capped(id, read.0, read.1)
+                } else {
+                    self.store.transfer_object(id, read.0, read.1)
+                }
+                .map_err(|source| ReuseError::Read { id, source })?;
                 if let Some((actual, length, _)) = metadata {
                     if actual != kind {
                         return Err(ReuseError::Read {
@@ -572,14 +610,16 @@ impl<'a> ExternalBases<'a> {
                 continue;
             }
             charge_input(input_bytes, size, limits)?;
-            let base = self
-                .store
-                .read_controlled(id, read.0, read.1)
-                .map_err(|source| ReuseError::Read { id, source })?
-                .ok_or(ReuseError::Read {
-                    id,
-                    source: ObjectReadError::Corrupt("missing delta candidate"),
-                })?;
+            let base = if CAPPED {
+                self.store.read_capped(id, read.0, read.1)
+            } else {
+                self.store.read_controlled(id, read.0, read.1)
+            }
+            .map_err(|source| ReuseError::Read { id, source })?
+            .ok_or(ReuseError::Read {
+                id,
+                source: ObjectReadError::Corrupt("missing delta candidate"),
+            })?;
             if base.kind() != object.kind || base.data().len() != size {
                 return Err(ReuseError::Read {
                     id,
@@ -618,11 +658,11 @@ impl<'a> ExternalBases<'a> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_reconstructed<W: Write>(
+fn write_reconstructed<W: Write, const CAPPED: bool>(
     pack: &mut Output<'_, W>,
     id: ObjectId,
     object: &crate::Object,
-    external: Option<&mut ExternalBases<'_>>,
+    external: Option<&mut ExternalBases<'_, CAPPED>>,
     compression: PackCompression,
     read: (ReadLimits, &AtomicBool),
     max_depth: usize,
@@ -1104,19 +1144,7 @@ mod capped_transfer_tests {
                     (id < victim).then_some(id)
                 })
                 .unwrap();
-            let payload = b"blob 0\0";
-            let mut padded = vec![0x78, 0x01];
-            for _ in 0..10_000 {
-                padded.extend_from_slice(&[0, 0, 0, 0xff, 0xff]);
-            }
-            padded.extend_from_slice(&[1, 7, 0, 0xf8, 0xff]);
-            padded.extend_from_slice(payload);
-            let (mut a, mut b) = (1_u32, 0_u32);
-            for byte in payload {
-                a = (a + u32::from(*byte)) % 65521;
-                b = (b + a) % 65521;
-            }
-            padded.extend_from_slice(&((b << 16) | a).to_be_bytes());
+            let padded = crate::zlib_fixture::padded(b"blob 0\0");
             let objects = Objects::open(
                 format,
                 root.path(),
@@ -1143,9 +1171,10 @@ mod capped_transfer_tests {
         fn write(
             &self,
             ids: &[ObjectId],
+            cancel: &AtomicBool,
             observe: &mut impl FnMut(u64, u64),
         ) -> Result<PackWritten, ReuseError> {
-            write_transfer_capped(
+            write_transfer_controlled::<true>(
                 &self.objects,
                 ids,
                 &[],
@@ -1154,7 +1183,7 @@ mod capped_transfer_tests {
                 PackCompression::Ordinary,
                 (
                     ReadLimits::default().with_max_input_bytes(self.padded.len() - 1),
-                    &AtomicBool::new(false),
+                    cancel,
                 ),
                 50,
                 DeltaFraming::Offset,
@@ -1171,7 +1200,7 @@ mod capped_transfer_tests {
     fn capped_transfer_refuses_padded_location_input(#[case] format: ObjectFormat) {
         let source = Source::new(format);
         source.replace_victim();
-        let result = source.write(&[source.victim], &mut |_, _| {});
+        let result = source.write(&[source.victim], &AtomicBool::new(false), &mut |_, _| {});
         assert!(matches!(
             result,
             Err(ReuseError::Read {
@@ -1186,15 +1215,34 @@ mod capped_transfer_tests {
     #[case::sha256(ObjectFormat::Sha256)]
     fn capped_transfer_rechecks_fresh_input_after_classification(#[case] format: ObjectFormat) {
         let source = Source::new(format);
-        let result = source.write(&[source.first, source.victim], &mut |done, _| {
-            if done == 1 {
-                source.replace_victim();
-            }
-        });
+        let result = source.write(
+            &[source.first, source.victim],
+            &AtomicBool::new(false),
+            &mut |done, _| {
+                if done == 1 {
+                    source.replace_victim();
+                }
+            },
+        );
         assert!(matches!(
             result,
             Err(ReuseError::Read {
                 source: ObjectReadError::Limit("loose compressed bytes"),
+                ..
+            })
+        ));
+    }
+
+    #[rstest::rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn capped_transfer_observes_cancelled_source_reads(#[case] format: ObjectFormat) {
+        let source = Source::new(format);
+        let result = source.write(&[source.victim], &AtomicBool::new(true), &mut |_, _| {});
+        assert!(matches!(
+            result,
+            Err(ReuseError::Read {
+                source: ObjectReadError::Cancelled,
                 ..
             })
         ));
