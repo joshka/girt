@@ -430,9 +430,11 @@ pre-install metadata/configuration/reference limits, cancellation and linked-wor
 default full, dependency-bearing and shallow completions run in both object formats. Original Git
 bundles exercise installation and conditional refs, and Git fsck verifies successful results. A
 later admission failure checks that installed objects and published shallow metadata remain visible
-and accurately reported before reference publication. Reference transactions retain their trusted
-metadata contract; controlled files-transaction bounds remain separate work before prefetch
-execution can be called bounded.
+and accurately reported before reference publication. Controlled files transaction tests cover
+edit/packed/input/preparation refusals after installation, backend migration before installation,
+files/reftable success and completed pruning retained after later update preparation failure.
+Ordinary and retained completion keep their trusted metadata contract; complete prefetch execution
+remains separate work.
 
 ### Controlled Prune Admission
 
