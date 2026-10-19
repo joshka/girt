@@ -344,7 +344,7 @@ impl<'r> UploadPack<'r> {
             cancel,
         };
         if protocol == Protocol::V0 {
-            let result = self.serve_v0(&mut wire, output, cancel);
+            let result = self.serve_v0(false, &mut wire, output, cancel);
             if let Err(error) = &result {
                 report(error, output, cancel);
             }
@@ -369,7 +369,7 @@ impl<'r> UploadPack<'r> {
         cancel: &AtomicBool,
     ) -> Result<(), ServeError> {
         if protocol == Protocol::V0 {
-            return self.advertise_v0(output, cancel);
+            return self.advertise_v0(false, output, cancel);
         }
         let format = self.repository.object_format();
         let fetch = match self.filters {
@@ -393,6 +393,26 @@ impl<'r> UploadPack<'r> {
         packet::put(output, b"0000", cancel)?;
         output.flush()?;
         Ok(())
+    }
+
+    /// Answers one stateless protocol v0 request, as smart HTTP carries it: the wants, shallow
+    /// lines and the haves the client is offering, ending with a flush or `done`.
+    pub(in crate::serve) fn respond_v0(
+        &self,
+        input: &mut impl Read,
+        output: &mut impl Write,
+        cancel: &AtomicBool,
+    ) -> Result<(), ServeError> {
+        let mut wire = Wire {
+            reader: input,
+            remaining: self.limits.max_request_bytes,
+            cancel,
+        };
+        let result = self.serve_v0(true, &mut wire, output, cancel);
+        if let Err(error) = &result {
+            report(error, output, cancel);
+        }
+        result
     }
 
     /// Answers exactly one request, as a stateless transport does after the advertisement.

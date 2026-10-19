@@ -44,10 +44,10 @@
 //!
 //! Protocol v2 `ls-refs` and `fetch`, and the protocol v0 advertisement and negotiation
 //! (`multi_ack`, `multi_ack_detailed`, `side-band` and `side-band-64k`), are served over
-//! full-duplex streams. Both support `include-tag`, thin packs and shallow requests (`deepen`,
-//! `deepen-relative`, `deepen-since` and `deepen-not`). v2 also supports `wait-for-done`, and
-//! `object-info` when `transfer.advertiseObjectInfo` or [`UploadPack::with_object_info`] enables
-//! it.
+//! full-duplex streams and, through [`http`], as stateless smart HTTP requests. Both support
+//! `include-tag`, thin packs and shallow requests (`deepen`, `deepen-relative`, `deepen-since` and
+//! `deepen-not`). v2 also supports `wait-for-done`, and `object-info` when
+//! `transfer.advertiseObjectInfo` or [`UploadPack::with_object_info`] enables it.
 //!
 //! When `uploadpack.allowFilter` is true or the caller sets [`FilterPolicy::Allow`], both
 //! protocols serve partial clones: a `filter` of `blob:none`, `blob:limit`, `tree:<depth>`,
@@ -56,8 +56,7 @@
 //! blobs rely on that. `sparse:oid` filters are refused, and a filtered fetch never gets thin
 //! deltas, because the client may lack the trees and blobs they would build on.
 //!
-//! Stateless v0 (HTTP) isn't supported yet, and a shallow repository can't be served; see
-//! [#520](https://github.com/joshka/girt/issues/520).
+//! A shallow repository can't be served; see [#520](https://github.com/joshka/girt/issues/520).
 
 #![warn(
     clippy::unwrap_used,
@@ -68,6 +67,7 @@
     reason = "parses untrusted network input (#103)"
 )]
 
+pub mod http;
 mod receive;
 mod shallow;
 mod upload;
