@@ -35,6 +35,8 @@ mod gc;
 mod lock;
 mod policy;
 mod prefetch;
+#[cfg(test)]
+mod prefetch_config_tests;
 mod run;
 mod tasks;
 
