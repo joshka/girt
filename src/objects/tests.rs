@@ -294,15 +294,23 @@ fn capped_source_reads_admit_compressed_bytes_inclusively(#[case] format: Object
 
     let admitted = limits.with_max_input_bytes(compressed.len());
     assert_eq!(
-        objects.read_unverified_capped(id, admitted, &cancel).unwrap().unwrap().data(),
+        objects
+            .read_unverified_capped(id, admitted, &cancel)
+            .unwrap()
+            .unwrap()
+            .data(),
         b""
     );
     assert!(matches!(
-        objects.transfer_object_capped(id, admitted, &cancel).unwrap(),
+        objects
+            .transfer_object_capped(id, admitted, &cancel)
+            .unwrap(),
         Some((ObjectKind::Blob, 0, None))
     ));
     assert!(matches!(
-        objects.transfer_location_capped(id, admitted, &cancel).unwrap(),
+        objects
+            .transfer_location_capped(id, admitted, &cancel)
+            .unwrap(),
         Some(None)
     ));
     cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -420,3 +428,130 @@ fn append_loose_trailer(bytes: &mut Vec<u8>) {
     bytes.push(0);
 }
 fn keep_loose_stream(_: &mut Vec<u8>) {}
+
+/// A corrupt loose duplicate must not override the admitted packed representation.
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn capped_source_reads_keep_pack_precedence_and_decode_limits(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format, true, 4);
+    let id = fixture.ordinary;
+    let hex = id.to_string();
+    let loose_path = fixture.repo.object_dir().join(&hex[..2]).join(&hex[2..]);
+    fs::create_dir_all(loose_path.parent().unwrap()).unwrap();
+    fs::write(loose_path, b"corrupt loose duplicate").unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let limits = ReadLimits::default();
+    let trusted = objects
+        .read_unverified(id, limits, &cancel)
+        .unwrap()
+        .unwrap();
+    let capped = objects
+        .read_unverified_capped(id, limits, &cancel)
+        .unwrap()
+        .unwrap();
+    assert_eq!(capped.kind(), trusted.kind());
+    assert_eq!(capped.data(), trusted.data());
+    let (kind, length, packed) = objects
+        .transfer_object_capped(id, limits, &cancel)
+        .unwrap()
+        .unwrap();
+    assert_eq!((kind, length), (trusted.kind(), trusted.data().len()));
+    assert_eq!(packed.unwrap().id, id);
+    assert_eq!(
+        objects
+            .transfer_location_capped(id, limits, &cancel)
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .id,
+        id
+    );
+    assert!(matches!(
+        objects.read_unverified_capped(id, limits.with_max_object_bytes(1), &cancel),
+        Err(ObjectReadError::Limit(_))
+    ));
+    let missing = ObjectId::for_blob(format, b"absent source object");
+    assert!(
+        objects
+            .read_unverified_capped(missing, limits, &cancel)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        objects
+            .transfer_object_capped(missing, limits, &cancel)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        objects
+            .transfer_location_capped(missing, limits, &cancel)
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// A damaged packed claim must restart through verified, compressed-input-capped loose reads.
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn capped_source_damage_fallback_verifies_and_caps_loose_input(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format, true, 4);
+    let id = fixture.ordinary;
+    let payload = &fixture
+        .records
+        .iter()
+        .find(|record| record.0 == id)
+        .unwrap()
+        .2;
+    assert_eq!(
+        fixture.repo.loose_objects().write_blob(payload).unwrap(),
+        id
+    );
+    let mut index = fs::read(&fixture.index_path).unwrap();
+    let width = id.as_bytes().len();
+    let count = fixture.records.len();
+    let position = index[1032..1032 + count * width]
+        .chunks_exact(width)
+        .position(|name| name == id.as_bytes())
+        .unwrap();
+    index[1032 + count * width + position * 4] ^= 1;
+    let trailer = index.len() - width;
+    let checksum = format.checksum(&index[..trailer]);
+    index[trailer..].copy_from_slice(checksum.as_bytes());
+    fs::rename(
+        &fixture.index_path,
+        fixture.root.path().join("original-pack-index"),
+    )
+    .unwrap();
+    fs::write(&fixture.index_path, index).unwrap();
+    let objects = fixture.repo.objects_with(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let verified = objects
+        .read_unverified_capped(id, ReadLimits::default(), &cancel)
+        .unwrap()
+        .unwrap();
+    assert_eq!(verified.data(), payload);
+    let hex = id.to_string();
+    let length = fs::metadata(fixture.repo.object_dir().join(&hex[..2]).join(&hex[2..]))
+        .unwrap()
+        .len() as usize;
+    assert!(matches!(
+        objects.read_unverified_capped(
+            id,
+            ReadLimits::default().with_max_input_bytes(length - 1),
+            &cancel
+        ),
+        Err(ObjectReadError::Limit("loose compressed bytes"))
+    ));
+    let path = fixture.repo.object_dir().join(&hex[..2]).join(&hex[2..]);
+    fs::rename(&path, fixture.root.path().join("original-loose-object")).unwrap();
+    fs::write(path, b"corrupt loose fallback").unwrap();
+    assert!(
+        objects
+            .read_unverified_capped(id, ReadLimits::default(), &cancel)
+            .is_err()
+    );
+}
