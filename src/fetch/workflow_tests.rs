@@ -11,13 +11,14 @@ fn id(byte: u8) -> ObjectId {
     ObjectId::Sha1([byte; 20])
 }
 fn request(specs: &[&str]) -> (tempfile::TempDir, FetchRequest) {
+    request_format(crate::ObjectFormat::Sha1, specs)
+}
+fn request_format(
+    format: crate::ObjectFormat,
+    specs: &[&str],
+) -> (tempfile::TempDir, FetchRequest) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(
-        crate::ObjectFormat::Sha1,
-        root.path().join("repo"),
-        InitKind::Bare,
-    )
-    .unwrap();
+    let repo = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
     let specs =
         Refspecs::parse(Direction::Fetch, specs.iter().map(|spec| spec.as_bytes())).unwrap();
     let request = FetchRequest::prepare(repo, specs, BTreeSet::new(), Reflog::Preserve).unwrap();
@@ -326,6 +327,14 @@ fn git_fixture(repository: &Repository, args: &[&str]) -> std::process::Output {
     let output = command
         .arg("-C")
         .arg(repository.git_dir())
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
+        ])
         .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env(
@@ -336,6 +345,8 @@ fn git_fixture(repository: &Repository, args: &[&str]) -> std::process::Output {
         .env("GIT_AUTHOR_EMAIL", "fixture@example.test")
         .env("GIT_COMMITTER_NAME", "Fixture")
         .env("GIT_COMMITTER_EMAIL", "fixture@example.test")
+        .env("GIT_AUTHOR_DATE", "@1700000000 +0000")
+        .env("GIT_COMMITTER_DATE", "@1700000000 +0000")
         .output()
         .unwrap();
     assert!(
@@ -348,13 +359,12 @@ fn git_fixture(repository: &Repository, args: &[&str]) -> std::process::Output {
 
 /// Independently generate a complete history with Git before receiving through the public API.
 fn received_git_history() -> (tempfile::TempDir, FetchReady) {
+    received_git_history_format(crate::ObjectFormat::Sha1)
+}
+fn received_git_history_format(format: crate::ObjectFormat) -> (tempfile::TempDir, FetchReady) {
     let source_root = tempfile::tempdir().unwrap();
-    let source = Repository::init(
-        crate::ObjectFormat::Sha1,
-        source_root.path().join("source"),
-        InitKind::Bare,
-    )
-    .unwrap();
+    let source =
+        Repository::init(format, source_root.path().join("source"), InitKind::Bare).unwrap();
     let tree = git_fixture(&source, &["mktree"]);
     let tree = std::str::from_utf8(&tree.stdout).unwrap().trim();
     let commit = git_fixture(&source, &["commit-tree", tree, "-m", "receive proof"]);
@@ -372,7 +382,7 @@ fn received_git_history() -> (tempfile::TempDir, FetchReady) {
             Expected::Absent,
         )
         .unwrap();
-    let (_root, request) = request(&["refs/heads/main:refs/remotes/origin/main"]);
+    let (_root, request) = request_format(format, &["refs/heads/main:refs/remotes/origin/main"]);
     let cancel = AtomicBool::new(false);
     let ready = request
         .receive_local(
@@ -424,5 +434,90 @@ fn damaged_receive_spool_cannot_publish_refs() {
             .read(&name("refs/remotes/origin/main"))
             .unwrap()
             .is_none()
+    );
+}
+
+/// Namespace replacement skips ancestry policy, but never received-object verification.
+#[rstest]
+#[case::sha1_verified(crate::ObjectFormat::Sha1, false)]
+#[case::sha1_damaged(crate::ObjectFormat::Sha1, true)]
+#[case::sha256_verified(crate::ObjectFormat::Sha256, false)]
+#[case::sha256_damaged(crate::ObjectFormat::Sha256, true)]
+fn prefetch_replacement_keeps_installed_object_validation(
+    #[case] format: crate::ObjectFormat,
+    #[case] damage: bool,
+) {
+    let (_root, mut ready) = received_git_history_format(format);
+    let repository = ready.request.repository.clone();
+    let tree = git_fixture(&repository, &["mktree"]);
+    let tree = std::str::from_utf8(&tree.stdout).unwrap().trim();
+    let old = git_fixture(
+        &repository,
+        &["commit-tree", tree, "-m", "unrelated old tip"],
+    );
+    let old: ObjectId = std::str::from_utf8(&old.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let destination = name("refs/prefetch/remotes/origin/main");
+    repository
+        .references()
+        .unwrap()
+        .update_without_reflog(&destination, Target::Direct(old), Expected::Absent)
+        .unwrap();
+    ready.request.specs = Refspecs::parse(
+        Direction::Fetch,
+        ["refs/heads/main:refs/prefetch/remotes/origin/main"],
+    )
+    .unwrap();
+    ready
+        .request
+        .snapshot
+        .insert(destination.clone(), Target::Direct(old));
+    ready.updates = ready
+        .request
+        .plan_prefetch_controlled(
+            ready.received.advertisement(),
+            super::prefetch_plan::PrefetchPlanLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(ready.updates[0].kind, FetchUpdateKind::PrefetchReplace);
+    let new = ready.updates[0].mapping.source.as_ref().unwrap().id;
+    assert_ne!(old, new);
+    if damage {
+        let path = ready.received.pack.path().unwrap();
+        let mut bytes = std::fs::read(path).unwrap();
+        let index = crate::pack::index::Index::parse(
+            new.format(),
+            &ready.received.index,
+            bytes.len() - new.format().digest_len(),
+        )
+        .unwrap();
+        let position = index.find(&ready.received.index, new).unwrap().unwrap();
+        let entry = index.entry(&ready.received.index, position).unwrap();
+        // Damage this new commit's zlib checksum, not an arbitrary entry that might already
+        // have a valid loose duplicate in the destination.
+        bytes[entry.end - 1] ^= 1;
+        std::fs::write(path, bytes).unwrap();
+    }
+    let outcome = ready.finish(FetchUpdateLimits::default(), &AtomicBool::new(false));
+    let expected = if damage {
+        let error = outcome.unwrap_err();
+        assert!(matches!(
+            *error.source,
+            FetchFinishFailure::BeforePublication(_)
+        ));
+        old
+    } else {
+        let report = outcome.unwrap();
+        assert_eq!(report.updates[0].kind, FetchUpdateKind::PrefetchReplace);
+        git_fixture(&repository, &["fsck", "--strict", "--no-dangling"]);
+        new
+    };
+    assert_eq!(
+        repository.references().unwrap().read(&destination).unwrap(),
+        Some(Target::Direct(expected))
     );
 }

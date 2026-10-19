@@ -1,4 +1,5 @@
 //! Pure maintenance planning; the public fetch planner keeps its namespace policy.
+use super::prefetch_plan::PrefetchPlanLimits;
 use super::*;
 use crate::fetch::AdvertisedRef;
 use crate::remote::MappingLimits;
@@ -142,5 +143,83 @@ fn mapping_limits_still_apply_inside_maintenance() {
         Err(FetchPlanError::Mapping(crate::remote::MappingError::Limit(
             _
         )))
+    ));
+}
+
+#[rstest::rstest]
+#[case::snapshot_count("prefetch snapshot entries", 0)]
+#[case::snapshot_bytes("prefetch snapshot bytes", 1)]
+#[case::result_count("prefetch updates", 2)]
+#[case::result_bytes("prefetch output bytes", 3)]
+#[case::work("prefetch planning work", 4)]
+fn destination_and_result_admission(#[case] resource: &str, #[case] limit: usize) {
+    let (_root, mut request) = request(&["refs/heads/*:refs/prefetch/*"]);
+    request.prune = true;
+    request
+        .snapshot
+        .insert(name("refs/prefetch/stale"), Target::Direct(id(1)));
+    let mut limits = PrefetchPlanLimits::default();
+    match limit {
+        0 => limits.max_snapshot_entries = 0,
+        1 => limits.max_snapshot_bytes = 0,
+        2 => limits.max_updates = 0,
+        3 => limits.max_output_bytes = 0,
+        4 => limits.max_work = 0,
+        _ => unreachable!(),
+    }
+    let empty = Advertisement::new(Vec::new(), Vec::new());
+    assert!(matches!(
+        request.plan_prefetch_controlled(&empty, limits, &AtomicBool::new(false)),
+        Err(FetchPlanError::Mapping(crate::remote::MappingError::Limit(name))) if name == resource
+    ));
+}
+
+#[test]
+fn reverse_candidate_bytes_are_limited_even_with_no_forward_mappings() {
+    let (_root, mut request) = request(&["refs/heads/*:refs/prefetch/*"]);
+    request.prune = true;
+    request
+        .snapshot
+        .insert(name("refs/prefetch/stale"), Target::Direct(id(1)));
+    let limits = PrefetchPlanLimits {
+        mapping: MappingLimits::default().with_max_output_bytes(0),
+        ..PrefetchPlanLimits::default()
+    };
+    let empty = Advertisement::new(Vec::new(), Vec::new());
+    assert!(matches!(
+        request.plan_prefetch_controlled(&empty, limits, &AtomicBool::new(false)),
+        Err(FetchPlanError::Mapping(crate::remote::MappingError::Limit(
+            "output bytes"
+        )))
+    ));
+}
+
+#[test]
+fn retained_missing_sources_protect_their_prefetch_destinations() {
+    let (_root, mut request) = request(&["refs/heads/*:refs/prefetch/*"]);
+    request.prune = true;
+    request
+        .snapshot
+        .insert(name("refs/prefetch/stale"), Target::Direct(id(1)));
+    request
+        .retained_missing_sources
+        .insert(b"refs/heads/stale".to_vec());
+    let updates = request
+        .plan_prefetch_controlled(
+            &Advertisement::new(Vec::new(), Vec::new()),
+            PrefetchPlanLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(updates.is_empty());
+}
+
+#[test]
+fn missing_exact_source_refuses_like_git_maintenance_prefetch() {
+    let (_root, request) = request(&["refs/heads/deleted:refs/prefetch/deleted"]);
+    assert!(matches!(
+        request.plan_prefetch_controlled(&advertisement(), PrefetchPlanLimits::default(), &AtomicBool::new(false)),
+        Err(FetchPlanError::Mapping(crate::remote::MappingError::UnmatchedSource(source)))
+            if source == b"refs/heads/deleted"
     ));
 }
