@@ -82,8 +82,10 @@ successful additive repack doesn't make its inputs safe to delete.
 `expire_multi_pack_index` removes only old packs named in a standalone multi-pack index that own no
 indexed objects. It verifies packed survivors and publishes a replacement index before removing
 redundant artifacts. The operation requires isolation, preserves protected and unlisted storage, and
-currently refuses incremental-chain expiry and non-Unix destructive publication. The unreleased API
-is tracked in [automatic maintenance](https://github.com/joshka/girt/issues/531).
+currently refuses incremental-chain expiry and non-Unix destructive publication. `ExpireLimits` uses
+the controlled opener's default admission budgets; `with_open` adjusts metadata, configuration,
+shallow-data and reference-stack limits before any index publication or pack removal. The unreleased
+API is tracked in [automatic maintenance](https://github.com/joshka/girt/issues/531).
 
 `plan_incremental_repack(batch_bytes, limits, cancel)` reports a batch without changing storage. It
 estimates each pack's size from the fraction of objects the MIDX selects there, then chooses the

@@ -326,7 +326,10 @@ fn refresh_limits_refuse_before_index_publication_or_pack_removal() {
                     &AtomicBool::new(false),
                 )
                 .unwrap_err();
-            assert!(matches!(failure.cause, girt::multi_pack_index::ExpireCause::Open(_)));
+            assert!(matches!(
+                failure.cause,
+                girt::multi_pack_index::ExpireCause::Open(_)
+            ));
             assert!(!failure.report.index_published);
             assert!(failure.report.removed.is_empty());
             assert_eq!(fs::read(index).unwrap(), before);

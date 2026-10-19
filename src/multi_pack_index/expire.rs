@@ -5,6 +5,10 @@ use crate::retention::MaintenanceIsolation;
 use crate::{PackLimits, ReadLimits, Repository};
 
 /// Bounds for verifying and retiring unused packs from a standalone multi-pack index.
+///
+/// Defaults use [`crate::OpenLimits::default`] for repository admission under isolation.
+/// Metadata, configuration, shallow-data and reference-stack budgets apply before publication
+/// or removal. Exhaustion preserves the opener's typed error in [`ExpireCause::Open`].
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct ExpireLimits {
@@ -20,6 +24,8 @@ pub struct ExpireLimits {
     pub packs: PackLimits,
     /// Individual survivor decoding and delta-depth bounds.
     pub read: ReadLimits,
+    /// Bounds repository refresh under isolation before observing expiry inputs.
+    pub open: crate::OpenLimits,
 }
 
 impl Default for ExpireLimits {
@@ -31,7 +37,17 @@ impl Default for ExpireLimits {
             write: Default::default(),
             packs: Default::default(),
             read: Default::default(),
+            open: Default::default(),
         }
+    }
+}
+
+impl ExpireLimits {
+    /// Replaces repository admission bounds, applied before any index or pack mutation.
+    #[must_use]
+    pub fn with_open(mut self, open: crate::OpenLimits) -> Self {
+        self.open = open;
+        self
     }
 }
 
@@ -415,7 +431,9 @@ mod native {
             checkpoints: (impl FnOnce(), impl FnOnce(), impl FnMut()),
         ) -> Result<(), ExpireCause> {
             let (after_proof, after_publish, mut after_remove) = checkpoints;
-            let current = Repository::open(self.git_dir())
+            let current = crate::OpenOptions::default()
+                .with_limits(limits.open)
+                .open(self.git_dir(), cancel)
                 .map_err(|error| ExpireCause::Open(Box::new(error)))?;
             if current.object_dir() != self.object_dir()
                 || current.object_format() != self.object_format()
