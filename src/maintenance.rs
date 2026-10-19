@@ -6,6 +6,9 @@
 //! background execution. A due result is not permission to delete objects: execution still needs
 //! the isolation and retention policy described in [`crate::retention`].
 //!
+//! [`TaskSelection`] validates explicit tasks separately from execution and configuration. It
+//! refuses an implicit default task set; selecting a task does not run maintenance.
+//!
 //! ```
 //! use std::sync::atomic::AtomicBool;
 //!
@@ -25,6 +28,7 @@
 mod gc;
 mod lock;
 mod policy;
+mod tasks;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +37,7 @@ use std::{fs, io};
 pub use gc::{GcCoordinationError, GcLock, GcLog};
 pub use lock::{LockError, MaintenanceLock};
 pub use policy::PolicyError;
+pub use tasks::{MaintenanceTask, TaskSelection, TaskSelectionError};
 
 use crate::{Config, Repository};
 
