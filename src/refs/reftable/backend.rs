@@ -68,6 +68,25 @@ fn snapshot(refs: &References<'_>, root: &std::path::Path) -> Result<Snapshot, R
     )
 }
 
+pub(crate) fn head_controlled(
+    refs: &References<'_>,
+    cancel: &AtomicBool,
+) -> Result<Option<Target>, ReferenceError> {
+    let name = RefName::HEAD;
+    let snapshot = Snapshot::read(
+        &directory(refs, &name),
+        refs.object_format,
+        refs.reftable_limits,
+        cancel,
+    )?;
+    Ok(snapshot
+        .table
+        .references
+        .into_iter()
+        .find(|record| record.name == name)
+        .and_then(|record| record.target))
+}
+
 pub(crate) fn read_observation(
     refs: &References<'_>,
     name: &RefName,

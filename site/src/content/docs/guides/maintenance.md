@@ -78,6 +78,20 @@ no transport and authorizes no reference update. Callers inspect the result and 
 low-level fetch; the `workflow::fetch` convenience wrapper retains its trusted transfer limits.
 [Prefetch task execution](https://github.com/joshka/girt/issues/531) remains separate work.
 
+## Bound fetch preparation
+
+`FetchRequest::prepare_controlled` captures destinations with `FetchPrepareLimits` and a
+cancellation flag. It bounds reference inventory, HEAD data, reftable snapshots and shallow-root
+copying on an already-open repository. It writes nothing. Transport, advertisement mapping and
+publication have separate controls; this helper alone does not make a prefetch task bounded.
+
+The controlled path returns `FetchPlanError::LinkedWorktrees` for a linked caller or any registered
+linked worktree. A maintenance runner can report that admission refusal as skipped. Bounded
+repository opening to support those layouts is tracked in
+[#896](https://github.com/joshka/girt/issues/896). The existing `prepare` wrapper retains its
+trusted metadata behavior. Both paths require the caller to exclude checkout, HEAD/branch,
+registration and GC changes through publication.
+
 ## Understand roots and plan outcomes
 
 `RetentionPolicy` defaults to retaining every reflog record, loose object and pack regardless of

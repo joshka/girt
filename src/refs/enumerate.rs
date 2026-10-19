@@ -58,14 +58,7 @@ impl References<'_> {
     ) -> Result<Option<Target>, ReferenceError> {
         let name = RefName::HEAD;
         if self.reference_backend == super::Backend::Reftable {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(ReferenceError::Cancelled);
-            }
-            let target = self.read(&name)?;
-            if cancel.load(Ordering::Relaxed) {
-                return Err(ReferenceError::Cancelled);
-            }
-            return Ok(target);
+            return super::reftable::backend::head_controlled(self, cancel);
         }
         let mut budget = ScanBudget {
             entries: 1,
