@@ -2098,3 +2098,7 @@ mod tests;
 #[cfg(test)]
 #[path = "single_pass_tests.rs"]
 mod single_pass_tests;
+
+#[cfg(test)]
+#[path = "prefetch_plan_tests.rs"]
+mod prefetch_plan_tests;
