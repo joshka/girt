@@ -260,7 +260,7 @@ fn read_or_fetch(
         };
         let unfetchable = fetched.contains(&missing)
             || !repository.is_partial_clone()
-            || lazy_fetch_disabled(context)?;
+            || crate::lazy_fetch::disabled(context)?;
         if unfetchable {
             // Report a missing object, or the replacement error, as an ordinary read does.
             return read_replaced(objects, id);
@@ -278,21 +278,6 @@ fn read_or_fetch(
         fetched.push(missing);
         *objects = context.replaced_objects(repository, repository.objects()?)?;
     }
-}
-
-/// Whether `GIT_NO_LAZY_FETCH` is set to a true value. Like Git, an empty value is false and a
-/// value that isn't a boolean is an error.
-fn lazy_fetch_disabled(context: &Context) -> Result<bool> {
-    let Some(value) = context.environment.get("GIT_NO_LAZY_FETCH") else {
-        return Ok(false);
-    };
-    let bytes = value.as_encoded_bytes();
-    girt::config::parse_boolean(bytes).ok_or_else(|| {
-        eyre!(
-            "bad boolean environment value '{}' for 'GIT_NO_LAZY_FETCH'",
-            String::from_utf8_lossy(bytes)
-        )
-    })
 }
 
 /// Reads `id` through replace references; Git's `cat-file` reports the requested ID with the

@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicBool;
 use super::{Endpoint, Environment, TransferCallbacks, TransferError, is_stream_failure};
 use crate::fetch::{FetchLimits, FetchWorkflowError, KnownHistory, ObjectFilter};
 use crate::remote::{Direction, Remote};
-use crate::{IdSet, ObjectId, Repository};
+use crate::{IdSet, MissingObjectsError, ObjectId, Repository};
 
 /// What [`fetch_missing`] or [`fetch_promised`] fetched.
 ///
@@ -203,6 +203,41 @@ pub fn fetch_promised(
         fetched,
         already_present,
     })
+}
+
+/// Fetches, in one batch, the objects an operation reported missing, so it can run again.
+///
+/// Library operations never fetch. Checkout, patch rendering and blame fail with
+/// [`MissingObjectsError`] when a partial clone lacks objects they need; checkout and patches list
+/// every missing blob at once. Pass that error here, then repeat the operation with a new
+/// [`Objects`](crate::Objects) reader or a reopened repository. This is [`fetch_promised`] for
+/// [`MissingObjectsError::ids`].
+///
+/// # Examples
+///
+/// ```
+/// use girt::workflow::{self, Environment, NoCallbacks, TransferError};
+/// use girt::{MissingObjectsError, ObjectFormat, ObjectKind};
+/// # let (_directory, _, repo, _, _) = include!("../doctest/remote.rs");
+///
+/// let blob = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"some file\n");
+/// let missing = MissingObjectsError::new(vec![(blob, ObjectKind::Blob)]);
+/// let result = workflow::fetch_needed(&repo, &missing, &Environment::default(), &mut NoCallbacks);
+/// assert!(matches!(result, Err(TransferError::NoPromisorRemote)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// Returns the errors of [`fetch_promised`].
+pub fn fetch_needed(
+    repository: &Repository,
+    missing: &MissingObjectsError,
+    environment: &Environment,
+    callbacks: &mut dyn TransferCallbacks,
+) -> Result<PromisorFetch, TransferError> {
+    let ids: Vec<ObjectId> = missing.ids().collect();
+    fetch_promised(repository, &ids, environment, callbacks)
 }
 
 /// Whether `remote.<name>.promisor` is true or `extensions.partialClone` names the remote.

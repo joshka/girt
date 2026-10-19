@@ -47,6 +47,64 @@ impl PromisedObjects {
     }
 }
 
+/// Objects an operation needs that this partial clone does not store yet.
+///
+/// A partial clone's promisor remotes can supply objects it left out. Operations that read many
+/// objects, such as checkout, patch rendering and rename detection, collect every needed object
+/// they find missing before failing, so one batch fetch can supply them all. Blame reads history
+/// one version at a time and reports the first missing blob. In other repositories a missing
+/// object is damage, and each operation reports it with its own error instead.
+///
+/// Object reads never fetch. Pass [`Self::ids`] to
+/// [`workflow::fetch_promised`](crate::workflow::fetch_promised), or use
+/// [`workflow::fetch_needed`](crate::workflow::fetch_needed), then run the operation again.
+///
+/// # Examples
+///
+/// ```
+/// use girt::{MissingObjectsError, ObjectFormat, ObjectKind};
+///
+/// let blob = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"text\n");
+/// let error = MissingObjectsError::new(vec![(blob, ObjectKind::Blob)]);
+/// assert_eq!(error.ids().collect::<Vec<_>>(), [blob]);
+/// assert_eq!(
+///     error.to_string(),
+///     format!("blob {blob} is missing from this partial clone"),
+/// );
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{}", describe_missing(.objects))]
+#[non_exhaustive]
+pub struct MissingObjectsError {
+    /// Each missing object once, with the kind the operation expected, in the order it was needed.
+    pub objects: Vec<(ObjectId, ObjectKind)>,
+}
+
+impl MissingObjectsError {
+    /// Lists `objects` as missing.
+    pub fn new(objects: Vec<(ObjectId, ObjectKind)>) -> Self {
+        Self { objects }
+    }
+
+    /// The missing identities, in [`Self::objects`] order.
+    pub fn ids(&self) -> impl ExactSizeIterator<Item = ObjectId> + '_ {
+        self.objects.iter().map(|&(id, _)| id)
+    }
+}
+
+fn describe_missing(objects: &[(ObjectId, ObjectKind)]) -> String {
+    let count = objects.len();
+    let place = "this partial clone";
+    match objects {
+        [] => format!("no objects missing from {place}"),
+        [(id, kind)] => format!("{} {id} is missing from {place}", kind.as_str()),
+        [(id, kind), ..] => format!(
+            "{count} objects missing from {place}, first {} {id}",
+            kind.as_str()
+        ),
+    }
+}
+
 /// Stops collecting references at the first storage failure or unparseable payload.
 enum Stop {
     Read(ObjectReadError),

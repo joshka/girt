@@ -274,7 +274,7 @@ use crate::{ObjectId, Repository};
 mod clone;
 pub use clone::{CloneError, CloneOptions, CloneOutcome, clone, clone_with};
 mod missing;
-pub use missing::{PromisorFetch, fetch_missing, fetch_promised, promisor_remotes};
+pub use missing::{PromisorFetch, fetch_missing, fetch_needed, fetch_promised, promisor_remotes};
 
 /// Asks a configured remote which branch its `HEAD` names, without downloading objects.
 ///

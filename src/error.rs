@@ -243,6 +243,7 @@ from_domain_errors! {
     crate::ParseObjectIdPrefixError,
     crate::ObjectReadError,
     crate::ReadBlobError,
+    crate::MissingObjectsError,
     crate::ReadCommitError,
     crate::ReadTagError,
     crate::ReadTreeError,

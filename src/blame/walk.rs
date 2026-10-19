@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{Error, Hunk, Limits};
 use crate::content_diff::{BinaryMode, ContentDiff, DiffLimits};
-use crate::{ObjectId, Objects};
+use crate::{ObjectId, ObjectKind, Objects};
 
 struct File {
     id: ObjectId,
@@ -246,10 +246,18 @@ impl Walk<'_> {
     }
     fn content(&mut self, id: ObjectId) -> Result<File, Error> {
         self.check()?;
-        let bytes = self
-            .objects
-            .read_blob_with(id, self.limits.read)
-            .map_err(crate::Error::from)?;
+        let bytes =
+            self.objects
+                .read_blob_with(id, self.limits.read)
+                .map_err(|error| match error {
+                    crate::ReadBlobError::Missing(id) if self.objects.partial_clone => {
+                        Error::MissingObjects(crate::MissingObjectsError::new(vec![(
+                            id,
+                            ObjectKind::Blob,
+                        )]))
+                    }
+                    error => crate::Error::from(error).into(),
+                })?;
         self.bytes = self
             .bytes
             .checked_sub(bytes.len())

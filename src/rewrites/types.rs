@@ -635,4 +635,9 @@ pub enum Error {
     /// Caller cancellation was observed.
     #[error("rewrite detection cancelled")]
     Cancelled,
+    /// In a partial clone, candidate blobs are not stored. Every missing candidate is listed
+    /// before failing; fetch them, for example with
+    /// [`workflow::fetch_needed`](crate::workflow::fetch_needed), and detect again.
+    #[error("rewrite detection needs objects the repository does not store")]
+    MissingObjects(#[source] crate::MissingObjectsError),
 }

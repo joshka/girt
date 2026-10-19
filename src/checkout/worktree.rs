@@ -467,6 +467,8 @@ impl<'a> Plan<'a> {
             }
         }
         let mut blobs = BTreeMap::new();
+        let mut missing = Vec::new();
+        let mut absent = BTreeSet::new();
         // A full discard never compares old content, so old blobs, which may be absent (as for
         // intent-to-add entries), are not read.
         let compared = match local {
@@ -485,7 +487,7 @@ impl<'a> Plan<'a> {
                 }
                 return Err(refused(b"", "gitlink transitions are unsupported"));
             }
-            if blobs.contains_key(&leaf.id) {
+            if blobs.contains_key(&leaf.id) || absent.contains(&leaf.id) {
                 continue;
             }
             let mut read = limits.read;
@@ -493,9 +495,16 @@ impl<'a> Plan<'a> {
                 .max_object_bytes
                 .min(limits.max_object_bytes)
                 .min(limits.max_file_bytes);
-            let object = objects
-                .read_with(leaf.id, read)?
-                .ok_or(Error::InvalidBlob(leaf.id))?;
+            let Some(object) = objects.read_with(leaf.id, read)? else {
+                // In a partial clone, keep listing absent blobs so one fetch can supply them all.
+                // Elsewhere a missing blob is damage.
+                if !objects.partial_clone {
+                    return Err(Error::InvalidBlob(leaf.id));
+                }
+                absent.insert(leaf.id);
+                missing.push((leaf.id, ObjectKind::Blob));
+                continue;
+            };
             if object.kind() != ObjectKind::Blob {
                 return Err(Error::InvalidBlob(leaf.id));
             }
@@ -505,6 +514,43 @@ impl<'a> Plan<'a> {
                 "object bytes",
             )?;
             blobs.insert(leaf.id, object.data().to_vec());
+        }
+        // Attribute files come from the target tree or an explicit attribute source, which may
+        // name blobs outside both trees; list those too.
+        let mut filters = filters;
+        if let Some(filters) = filters.as_mut() {
+            let attributes = |source: crate::attributes::LoadError| Error::Filter {
+                path: Vec::new(),
+                source: Box::new(source.into()),
+            };
+            let mut ids = Vec::new();
+            if let (Local::Refuse, Some(baseline)) = (local, filters.baseline.as_deref_mut()) {
+                ids.extend(
+                    baseline
+                        .missing_attribute_blobs(old.keys().map(Vec::as_slice))
+                        .map_err(attributes)?,
+                );
+            }
+            let target_paths = target
+                .keys()
+                .chain(clean_old.iter().flat_map(Leaves::keys))
+                .map(Vec::as_slice);
+            ids.extend(
+                filters
+                    .target
+                    .missing_attribute_blobs(target_paths)
+                    .map_err(attributes)?,
+            );
+            for id in ids {
+                if absent.insert(id) {
+                    missing.push((id, ObjectKind::Blob));
+                }
+            }
+        }
+        if !missing.is_empty() {
+            return Err(Error::MissingObjects(crate::MissingObjectsError::new(
+                missing,
+            )));
         }
         for leaf in compared
             .into_iter()

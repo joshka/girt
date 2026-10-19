@@ -251,13 +251,34 @@ impl Objects {
         }
         let (sources, destinations) = candidates(changes, options.copies, &mut budget)?;
         let mut blobs = BTreeMap::new();
+        let mut missing = Vec::new();
+        let mut absent = std::collections::BTreeSet::new();
         for candidate in sources.iter().chain(&destinations) {
             budget.check()?;
+            if absent.contains(&candidate.value.id) {
+                continue;
+            }
             if let std::collections::btree_map::Entry::Vacant(entry) =
                 blobs.entry(candidate.value.id)
             {
-                entry.insert(read(self, candidate.value.id, &mut budget, memory)?);
+                match read(self, candidate.value.id, &mut budget, memory) {
+                    Ok(blob) => {
+                        entry.insert(blob);
+                    }
+                    // In a partial clone, keep listing absent blobs so one fetch can supply them
+                    // all. Elsewhere a missing blob is damage.
+                    Err(Error::Missing(id)) if self.partial_clone => {
+                        absent.insert(id);
+                        missing.push((id, ObjectKind::Blob));
+                    }
+                    Err(error) => return Err(error),
+                }
             }
+        }
+        if !missing.is_empty() {
+            return Err(Error::MissingObjects(crate::MissingObjectsError::new(
+                missing,
+            )));
         }
         let mut selection = Selection::new(&sources, &destinations, options);
         selection.exact(&blobs, &mut budget)?;

@@ -25,6 +25,7 @@ mod fsck;
 mod git_hints;
 mod grep;
 mod history;
+mod lazy_fetch;
 mod maintenance;
 mod object;
 mod progress;

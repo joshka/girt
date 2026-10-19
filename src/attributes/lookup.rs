@@ -165,6 +165,63 @@ impl Lookup {
         self.attributes.get(path, name).map_err(rules)
     }
 
+    /// In a partial clone with a tree source, lists the `.gitattributes` blobs that queries for
+    /// `paths` would read but the repository lacks, without loading any file.
+    ///
+    /// Operations call this before their first query so one fetch can supply every attribute
+    /// file they need. Other sources and repositories return an empty list.
+    pub(crate) fn missing_blobs<'p>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'p [u8]>,
+    ) -> Result<Vec<ObjectId>, LoadError> {
+        let Directories::Tree {
+            objects,
+            limits,
+            trees,
+        } = &mut self.directories
+        else {
+            return Ok(Vec::new());
+        };
+        let mut missing = Vec::new();
+        if !objects.partial_clone {
+            return Ok(missing);
+        }
+        let mut visited = BTreeSet::new();
+        for path in paths {
+            let ends = std::iter::once(0).chain(
+                path.iter()
+                    .enumerate()
+                    .filter_map(|(end, byte)| (*byte == b'/').then_some(end)),
+            );
+            for end in ends {
+                let directory = path.get(..end).unwrap_or_default();
+                if self.loaded.contains(directory) || !visited.insert(directory.to_vec()) {
+                    continue;
+                }
+                let Some(tree) = tree_at(objects, *limits, trees, directory)? else {
+                    break;
+                };
+                let object = |source: crate::Error| LoadError::Object {
+                    path: directory.to_vec(),
+                    source: Box::new(source),
+                };
+                let entries = objects
+                    .read_tree_with(tree, *limits)
+                    .map_err(|e| object(e.into()))?;
+                let blob = entries.entries().iter().find(|entry| {
+                    entry.name == b".gitattributes"
+                        && matches!(entry.mode, EntryMode::Blob | EntryMode::Executable)
+                });
+                if let Some(entry) = blob
+                    && !objects.contains(entry.id).map_err(|e| object(e.into()))?
+                {
+                    missing.push(entry.id);
+                }
+            }
+        }
+        Ok(missing)
+    }
+
     fn load_ancestors(&mut self, path: &[u8]) -> Result<(), LoadError> {
         let ends = std::iter::once(0).chain(
             path.iter()
