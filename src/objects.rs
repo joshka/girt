@@ -113,6 +113,11 @@
     reason = "parses untrusted repository or network input (#103)"
 )]
 mod alternates;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "controlled source wiring follows")
+)]
+mod controlled_transfer;
 mod header;
 mod listing;
 mod prefix;
