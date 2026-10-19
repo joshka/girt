@@ -14,7 +14,6 @@ export interface Comparison {
   command: string;
   girtMs: number | null;
   stockMs: number;
-  gitMs: number | null;
   /** girt ÷ stock jj; null when girt did not finish. */
   ratio: number | null;
 }
@@ -24,9 +23,14 @@ const EVERYDAY: [op: string, variant: string, command: string][] = [
   ['status', 'small-edit', 'jj status'],
   ['log', 'default', 'jj log'],
   ['diff', 'wc', 'jj diff'],
-  ['commit', 'default', 'jj commit'],
+  ['show', 'default', 'jj show'],
+  ['new', 'default', 'jj new'],
   ['describe', 'default', 'jj describe'],
+  ['commit', 'default', 'jj commit'],
+  ['squash', 'default', 'jj squash'],
   ['rebase', '1', 'jj rebase'],
+  ['bookmark', 'move', 'jj bookmark move'],
+  ['undo', 'default', 'jj undo'],
   ['git fetch', '1', 'jj git fetch'],
   ['git push', 'update', 'jj git push'],
   ['git clone', 'local-full-checkout', 'jj git clone'],
@@ -46,7 +50,6 @@ export const comparisons: Comparison[] = EVERYDAY.map(([op, variant, command]) =
     command,
     girtMs: row.girt_ms,
     stockMs: row.stock_ms,
-    gitMs: row.git_ms,
     ratio: row.girt_ms == null ? null : row.girt_ms / row.stock_ms,
   };
 });

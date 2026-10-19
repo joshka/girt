@@ -37,7 +37,6 @@ This program prints the first ten commits in `HEAD`'s history, one line each:
 use std::path::PathBuf;
 
 use clap::Parser;
-use girt::{HistoryLimits, PackLimits, ReadLimits, Repository};
 
 /// Print the first commits in HEAD's history.
 #[derive(Parser)]
@@ -52,7 +51,7 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let repository = Repository::open(&args.path)?;
+    let repository = girt::Repository::open(&args.path)?;
 
     let head = repository.head()?;
     let head_id = head.id.ok_or("HEAD has no commits yet")?;
