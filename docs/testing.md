@@ -427,3 +427,10 @@ later admission failure checks that installed objects and published shallow meta
 and accurately reported before reference publication. Reference transactions retain their trusted
 metadata contract; controlled files-transaction bounds remain separate work before prefetch
 execution can be called bounded.
+
+### Controlled Prune Admission
+
+`prune_packed_open` and `repository_open_control` run in Windows interoperability CI. Refresh
+metadata/configuration limits and cancellation refuse before loose deletion; default admission still
+permits verified pruning in both object formats. Existing prune-packed integrity and publication
+tests remain unchanged.
