@@ -101,6 +101,13 @@ operation does not retire data or create bitmaps. It is an explicit caller reque
 consolidation or network access. `BatchRepackLimits::with_open` adjusts the controlled repository
 admission budgets applied under isolation before batch observation or publication.
 
+`prune_packed` defaults to verifying all candidates before deleting any loose copy. The unreleased
+`PrunePackedSelection::Prefix { max_objects }` option admits a prefix in object-ID order within that
+count and the survivor-byte budget. Every selected survivor is verified before the first unlink; an
+individually unfit survivor still refuses the operation. A successful report with `more_candidates`
+set calls for another pass under fresh isolation. This policy is tracked in
+[automatic maintenance](https://github.com/joshka/girt/issues/531).
+
 ## Prepare prefetch mappings
 
 `PrefetchRefspecs::parse` prepares configured fetch refspec values for a prefetch cache. A

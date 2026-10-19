@@ -434,3 +434,8 @@ execution can be called bounded.
 metadata/configuration limits and cancellation refuse before loose deletion; default admission still
 permits verified pruning in both object formats. Existing prune-packed integrity and publication
 tests remain unchanged.
+
+`prune_packed_prefix` covers deterministic object/byte prefixes, unchanged all-candidate refusal,
+individual survivor refusal and draining a duplicate backlog across bounded passes in both formats.
+It also runs in Windows interoperability CI. A unit checkpoint verifies the complete selected prefix
+before the first unlink.
