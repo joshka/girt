@@ -286,10 +286,11 @@ pub use peel::{PeelError, PeelFailure, PeelLimits, PeeledObject};
 pub use repo::Repo;
 pub use repository::{
     ColocationEdit, ColocationError, CreateWorktreeError, InitError, InitKind, InitOptions,
-    OpenError, OperationCleanupError, OperationError, OperationLimits, OperationState,
-    OrphanWorktreeOptions, ReflogPolicyError, Repository, RepositoryLocation, RepositoryMetadata,
-    ShallowError, ShallowRoots, Worktree, WorktreeAdminError, WorktreeDurability, WorktreeError,
-    WorktreeLinkStyle, WorktreeRepair, WorktreeRetirement, WorktreeState,
+    OpenError, OpenLimits, OpenOptions, OperationCleanupError, OperationError, OperationLimits,
+    OperationState, OrphanWorktreeOptions, ReflogPolicyError, Repository, RepositoryLocation,
+    RepositoryMetadata, ShallowError, ShallowRoots, Worktree, WorktreeAdminError,
+    WorktreeDurability, WorktreeError, WorktreeLinkStyle, WorktreeRepair, WorktreeRetirement,
+    WorktreeState,
 };
 pub use tag::{Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

@@ -9,7 +9,9 @@
 //! `git` would.
 //! For trusted local use with Git defaults, lazy loading, and default limits, start with
 //! [`crate::Repo`] instead. `Repository` keeps limits, cancellation, and configuration under caller
-//! control when handling untrusted input or implementing a custom policy.
+//! control when handling untrusted input or implementing a custom policy. Use [`OpenOptions`]
+//! with [`OpenLimits`] to bound explicit metadata opening and observe cancellation; this reads
+//! local-only configuration and writes nothing.
 //!
 //! # Layout and lifetime
 //!
@@ -60,6 +62,9 @@
 //! [`OpenError::Unsupported`] requires choosing a supported feature or extending support, rather
 //! than bypassing validation. Configuration errors retain their source; correct that source before
 //! reopening. Opening writes nothing and does not repair a repository.
+mod open;
+pub use open::{OpenLimits, OpenOptions};
+
 mod colocation;
 mod command_layout;
 mod discover;
@@ -326,6 +331,23 @@ impl RepositoryLocation {
         common_override: Option<&Path>,
         object_override: Option<&Path>,
     ) -> Result<Self, OpenError> {
+        Self::resolve_storage_with(
+            path,
+            exact,
+            common_override,
+            object_override,
+            &mut open::Control::trusted(),
+        )
+    }
+
+    fn resolve_storage_with<const CONTROLLED: bool>(
+        path: &Path,
+        exact: bool,
+        common_override: Option<&Path>,
+        object_override: Option<&Path>,
+        control: &mut open::Control<'_, CONTROLLED>,
+    ) -> Result<Self, OpenError> {
+        control.phase()?;
         let input = path;
         let metadata = match fs::metadata(input) {
             Ok(metadata) => metadata,
@@ -345,16 +367,16 @@ impl RepositoryLocation {
         } else if metadata.is_dir() && (exact || !logical_input.join(".git").exists()) {
             Some(logical_input.clone())
         } else if metadata.is_file() {
-            Some(gitfile_target(&logical_input)?)
+            Some(gitfile_target_with(&logical_input, control)?)
         } else if metadata.is_dir() && logical_input.join(".git").is_file() {
-            Some(gitfile_target(&logical_input.join(".git"))?)
+            Some(gitfile_target_with(&logical_input.join(".git"), control)?)
         } else {
             None
         };
         let input = canonical(input)?;
         let (git_dir, inferred_worktree) = if metadata.is_file() {
             (
-                read_gitfile(&logical_input)?,
+                read_gitfile_with(&logical_input, control)?,
                 logical_input.parent().map(canonical).transpose()?,
             )
         } else if !exact && entry_exists(&input.join(".git"))? {
@@ -362,7 +384,7 @@ impl RepositoryLocation {
             let git_dir = if dotgit.is_dir() {
                 canonical(&dotgit)?
             } else {
-                read_gitfile(&dotgit)?
+                read_gitfile_with(&dotgit, control)?
             };
             (git_dir, Some(input.clone()))
         } else {
@@ -387,13 +409,13 @@ impl RepositoryLocation {
                 }
                 return Err(OpenError::NotFound(input));
             }
-            validate_head(&git_dir.join("HEAD"))?;
+            validate_head_with(&git_dir.join("HEAD"), control)?;
         }
         let common_file = git_dir.join("commondir");
         let (common_dir, common_dir_redirected) = if let Some(common) = common_override {
             (canonical(common)?, true)
         } else if exists(&common_file)? {
-            let relative = metadata_path(&common_file, &read(&common_file)?)?;
+            let relative = metadata_path(&common_file, &control.read(&common_file)?)?;
             (canonical(&git_dir.join(relative))?, true)
         } else {
             (git_dir.clone(), false)
@@ -574,6 +596,25 @@ impl RepositoryMetadata {
         command: Option<command_layout::CommandWorktree>,
         placement: IncludePlacement,
     ) -> Result<Self, OpenError> {
+        Self::read_location_with(
+            location,
+            inputs,
+            reference_limits,
+            command,
+            placement,
+            &mut open::Control::trusted(),
+        )
+    }
+
+    fn read_location_with<const CONTROLLED: bool>(
+        location: &RepositoryLocation,
+        inputs: &ConfigInputs,
+        reference_limits: crate::refs::reftable::StackLimits,
+        command: Option<command_layout::CommandWorktree>,
+        placement: IncludePlacement,
+        control: &mut open::Control<'_, CONTROLLED>,
+    ) -> Result<Self, OpenError> {
+        control.phase()?;
         let RepositoryLocation {
             git_dir,
             common_dir,
@@ -588,7 +629,7 @@ impl RepositoryMetadata {
             }
             return Err(OpenError::NotFound(git_dir.clone()));
         }
-        validate_head(&git_dir.join("HEAD"))?;
+        validate_head_with(&git_dir.join("HEAD"), control)?;
         let object_dir = object_dir.unwrap_or_else(|| common_dir.join("objects"));
         require_directory(&object_dir)?;
         require_directory(&common_dir.join("refs"))?;
@@ -612,6 +653,7 @@ impl RepositoryMetadata {
                 "command layout without repository format version",
             ));
         }
+        control.phase()?;
         let (format_version, object_format) = validate_config(&config, &config_path)?;
         let reference_backend = match config.value("extensions", None, "refstorage") {
             Some(Some(b"reftable")) => crate::refs::Backend::Reftable,
@@ -633,16 +675,28 @@ impl RepositoryMetadata {
         if let Some(logical_git_dir) = logical_git_dir {
             inputs.context.git_dirs.push(logical_git_dir);
         }
-        let head = read(&git_dir.join("HEAD"))?;
+        control.phase()?;
+        let head = control.read(&git_dir.join("HEAD"))?;
         let head = head.strip_suffix(b"\n").unwrap_or(&head);
         let head = head.strip_suffix(b"\r").unwrap_or(head);
         inputs.context.branch = if reference_backend == crate::refs::Backend::Reftable {
-            let snapshot = crate::refs::reftable::Snapshot::read(
-                &git_dir.join("reftable"),
-                object_format,
-                reference_limits,
-                &std::sync::atomic::AtomicBool::new(false),
-            )?;
+            let result = if CONTROLLED {
+                crate::refs::reftable::Snapshot::read(
+                    &git_dir.join("reftable"),
+                    object_format,
+                    reference_limits,
+                    control.flag(),
+                )
+            } else {
+                crate::refs::reftable::Snapshot::read(
+                    &git_dir.join("reftable"),
+                    object_format,
+                    reference_limits,
+                    &std::sync::atomic::AtomicBool::new(false),
+                )
+            };
+            control.phase()?;
+            let snapshot = result?;
             snapshot
                 .table
                 .references
@@ -697,17 +751,21 @@ impl RepositoryMetadata {
         let (worktree, bare, worktree_config_conflict) = if let Some(command) = &command {
             command.resolve(&git_dir, &layout_config, &config_path)?
         } else {
-            let worktree = resolve_worktree(
+            let worktree = resolve_worktree_with(
                 &git_dir,
                 &common_dir,
                 inferred_worktree,
                 &layout_config,
                 &config_path,
+                control,
             )?;
             let bare = boolean(&layout_config, &config_path, "bare")?.unwrap_or(worktree.is_none());
             (worktree, bare, false)
         };
-        let config = Config::resolve_with_include_placement(&inputs, placement)?;
+        control.phase()?;
+        let config = Config::resolve_with_include_placement(&inputs, placement);
+        control.phase()?;
+        let config = config?;
         Ok(Self {
             git_dir,
             common_dir,
@@ -894,6 +952,12 @@ pub enum OpenError {
         /// Feature or setting requiring support.
         feature: String,
     },
+    /// Controlled opening exhausted its aggregate layout metadata budget; no handle is returned.
+    #[error("repository opening limit exceeded: {0}")]
+    Limit(&'static str),
+    /// Controlled opening observed cancellation; no handle or filesystem changes remain.
+    #[error("repository opening cancelled")]
+    Cancelled,
 }
 
 impl Repository {
@@ -1500,25 +1564,26 @@ fn boolean(config: &Config, path: &Path, name: &str) -> Result<Option<bool>, Ope
     }
 }
 
-fn resolve_worktree(
+fn resolve_worktree_with<const CONTROLLED: bool>(
     git_dir: &Path,
     common_dir: &Path,
     inferred: Option<PathBuf>,
     config: &Config,
     source: &Path,
+    control: &mut open::Control<'_, CONTROLLED>,
 ) -> Result<Option<PathBuf>, OpenError> {
     let bare = boolean(config, source, "bare")?;
     let configured = config.value("core", None, "worktree");
     if git_dir != common_dir && configured.is_none() && bare != Some(true) {
         let backlink = git_dir.join("gitdir");
-        let target = git_dir.join(metadata_path(&backlink, &read(&backlink)?)?);
+        let target = git_dir.join(metadata_path(&backlink, &control.read(&backlink)?)?);
         let root = target
             .parent()
             .ok_or_else(|| malformed(&backlink, "backlink has no parent"))?;
         // Metadata remains useful when a registered checkout has disappeared. Validate a live
         // backlink separately; enumeration retains its failure without losing this Git directory.
         if let Some(inferred) = inferred {
-            if canonical(root)? != inferred || read_gitfile(&target)? != git_dir {
+            if canonical(root)? != inferred || read_gitfile_with(&target, control)? != git_dir {
                 return Err(malformed(&backlink, "worktree and backlink disagree"));
             }
             return Ok(Some(inferred));
@@ -1548,8 +1613,11 @@ fn resolve_worktree(
     Ok(None)
 }
 
-fn validate_head(path: &Path) -> Result<(), OpenError> {
-    let bytes = read(path)?;
+fn validate_head_with<const CONTROLLED: bool>(
+    path: &Path,
+    control: &mut open::Control<'_, CONTROLLED>,
+) -> Result<(), OpenError> {
+    let bytes = control.read(path)?;
     let bytes = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
     let bytes = bytes.strip_suffix(b"\r").unwrap_or(bytes);
     let symbolic = bytes.strip_prefix(b"ref: ").is_some_and(|name| {
@@ -1566,10 +1634,19 @@ fn validate_head(path: &Path) -> Result<(), OpenError> {
 }
 
 fn read_gitfile(path: &Path) -> Result<PathBuf, OpenError> {
-    canonical(&gitfile_target(path)?)
+    read_gitfile_with(path, &mut open::Control::trusted())
 }
-fn gitfile_target(path: &Path) -> Result<PathBuf, OpenError> {
-    let bytes = read(path)?;
+fn read_gitfile_with<const CONTROLLED: bool>(
+    path: &Path,
+    control: &mut open::Control<'_, CONTROLLED>,
+) -> Result<PathBuf, OpenError> {
+    canonical(&gitfile_target_with(path, control)?)
+}
+fn gitfile_target_with<const CONTROLLED: bool>(
+    path: &Path,
+    control: &mut open::Control<'_, CONTROLLED>,
+) -> Result<PathBuf, OpenError> {
+    let bytes = control.read(path)?;
     let value = bytes
         .strip_prefix(b"gitdir: ")
         .ok_or_else(|| malformed(path, "expected gitdir: indirection"))?;
