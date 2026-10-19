@@ -411,7 +411,7 @@ fn parse_names(bytes: &[u8], count: usize, version: u8) -> Result<Vec<&str>, Err
             .position(|byte| *byte == 0)
             .ok_or(bad("pack name terminator"))?;
         let name = std::str::from_utf8(&rest[..end]).map_err(|_| bad("pack name encoding"))?;
-        if !name.starts_with("pack-")
+        if !(name.starts_with("pack-") || name.starts_with("loose-"))
             || !name.ends_with(".idx")
             || name.bytes().any(|b| b == b'/' || b == b'\\')
         {
