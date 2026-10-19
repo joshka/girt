@@ -27,6 +27,76 @@ pub enum LockWait {
     UntilCancelled,
 }
 
+/// Bounds for opt-in files reference transaction preparation.
+///
+/// Defaults admit 10,000 edits and one million packed records, with 128 MiB of aggregate metadata
+/// input and 512 MiB of admitted/constructed preparation data. Counts bound transaction plans;
+/// byte budgets bound file contents, edit payloads and buffers. These are cooperative work bounds,
+/// not a filesystem deadline or a resident-memory measurement. Symbolic chains keep their existing
+/// depth limit. Publication is not interrupted after it starts.
+///
+/// This type is `Copy`; future fields must also be `Copy`. Set these bounds through
+/// [`FilesTransactionOptions::with_limits`]. Existing options do not impose these limits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct FilesTransactionLimits {
+    /// Maximum number of caller edits, admitted before lock acquisition.
+    pub max_edits: usize,
+    /// Maximum packed reference records, including records retained in a cached snapshot.
+    pub max_packed_refs: usize,
+    /// Aggregate bytes admitted from packed refs, loose/symbolic rereads and reflog append tails.
+    pub max_input_bytes: usize,
+    /// Aggregate bytes admitted from edit fields and constructed during preparation.
+    ///
+    /// Includes names, targets, reflog encoding/copies and temporary packed replacements. Repeated
+    /// construction is charged repeatedly; conservative encoding allowances can refuse before the
+    /// final representation would exhaust the budget. Counts describe logical reference data;
+    /// collection and filesystem-path overhead additionally scale with edit count and chain depth.
+    /// No preparation refusal publishes a ref/log.
+    pub max_prepared_bytes: usize,
+}
+
+impl Default for FilesTransactionLimits {
+    fn default() -> Self {
+        Self {
+            max_edits: 10_000,
+            max_packed_refs: 1_000_000,
+            max_input_bytes: 128 * 1024 * 1024,
+            max_prepared_bytes: 512 * 1024 * 1024,
+        }
+    }
+}
+
+impl FilesTransactionLimits {
+    /// Sets [`Self::max_edits`].
+    #[must_use]
+    pub fn with_max_edits(mut self, maximum: usize) -> Self {
+        self.max_edits = maximum;
+        self
+    }
+
+    /// Sets [`Self::max_packed_refs`].
+    #[must_use]
+    pub fn with_max_packed_refs(mut self, maximum: usize) -> Self {
+        self.max_packed_refs = maximum;
+        self
+    }
+
+    /// Sets [`Self::max_input_bytes`].
+    #[must_use]
+    pub fn with_max_input_bytes(mut self, maximum: usize) -> Self {
+        self.max_input_bytes = maximum;
+        self
+    }
+
+    /// Sets [`Self::max_prepared_bytes`].
+    #[must_use]
+    pub fn with_max_prepared_bytes(mut self, maximum: usize) -> Self {
+        self.max_prepared_bytes = maximum;
+        self
+    }
+}
+
 /// Lock waits for a files reference transaction; both default to immediate acquisition.
 ///
 /// Reference locks include HEAD, symbolic dependencies and placeholders. Reflog locks always fail
@@ -43,9 +113,21 @@ pub struct FilesTransactionOptions {
     pub reference_lock_wait: LockWait,
     /// Wait for the common `packed-refs.lock`.
     pub packed_refs_lock_wait: LockWait,
+    pub(super) limits: Option<FilesTransactionLimits>,
 }
 
 impl FilesTransactionOptions {
+    /// Applies metadata and preparation bounds to this files transaction.
+    ///
+    /// Limits and cancellation are enforced before publication, including on cached packed refs
+    /// and locked loose rereads. Ordinary options leave this policy unset. Lock waits retain
+    /// their independent budgets; publication retains its existing partial-effect contract.
+    #[must_use]
+    pub fn with_limits(mut self, limits: FilesTransactionLimits) -> Self {
+        self.limits = Some(limits);
+        self
+    }
+
     /// Sets [`Self::reference_lock_wait`].
     #[must_use]
     pub fn with_reference_lock_wait(mut self, reference_lock_wait: LockWait) -> Self {
@@ -67,6 +149,7 @@ impl FilesTransactionOptions {
     pub const GIT_DEFAULT: Self = Self {
         reference_lock_wait: LockWait::For(Duration::from_millis(100)),
         packed_refs_lock_wait: LockWait::For(Duration::from_secs(1)),
+        limits: None,
     };
 }
 

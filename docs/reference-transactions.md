@@ -46,6 +46,41 @@ of record bytes written; zero bytes can still mean an empty log was created. Log
 reports zero bytes and leaves the log under the cooperating-writer contract. Inspect the report and
 current state before recovery; retrying the original batch may violate its original preconditions.
 
+## Bound Files Transaction Preparation
+
+Use `FilesTransactionOptions::with_limits(FilesTransactionLimits)` when composing controlled work.
+The limits admit edit count, packed records, aggregate metadata input and preparation bytes before
+publication. Input includes cached packed bytes, loose/symbolic discovery, locked rereads and the
+existing reflog's append-tail byte. Preparation includes admitted edit payloads, copied
+names/targets, reflog encoding and temporary packed replacements; repeated copies are charged
+repeatedly. A conservative encoding allowance can refuse before the final representation would fill
+the budget.
+
+```rust
+use girt::refs::{FilesTransactionLimits, FilesTransactionOptions};
+
+let options = FilesTransactionOptions::GIT_DEFAULT.with_limits(
+    FilesTransactionLimits::default()
+        .with_max_edits(32)
+        .with_max_input_bytes(8 * 1024 * 1024)
+        .with_max_prepared_bytes(32 * 1024 * 1024),
+);
+// Pass options and your cancellation flag to transaction_files_with_options.
+```
+
+Defaults permit 10,000 edits and one million packed records, 128 MiB of metadata input and 512 MiB
+of admitted/constructed preparation data. Logical data bytes exclude collection/path overhead, which
+also scales with admitted edit count and chain depth. Existing options leave limits unset. Limits do
+not choose reflog policy, read configuration, or change expected values. Refusals use
+`TransactionError::Prepare` with `ReferenceError::Limit` or `Cancelled`; refs and logs retain their
+contents, owned locks are released, and empty parent directories can remain.
+
+Cancellation is cooperative between bounded phases and in batches during namespace scans.
+Parsing/encoding one admitted file or record, and constructing one packed replacement, can finish
+before the next check. Filesystem calls and lock waits retain their separate contracts. These bounds
+are not a hard deadline or process-wide memory cap. Publication starts only after preparation and
+its final cancellation check; the existing partial-effect report remains authoritative thereafter.
+
 ## History Policy
 
 `Reflog::Preserve` leaves history unchanged. `Reflog::Append` creates a log or appends one record
@@ -71,8 +106,9 @@ canonical identities, nonnegative seconds, offsets within 23:59 and single-line 
 The current reader requires exact-width IDs, complete LF records, signed `i64` seconds and a signed
 four-digit zone. It rejects CR/NUL records, short zones and zone suffix text. Independent Git
 observations accept some of those forms, so these are reader limits, not assertions that Git rejects
-them. Reads allocate in proportion to whole ref/log files; no configurable allocation budget or
-streaming interface is provided. These limitations remain visible for later acceptance work.
+them. Ordinary reads allocate in proportion to whole ref/log files; they have no configurable
+allocation budget or streaming interface. Controlled transaction preparation bounds its reference
+reads and inspects only the reflog append tail; it does not add a bounded full-reflog reader.
 
 ## Platform and Cleanup
 
