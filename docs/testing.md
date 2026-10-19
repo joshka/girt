@@ -451,3 +451,15 @@ configuration budgets preserve the original MIDX and packs in both formats, and 
 while acquiring isolation reaches the opener before publication or deletion. Existing default-limit
 round trips still compare expiry and storage counts with Git. Windows retains the typed platform
 refusal for destructive expiry.
+
+### Git Loose-Named Packs
+
+`loose_pack_names` runs in Windows interoperability CI. Git creates `loose-<checksum>` packs; girt
+reads their objects, plans retention, prunes only verified loose duplicates, round-trips their MIDX
+and publishes bitmap/reverse-index sidecars beside the installed basename. Git verifies the MIDX,
+bitmap and object graph in both formats. Unix-only tests cover verified expiry, retirement with
+sidecars and explicit GC consolidation without ignoring the loose-named input.
+
+Incremental batch membership coverage includes subset selection in both formats and a checksum-valid
+wrong offset owned by an unselected pack. The latter must refuse before publication, preserving MIDX
+and source bytes; skipping payload work never skips complete input-claim verification.

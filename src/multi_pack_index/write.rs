@@ -227,7 +227,7 @@ fn index_name(path: &Path) -> Result<String, WriteError> {
         .ok_or(WriteError::PackName(path.to_owned()))?;
     let stem = name
         .strip_suffix(".pack")
-        .filter(|name| name.starts_with("pack-"))
+        .filter(|name| name.starts_with("pack-") || name.starts_with("loose-"))
         .ok_or(WriteError::PackName(path.to_owned()))?;
     Ok(format!("{stem}.idx"))
 }
