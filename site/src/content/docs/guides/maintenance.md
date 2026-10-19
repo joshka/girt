@@ -129,6 +129,20 @@ repository opening to support those layouts is tracked in
 trusted metadata behavior. Both paths require the caller to exclude checkout, HEAD/branch,
 registration and GC changes through publication.
 
+## Admit fetch completion metadata
+
+`FetchFinishOptions` composes `FetchUpdateLimits` with `FetchFinishLimits` for explicit ordinary
+completion. It admits repository and reference/HEAD metadata before installation, refuses linked
+callers or registered linked worktrees with `FetchPlanError::LinkedWorktrees`, and uses controlled
+repository reopens and object snapshots for dependencies and publication checks. Initial admission
+refusals leave packs and refs untouched. Later failures preserve installed objects and completed
+shallow/reference effects in the existing report.
+
+Reference transactions still retain their trusted metadata contract. This builder alone does not
+provide bounded prefetch execution; controlled files-reference publication remains a prerequisite.
+The existing ordinary and retained finish methods retain their behavior. Follow
+[automatic maintenance](https://github.com/joshka/girt/issues/531) for that composition.
+
 ## Understand roots and plan outcomes
 
 `RetentionPolicy` defaults to retaining every reflog record, loose object and pack regardless of

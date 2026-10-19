@@ -6,8 +6,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
-    Advertisement, FetchError, FetchInstalled, FetchLimits, FetchUpdateLimits, KnownHistory,
-    ReceivedFetch,
+    Advertisement, FetchError, FetchFinishLimits, FetchInstalled, FetchLimits, FetchUpdateLimits,
+    KnownHistory, ReceivedFetch,
 };
 use crate::refs::{Expected, RefEdit, RefEditOutcome, RefName, ReferenceError, Reflog, Target};
 use crate::remote::{Direction, Mapping, MappingError, Refspecs};
@@ -1175,7 +1175,7 @@ impl FetchReady {
         };
         let installation =
             super::retention::install_with(&self.request.repository, checksum, || {
-                self.received.install_for_workflow(
+                self.received.install_for_workflow::<false>(
                     &self.request.repository,
                     limits.snapshot,
                     cancel,
@@ -1226,8 +1226,26 @@ impl FetchReady {
     /// errors retain exact per-ref/per-log partial effects. No automatic cleanup, rollback or
     /// retry occurs.
     pub fn finish(
+        self,
+        limits: FetchUpdateLimits,
+        cancel: &AtomicBool,
+    ) -> Result<FetchReport, FetchFinishError> {
+        self.finish_with::<false>(limits, FetchFinishLimits::default(), cancel)
+    }
+
+    pub(super) fn finish_controlled(
+        self,
+        limits: FetchUpdateLimits,
+        admission: FetchFinishLimits,
+        cancel: &AtomicBool,
+    ) -> Result<FetchReport, FetchFinishError> {
+        self.finish_with::<true>(limits, admission, cancel)
+    }
+
+    fn finish_with<const CONTROLLED: bool>(
         mut self,
         limits: FetchUpdateLimits,
+        admission: FetchFinishLimits,
         cancel: &AtomicBool,
     ) -> Result<FetchReport, FetchFinishError> {
         #[cfg(feature = "tracing")]
@@ -1241,7 +1259,7 @@ impl FetchReady {
 
         let operation = || {
             let mut report = self.take_report();
-            let result = self.install_publish(limits, cancel, &mut report);
+            let result = self.install_publish::<CONTROLLED>(limits, admission, cancel, &mut report);
             match result {
                 Ok(()) => Ok(report),
                 Err(source) => Err(FetchFinishError {
@@ -1262,12 +1280,34 @@ impl FetchReady {
         result
     }
 
-    fn install_publish(
+    fn install_publish<const CONTROLLED: bool>(
         &self,
         limits: FetchUpdateLimits,
+        admission: FetchFinishLimits,
         cancel: &AtomicBool,
         report: &mut FetchReport,
     ) -> Result<(), Box<FetchFinishFailure>> {
+        if CONTROLLED {
+            super::finish::admit(&self.request.repository, admission, cancel)?;
+            if self.request.snapshot.len() > admission.preparation.max_ref_entries {
+                return Err(FetchFinishFailure::Safety(FetchPlanError::PrepareLimit(
+                    "prepared references",
+                ))
+                .into());
+            }
+            if self.request.shallow_before.len() > admission.preparation.max_shallow_roots {
+                return Err(FetchFinishFailure::Safety(FetchPlanError::PrepareLimit(
+                    "prepared shallow roots",
+                ))
+                .into());
+            }
+            if self.received.shallow_roots().len() > admission.preparation.max_shallow_roots {
+                return Err(FetchFinishFailure::Safety(FetchPlanError::PrepareLimit(
+                    "received shallow roots",
+                ))
+                .into());
+            }
+        }
         report.integrity = self
             .received
             .enforce_fsck(
@@ -1283,7 +1323,7 @@ impl FetchReady {
         let mut shallow_lock = self.lock_shallow(false, cancel)?;
         report.installed = Some(
             self.received
-                .install_for_workflow(
+                .install_for_workflow::<CONTROLLED>(
                     &self.request.repository,
                     limits.snapshot,
                     cancel,
@@ -1291,7 +1331,7 @@ impl FetchReady {
                 )
                 .map_err(FetchFinishFailure::Installation)?,
         );
-        self.publish_installed(limits, cancel, &mut shallow_lock, report)
+        self.publish_installed::<CONTROLLED>(limits, admission, cancel, &mut shallow_lock, report)
     }
 
     fn take_report(&mut self) -> FetchReport {
@@ -1341,22 +1381,31 @@ impl FetchReady {
         Ok(shallow_lock)
     }
 
-    fn publish_installed(
+    fn publish_installed<const CONTROLLED: bool>(
         &self,
         limits: FetchUpdateLimits,
+        admission: FetchFinishLimits,
         cancel: &AtomicBool,
         shallow_lock: &mut Option<super::shallow::Lock>,
         report: &mut FetchReport,
     ) -> Result<(), Box<FetchFinishFailure>> {
+        if CONTROLLED {
+            super::finish::admit(&self.request.repository, admission, cancel)?;
+        }
         let resulting_roots = self.received.shallow_roots();
         if !self.received.wants().is_empty() && self.request.shallow_before != resulting_roots {
-            let objects = self
-                .request
-                .repository
-                .objects_with(limits.snapshot)
-                .map_err(|error| {
-                    FetchFinishFailure::BeforePublication(FetchError::Destination(error))
-                })?;
+            let objects = if CONTROLLED {
+                self.request.repository.objects_controlled(
+                    limits.snapshot,
+                    Default::default(),
+                    cancel,
+                )
+            } else {
+                self.request.repository.objects_with(limits.snapshot)
+            }
+            .map_err(|error| {
+                FetchFinishFailure::BeforePublication(FetchError::Destination(error))
+            })?;
             let mut verify_roots = self.received.wants().to_vec();
             verify_roots.extend(self.request.shallow_before.iter().copied());
             let verified = KnownHistory::new_with_boundaries(
@@ -1383,11 +1432,22 @@ impl FetchReady {
                 .map_err(FetchFinishFailure::Shallow)?;
         }
         super::check_cancelled(cancel).map_err(FetchFinishFailure::BeforePublication)?;
-        super::worktree::check(&self.request.repository).map_err(FetchFinishFailure::Safety)?;
+        if !CONTROLLED {
+            super::worktree::check(&self.request.repository).map_err(FetchFinishFailure::Safety)?;
+        }
         if !self.received.wants().is_empty() {
-            let reopened = Repository::open(self.request.repository.git_dir())
-                .map_err(FetchFinishFailure::Reopen)?;
-            let objects = reopened.objects_with(limits.snapshot).map_err(|error| {
+            let reopened = if CONTROLLED {
+                super::finish::admit(&self.request.repository, admission, cancel)?
+            } else {
+                Repository::open(self.request.repository.git_dir())
+                    .map_err(FetchFinishFailure::Reopen)?
+            };
+            let objects = if CONTROLLED {
+                reopened.objects_controlled(limits.snapshot, Default::default(), cancel)
+            } else {
+                reopened.objects_with(limits.snapshot)
+            }
+            .map_err(|error| {
                 FetchFinishFailure::BeforePublication(FetchError::Destination(error))
             })?;
             // Prove the received representation is still installed, and honor destination lookup
@@ -1626,8 +1686,9 @@ impl RetainedFetchReady {
         mut self,
         cancel: &AtomicBool,
     ) -> Result<(FetchReport, super::FetchRetention), RetainedFetchFinishError> {
-        let result = self.ready.publish_installed(
+        let result = self.ready.publish_installed::<false>(
             self.limits,
+            FetchFinishLimits::default(),
             cancel,
             &mut self.shallow_lock,
             &mut self.report,
@@ -1965,13 +2026,13 @@ pub enum FetchFinishFailure {
     /// Shallow lock, snapshot comparison, or metadata publication failed.
     #[error("fetch shallow publication")]
     Shallow(#[from] super::FetchShallowError),
-    /// Repository could not be reopened with freshly published shallow boundaries.
+    /// Controlled repository admission or a reopen with fresh shallow boundaries failed.
     #[error("fetch repository reopen")]
     Reopen(#[from] crate::OpenError),
     /// Cancellation or installed-object verification failed before the reference transaction.
     #[error("before fetch publication")]
     BeforePublication(#[source] FetchError),
-    /// Worktree/HEAD safety recheck failed after installation; refs unchanged.
+    /// Controlled admission or a worktree/HEAD safety recheck failed; refs unchanged.
     #[error("fetch publication safety")]
     Safety(#[from] FetchPlanError),
     /// Object-kind/ancestry validation or update authorization failed; installed objects remain,
