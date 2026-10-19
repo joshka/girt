@@ -445,3 +445,11 @@ configuration budgets preserve the original MIDX and packs in both formats, and 
 while acquiring isolation reaches the opener before publication or deletion. Existing default-limit
 round trips still compare expiry and storage counts with Git. Windows retains the typed platform
 refusal for destructive expiry.
+
+### Controlled Files Transactions
+
+`files_transaction_control` runs in Windows interoperability CI. It covers cold/cached packed
+admission, caller edit and preparation budgets, symbolic discovery and locked rereads, append-tail
+input, cancellation, foreign lock preservation and cleanup without publication. Successful SHA-1 and
+SHA-256 reference/reflog bytes match isolated Git transactions. Legacy wait and publication suites
+remain unchanged apart from initializing the additive options field through defaults.

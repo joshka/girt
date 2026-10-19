@@ -720,7 +720,7 @@ fn read_walked(path: &Path) -> Result<Option<Vec<u8>>, ReferenceError> {
 /// leaf replaced by a symlink and never blocks on a special file, and the opened handle must be a
 /// regular file. Hosts without such an open fall back to checking every ancestor first. This keeps
 /// the trusted-directory contract of [`check_path`]; it is not a sandbox against ancestor swaps.
-fn open_walked(path: &Path) -> Result<Option<fs::File>, ReferenceError> {
+pub(super) fn open_walked(path: &Path) -> Result<Option<fs::File>, ReferenceError> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let opened = {
         use std::os::unix::fs::OpenOptionsExt;

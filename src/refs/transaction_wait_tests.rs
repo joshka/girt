@@ -7,6 +7,7 @@ fn options(wait: LockWait) -> FilesTransactionOptions {
     FilesTransactionOptions {
         reference_lock_wait: wait,
         packed_refs_lock_wait: wait,
+        ..Default::default()
     }
 }
 
@@ -303,8 +304,8 @@ fn options_preparation_reuses_partial_publication_without_retry() {
 }
 
 #[rstest]
-#[case::packed("packed-refs.lock", FilesTransactionOptions { reference_lock_wait: LockWait::UntilCancelled, packed_refs_lock_wait: LockWait::Immediate })]
-#[case::reference("refs/tags/a.lock", FilesTransactionOptions { reference_lock_wait: LockWait::Immediate, packed_refs_lock_wait: LockWait::UntilCancelled })]
+#[case::packed("packed-refs.lock", FilesTransactionOptions { reference_lock_wait: LockWait::UntilCancelled, packed_refs_lock_wait: LockWait::Immediate, ..Default::default() })]
+#[case::reference("refs/tags/a.lock", FilesTransactionOptions { reference_lock_wait: LockWait::Immediate, packed_refs_lock_wait: LockWait::UntilCancelled, ..Default::default() })]
 fn packed_and_reference_policies_are_independent(
     #[case] path: &str,
     #[case] policies: FilesTransactionOptions,

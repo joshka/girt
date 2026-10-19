@@ -323,18 +323,42 @@ impl References<'_> {
 
 // Inspect only framing at the append boundary; imported grammar does not constrain construction.
 pub(super) fn check_append_tail(path: &std::path::Path) -> Result<(), ReferenceError> {
+    check_append_tail_with::<false>(path, usize::MAX).map(|_| ())
+}
+
+pub(super) fn check_append_tail_controlled(
+    path: &std::path::Path,
+    max_bytes: usize,
+) -> Result<usize, ReferenceError> {
+    check_append_tail_with::<true>(path, max_bytes)
+}
+
+fn check_append_tail_with<const CONTROLLED: bool>(
+    path: &std::path::Path,
+    max_bytes: usize,
+) -> Result<usize, ReferenceError> {
     use std::io::{Read, Seek, SeekFrom};
     super::store::check_path(path)?;
-    let mut file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(super::store::io_error(path, error)),
+    let mut file = if CONTROLLED {
+        let Some(file) = super::enumerate::open_walked(path)? else {
+            return Ok(0);
+        };
+        file
+    } else {
+        match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(super::store::io_error(path, error)),
+        }
     };
     let size = file
         .seek(SeekFrom::End(0))
         .map_err(|error| super::store::io_error(path, error))?;
     if size == 0 {
-        return Ok(());
+        return Ok(0);
+    }
+    if CONTROLLED && max_bytes == 0 {
+        return Err(ReferenceError::Limit("reference bytes"));
     }
     file.seek(SeekFrom::End(-1))
         .map_err(|error| super::store::io_error(path, error))?;
@@ -347,7 +371,7 @@ pub(super) fn check_append_tail(path: &std::path::Path) -> Result<(), ReferenceE
             "unterminated reflog append tail; inspect and repair before retry",
         ));
     }
-    Ok(())
+    Ok(1)
 }
 
 pub(super) fn validate(committer: &Signature, message: &[u8]) -> Result<(), ReferenceError> {

@@ -150,7 +150,7 @@ pub use imported::{
     ImportedRecord, ImportedReflog, ReflogFields, ReflogInterpretationError, ReflogLimits,
     ReflogReadEnd,
 };
-pub use lock_wait::{FilesTransactionOptions, LockWait};
+pub use lock_wait::{FilesTransactionLimits, FilesTransactionOptions, LockWait};
 pub use name::{InvalidRefName, RefName};
 pub use pack::{
     PackRefsError, PackRefsLimits, PackRefsOptions, PackRefsReport, PackScope, PackTrigger,

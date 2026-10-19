@@ -4,12 +4,17 @@ use std::io::{self, Write};
 use std::sync::atomic::AtomicBool;
 
 use super::lock_wait::check_cancelled;
-use super::store::{Lock, check_expected, conflicts, io_error, remove_loose, validate_target};
+use super::store::{Lock, check_expected, io_error, remove_loose, validate_target};
 use super::{
     Expected, FilesTransactionOptions, LockWait, RefName, ReferenceError, References, Reflog,
     ReflogEntry, Target, packed, reflog,
 };
 use crate::ObjectId;
+
+mod control;
+use control::Control;
+
+use super::FilesTransactionLimits;
 
 /// Which stored reference a conditional edit updates.
 ///
@@ -493,6 +498,14 @@ impl References<'_> {
     /// choosing [`LockWait::UntilCancelled`] must arrange cancellation if an unbounded wait is
     /// unacceptable. Cancellation does not interrupt publication once it starts.
     ///
+    /// Add [`FilesTransactionOptions::with_limits`] to bound packed snapshots, aggregate loose and
+    /// symbolic rereads, reflog append-tail reads and preparation buffers. Cached packed data still
+    /// consumes its retained bytes/record count. Preparation accounting conservatively includes
+    /// edit payloads and constructed copies. Parsing/encoding one admitted file or record, and
+    /// rewriting one admitted packed snapshot, remain synchronous bounded phases. Namespace
+    /// scans poll once per batch; cancellation cannot interrupt filesystem operations or
+    /// publication.
+    ///
     /// Uses the same locked rechecks, expected values, cleanup and publication as
     /// [`Self::transaction`]. It never refreshes preconditions or retries preparation/publication.
     /// No configuration or environment is read. The ordinary transaction entry point uses
@@ -508,7 +521,9 @@ impl References<'_> {
     /// ```
     /// use std::sync::atomic::AtomicBool;
     ///
-    /// use girt::refs::{Expected, FilesTransactionOptions, RefEdit, RefName, Reflog, Target};
+    /// use girt::refs::{
+    ///     Expected, FilesTransactionLimits, FilesTransactionOptions, RefEdit, RefName, Reflog, Target,
+    /// };
     /// use girt::{InitKind, ObjectFormat, Repository};
     ///
     /// let directory = tempfile::tempdir()?;
@@ -527,9 +542,12 @@ impl References<'_> {
     ///     Reflog::Preserve,
     /// )];
     ///
-    /// let options = FilesTransactionOptions::GIT_DEFAULT.with_reference_lock_wait(
-    ///     girt::refs::LockWait::For(std::time::Duration::from_millis(25)),
-    /// ); // Shorten loose-ref waits while retaining the one-second packed-refs wait.
+    /// let options = FilesTransactionOptions::GIT_DEFAULT
+    ///     .with_reference_lock_wait(girt::refs::LockWait::For(std::time::Duration::from_millis(
+    ///         25,
+    ///     )))
+    ///     .with_limits(FilesTransactionLimits::default().with_max_edits(16));
+    /// // Shorten loose-ref waits, retain the packed wait, and bound preparation.
     /// let outcomes = repo.references()?.transaction_files_with_options(
     ///     &edits,
     ///     options,
@@ -636,6 +654,29 @@ impl References<'_> {
         cancel: &AtomicBool,
         identity: LogIdentity,
     ) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        if let Some(limits) = options.limits {
+            self.transaction_files_with_log_identity_with::<true>(
+                edits, options, cancel, identity, limits,
+            )
+        } else {
+            self.transaction_files_with_log_identity_with::<false>(
+                edits,
+                options,
+                cancel,
+                identity,
+                FilesTransactionLimits::default(),
+            )
+        }
+    }
+
+    fn transaction_files_with_log_identity_with<const CONTROLLED: bool>(
+        &self,
+        edits: &[RefEdit],
+        options: FilesTransactionOptions,
+        cancel: &AtomicBool,
+        identity: LogIdentity,
+        limits: FilesTransactionLimits,
+    ) -> Result<Vec<RefEditOutcome>, TransactionError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt", "refs.transaction", outcome = "incomplete",
@@ -643,6 +684,7 @@ impl References<'_> {
             edits = edits.len(),
         );
         let operation = || {
+            let mut control = Control::<CONTROLLED>::new(limits, cancel);
             if self.reference_backend != super::Backend::Files {
                 return Err(TransactionError::Prepare {
                     operation: None,
@@ -655,10 +697,20 @@ impl References<'_> {
                 operation: None,
                 source,
             })?;
+            control
+                .edits(edits)
+                .map_err(|source| TransactionError::Prepare {
+                    operation: None,
+                    source,
+                })?;
             if edits.is_empty() {
                 return Ok(Vec::new());
             }
             for (index, edit) in edits.iter().enumerate() {
+                control.step().map_err(|source| TransactionError::Prepare {
+                    operation: Some(index),
+                    source,
+                })?;
                 if identity == LogIdentity::Stored
                     && (edit.dereference == crate::refs::Dereference::Follow
                         || matches!(edit.target, Some(Target::Symbolic(_))))
@@ -677,8 +729,13 @@ impl References<'_> {
                     }
                 })?;
             }
-            let prepared =
-                self.prepare_files_transaction_with_options(edits, options, cancel, identity)?;
+            let prepared = self.prepare_files_transaction_with_control(
+                edits,
+                options,
+                cancel,
+                identity,
+                &mut control,
+            )?;
             check_cancelled(cancel).map_err(|source| TransactionError::Prepare {
                 operation: None,
                 source,
@@ -728,6 +785,18 @@ impl References<'_> {
         cancel: &AtomicBool,
         identity: LogIdentity,
     ) -> Result<Prepared, TransactionError> {
+        let mut control = Control::<false>::new(FilesTransactionLimits::default(), cancel);
+        self.prepare_files_transaction_with_control(edits, options, cancel, identity, &mut control)
+    }
+
+    fn prepare_files_transaction_with_control<const CONTROLLED: bool>(
+        &self,
+        edits: &[RefEdit],
+        options: FilesTransactionOptions,
+        cancel: &AtomicBool,
+        identity: LogIdentity,
+        control: &mut Control<'_, CONTROLLED>,
+    ) -> Result<Prepared, TransactionError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -748,22 +817,24 @@ impl References<'_> {
                 cancel,
             )
             .map_err(batch_error)?;
-            let packed = self
-                .packed_at(&packed_lock.destination)
+            let packed = control
+                .packed(self, &packed_lock.destination)
                 .map_err(batch_error)?;
             let mut plans = Vec::new();
             let mut names = BTreeSet::new();
             for (index, edit) in edits.iter().enumerate() {
+                control.step().map_err(batch_error)?;
                 let error = |source| TransactionError::Prepare {
                     operation: Some(index),
                     source,
                 };
                 let chain = self
-                    .discover_chain(edit, &packed, identity)
+                    .discover_chain(edit, &packed, identity, control)
                     .map_err(error)?;
                 let new_chain = if let Some(Target::Symbolic(target)) = &edit.target
                     && edit.reflog.append_fields().is_some()
                 {
+                    control.name(target).map_err(error)?;
                     let dependency = RefEdit {
                         name: target.clone(),
                         dereference: crate::refs::Dereference::Follow,
@@ -772,7 +843,7 @@ impl References<'_> {
                         reflog: Reflog::Preserve,
                     };
                     let new_chain = self
-                        .discover_chain(&dependency, &packed, LogIdentity::Resolved)
+                        .discover_chain(&dependency, &packed, LogIdentity::Resolved, control)
                         .map_err(error)?;
                     if new_chain.iter().any(|(name, _)| name == &edit.name) {
                         return Err(error(ReferenceError::Cycle(edit.name.clone())));
@@ -787,10 +858,10 @@ impl References<'_> {
                     .map(|(name, _)| name)
                     .collect();
                 for name in dependencies {
+                    control.step().map_err(error)?;
+                    control.name(name).map_err(error)?;
                     if !names.insert(name.clone())
-                        || names
-                            .iter()
-                            .any(|other: &RefName| conflicts(name.as_bytes(), other.as_bytes()))
+                        || control.overlap(&names, name).map_err(error)?
                     {
                         return Err(error(ReferenceError::Conflict(
                             self.path(name).map_err(error)?,
@@ -802,8 +873,15 @@ impl References<'_> {
 
             let mut locks = BTreeMap::new();
             for name in names {
-                self.check_packed_namespace(&name, &packed)
-                    .map_err(batch_error)?;
+                if CONTROLLED {
+                    control
+                        .namespace(self, &name, &packed)
+                        .map_err(batch_error)?;
+                } else {
+                    self.check_packed_namespace(&name, &packed)
+                        .map_err(batch_error)?;
+                }
+                control.name(&name).map_err(batch_error)?;
                 locks.insert(
                     name.clone(),
                     Lock::acquire_wait(
@@ -822,8 +900,10 @@ impl References<'_> {
                     source,
                 };
                 for (name, observed) in chain.iter().chain(&new_chain) {
+                    control.step().map_err(error)?;
+                    control.target(observed.as_ref()).map_err(error)?;
                     check_expected(
-                        self.read_locked(name, &packed).map_err(error)?,
+                        control.read_locked(self, name, &packed).map_err(error)?,
                         match observed {
                             Some(target) => Expected::Value(target.clone()),
                             None => Expected::Absent,
@@ -836,6 +916,8 @@ impl References<'_> {
                 } else {
                     chain.first().unwrap()
                 };
+                control.target(actual.as_ref()).map_err(error)?;
+                control.expected(&edit.expected).map_err(error)?;
                 check_expected(actual.clone(), edit.expected.clone()).map_err(error)?;
                 let mut logs = Vec::new();
                 let logged_chain = if edit.dereference == crate::refs::Dereference::Follow {
@@ -844,6 +926,11 @@ impl References<'_> {
                     &chain[..1]
                 };
                 if edit.reflog.append_fields().is_some() {
+                    if CONTROLLED {
+                        for (name, _) in logged_chain {
+                            control.name(name).map_err(error)?;
+                        }
+                    }
                     log_names.extend(logged_chain.iter().map(|(name, _)| name.clone()));
                 }
                 let skip_log = matches!(
@@ -865,6 +952,7 @@ impl References<'_> {
                         .last()
                         .map_or(edit.target.as_ref(), |(_, value)| value.as_ref());
                     let new = log_id(self.object_format, new_target, identity).map_err(error)?;
+                    control.reflog(committer, message).map_err(error)?;
                     let record = ReflogEntry {
                         old,
                         new,
@@ -873,13 +961,19 @@ impl References<'_> {
                     };
                     let record = record.encode().map_err(error)?;
                     for (log_name, _) in logged_chain {
+                        control.name(log_name).map_err(error)?;
+                        control.prepare(record.len()).map_err(error)?;
                         logs.push((log_name.clone(), record.clone()));
                     }
                 }
                 if edit.reflog == Reflog::Delete {
+                    control.name(name).map_err(error)?;
+                    control.name(name).map_err(error)?;
                     log_names.insert(name.clone());
                     logs.push((name.clone(), Vec::new()));
                 }
+                control.name(name).map_err(error)?;
+                control.target(edit.target.as_ref()).map_err(error)?;
                 operations.push(Operation {
                     name: name.clone(),
                     target: edit.target.clone(),
@@ -890,12 +984,14 @@ impl References<'_> {
             }
             let mut log_locks = BTreeMap::new();
             for name in log_names {
+                control.step().map_err(batch_error)?;
                 let path = self.reflog_path(&name).map_err(batch_error)?;
                 let lock =
                     Lock::acquire_wait(path, LockWait::Immediate, cancel).map_err(batch_error)?;
                 log_locks.insert(name, lock);
             }
             for (operation, edit) in operations.iter_mut().zip(edits) {
+                control.step().map_err(batch_error)?;
                 if matches!(edit.reflog, Reflog::AppendExistingIfChanged { .. }) {
                     // Presence is a transaction decision, never a caller's pre-read.
                     let mut existing = Vec::new();
@@ -908,7 +1004,8 @@ impl References<'_> {
                 }
                 if !operation.delete_log {
                     for (name, _) in &operation.logs {
-                        reflog::check_append_tail(&log_locks[name].destination)
+                        control
+                            .append_tail(&log_locks[name].destination)
                             .map_err(batch_error)?;
                     }
                 }
@@ -916,9 +1013,12 @@ impl References<'_> {
             // Publication rewrites `packed-refs` only when an operation removes a record.
             let mut replacement = Vec::new();
             if operations.iter().any(|operation| operation.packed_removed) {
+                control.prepare(packed.bytes.len()).map_err(batch_error)?;
                 replacement.clone_from(&packed.bytes);
                 for operation in &operations {
                     if operation.packed_removed {
+                        control.phase().map_err(batch_error)?;
+                        control.prepare(replacement.len()).map_err(batch_error)?;
                         replacement =
                             packed::without_ref(self.object_format, &replacement, &operation.name);
                     }
@@ -944,22 +1044,27 @@ impl References<'_> {
         result
     }
 
-    fn discover_chain(
+    fn discover_chain<const CONTROLLED: bool>(
         &self,
         edit: &RefEdit,
         packed: &packed::Packed,
         identity: LogIdentity,
+        control: &mut Control<'_, CONTROLLED>,
     ) -> Result<Vec<(RefName, Option<Target>)>, ReferenceError> {
         let resolve_old = identity == LogIdentity::Resolved
             && (edit.dereference == crate::refs::Dereference::Follow
                 || edit.reflog.append_fields().is_some());
         let mut chain = Vec::new();
+        control.name(&edit.name)?;
         let mut name = edit.name.clone();
         loop {
+            control.step()?;
             if chain.iter().any(|(seen, _)| seen == &name) {
                 return Err(ReferenceError::Cycle(name));
             }
-            let target = self.read_locked(&name, packed)?;
+            let target = control.read_locked(self, &name, packed)?;
+            control.name(&name)?;
+            control.target(target.as_ref())?;
             chain.push((name.clone(), target.clone()));
             match target {
                 Some(Target::Symbolic(next)) if resolve_old => {
