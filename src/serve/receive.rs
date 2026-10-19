@@ -21,10 +21,12 @@ use crate::{ObjectFormat, ObjectId, Repository, Signature};
 ///
 /// Updates follow the repository's receive policy: `receive.denyCurrentBranch`,
 /// `receive.denyDeletes`, `receive.denyNonFastForwards`, `receive.hideRefs` and
-/// `transfer.hideRefs`. `receive.denyCurrentBranch=updateInstead` and atomic pushes are refused for
-/// now. The pushed pack is validated before any reference changes. When a
-/// `pre-receive` hook exists, the objects stay in quarantine until it accepts them; `update`,
-/// `post-receive` and `post-update` hooks run as Git runs them.
+/// `transfer.hideRefs`. With `receive.denyCurrentBranch=updateInstead` on macOS and Linux, a clean
+/// checked-out working tree is updated to the pushed commit. Atomic pushes are refused for now.
+///
+/// The pushed pack is validated before any reference changes. When a `pre-receive` hook exists,
+/// the objects stay in quarantine until it accepts them; `update`, `post-receive` and
+/// `post-update` hooks run as Git runs them.
 ///
 /// # Examples
 ///

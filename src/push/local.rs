@@ -124,8 +124,9 @@ impl<'a> LocalPushRequest<'a> {
 /// worktree state may change between separate reads; conditional locks prevent stale ref
 /// overwrites. Callers must exclude external GC/pruning, checkout, symbolic-HEAD/branch changes and
 /// worktree registration changes from preparation through publication. Ref locks do not enforce
-/// this exclusion. Deletion and non-fast-forward receive restrictions apply. `updateInstead`,
-/// namespace-specific policy and unsupported receive settings refuse before mutation.
+/// this exclusion. Deletion and non-fast-forward receive restrictions apply, and `updateInstead`
+/// updates a clean checked-out working tree on macOS/Linux. Namespace-specific policy and
+/// unsupported receive settings refuse before mutation.
 /// Object installation can leave an indexed pack when later refs reject or fail.
 ///
 /// On macOS/Linux, incoming objects are private during `pre-receive`, with primary objects

@@ -489,8 +489,9 @@ pub fn fetch(
 /// Only the remote's first push URL is used. Git pushes to every configured `pushurl`; to do the
 /// same, configure one remote per URL. Atomic and signed pushes are unsupported. A local
 /// destination's `receive.denyCurrentBranch` is honored as Git honors it, so by default a branch
-/// checked out in the destination's working tree is refused; the `updateInstead` value is
-/// unsupported and fails the push before anything is sent.
+/// checked out in the destination's working tree is refused. With `updateInstead` on macOS and
+/// Linux, a clean working tree is updated to the pushed commit before the branch moves, and a tree
+/// with staged or unstaged changes refuses that reference, as with Git.
 ///
 /// # Examples
 ///

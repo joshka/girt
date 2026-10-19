@@ -1964,10 +1964,10 @@ Native local push uses conditional per-ref transactions. `LocalPushRequest::with
 the identity for reflogs when `core.logAllRefUpdates` or an existing log requires an append; without
 it, the push refuses before object installation. Deletion removes the edited name's log. The report
 retains separate reference and log effects on publication failure, so an appended or failed log is
-not inferred from the ref acknowledgement. Current-branch refuse, ignore and warn modes are
-supported, as are `receive.denyDeleteCurrent`, `receive.denyDeletes`, `receive.denyNonFastForwards`
-and ordered `transfer.hideRefs`/`receive.hideRefs` restrictions. The native adapter refuses
-`updateInstead`, proc-receive, reference-transaction and push-to-checkout hooks, and other
+not inferred from the ref acknowledgement. Current-branch refuse, ignore, warn and `updateInstead`
+modes are supported, as are `receive.denyDeleteCurrent`, `receive.denyDeletes`,
+`receive.denyNonFastForwards` and ordered `transfer.hideRefs`/`receive.hideRefs` restrictions. The
+native adapter refuses proc-receive, reference-transaction and push-to-checkout hooks, and other
 unsupported receive policy before mutation. Girt starts supported hooks directly without a Git
 transport subprocess. jj still owns its pre-push policy.
 
