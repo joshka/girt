@@ -530,3 +530,11 @@ streams padded with empty DEFLATE blocks. Exact input limits succeed; smaller li
 typed limit error. Cancellation returns no partial object. Existing public readers retain their
 output-only loose-object limit contract. Framing, stream completion and object identity remain
 verified, and pack-first lookup and alternate precedence stay unchanged.
+
+## Controlled Known-History Reads
+
+Private known-history read tests cover aggregate fallback attempts and payload bytes, compressed
+loose-input limits, cancellation and trusted-path equivalence. Root admission bounds occurrences,
+shallow roots and tag edges before retaining completeness evidence. Annotated roots establish only
+peeled commits, and missing or unreadable roots refuse without returning partial evidence. Existing
+known-history constructors and receive paths keep their trusted-read behavior.

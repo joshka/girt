@@ -197,17 +197,60 @@ fn missing_fallbacks_and_per_read_limits_are_enforced() {
     ));
 }
 
-
 #[test]
 fn compressed_input_limit_reaches_loose_fallbacks() {
     let (_root, known, id) = fixture(ObjectFormat::Sha1);
     let cancel = AtomicBool::new(false);
-    let limits = FetchLimits::default().with_known_read(
-        crate::ReadLimits::default().with_max_input_bytes(1),
-    );
+    let limits = FetchLimits::default()
+        .with_known_read(crate::ReadLimits::default().with_max_input_bytes(1));
     let reads = KnownRead::<true>::new(&known, limits, &cancel);
     assert!(matches!(
         reads.get(id),
         Err(FetchError::Limit("loose compressed bytes"))
     ));
+}
+
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn packed_fallbacks_share_the_aggregate_payload_budget(#[case] format: ObjectFormat) {
+    let fixture = crate::pack_git::Fixture::new(format, true, 4);
+    let payload = &fixture
+        .records
+        .iter()
+        .find(|(id, _, _)| *id == fixture.ordinary)
+        .unwrap()
+        .2;
+    let cancel = AtomicBool::new(false);
+    let store = fixture.repo.objects_with(Default::default()).unwrap();
+    let known = KnownHistory::from_store_roots(store, &[], &cancel).unwrap();
+    let reads = KnownRead::<true>::new(
+        &known,
+        FetchLimits::default().with_max_known_bytes(payload.len()),
+        &cancel,
+    );
+    assert_eq!(
+        reads.get(fixture.ordinary).unwrap().unwrap().data(),
+        payload
+    );
+    assert!(matches!(
+        reads.get(fixture.ordinary),
+        Err(FetchError::Limit("known read bytes"))
+    ));
+}
+
+#[test]
+fn unreadable_root_refuses_partial_completeness_evidence() {
+    let (_root, known, _) = fixture(ObjectFormat::Sha1);
+    let store = known.store.as_ref().unwrap().as_ref().clone();
+    let cancel = AtomicBool::new(false);
+    let missing = crate::ObjectId::for_blob(ObjectFormat::Sha1, b"not stored");
+    let result = KnownHistory::from_store_roots_controlled(
+        store,
+        &[missing],
+        FetchLimits::default(),
+        crate::PeelLimits::default(),
+        &cancel,
+    );
+    assert!(matches!(result, Err(FetchError::Peel(_))));
 }
