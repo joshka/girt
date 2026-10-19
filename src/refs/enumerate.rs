@@ -151,7 +151,10 @@ impl References<'_> {
     /// The entry limit covers packed names and loose directory entries before they are retained;
     /// the byte limit covers packed-refs and loose file contents. Reftable uses this handle's
     /// [`super::reftable::StackLimits`] for encoded/decoded data and applies the entry limit to
-    /// its bounded merged output. Cancellation is checked between files and directory entries.
+    /// its bounded merged output. Cached packed snapshots still consume their retained byte and
+    /// record counts. A busy packed cache is bypassed, so another reader's unbounded load cannot
+    /// delay admission. Cancellation is checked between files and directory entries, and every
+    /// batch of 64 packed lines. Individual filesystem reads remain synchronous bounded phases.
     /// A failed inventory returns no partial list and must not justify removing objects.
     ///
     /// # Errors
@@ -467,9 +470,17 @@ impl References<'_> {
         }
         let packed = if let Some(budget) = budget.as_deref_mut() {
             let path = self.common_dir.join("packed-refs");
-            let bytes = read_limited(&path, budget)?.unwrap_or_default();
-            let records = super::packed::parse(self.object_format, &bytes, &path)?;
-            std::sync::Arc::new(super::packed::Snapshot { bytes, records })
+            let fallback = super::packed::PackedCache::default();
+            let cache = self.packed_cache.unwrap_or(&fallback);
+            let snapshot = cache.load_controlled(
+                self.object_format,
+                &path,
+                budget.bytes,
+                budget.entries,
+                budget.cancel,
+            )?;
+            budget.bytes -= snapshot.bytes.len();
+            snapshot
         } else {
             self.packed()?
         };
