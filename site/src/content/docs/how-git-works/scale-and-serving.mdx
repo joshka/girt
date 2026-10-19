@@ -77,11 +77,14 @@ The server side of [transfer](/girt/how-git-works/transfer/) runs `git-upload-pa
 clone and `git-receive-pack` for push: advertise refs, negotiate, build a pack, or receive one and
 apply ref updates. A Rust forge, a jj server or self-contained test fixtures need this.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/520">Serves protocol v2
-`ls-refs` and `fetch` to Git clients, including shallow clones and hidden refs, through
-`girt upload-pack`, in protocol v2 and v0, and receives pushes with receive policy and hooks through
-`girt receive-pack`, including atomic pushes. `girt::serve::http` carries both over smart HTTP for
-any web server. Filters aren't served yet.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/520">`girt upload-pack`
+serves fetches and clones to Git clients in protocol v2 and v0, including shallow requests, hidden
+refs and partial-clone filters. `girt receive-pack` receives pushes with receive policy, hooks,
+atomic pushes and `updateInstead`. `girt::serve::http` carries both over smart HTTP for any web
+server. Serving from a shallow repository, some hooks and optional protocol features remain open
+in [#899](https://github.com/joshka/girt/issues/899),
+[#900](https://github.com/joshka/girt/issues/900) and
+[#901](https://github.com/joshka/girt/issues/901).</GirtStatus>
 
 ## Partial clone
 
