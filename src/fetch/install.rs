@@ -1,3 +1,4 @@
+mod controlled;
 mod integrity;
 
 use std::fs;

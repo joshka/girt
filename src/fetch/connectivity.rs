@@ -213,10 +213,16 @@ fn walk(
     proof: Option<TreeProof<'_>>,
 ) -> Result<Walked, FetchError> {
     let lookup = |id: ObjectId| -> Result<Option<Cow<'_, Object>>, FetchError> {
-        Ok(objects.get(&id, cancel)?.or_else(|| known.get(id)))
+        match objects.get(&id, cancel)? {
+            Some(object) => Ok(Some(object)),
+            None => known.try_get(id),
+        }
     };
     let kind = |id: ObjectId| -> Result<Option<ObjectKind>, FetchError> {
-        Ok(objects.kind(id, cancel)?.or_else(|| known.known_kind(id)))
+        match objects.kind(id, cancel)? {
+            Some(kind) => Ok(Some(kind)),
+            None => known.try_known_kind(id),
+        }
     };
     let promised = |expected: ObjectKind, root_tree: bool| {
         filter.is_some_and(|filter| filter.may_omit(expected, root_tree))
@@ -642,6 +648,51 @@ mod tests {
                 &AtomicBool::new(false)
             ),
             Err(FetchError::Limit("connectivity edges"))
+        ));
+    }
+}
+
+#[cfg(test)]
+mod controlled_known_tests {
+    use super::*;
+
+    struct Refused {
+        payload: bool,
+    }
+    impl KnownObjects for Refused {
+        fn get(&self, _: ObjectId) -> Option<Cow<'_, Object>> {
+            panic!("legacy fallback must not be used");
+        }
+        fn try_get(&self, _: ObjectId) -> Result<Option<Cow<'_, Object>>, FetchError> {
+            Err(FetchError::Limit("controlled known payload"))
+        }
+        fn try_known_kind(&self, _: ObjectId) -> Result<Option<ObjectKind>, FetchError> {
+            if self.payload {
+                Ok(Some(ObjectKind::Tree))
+            } else {
+                Err(FetchError::Cancelled)
+            }
+        }
+    }
+
+    #[test]
+    fn controlled_known_failures_reach_connectivity_callers() {
+        let missing = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing");
+        let run = |payload| {
+            validate_with_boundaries(
+                &IdMap::<Object>::default(),
+                &Refused { payload },
+                &[missing],
+                &[],
+                None,
+                FetchLimits::default(),
+                &AtomicBool::new(false),
+            )
+        };
+        assert!(matches!(run(false), Err(FetchError::Cancelled)));
+        assert!(matches!(
+            run(true),
+            Err(FetchError::Limit("controlled known payload"))
         ));
     }
 }
