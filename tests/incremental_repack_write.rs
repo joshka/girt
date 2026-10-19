@@ -295,3 +295,124 @@ fn cancellation_acquired_with_isolation_reaches_batch_opener() {
     assert_eq!(failure.report.publication, BatchPublication::None);
     assert!(!failure.report.index_published);
 }
+
+#[test]
+fn subset_batch_copies_only_owners_in_selected_pack_ordinals() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        let fixture = Fixture::new(format);
+        let target = fs::metadata(&fixture.packs[1]).unwrap().len() + 1;
+        let before: Vec<_> = fixture
+            .packs
+            .iter()
+            .map(|path| fs::read(path).unwrap())
+            .collect();
+        let report = fixture
+            .repo
+            .repack_incremental_batch(
+                &mut PrivateFixture,
+                target,
+                BatchRepackLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(report.batch.packs.len(), 2);
+        assert!(
+            !report
+                .batch
+                .packs
+                .iter()
+                .any(|pack| pack.path == fixture.packs[2])
+        );
+        let written = report.written.unwrap();
+        assert_eq!(written.objects, 2);
+        let index = fixture
+            .repo
+            .object_dir()
+            .join(format!("pack/pack-{}.idx", written.checksum));
+        let names = git(
+            fixture.repo.git_dir(),
+            &["show-index"],
+            &fs::read(index).unwrap(),
+        );
+        let names = std::str::from_utf8(&names).unwrap();
+        assert!(names.contains(&fixture.ids[0].to_string()));
+        assert!(names.contains(&fixture.ids[1].to_string()));
+        assert!(!names.contains(&fixture.ids[2].to_string()));
+        fixture.assert_old_storage(&before);
+        git(fixture.repo.git_dir(), &["multi-pack-index", "verify"], b"");
+        git(
+            fixture.repo.git_dir(),
+            &["fsck", "--strict", "--no-dangling"],
+            b"",
+        );
+    }
+}
+
+#[test]
+fn checksum_valid_corrupt_claim_in_unselected_pack_still_refuses_before_publication() {
+    use sha1::{Digest, Sha1};
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    let path = fixture.repo.object_dir().join("pack/multi-pack-index");
+    let mut bytes = fs::read(&path).unwrap();
+    let parsed = girt::multi_pack_index::MultiPackIndex::parse(&bytes, ObjectFormat::Sha1).unwrap();
+    let ordinal = parsed
+        .pack_names()
+        .iter()
+        .position(|name| {
+            *name
+                == fixture.packs[2]
+                    .with_extension("idx")
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+        })
+        .unwrap();
+    let chunks = bytes[6] as usize;
+    let row = bytes[12..12 + chunks * 12]
+        .as_chunks::<12>()
+        .0
+        .iter()
+        .find(|row| &row[..4] == b"OOFF")
+        .unwrap();
+    let start = u64::from_be_bytes(row[4..12].try_into().unwrap()) as usize;
+    let entry = bytes[start..]
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .take(3)
+        .position(|entry| u32::from_be_bytes(entry[..4].try_into().unwrap()) as usize == ordinal)
+        .unwrap();
+    let offset = start + entry * 8 + 4;
+    let old = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap());
+    bytes[offset..offset + 4].copy_from_slice(&(old + 1).to_be_bytes());
+    let end = bytes.len() - 20;
+    let checksum = Sha1::digest(&bytes[..end]);
+    bytes[end..].copy_from_slice(&checksum);
+    fs::rename(&path, fixture._root.path().join("original-midx")).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    let before: Vec<_> = fixture
+        .packs
+        .iter()
+        .map(|path| fs::read(path).unwrap())
+        .collect();
+    let target = fs::metadata(&fixture.packs[1]).unwrap().len() + 1;
+    let failure = fixture
+        .repo
+        .repack_incremental_batch(
+            &mut PrivateFixture,
+            target,
+            BatchRepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert_eq!(failure.report.publication, BatchPublication::None);
+    assert!(matches!(
+        failure.cause,
+        girt::multi_pack_index::BatchRepackCause::Plan(_)
+    ));
+    assert_eq!(fs::read(path).unwrap(), bytes);
+    for (path, expected) in fixture.packs.iter().zip(before) {
+        assert_eq!(fs::read(path).unwrap(), expected);
+    }
+}
