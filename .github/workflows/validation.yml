@@ -276,6 +276,7 @@ jobs:
           cargo +stable nextest run --profile windows-ci --locked --no-default-features --no-fail-fast
           --test object_ids --test short_ids --test sha256 --test blobs --test trees --test commits --test builders --test repo --test decoding --test discovery --test tags --test packs --test pack_index_rebuild --test multi_pack_index --test bitmaps
           --test signing --test signing_gpg --test history --test commit_graph --test repositories --test layout_shallow --test worktree_create --test worktree_admin --test config_resolution --test config_edit --test submodules --test submodule_plans --test submodule_execute --test submodule_populate --test submodule_recursive --test remotes --test tree_compare --test content_diff --test diffstat --test patch --test patch_binary --test format_patch --test format_patch_series --test am_recovery --test am_unborn --test am_commit --test am_apply --test am_state --test mailbox --test mailinfo --test mailinfo_mime --test apply --test apply_tree --test apply_extended --test apply_index --test apply_worktree --test blame --test index --test colocation --test status_portable --test checkout_portable --test checkout_gitlinks --test references --test references_portable --test reflog_expiry --test retention --test lock_cleanup --test maintenance_run
+          --test loose_pack_names
           --test pack_loose
           --test incremental_repack_write
           --test fetch_finish_control
