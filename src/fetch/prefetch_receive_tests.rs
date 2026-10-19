@@ -574,8 +574,7 @@ fn controlled_incremental_receive_bounds_local_dependencies(#[case] format: Obje
         admit(),
         &known,
         PrefetchPlanLimits::default(),
-        FetchLimits::default()
-            .with_known_read(crate::ReadLimits::default().with_max_object_bytes(1)),
+        FetchLimits::default().with_max_known_bytes(1),
         &cancel,
     );
     let summary = match &refused {
@@ -586,7 +585,7 @@ fn controlled_incremental_receive_bounds_local_dependencies(#[case] format: Obje
         matches!(
             refused,
             Err(FetchWorkflowError::Transfer(FetchError::Limit(
-                "object bytes"
+                "known read bytes"
             )))
         ),
         "{summary}"

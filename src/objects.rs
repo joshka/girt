@@ -1303,10 +1303,6 @@ impl Objects {
     /// Caps compressed loose input as well as the existing packed and decoded budgets.
     ///
     /// File loading is a bounded synchronous phase; inflation polls at each input buffer refill.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "controlled known reads follow separately")
-    )]
     pub(crate) fn read_capped(
         &self,
         id: ObjectId,

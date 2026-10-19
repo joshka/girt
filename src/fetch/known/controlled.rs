@@ -112,6 +112,86 @@ impl<'a, const CONTROLLED: bool> KnownRead<'a, CONTROLLED> {
         Ok(self.get(id)?.map(|object| object.kind()))
     }
 
+    /// Discards inapplicable evidence without replenishing work already charged to this receive.
+    pub(in crate::fetch) fn use_history(&mut self, known: &'a KnownHistory) {
+        self.known = known;
+    }
+
+    pub(in crate::fetch) fn history(&self) -> &'a KnownHistory {
+        self.known
+    }
+
+    pub(in crate::fetch) fn complete_kind(
+        &self,
+        id: ObjectId,
+    ) -> Result<Option<ObjectKind>, FetchError> {
+        if !CONTROLLED {
+            return Ok(self.known.complete_kind(id));
+        }
+        check_cancelled(self.cancel)?;
+        if self.known.missing_empty_tree.is_none()
+            && let Some(object) = self.known.objects.get(&id)
+        {
+            return Ok(Some(object.kind()));
+        }
+        if self.known.trusted_complete(id) {
+            self.kind(id)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub(in crate::fetch) fn applies_to(&self, wants: &[ObjectId]) -> Result<bool, FetchError> {
+        if !CONTROLLED {
+            return Ok(self.known.applies_to(wants));
+        }
+        if !self.known.only_when_all_wants_known {
+            return Ok(true);
+        }
+        for batch in wants.chunks(64) {
+            check_cancelled(self.cancel)?;
+            for &id in batch {
+                if self.complete_kind(id)?.is_none() {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    pub(in crate::fetch) fn complete_dependencies(
+        &self,
+        dependencies: &[ObjectId],
+        boundaries: &crate::fetch::boundaries::TreeBoundaries,
+    ) -> Result<crate::IdMap<ObjectKind>, FetchError> {
+        if !CONTROLLED {
+            return Ok(dependencies
+                .iter()
+                .filter_map(|&id| {
+                    Some((
+                        id,
+                        crate::fetch::boundaries::complete_kind(self.known, boundaries, id)?,
+                    ))
+                })
+                .collect());
+        }
+        let mut complete = crate::IdMap::default();
+        for batch in dependencies.chunks(64) {
+            check_cancelled(self.cancel)?;
+            for &id in batch {
+                let kind = match boundaries.kind(id) {
+                    Some(kind) => Some(kind),
+                    None if self.known.trusted_complete(id) => self.complete_kind(id)?,
+                    None => None,
+                };
+                if let Some(kind) = kind {
+                    complete.insert(id, kind);
+                }
+            }
+        }
+        Ok(complete)
+    }
+
     fn check(&self) -> Result<(), ObjectReadError> {
         if self.cancel.load(Ordering::Relaxed) {
             Err(ObjectReadError::Cancelled)
@@ -146,6 +226,10 @@ impl KnownHistory {
     /// known_read. Each tag chain also respects peel limits. Unreadable roots refuse instead of
     /// silently dropping evidence. Destination references establish completeness of peeled commits;
     /// this does not validate their reachable history. The supplied controlled snapshot stays held.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "maintenance root composition follows")
+    )]
     pub(crate) fn from_store_roots_controlled(
         store: crate::Objects,
         roots: &[ObjectId],
@@ -197,6 +281,10 @@ impl KnownHistory {
     }
 }
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "maintenance root composition follows")
+)]
 fn peel_error(error: crate::PeelError) -> FetchError {
     match error.source.as_ref() {
         crate::PeelFailure::Cancelled => FetchError::Cancelled,
@@ -205,5 +293,33 @@ fn peel_error(error: crate::PeelError) -> FetchError {
         crate::PeelFailure::Read(ObjectReadError::Limit(reason)) => FetchError::Limit(reason),
         crate::PeelFailure::Read(ObjectReadError::Cancelled) => FetchError::Cancelled,
         _ => FetchError::Peel(Box::new(error)),
+    }
+}
+
+impl<const CONTROLLED: bool> KnownObjects for KnownRead<'_, CONTROLLED> {
+    fn get(&self, id: ObjectId) -> Option<Cow<'_, Object>> {
+        if CONTROLLED {
+            (self.known.missing_empty_tree != Some(id))
+                .then(|| self.known.objects.get(&id).map(Cow::Borrowed))
+                .flatten()
+        } else {
+            self.known.get(id)
+        }
+    }
+
+    fn try_get(&self, id: ObjectId) -> Result<Option<Cow<'_, Object>>, FetchError> {
+        KnownRead::get(self, id)
+    }
+
+    fn try_known_kind(&self, id: ObjectId) -> Result<Option<ObjectKind>, FetchError> {
+        if CONTROLLED {
+            self.kind(id)
+        } else {
+            Ok(self.known.known_kind(id))
+        }
+    }
+
+    fn trusted_complete(&self, id: ObjectId) -> bool {
+        self.known.trusted_complete(id)
     }
 }

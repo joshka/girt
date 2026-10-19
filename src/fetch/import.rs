@@ -478,7 +478,7 @@ impl IndexedObjects {
                 work = work
                     .checked_sub(1)
                     .ok_or(FetchError::Limit("delta resolution steps"))?;
-                if let Some(object) = known.get(id) {
+                if let Some(object) = known.try_get(id)? {
                     external_base = Some((id, object));
                     break;
                 }
