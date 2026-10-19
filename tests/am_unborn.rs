@@ -18,6 +18,10 @@ fn stopped(root: &Path, format: &str, backend: &str) {
 }
 
 fn stopped_series(root: &Path, format: &str, backend: &str, queued: bool) {
+    stopped_count(root, format, backend, if queued { 2 } else { 1 });
+}
+
+fn stopped_count(root: &Path, format: &str, backend: &str, count: usize) {
     git(
         root,
         &[
@@ -32,16 +36,16 @@ fn stopped_series(root: &Path, format: &str, backend: &str, queued: bool) {
     fs::write(root.join("one"), b"one\n").unwrap();
     git(root, &["add", "."], b"");
     git(root, &["commit", "-m", "root mail"], b"");
-    if queued {
-        fs::write(root.join("two"), b"two\n").unwrap();
-        git(root, &["add", "two"], b"");
-        git(root, &["commit", "-m", "second mail"], b"");
+    for name in ["two", "three"].into_iter().take(count - 1) {
+        fs::write(root.join(name), format!("{name}\n")).unwrap();
+        git(root, &["add", name], b"");
+        git(root, &["commit", "-m", name], b"");
     }
     let mail = git(root, &["format-patch", "--stdout", "--root"], b"");
     git(root, &["checkout", "--orphan", "destination"], b"");
     git(root, &["rm", "-rf", "."], b"");
     fs::write(root.join("one"), b"obstruction\n").unwrap();
-    if queued {
+    if count > 1 {
         fs::write(root.join("two"), b"obstruction\n").unwrap();
     }
     assert!(!git_output(root, &["am"], &mail).status.success());
@@ -372,4 +376,155 @@ fn queued_unborn_failure_keeps_source_mail(#[case] failure: &str) {
     assert_eq!(fs::read(dir.join("next")).unwrap(), b"1\n");
     assert_eq!(fs::read(dir.join("abort-safety")).unwrap(), b"");
     assert!(dir.join("0001").exists());
+}
+
+fn partially_applied(root: &Path, format: &str, backend: &str, queued_tail: bool) {
+    stopped_count(root, format, backend, if queued_tail { 3 } else { 2 });
+    git(
+        root,
+        &["apply", "--index"],
+        &fs::read(root.join(".git/rebase-apply/patch")).unwrap(),
+    );
+    assert!(
+        !git_output(root, &["am", "--continue"], b"")
+            .status
+            .success()
+    );
+    fs::remove_file(root.join("two")).unwrap();
+}
+
+fn clear_and_delete_branch(root: &Path, repo: &Repository, old: girt::ObjectId) {
+    let empty = git(root, &["hash-object", "-w", "-t", "tree", "--stdin"], b"");
+    git(
+        root,
+        &[
+            "read-tree",
+            "--reset",
+            "-u",
+            std::str::from_utf8(&empty).unwrap().trim(),
+        ],
+        b"",
+    );
+    let edit =
+        RefEdit::delete(RefName::HEAD, old, Reflog::Delete).with_dereference(Dereference::Follow);
+    repo.references().unwrap().transaction(&[edit]).unwrap();
+}
+
+#[rstest]
+fn abort_after_earlier_mail_restores_unborn_like_git(
+    #[values("sha1", "sha256")] format: &str,
+    #[values("files", "reftable")] backend: &str,
+    #[values(false, true)] queued_tail: bool,
+) {
+    let actual = tempfile::tempdir().unwrap();
+    let expected = tempfile::tempdir().unwrap();
+    partially_applied(actual.path(), format, backend, queued_tail);
+    partially_applied(expected.path(), format, backend, queued_tail);
+    let repo = Repository::open(actual.path()).unwrap();
+    let old = repo.head().unwrap().id.unwrap();
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.original_head(), None);
+    let plan = state.prepare_abort_to_unborn_am(&repo, old).unwrap();
+    assert_eq!(plan.destination(), None);
+    assert!(plan.file_after("rebase-apply/next").is_none());
+    // Restoration and conditional branch deletion remain explicit caller-owned operations.
+    clear_and_delete_branch(actual.path(), &repo, old);
+    plan.publish_metadata(&repo).unwrap();
+    git(expected.path(), &["am", "--abort"], b"");
+    for args in [
+        vec!["symbolic-ref", "HEAD"],
+        vec!["ls-files", "--stage"],
+        vec!["status", "--porcelain"],
+    ] {
+        assert_eq!(
+            git(actual.path(), &args, b""),
+            git(expected.path(), &args, b"")
+        );
+    }
+    assert_eq!(repo.head().unwrap().id, None);
+    assert_eq!(
+        Repository::open(expected.path())
+            .unwrap()
+            .head()
+            .unwrap()
+            .id,
+        None
+    );
+    assert!(
+        !repo
+            .references()
+            .unwrap()
+            .has_reflog(&RefName::branch("destination").unwrap())
+            .unwrap()
+    );
+    assert!(!repo.git_dir().join("rebase-apply").exists());
+    git(actual.path(), &["fsck", "--no-reflogs"], b"");
+}
+
+#[rstest]
+#[case("checkpoint")]
+#[case("original")]
+#[case("expected")]
+#[case("not_deleted")]
+#[case("retarget")]
+#[case("foreign")]
+#[case("changed")]
+fn unsafe_abort_to_unborn_retains_active_mail(#[case] failure: &str) {
+    let root = tempfile::tempdir().unwrap();
+    partially_applied(root.path(), "sha1", "files", true);
+    let repo = Repository::open(root.path()).unwrap();
+    let old = repo.head().unwrap().id.unwrap();
+    let dir = repo.git_dir().join("rebase-apply");
+    match failure {
+        "checkpoint" => fs::write(dir.join("abort-safety"), b"").unwrap(),
+        "original" => fs::write(repo.git_dir().join("ORIG_HEAD"), format!("{old}\n")).unwrap(),
+        _ => (),
+    }
+    let state = State::read_repository(&repo, Limits::default())
+        .unwrap()
+        .unwrap();
+    let expected = if failure == "expected" {
+        girt::ObjectId::null(repo.object_format())
+    } else {
+        old
+    };
+    let plan = state.prepare_abort_to_unborn_am(&repo, expected);
+    if matches!(failure, "checkpoint" | "original" | "expected") {
+        assert!(plan.is_err());
+    } else {
+        let plan = plan.unwrap();
+        match failure {
+            "not_deleted" => (),
+            "retarget" => {
+                clear_and_delete_branch(root.path(), &repo, old);
+                git(
+                    root.path(),
+                    &["symbolic-ref", "HEAD", "refs/heads/other"],
+                    b"",
+                );
+            }
+            "changed" => {
+                clear_and_delete_branch(root.path(), &repo, old);
+                fs::write(dir.join("patch"), b"changed\n").unwrap();
+            }
+            "foreign" => {
+                let other = tempfile::tempdir().unwrap();
+                partially_applied(other.path(), "sha1", "files", true);
+                assert!(
+                    plan.publish_metadata(&Repository::open(other.path()).unwrap())
+                        .is_err()
+                );
+                assert!(dir.join("0002").exists());
+                return;
+            }
+            _ => unreachable!(),
+        }
+        assert!(plan.publish_metadata(&repo).is_err());
+    }
+    assert_eq!(fs::read(dir.join("next")).unwrap(), b"2\n");
+    for name in ["0001", "0002", "0003"] {
+        assert!(dir.join(name).exists());
+    }
 }
