@@ -544,3 +544,187 @@ fn late_admission_failure_preserves_installed_pack_and_published_shallow_report(
     );
     git(repo.git_dir(), &["fsck", "--strict"], b"");
 }
+
+#[test]
+fn controlled_files_transaction_limits_preserve_refs_after_installation() {
+    use girt::refs::FilesTransactionLimits;
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        let (_source, bytes, _) = bundle(format);
+        for limits in [
+            FilesTransactionLimits::default().with_max_edits(0),
+            FilesTransactionLimits::default().with_max_packed_refs(0),
+            FilesTransactionLimits::default().with_max_input_bytes(0),
+            FilesTransactionLimits::default().with_max_prepared_bytes(0),
+        ] {
+            let (_root, repo) = destination(format);
+            let sentinel = repo
+                .loose_objects()
+                .write_blob(b"unrelated packed ref")
+                .unwrap();
+            git(
+                repo.git_dir(),
+                &["update-ref", "refs/keep/sentinel", &sentinel.to_string()],
+                b"",
+            );
+            git(repo.git_dir(), &["pack-refs", "--all"], b"");
+            let packed = fs::read(repo.common_dir().join("packed-refs")).unwrap();
+            let failure = FetchFinishOptions::default()
+                .with_admission_limits(FetchFinishLimits::default().with_files_transaction(limits))
+                .finish(ready(&repo, &bytes), &AtomicBool::new(false))
+                .unwrap_err();
+            assert!(failure.report.installed.is_some());
+            assert!(failure.report.references.is_empty());
+            assert!(
+                repo.references()
+                    .unwrap()
+                    .read(&RefName::new("refs/remotes/origin/main").unwrap())
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                fs::read(repo.common_dir().join("packed-refs")).unwrap(),
+                packed
+            );
+            assert_eq!(
+                repo.references()
+                    .unwrap()
+                    .read(&RefName::new("refs/keep/sentinel").unwrap())
+                    .unwrap(),
+                Some(Target::Direct(sentinel))
+            );
+            assert!(!repo.common_dir().join("packed-refs.lock").exists());
+            assert!(
+                !repo
+                    .common_dir()
+                    .join("refs/remotes/origin/main.lock")
+                    .exists()
+            );
+        }
+    }
+}
+
+#[test]
+fn controlled_finish_publishes_through_both_reference_backends() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        let (_source, bytes, commit) = bundle(format);
+        for backend in [girt::refs::Backend::Files, girt::refs::Backend::Reftable] {
+            let root = tempfile::tempdir().unwrap();
+            let repo = Repository::init_with_backend(
+                format,
+                root.path().join("r.git"),
+                InitKind::Bare,
+                backend,
+            )
+            .unwrap();
+            let report = FetchFinishOptions::default()
+                .finish(ready(&repo, &bytes), &AtomicBool::new(false))
+                .unwrap();
+            assert!(report.installed.is_some());
+            assert_eq!(
+                repo.references()
+                    .unwrap()
+                    .read(&RefName::new("refs/remotes/origin/main").unwrap())
+                    .unwrap(),
+                Some(Target::Direct(commit))
+            );
+            git(repo.git_dir(), &["fsck", "--strict"], b"");
+        }
+    }
+}
+
+#[test]
+fn reference_backend_migration_after_preparation_refuses_before_installation() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        let (_source, bytes, _) = bundle(format);
+        let (_root, repo) = destination(format);
+        let received = ready(&repo, &bytes);
+        git(
+            repo.git_dir(),
+            &["refs", "migrate", "--ref-format=reftable"],
+            b"",
+        );
+        assert_eq!(
+            Repository::open(repo.git_dir())
+                .unwrap()
+                .reference_backend(),
+            girt::refs::Backend::Reftable
+        );
+        let before = pack_names(&repo);
+        let failure = FetchFinishOptions::default()
+            .finish(received, &AtomicBool::new(false))
+            .unwrap_err();
+        assert!(matches!(
+            failure.source.as_ref(),
+            FetchFinishFailure::BeforePublication(girt::fetch::FetchError::Unsupported(_))
+        ));
+        assert!(failure.report.installed.is_none());
+        assert!(failure.report.references.is_empty());
+        assert_no_effects(&repo, &before);
+    }
+}
+
+#[test]
+fn completed_controlled_prunes_survive_later_update_preparation_failure() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        let (_source, bytes, commit) = bundle(format);
+        let (_root, repo) = destination(format);
+        ready(&repo, &bytes)
+            .finish(Default::default(), &AtomicBool::new(false))
+            .unwrap();
+        git(
+            repo.git_dir(),
+            &["update-ref", "-d", "refs/remotes/origin/main"],
+            b"",
+        );
+        git(
+            repo.git_dir(),
+            &[
+                "update-ref",
+                "refs/remotes/origin/stale",
+                &commit.to_string(),
+            ],
+            b"",
+        );
+        let received = FetchRequest::prepare_controlled(
+            Repository::open(repo.git_dir()).unwrap(),
+            Refspecs::parse(Direction::Fetch, ["refs/heads/*:refs/remotes/origin/*"]).unwrap(),
+            BTreeSet::new(),
+            Reflog::Preserve,
+            FetchPrepareLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+        .with_prune()
+        .receive_bundle(
+            &Bundle::parse(&bytes).unwrap(),
+            &KnownHistory::default(),
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let lock = repo.common_dir().join("refs/remotes/origin/main.lock");
+        fs::write(&lock, b"foreign update lock").unwrap();
+        let failure = FetchFinishOptions::default()
+            .finish(received, &AtomicBool::new(false))
+            .unwrap_err();
+        assert!(failure.report.installed.is_some());
+        assert!(
+            matches!(failure.source.as_ref(), FetchFinishFailure::Publication(girt::refs::TransactionError::Publish { outcomes, .. }) if outcomes.len() == 1)
+        );
+        assert!(
+            repo.references()
+                .unwrap()
+                .read(&RefName::new("refs/remotes/origin/stale").unwrap())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            repo.references()
+                .unwrap()
+                .read(&RefName::new("refs/remotes/origin/main").unwrap())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(fs::read(lock).unwrap(), b"foreign update lock");
+    }
+}
