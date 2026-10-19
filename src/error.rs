@@ -114,6 +114,8 @@ from_domain_errors! {
     crate::multi_pack_index::BatchRepackFailure,
     crate::multi_pack_index::BatchError,
     crate::fetch::ObjectFilterParseError,
+    crate::maintenance::MaintenanceFailure,
+    crate::maintenance::MaintenanceRunError,
     crate::maintenance::CheckError,
     crate::maintenance::LockError,
     crate::maintenance::PolicyError,

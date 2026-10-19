@@ -397,3 +397,10 @@ supported native platforms. Named SHA-1/SHA-256 cases in `object_ids`, `sha256`,
 and `references` establish format-specific execution; a successful compile or a suite's filename is
 not sufficient evidence. Native run logs record OS, filesystem, compiler and Git versions for
 checkout and temporary-fixture storage.
+
+### Explicit Maintenance Execution
+
+`maintenance_run` is portable and selected by Windows interoperability CI. It covers explicit
+selection, isolation and lock ownership, bounded graph inventory, partial results, automatic graph
+thresholds, shallow/configuration skips and jj keep refs with a detached HEAD. Git verifies
+generated graphs and object readability in SHA-1 and SHA-256 repositories.
