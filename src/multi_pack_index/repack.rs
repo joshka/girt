@@ -431,12 +431,24 @@ fn decode(
     let index =
         MultiPackIndex::parse_with(bytes, repository.object_format(), limits.batch.index)
             .map_err(|error| BatchRepackCause::Plan(Box::new(super::BatchError::Index(error))))?;
-    let selected: BTreeSet<_> = report
+    let selected_paths: BTreeSet<_> = report
         .batch
         .packs
         .iter()
         .map(|pack| pack.path.clone())
         .collect();
+    // The prepared MIDX already verified every claim, including unselected owners. Resolve
+    // path membership once per bounded pack name rather than allocating a path for every object.
+    let directory = repository.object_dir().join("pack");
+    let selected = index
+        .pack_names()
+        .iter()
+        .map(|name| {
+            check(cancel)?;
+            let path = directory.join(name).with_extension("pack");
+            Ok(selected_paths.contains(path.as_path()))
+        })
+        .collect::<Result<Vec<bool>, BatchRepackCause>>()?;
     let primary = objects.primary_packs_with_paths();
     let mut decoded = Vec::new();
     for (position, bytes) in index
@@ -445,19 +457,14 @@ fn decode(
         .enumerate()
     {
         check(cancel)?;
-        let id = ObjectId::from_bytes(repository.object_format(), bytes)
-            .map_err(|_| BatchRepackCause::Changed)?;
         let location = index
             .location(position)
             .map_err(|error| BatchRepackCause::Plan(Box::new(super::BatchError::Index(error))))?;
-        let path = repository
-            .object_dir()
-            .join("pack")
-            .join(index.pack_names()[location.pack as usize])
-            .with_extension("pack");
-        if !selected.contains(path.as_path()) {
+        if !selected[location.pack as usize] {
             continue;
         }
+        let id = ObjectId::from_bytes(repository.object_format(), bytes)
+            .map_err(|_| BatchRepackCause::Changed)?;
         if decoded.len() + report.protected_objects >= limits.write.max_objects as usize {
             return Err(PackWriteError::Limit("object count").into());
         }

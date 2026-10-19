@@ -377,7 +377,9 @@ fn checksum_valid_corrupt_claim_in_unselected_pack_still_refuses_before_publicat
         .unwrap();
     let start = u64::from_be_bytes(row[4..12].try_into().unwrap()) as usize;
     let entry = bytes[start..]
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .take(3)
         .position(|entry| u32::from_be_bytes(entry[..4].try_into().unwrap()) as usize == ordinal)
         .unwrap();
