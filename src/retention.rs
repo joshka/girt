@@ -240,6 +240,7 @@ mod prune_packed;
 pub use prune::{MaintenanceIsolation, PruneCause, PruneFailure, PruneReport};
 pub use prune_packed::{
     PrunePackedCause, PrunePackedFailure, PrunePackedLimits, PrunePackedReport,
+    PrunePackedSelection,
 };
 mod config;
 pub(crate) use config::parse_expiry_date;

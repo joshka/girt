@@ -6,6 +6,24 @@ use std::{fs, io};
 use super::MaintenanceIsolation;
 use crate::{ObjectId, PackLimits, ReadLimits, Repository};
 
+/// Candidate selection for verified loose-duplicate pruning.
+///
+/// The default verifies all candidates before deleting any loose copy.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PrunePackedSelection {
+    /// Refuses the whole operation if its candidates exceed the byte budget.
+    #[default]
+    All,
+    /// Verifies a nonempty prefix in object-ID order within the object and byte budgets.
+    ///
+    /// A survivor that individually exceeds the byte budget still refuses the operation.
+    Prefix {
+        /// Maximum selected loose duplicates per operation.
+        max_objects: usize,
+    },
+}
+
 /// Work bounds for removing loose copies already held in installed primary packs.
 ///
 /// Defaults include [`crate::OpenLimits::default`] for repository admission under isolation.
@@ -25,6 +43,8 @@ pub struct PrunePackedLimits {
     pub read: ReadLimits,
     /// Bounds the fresh repository admission before observing or deleting loose copies.
     pub open: crate::OpenLimits,
+    /// Selects all candidates by default, or a bounded prefix for repeated passes.
+    pub selection: PrunePackedSelection,
 }
 
 impl Default for PrunePackedLimits {
@@ -35,11 +55,19 @@ impl Default for PrunePackedLimits {
             packs: PackLimits::default(),
             read: ReadLimits::default(),
             open: crate::OpenLimits::default(),
+            selection: PrunePackedSelection::default(),
         }
     }
 }
 
 impl PrunePackedLimits {
+    /// Replaces candidate selection while retaining full proof before the first unlink.
+    #[must_use]
+    pub fn with_selection(mut self, selection: PrunePackedSelection) -> Self {
+        self.selection = selection;
+        self
+    }
+
     /// Replaces repository-refresh limits, applied under isolation before any deletion.
     #[must_use]
     pub fn with_open(mut self, open: crate::OpenLimits) -> Self {
@@ -54,10 +82,14 @@ impl PrunePackedLimits {
 pub struct PrunePackedReport {
     /// Loose copies successfully removed; their verified packed survivors remain.
     pub deleted: Vec<ObjectId>,
-    /// Named loose files without a primary indexed packed survivor, left untouched.
+    /// Visited loose files without a primary indexed packed survivor, left untouched.
     pub retained: Vec<ObjectId>,
     /// Payload bytes verified from packed survivors, including proof before a later failure.
     pub verified_bytes: u64,
+    /// A successful prefix stopped before a known eligible candidate.
+    ///
+    /// Retry under fresh isolation to continue. On failure, false does not establish exhaustion.
+    pub more_candidates: bool,
 }
 
 /// Why pruning packed loose duplicates stopped.
@@ -91,6 +123,9 @@ pub enum PrunePackedCause {
     /// Caller cancellation was observed; completed deletions are not rolled back.
     #[error("prune-packed cancelled")]
     Cancelled,
+    /// A zero-object prefix cannot admit the next eligible duplicate.
+    #[error("prune-packed selected object limit exceeded")]
+    ObjectLimit,
 }
 
 /// Failure preserving completed deletions and a possibly uncertain unlink boundary.
@@ -274,12 +309,30 @@ impl Repository {
                 report.retained.push(loose.id);
                 continue;
             };
+            if let PrunePackedSelection::Prefix { max_objects } = limits.selection
+                && selected.len() >= max_objects
+            {
+                if selected.is_empty() {
+                    return Err(PrunePackedCause::ObjectLimit);
+                }
+                report.more_candidates = true;
+                break;
+            }
             let (_, pack) = packs[number];
             let remaining = limits.max_bytes.saturating_sub(report.verified_bytes);
             let (_, bytes) = pack
                 .object_header(position, limits.read)
                 .map_err(|error| PrunePackedCause::Read(Box::new(error)))?;
+            if bytes as u64 > limits.max_bytes {
+                return Err(PrunePackedCause::ByteLimit);
+            }
             if bytes as u64 > remaining {
+                if matches!(limits.selection, PrunePackedSelection::Prefix { .. })
+                    && !selected.is_empty()
+                {
+                    report.more_candidates = true;
+                    break;
+                }
                 return Err(PrunePackedCause::ByteLimit);
             }
             let object = pack
@@ -519,5 +572,38 @@ mod tests {
         assert!(matches!(failure, PrunePackedCause::Cancelled));
         assert_eq!(report.deleted.len(), 1);
         oracle::git(repo.git_dir(), &["fsck", "--full"], b"");
+    }
+
+    #[test]
+    fn prefix_verifies_every_selected_survivor_before_first_unlink() {
+        let (_root, repo) = fixture();
+        let cancel = AtomicBool::new(false);
+        let mut report = PrunePackedReport::default();
+        let ids = [
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"first"),
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"second"),
+        ];
+        let limits = PrunePackedLimits::default()
+            .with_selection(PrunePackedSelection::Prefix { max_objects: 2 });
+        let cause = repo
+            .prune_packed_exclusive(
+                limits,
+                &cancel,
+                &mut report,
+                &mut None,
+                (
+                    || {
+                        for id in ids {
+                            assert!(repo.loose_objects().read_blob(id, 1024).is_ok());
+                        }
+                        cancel.store(true, Ordering::Relaxed);
+                    },
+                    || panic!("cancellation barrier must precede every unlink"),
+                ),
+            )
+            .unwrap_err();
+        assert!(matches!(cause, PrunePackedCause::Cancelled));
+        assert_eq!(report.verified_bytes, 11);
+        assert!(report.deleted.is_empty());
     }
 }
