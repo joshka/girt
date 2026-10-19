@@ -3,11 +3,13 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::{fs, io};
 
-use super::{MaintenanceRun, MaintenanceRunError, TaskOutcome, TaskSkip, checkpoint};
+use super::{
+    BorrowedIsolation, MaintenanceRun, MaintenanceRunError, TaskOutcome, TaskSkip, checkpoint,
+};
 use crate::Repository;
 use crate::maintenance::{AutoThreshold, MaintenanceConfig, MaintenanceTask};
 use crate::pack::LoosePackReport;
-use crate::retention::{MaintenanceIsolation, PrunePackedReport};
+use crate::retention::PrunePackedReport;
 
 /// Completed phases of loose-object maintenance. The default records no completed phase.
 ///
@@ -67,18 +69,6 @@ pub(super) fn run<G>(
             .map_err(MaintenanceRunError::primitive)?,
     );
     Ok(())
-}
-
-// Constructed only with the batch's live guard, for primitives operating on the same repository.
-// The caller's exclusion spans both phases; acquiring either primitive must not reacquire it.
-struct BorrowedIsolation<'a, G> {
-    _guard: &'a G,
-}
-impl<G> MaintenanceIsolation for BorrowedIsolation<'_, G> {
-    type Guard = ();
-    fn acquire(&mut self, _: &Repository) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 fn count_due(

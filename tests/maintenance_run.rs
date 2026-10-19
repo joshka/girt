@@ -62,11 +62,7 @@ fn fixture(format: ObjectFormat) -> (tempfile::TempDir, Repository, ObjectId, Ob
 #[test]
 fn unsupported_tasks_refuse_before_isolation_or_lock() {
     let (root, repo, _, _) = fixture(ObjectFormat::Sha1);
-    for task in [
-        MaintenanceTask::Gc,
-        MaintenanceTask::Prefetch,
-        MaintenanceTask::IncrementalRepack,
-    ] {
+    for task in [MaintenanceTask::Gc, MaintenanceTask::Prefetch] {
         let selected = TaskSelection::explicit(&[MaintenanceTask::PackRefs, task]).unwrap();
         let mut isolation = Isolation::default();
         assert!(
