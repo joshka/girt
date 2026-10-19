@@ -592,9 +592,12 @@ fn admitted_transfer_matches_legacy_bytes_and_notifications(
     assert_eq!(controlled.index, legacy.index);
     assert_eq!(controlled.wants(), legacy.wants());
     assert_eq!(controlled.dependencies(), legacy.dependencies());
-    assert!(controlled.complete_dependencies().iter().all(|(id, kind)| {
-        legacy.complete_dependencies().get(id) == Some(kind)
-    }));
+    assert!(
+        controlled
+            .complete_dependencies()
+            .iter()
+            .all(|(id, kind)| { legacy.complete_dependencies().get(id) == Some(kind) })
+    );
     assert_eq!(controlled.object_count(), legacy.object_count());
     assert_eq!(controlled_messages, legacy_messages);
     assert_eq!(controlled_construction, legacy_construction);

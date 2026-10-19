@@ -213,10 +213,16 @@ fn walk(
     proof: Option<TreeProof<'_>>,
 ) -> Result<Walked, FetchError> {
     let lookup = |id: ObjectId| -> Result<Option<Cow<'_, Object>>, FetchError> {
-        Ok(objects.get(&id, cancel)?.or_else(|| known.get(id)))
+        match objects.get(&id, cancel)? {
+            Some(object) => Ok(Some(object)),
+            None => known.try_get(id),
+        }
     };
     let kind = |id: ObjectId| -> Result<Option<ObjectKind>, FetchError> {
-        Ok(objects.kind(id, cancel)?.or_else(|| known.known_kind(id)))
+        match objects.kind(id, cancel)? {
+            Some(kind) => Ok(Some(kind)),
+            None => known.try_known_kind(id),
+        }
     };
     let promised = |expected: ObjectKind, root_tree: bool| {
         filter.is_some_and(|filter| filter.may_omit(expected, root_tree))
