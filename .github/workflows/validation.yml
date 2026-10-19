@@ -280,6 +280,7 @@ jobs:
           --test incremental_repack_write
           --test fetch_finish_control
           --test prune_packed_open --test repository_open_control
+          --test prune_packed_prefix
       - name: Portable HTTP runtime
         if: ${{ !cancelled() && matrix.suite == 'integrations' }}
         run: cargo +stable nextest run --profile windows-ci --locked --no-default-features --features http --no-fail-fast --test http --test http_portable
