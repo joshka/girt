@@ -1366,3 +1366,6 @@ mod tests {
         assert_eq!(dependencies, [commit]);
     }
 }
+
+#[cfg(test)]
+mod read_tests;
