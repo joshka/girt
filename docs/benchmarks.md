@@ -14,6 +14,10 @@ repository-retained artifacts.
 The [full-history jj log investigation](jj-log-large.md) records the packed commit-read profile and
 a bounded adapter pipeline experiment for the Linux `log` / `large` row.
 
+The [mutating jj command investigation](jj-mutating-index.md) records why each jj transaction on
+Linux rebuilt the Git index from every tree, and the adapter change that derives it from the current
+index instead.
+
 ## Reproduce
 
 - Run `just bench`, or `cargo bench --bench blobs`. Criterion writes reports and statistical
