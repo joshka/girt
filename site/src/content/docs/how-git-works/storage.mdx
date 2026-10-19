@@ -117,7 +117,7 @@ expire. Pruning waits for a grace period (`gc.pruneExpire`, two weeks by default
 was last written, because another Git process may have just written that object and be about to
 point a branch at it. Deleting it in that window would corrupt the repository.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/499">Git comparisons confirm explicit-cutoff pruning. The caller supplies the cutoff; `gc.pruneExpire` isn't read. Partial clones are refused.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/retention/index.html">Git comparisons confirm explicit-cutoff pruning. The caller supplies the cutoff; `gc.pruneExpire` isn't read. Partial clones are refused.</GirtStatus>
 
 ## Alternates
 

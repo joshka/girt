@@ -49,7 +49,7 @@ object lookup checks each pack's index in turn. A **multi-pack index**
 (`.git/objects/pack/multi-pack-index`) is one index across all packs, so a lookup is a single binary
 search however many packs there are.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/517">Single/incremental reading, standalone writing with bitmaps, and verification; automatic maintenance and existence-path acceleration remain.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/multi_pack_index/index.html">Single/incremental reading, standalone writing with bitmaps, and verification; automatic maintenance and existence-path acceleration remain.</GirtStatus>
 
 ## Reachability bitmaps
 
@@ -58,7 +58,7 @@ it is reachable from that commit. "Which objects does this client need?" becomes
 (reachable from the wants, minus reachable from the haves) instead of a graph walk. Bitmaps make
 serving clones and fetches fast, and speed up counting objects and repacking.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/518">Pack/MIDX bitmap reading and writing, explicit publication, explicit-only repack configuration, and exact want/have differences; incremental bitmap acceleration, pseudo-merges, query binding reuse and writer performance remain.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/bitmap/index.html">Pack/MIDX bitmap reading and writing, explicit publication, explicit-only repack configuration, and exact want/have differences; incremental bitmap acceleration, pseudo-merges, query binding reuse and writer performance remain.</GirtStatus>
 
 ## fsmonitor and the untracked cache
 
@@ -69,7 +69,7 @@ only checks those. The **untracked cache** (`core.untrackedCache`), an index ext
 directory listings so finding new files doesn't rescan unchanged directories. Together they make
 status take milliseconds.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/519">Configured status reuses valid UNTR listings under exact byte name policy. Explicit opt-in hook queries (protocols 1 and 2) can skip tracked stat calls using FSMN checkpoints. Explicit cache refresh uses the index lock and atomic publisher; built-in daemon IPC is explicitly refused.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/fsmonitor/index.html">Configured status reuses valid UNTR listings under exact byte name policy. Explicit opt-in hook queries (protocols 1 and 2) can skip tracked stat calls using FSMN checkpoints. Explicit cache refresh uses the index lock and atomic publisher; built-in daemon IPC is explicitly refused.</GirtStatus>
 
 ## Serving
 
@@ -77,7 +77,7 @@ The server side of [transfer](/girt/how-git-works/transfer/) runs `git-upload-pa
 clone and `git-receive-pack` for push: advertise refs, negotiate, build a pack, or receive one and
 apply ref updates. A Rust forge, a jj server or self-contained test fixtures need this.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/520">`girt upload-pack`
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/serve/index.html">`girt upload-pack`
 serves fetches and clones to Git clients in protocol v2 and v0, including shallow requests, hidden
 refs and partial-clone filters. `girt receive-pack` receives pushes with receive policy, hooks,
 atomic pushes and `updateInstead`. `girt::serve::http` carries both over smart HTTP for any web
@@ -93,7 +93,7 @@ records the remote as a **promisor**, and any later read of a missing blob fetch
 Large repositories clone in a fraction of the time. Everything that reads objects has to know a
 missing object may be promised rather than lost.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/521">Filtered fetch, clone
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/fetch/enum.ObjectFilter.html">Filtered fetch, clone
 and serving (`blob:none`, `blob:limit`, `tree:<depth>`, `object:type`, `combine:`), with promisor
 packs and Git's promisor configuration, and explicit batched fetches of missing objects. Library
 reads never fetch: checkout, diff, blame and merges report every missing blob they need, and the
@@ -108,7 +108,7 @@ a portable snapshot of some or all of a repository. You can clone or fetch from 
 is used to move repositories without a network and for **bundle URIs**, where a server points
 clients at a prebuilt bundle on a CDN to download first, then fetches the rest.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/523">Library support reads v2/v3 bundles, verifies and creates full/incremental bundles, and receives through fetch/clone publication. CLI commands, revision-range and automatic file-source integration remain; bundle URIs and filtered promisor installation are follow-ups.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/bundle/index.html">Library support reads v2/v3 bundles, verifies and creates full/incremental bundles, and receives through fetch/clone publication. CLI commands, revision-range and automatic file-source integration remain; bundle URIs and filtered promisor installation are follow-ups.</GirtStatus>
 
 ## fsck
 
@@ -116,7 +116,7 @@ clients at a prebuilt bundle on a CDN to download first, then fetches the rest.
 points at an existing object, and every object reachable from a ref is present. It also reports
 unreachable ("dangling") objects.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/828">Whole-repository object/connectivity checks, unreachable/dangling reporting, pack and auxiliary-index verification, configured severity/skip-list policy, CLI reporting and lost-found export. Commit/tag header and identity diagnostics match Git fixtures; configured fetch/clone and local receive enforce payload policy before installation. Further reference and metadata-blob emitters remain.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/fsck/index.html">Whole-repository object/connectivity checks, unreachable/dangling reporting, pack and auxiliary-index verification, configured severity/skip-list policy, CLI reporting and lost-found export. Commit/tag header and identity diagnostics match Git fixtures; configured fetch/clone and local receive enforce payload policy before installation. Further reference and metadata-blob emitters remain.</GirtStatus>
 
 ## grep
 
@@ -126,7 +126,7 @@ pathspecs. By default it searches tracked files, including tracked files that ma
 then hides tracked files that match them too. Searching a commit reads blobs straight from the
 object database, without a checkout.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/525">Searches the working tree, the index, trees and plain directories with `git grep`'s output; no `-P`, `--textconv` or submodules.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/grep/index.html">Searches the working tree, the index, trees and plain directories with `git grep`'s output; no `-P`, `--textconv` or submodules.</GirtStatus>
 
 ## archive
 
@@ -134,7 +134,7 @@ object database, without a checkout.
 `export-ignore` [attribute](/girt/how-git-works/other/#attributes). Release tooling uses it to build
 source tarballs.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/526">Writes tar byte for byte as Git does, plus tar.gz and zip, with `export-ignore`, `export-subst` and content filters; some `export-subst` placeholders are refused.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/archive/index.html">Writes tar byte for byte as Git does, plus tar.gz and zip, with `export-ignore`, `export-subst` and content filters; some `export-subst` placeholders are refused.</GirtStatus>
 
 ## bisect
 
@@ -143,7 +143,7 @@ and one bad; Git checks out a commit halfway between, you test it and mark it, a
 log₂(n) steps it names the first bad commit. It is mostly history-walk logic plus a little state in
 `.git/BISECT_*` files.
 
-<GirtStatus status="supported" href="https://github.com/joshka/girt/issues/527">`girt::bisect` shares Git's state files and picks the commits Git picks, skips included.</GirtStatus>
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/bisect/index.html">`girt::bisect` shares Git's state files and picks the commits Git picks, skips included.</GirtStatus>
 
 ## rerere
 
@@ -151,7 +151,7 @@ log₂(n) steps it names the first bad commit. It is mostly history-walk logic p
 [merge conflict](/girt/how-git-works/combining-work/#merging) under `.git/rr-cache/` and resolves
 the same conflict automatically next time, which helps when rebasing a long-lived branch repeatedly.
 
-<GirtStatus status="supported" href="https://github.com/joshka/girt/issues/528">`girt::rerere` and `girt rerere` share Git's `rr-cache`; callers run it after publishing a conflicted merge.</GirtStatus>
+<GirtStatus status="supported" href="https://docs.rs/girt/latest/girt/rerere/index.html">`girt::rerere` and `girt rerere` share Git's `rr-cache`; callers run it after publishing a conflicted merge.</GirtStatus>
 
 ## Replace refs and grafts
 
@@ -160,7 +160,7 @@ example to stitch an imported old history onto a newer one. Grafts (`.git/info/g
 older, deprecated form. Where they are used, a tool that ignores them shows different history from
 Git.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/529">Reading through replace refs and grafts is opt-in, and raw object reads never substitute. Converting a grafts file to replace refs is not supported yet.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/replace/index.html">Reading through replace refs and grafts is opt-in, and raw object reads never substitute. Converting a grafts file to replace refs is not supported yet.</GirtStatus>
 
 ## Hooks
 
@@ -169,7 +169,7 @@ Git.
 directory in `core.hooksPath`, and a non-zero exit from a `pre-` hook stops the operation. Tools
 that commit or push on a user's behalf may need to run a repository's hooks the way Git does.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/530">Hooks run only when a caller opts in, on Linux and macOS. Commit runs its four hooks, switch runs `post-checkout` and push runs `pre-push`; a native local push runs the receiving repository's hooks. Other hooks, such as `reference-transaction`, `post-merge` and `post-rewrite`, are not run.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/hooks/index.html">Hooks run only when a caller opts in, on Linux and macOS. Commit runs its four hooks, switch runs `post-checkout` and push runs `pre-push`; a native local push runs the receiving repository's hooks. Other hooks, such as `reference-transaction`, `post-merge` and `post-rewrite`, are not run.</GirtStatus>
 
 ## Automatic maintenance
 
@@ -179,4 +179,4 @@ as writing the commit-graph, prefetching and incremental repacking. Both decide 
 operations ([repacking](/girt/how-git-works/storage/#repacking-and-pruning), packing refs, pruning)
 should run.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/531">Callers can check gc thresholds, plan or publish isolated bounded incremental-repack batches, publish additive loose-object packs, validate selected tasks and read task configuration lazily. An explicit bounded runner supports pack-refs, commit-graph, loose-objects and Unix incremental-repack, retaining newly packed loose copies until a later pass; other tasks are refused before execution. No background work starts, and pruning policy remains caller-controlled.</GirtStatus>
+<GirtStatus status="partial" href="https://docs.rs/girt/latest/girt/maintenance/index.html">Callers can check gc thresholds, plan or publish isolated bounded incremental-repack batches, publish additive loose-object packs, validate selected tasks and read task configuration lazily. An explicit bounded runner supports pack-refs, commit-graph, loose-objects and Unix incremental-repack, retaining newly packed loose copies until a later pass; other tasks are refused before execution. No background work starts, and pruning policy remains caller-controlled.</GirtStatus>
