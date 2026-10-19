@@ -151,3 +151,18 @@ destinations. Installation also checks the live shallow marker, including a mark
 opening. Callers must exclude concurrent depth changes for the whole operation. Empty live markers
 are conservatively refused at the destination guard. Low-level advertised shallow-server responses
 remain unsupported, and clone does not request depth/deepening.
+
+## Open with resource budgets
+
+Use `OpenOptions::default().with_limits(OpenLimits::default()).open(path, &cancel)` for
+caller-controlled opening. It reads repository-local configuration, as `Repository::open` does,
+without ambient Git variables or global/system sources. `OpenLimits` separately bounds aggregate
+layout/HEAD/backlink bytes, shallow metadata, configuration resolution and reftable stacks. Repeated
+metadata observations consume the aggregate budget again.
+
+Cancellation is cooperative between metadata chunks and bounded phases. Filesystem calls and a
+bounded parse can finish before the next check. The caller must exclude hostile path/file-type
+replacement. Failures return no handle and write nothing. Existing simple openers keep their trusted
+metadata behavior. This primitive does not yet bound fetch publication or admit linked worktrees in
+controlled fetch preparation; that integration is tracked in
+[#896](https://github.com/joshka/girt/issues/896).
