@@ -549,3 +549,14 @@ refuses until its fallback reads have controlled bounds. Format mismatch, shallo
 unsupported request policy, planning/want limits and cancellation preserve the empty destination.
 Successful receives finish through the controlled path and pass isolated Git fsck checks. Full
 prefetch task execution remains separate from this primitive.
+
+### Controlled known reads during native receive
+
+Native maintenance receive shares one destination fallback budget across selection, thin-pack
+imports and connectivity. Missing, corrupt, limited and cancelled reads retain their typed errors;
+refusal leaves destination objects and references unchanged. SHA-1 and SHA-256 tests cover
+store-backed incremental transfer, exhausted attempts and payload limits, retry and Git fsck.
+
+The first controlled path omits optional tree-boundary discovery and checks connectivity within the
+shared budget. The legacy path retains its existing boundary optimisation. Controlled connectivity
+cost must be measured on medium and Linux repositories before prefetch task wiring.

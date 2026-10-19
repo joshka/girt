@@ -439,6 +439,7 @@ enum TransferSelection {
     Empty,
     Full,
     KnownOnly,
+    StoreKnown,
 }
 
 #[rstest]
@@ -448,6 +449,8 @@ enum TransferSelection {
 #[case::sha256_empty(ObjectFormat::Sha256, TransferSelection::Empty)]
 #[case::sha256_full(ObjectFormat::Sha256, TransferSelection::Full)]
 #[case::sha256_known(ObjectFormat::Sha256, TransferSelection::KnownOnly)]
+#[case::sha1_store(ObjectFormat::Sha1, TransferSelection::StoreKnown)]
+#[case::sha256_store(ObjectFormat::Sha256, TransferSelection::StoreKnown)]
 fn admitted_transfer_matches_legacy_bytes_and_notifications(
     #[case] format: ObjectFormat,
     #[case] selection: TransferSelection,
@@ -462,6 +465,16 @@ fn admitted_transfer_matches_legacy_bytes_and_notifications(
             &repo.objects_with(limits.source_packs).unwrap(),
             &[id],
             limits,
+            &cancel,
+        )
+        .unwrap()
+    } else if matches!(selection, TransferSelection::StoreKnown) {
+        KnownHistory::from_store_roots_controlled(
+            repo.objects_controlled(limits.source_packs, Default::default(), &cancel)
+                .unwrap(),
+            &[id],
+            limits,
+            crate::PeelLimits::default(),
             &cancel,
         )
         .unwrap()
@@ -543,4 +556,85 @@ fn admitted_transfer_matches_legacy_bytes_and_notifications(
     assert_eq!(messages, legacy_messages);
     assert_eq!(construction, legacy_construction);
     assert_eq!(validation, legacy_validation);
+
+    let store = repo
+        .objects_controlled(limits.source_packs, Default::default(), &cancel)
+        .unwrap();
+    let advertisement =
+        advertise_store(&repo, &store, limits, TransportControl::new(&cancel)).unwrap();
+    let mut controlled_messages = Vec::new();
+    let mut controlled_construction = Vec::new();
+    let mut controlled_validation = Vec::new();
+    let controlled = receive_advertised_controlled(
+        &repo,
+        store,
+        advertisement,
+        |_| wants.clone(),
+        &known,
+        limits,
+        TransportControl::new(&cancel),
+        |message| {
+            controlled_messages.push(message.to_vec());
+            ControlFlow::Continue(())
+        },
+        |event| controlled_construction.push(event),
+        |event| controlled_validation.push(event),
+    )
+    .unwrap();
+    let mut controlled_bytes = Vec::new();
+    controlled
+        .pack
+        .reader()
+        .unwrap()
+        .read_to_end(&mut controlled_bytes)
+        .unwrap();
+    assert_eq!(controlled_bytes, legacy_bytes);
+    assert_eq!(controlled.index, legacy.index);
+    assert_eq!(controlled.wants(), legacy.wants());
+    assert_eq!(controlled.dependencies(), legacy.dependencies());
+    assert!(controlled.complete_dependencies().iter().all(|(id, kind)| {
+        legacy.complete_dependencies().get(id) == Some(kind)
+    }));
+    assert_eq!(controlled.object_count(), legacy.object_count());
+    assert_eq!(controlled_messages, legacy_messages);
+    assert_eq!(controlled_construction, legacy_construction);
+    assert_eq!(controlled_validation, legacy_validation);
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn controlled_native_receive_refuses_exhausted_known_reads(#[case] format: ObjectFormat) {
+    let (_root, repo, id) = source(format);
+    let cancel = AtomicBool::new(false);
+    let limits = FetchLimits::default();
+    let store = repo
+        .objects_controlled(limits.source_packs, Default::default(), &cancel)
+        .unwrap();
+    let known = KnownHistory::from_store_roots_controlled(
+        store.clone(),
+        &[],
+        limits,
+        crate::PeelLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let advertisement =
+        advertise_store(&repo, &store, limits, TransportControl::new(&cancel)).unwrap();
+    let result = receive_advertised_controlled(
+        &repo,
+        store,
+        advertisement,
+        |_| vec![id],
+        &known,
+        limits.with_max_known_objects(0),
+        TransportControl::new(&cancel),
+        |_| ControlFlow::Continue(()),
+        |_| {},
+        |_| {},
+    );
+    assert!(matches!(
+        result,
+        Err(FetchError::Limit("known read attempts"))
+    ));
 }

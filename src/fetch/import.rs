@@ -1289,6 +1289,36 @@ mod tests {
     #[rstest]
     #[case::sha1(ObjectFormat::Sha1)]
     #[case::sha256(ObjectFormat::Sha256)]
+    fn external_base_lookup_propagates_controlled_failure(#[case] format: ObjectFormat) {
+        struct Refused;
+        impl KnownObjects for Refused {
+            fn get(&self, _: ObjectId) -> Option<std::borrow::Cow<'_, Object>> {
+                panic!("legacy fallback must not be used");
+            }
+            fn try_get(
+                &self,
+                _: ObjectId,
+            ) -> Result<Option<std::borrow::Cow<'_, Object>>, FetchError> {
+                Err(FetchError::Limit("controlled known payload"))
+            }
+        }
+        let id = ObjectId::for_blob(format, b"external");
+        let bytes = pack(format, &[entry(7, id.as_bytes(), b"\x08\x03\x03two")]);
+        assert!(matches!(
+            Imported::read_with_known(
+                format,
+                &bytes,
+                &Refused,
+                FetchLimits::default(),
+                &AtomicBool::new(false)
+            ),
+            Err(FetchError::Limit("controlled known payload"))
+        ));
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
     fn verified_external_base_becomes_self_contained_pack(#[case] format: ObjectFormat) {
         let base = Object {
             format,
