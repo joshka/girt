@@ -194,8 +194,8 @@ fn known_tip_needs_no_new_pack(#[case] format: ObjectFormat) {
     FetchFinishOptions::default()
         .finish(first, &cancel)
         .unwrap();
-    let known = KnownHistory::from_store(
-        fixture
+    let known = KnownHistory::new(
+        &fixture
             .destination
             .objects_controlled(crate::PackLimits::default(), Default::default(), &cancel)
             .unwrap(),
@@ -409,6 +409,46 @@ fn planning_failure_precedes_missing_source_payloads() {
         Err(FetchWorkflowError::Plan(FetchPlanError::Mapping(
             MappingError::Limit("prefetch updates")
         )))
+    ));
+    fixture.assert_destination_empty();
+}
+
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn store_backed_knowledge_refuses_before_transfer(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format);
+    let cancel = AtomicBool::new(false);
+    let admitted = super::super::local_native::admit_source(
+        fixture.source.git_dir(),
+        LocalAdvertisementLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let known = KnownHistory::from_store_roots(
+        fixture
+            .destination
+            .objects_controlled(crate::PackLimits::default(), Default::default(), &cancel)
+            .unwrap(),
+        &[],
+        &cancel,
+    )
+    .unwrap();
+    let error = fixture
+        .request()
+        .receive_prefetch_controlled(
+            admitted,
+            &known,
+            PrefetchPlanLimits::default(),
+            FetchLimits::default(),
+            &cancel,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        FetchWorkflowError::Transfer(FetchError::Unsupported(
+            "store-backed maintenance knowledge"
+        ))
     ));
     fixture.assert_destination_empty();
 }

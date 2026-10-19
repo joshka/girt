@@ -16,6 +16,7 @@ impl FetchRequest {
     /// `transfer.source_packs`, advertisement bytes and entry limits are not consulted again.
     /// Planning and transfer use independent budgets. Want IDs are bounded before each push.
     /// This entry point supports neither requested depth nor filtering; shallow sources refuse.
+    /// Store-backed known history refuses until its fallback reads have controlled limits.
     /// Cancellation is checked between phases and at most every 64 planned updates.
     /// The existing native transfer's read, graph, compression and import bounds still apply.
     ///
@@ -35,6 +36,9 @@ impl FetchRequest {
             return Err(FetchError::Unsupported("maintenance prefetch depth or filter").into());
         }
         self.check_known(known)?;
+        if known.store.is_some() {
+            return Err(FetchError::Unsupported("store-backed maintenance knowledge").into());
+        }
         let (repository, objects, advertisement) = source.into_parts();
         if !repository.shallow_roots().is_empty() {
             return Err(FetchError::Unsupported("shallow local source").into());

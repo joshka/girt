@@ -520,7 +520,8 @@ identities and dates, disable signing and automatic maintenance, and use local r
 `cargo test --lib prefetch_receive` exercises the internal transfer continuation in both object
 formats. It holds an admitted source, changes its live refs and replaces its configuration with
 invalid input, then proves transfer still selects the captured tip without reopening or rediscovery.
-Known tips produce pack-free artifacts. Format mismatch, shallow sources, unsupported request
-policy, planning/want limits and cancellation preserve the empty destination. Successful receives
-finish through the controlled path and pass isolated Git fsck checks. Full prefetch task execution
-remains separate from this primitive.
+Known tips supplied as bounded in-memory history produce pack-free artifacts. Store-backed knowledge
+refuses until its fallback reads have controlled bounds. Format mismatch, shallow sources,
+unsupported request policy, planning/want limits and cancellation preserve the empty destination.
+Successful receives finish through the controlled path and pass isolated Git fsck checks. Full
+prefetch task execution remains separate from this primitive.
