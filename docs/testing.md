@@ -525,3 +525,14 @@ refuses until its fallback reads have controlled bounds. Format mismatch, shallo
 unsupported request policy, planning/want limits and cancellation preserve the empty destination.
 Successful receives finish through the controlled path and pass isolated Git fsck checks. Full
 prefetch task execution remains separate from this primitive.
+
+### Controlled known-object reads
+
+Private known-read tests cover aggregate fallback attempts and payload bytes, caller read limits,
+missing and repeated lookups, cancellation after context creation, and trusted legacy behavior.
+Controlled reference-root preparation reuses tag peeling with shared read and tag-edge budgets; only
+peeled commits establish complete roots. Import and connectivity tests ensure controlled lookup
+failures remain typed errors. Native comparison tests cover empty, full, cached and store-backed
+history in both object formats, including bytes, dependency reports and notifications. An
+incremental prefetch test refuses a local dependency read before installation under a small budget,
+then succeeds with adequate limits and passes Git fsck. Full task execution remains separate.

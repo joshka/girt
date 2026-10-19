@@ -99,6 +99,16 @@ pub(crate) trait KnownObjects {
         self.get(id).map(|object| object.kind())
     }
 
+    /// Fallible fallback for callers carrying explicit read controls.
+    fn try_get(&self, id: ObjectId) -> Result<Option<Cow<'_, Object>>, Error> {
+        Ok(self.get(id))
+    }
+
+    /// Fallible kind lookup; legacy implementations keep their existing trusted behavior.
+    fn try_known_kind(&self, id: ObjectId) -> Result<Option<ObjectKind>, Error> {
+        Ok(self.known_kind(id))
+    }
+
     /// Whether a known object's history is trusted to be complete, so connectivity checks can
     /// stop at it rather than walking its history.
     fn trusted_complete(&self, _id: ObjectId) -> bool {
@@ -1370,3 +1380,9 @@ mod tests {
 #[cfg(test)]
 #[path = "known/read_tests.rs"]
 mod read_tests;
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "controlled receive wiring follows separately")
+)]
+pub(super) mod controlled;

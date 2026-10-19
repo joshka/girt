@@ -17,6 +17,7 @@ pub(crate) use advertisement::AdmittedSource;
 pub(crate) use advertisement::admit as admit_source;
 pub use advertisement::{LocalAdvertisementLimits, LocalAdvertisementOptions};
 
+use super::known::controlled::KnownRead;
 use super::{
     AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, LocalFetchProgress,
     NativeContents, ReceivedFetch,
@@ -134,10 +135,83 @@ pub(crate) fn receive_advertised_observed(
     explicit_wants: bool,
     limits: FetchLimits,
     control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(LocalFetchProgress),
+    validation: impl FnMut(super::ValidationProgress),
+) -> Result<ReceivedFetch, FetchError> {
+    receive_advertised_from::<false>(
+        source,
+        store,
+        advertisement,
+        select,
+        known,
+        depth,
+        explicit_wants,
+        limits,
+        control,
+        progress,
+        observe,
+        validation,
+    )
+}
+
+/// Continues admitted prefetch with fallible destination reads and shared fallback budgets.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "admitted transfer keeps selection and observers explicit"
+)]
+pub(crate) fn receive_advertised_controlled(
+    source: &Repository,
+    store: crate::Objects,
+    advertisement: Advertisement,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(LocalFetchProgress),
+    validation: impl FnMut(super::ValidationProgress),
+) -> Result<ReceivedFetch, FetchError> {
+    receive_advertised_from::<true>(
+        source,
+        store,
+        advertisement,
+        select,
+        known,
+        None,
+        false,
+        limits,
+        control,
+        progress,
+        observe,
+        validation,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shared native transfer preserves caller policies"
+)]
+fn receive_advertised_from<const CONTROLLED: bool>(
+    source: &Repository,
+    store: crate::Objects,
+    advertisement: Advertisement,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    depth: Option<NonZeroU32>,
+    explicit_wants: bool,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     mut observe: impl FnMut(LocalFetchProgress),
     mut validation: impl FnMut(super::ValidationProgress),
 ) -> Result<ReceivedFetch, FetchError> {
+    if CONTROLLED {
+        super::protocol::validate_known(known, limits, control.cancel)?;
+        if known.complete_roots.len() > limits.max_known_objects {
+            return Err(FetchError::Limit("known complete roots"));
+        }
+    }
     let mut wants = select(&advertisement);
     if wants.len() > limits.max_wants {
         return Err(FetchError::Limit("wants"));
@@ -148,9 +222,11 @@ pub(crate) fn receive_advertised_observed(
         return Err(FetchError::Unsupported("native local depth selection"));
     }
     let empty = KnownHistory::default();
-    let known = if known.applies_to(&wants) {
+    let mut reads = KnownRead::<CONTROLLED>::new(known, limits, control.cancel);
+    let known = if reads.applies_to(&wants)? {
         known
     } else {
+        reads = KnownRead::new(&empty, limits, control.cancel);
         &empty
     };
     let offered: IdSet = advertisement
@@ -205,7 +281,7 @@ pub(crate) fn receive_advertised_observed(
     let mut edges = 0_usize;
     let mut read = limits.known_read;
     read.max_object_bytes = read.max_object_bytes.min(limits.max_object_bytes);
-    if let Some(ids) = bitmap_selection(&store, &wants, known, depth, limits, control)? {
+    if let Some(ids) = bitmap_selection(&store, &wants, &reads, depth, limits, control)? {
         selected = ids;
         observe(LocalFetchProgress::Reading {
             objects: selected.len() as u64,
@@ -247,10 +323,10 @@ pub(crate) fn receive_advertised_observed(
                     // as stored destination data.
                     let available = depth.is_none()
                         && limits.max_haves > 0
-                        && known.kind(id) == Some(object_kind)
+                        && reads.kind(id)? == Some(object_kind)
                         && !(object_kind == ObjectKind::Tree && length == 0);
                     if available
-                        && known.complete_kind(id) == Some(object_kind)
+                        && reads.complete_kind(id)? == Some(object_kind)
                         && !known.shallow.contains(&id)
                     {
                         dependencies.push(id);
@@ -327,7 +403,7 @@ pub(crate) fn receive_advertised_observed(
                         // A complete parent's tree names this object. Send it again only if the
                         // destination lost it.
                         if boundaries.kind(target) == Some(kind)
-                            && known.stored_kind(target) == Some(kind)
+                            && reads.stored_kind(target)? == Some(kind)
                         {
                             observed.insert(target, kind);
                             dependencies.push(target);
@@ -389,15 +465,7 @@ pub(crate) fn receive_advertised_observed(
                 index: Vec::new(),
                 checksum: None,
                 objects: 0,
-                complete: dependencies
-                    .iter()
-                    .filter_map(|&id| {
-                        Some((
-                            id,
-                            super::boundaries::complete_kind(known, &boundaries, id)?,
-                        ))
-                    })
-                    .collect(),
+                complete: reads.complete_dependencies(&dependencies, &boundaries)?,
                 dependencies,
                 shallow,
                 limits,
@@ -461,20 +529,32 @@ pub(crate) fn receive_advertised_observed(
     check(control)?;
     // Never trust source index identities for reused bytes. Import derives a new index and checks
     // delta depth, identity, framing and connectivity before any destination mutation.
-    let received = ReceivedFetch::validate_known(
-        advertisement,
-        wants,
-        super::bytes::Bytes::File(temporary, written.pack_bytes as usize),
-        known,
-        shallow,
-        super::FetchOptions {
+    let received = if CONTROLLED {
+        ReceivedFetch::validate_known_controlled(
+            advertisement,
+            wants,
+            super::bytes::Bytes::File(temporary, written.pack_bytes as usize),
+            &reads,
+            shallow,
             limits,
-            depth,
-            filter: None,
-            explicit_wants,
-        },
-        &mut super::progress::ValidationObserver::new(control.cancel, &mut validation),
-    )?;
+            &mut super::progress::ValidationObserver::new(control.cancel, &mut validation),
+        )?
+    } else {
+        ReceivedFetch::validate_known(
+            advertisement,
+            wants,
+            super::bytes::Bytes::File(temporary, written.pack_bytes as usize),
+            known,
+            shallow,
+            super::FetchOptions {
+                limits,
+                depth,
+                filter: None,
+                explicit_wants,
+            },
+            &mut super::progress::ValidationObserver::new(control.cancel, &mut validation),
+        )?
+    };
     check(control)?;
     observe(LocalFetchProgress::Complete);
     Ok(received)
@@ -489,15 +569,15 @@ pub(crate) fn receive_advertised_observed(
 /// source's derived metadata only to choose objects; the destination's import still hashes every
 /// received object and checks its connectivity, so a stale or wrong bitmap fails validation rather
 /// than storing a gap.
-fn bitmap_selection(
+fn bitmap_selection<const CONTROLLED: bool>(
     store: &crate::Objects,
     wants: &[ObjectId],
-    known: &KnownHistory,
+    known: &KnownRead<'_, CONTROLLED>,
     depth: Option<NonZeroU32>,
     limits: FetchLimits,
     control: TransportControl<'_>,
 ) -> Result<Option<Vec<ObjectId>>, FetchError> {
-    if depth.is_some() || !known.shallow.is_empty() {
+    if depth.is_some() || !known.history().shallow.is_empty() {
         return Ok(None);
     }
     let query = crate::bitmap::QueryLimits {
@@ -523,7 +603,7 @@ fn bitmap_selection(
     let empty_tree = store.object_format().empty_tree();
     for &id in &ids {
         check(control)?;
-        if id != empty_tree && known.kind(id).is_some() {
+        if id != empty_tree && known.kind(id)?.is_some() {
             return Ok(None);
         }
     }

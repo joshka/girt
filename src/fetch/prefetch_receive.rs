@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::prefetch_plan::PrefetchPlanLimits;
 use super::{FetchReady, FetchRequest, FetchWorkflowError};
-use crate::fetch::local_native::{AdmittedSource, receive_advertised_observed};
+use crate::fetch::local_native::{AdmittedSource, receive_advertised_controlled};
 use crate::fetch::{FetchError, FetchLimits, KnownHistory, check_cancelled};
 use crate::transport::TransportControl;
 
@@ -15,8 +15,10 @@ impl FetchRequest {
     /// Source location, refs, peels and pack indexes were bounded by source admission;
     /// `transfer.source_packs`, advertisement bytes and entry limits are not consulted again.
     /// Planning and transfer use independent budgets. Want IDs are bounded before each push.
+    /// Store-backed lookups share caller read controls and aggregate fallback budgets through
+    /// selection, import and connectivity. Retained knowledge is admitted before transfer;
+    /// tree-boundary discovery keeps its separate bounded phase.
     /// This entry point supports neither requested depth nor filtering; shallow sources refuse.
-    /// Store-backed known history refuses until its fallback reads have controlled limits.
     /// Cancellation is checked between phases and at most every 64 planned updates.
     /// The existing native transfer's read, graph, compression and import bounds still apply.
     ///
@@ -36,9 +38,6 @@ impl FetchRequest {
             return Err(FetchError::Unsupported("maintenance prefetch depth or filter").into());
         }
         self.check_known(known)?;
-        if known.store.is_some() {
-            return Err(FetchError::Unsupported("store-backed maintenance knowledge").into());
-        }
         let (repository, objects, advertisement) = source.into_parts();
         if !repository.shallow_roots().is_empty() {
             return Err(FetchError::Unsupported("shallow local source").into());
@@ -63,14 +62,12 @@ impl FetchRequest {
                 }
             }
         }
-        let received = receive_advertised_observed(
+        let received = receive_advertised_controlled(
             &repository,
             objects,
             advertisement,
             |_| wants,
             known,
-            None,
-            false,
             transfer,
             TransportControl::new(cancel),
             |_| ControlFlow::Continue(()),
