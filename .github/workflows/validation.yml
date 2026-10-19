@@ -89,7 +89,8 @@ jobs:
         # macOS job approaches the timeout. Each suite keeps its own cache.
         suite: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["main","features"]' || '["main"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Interim: the serial all-features test step can exceed 30 minutes on hosted macOS.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -213,7 +214,8 @@ jobs:
     # Divide the existing checks by feature configuration to avoid duplicate builds.
     # Portable integrations are explicit; native local transfer runs on Windows.
     runs-on: windows-2022
-    timeout-minutes: 20
+    # Interim: the all-features suite can exceed 20 minutes on hosted Windows.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
