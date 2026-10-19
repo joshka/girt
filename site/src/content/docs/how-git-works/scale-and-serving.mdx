@@ -174,4 +174,4 @@ as writing the commit-graph, prefetching and incremental repacking. Both decide 
 operations ([repacking](/girt/how-git-works/storage/#repacking-and-pruning), packing refs, pruning)
 should run.
 
-<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/531">Callers can explicitly check `gc.auto` and `gc.autoPackLimit`, and plan bounded incremental-repack batches with typed skip reports. These checks start no background work; task execution and pruning policy remain caller-controlled.</GirtStatus>
+<GirtStatus status="partial" href="https://github.com/joshka/girt/issues/531">Callers can check gc thresholds, plan bounded incremental-repack batches, validate selected tasks and read task configuration lazily. These APIs start no background work; task execution and pruning policy remain caller-controlled.</GirtStatus>
