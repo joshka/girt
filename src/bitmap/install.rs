@@ -76,6 +76,9 @@ impl Repository {
 
     /// Publishes a reverse index before atomically replacing the associated pack bitmap.
     ///
+    /// Sidecars use the selected installed pack's basename, including Git's `loose-` packs.
+    /// The per-checksum writer lock coordinates aliases naming the same pack content.
+    ///
     /// The caller's guard must exclude pack mutation/retirement and sidecar writers through return.
     /// Source indexes and graph contents are verified and generations rechecked before publication.
     /// A separate per-pack bitmap lock is registered for cleanup. Complete temporary files are
@@ -226,7 +229,15 @@ fn install_held(
         let (index, written, packs, basename) = match target {
             Target::Pack(id) => {
                 let written = objects.encode_pack_bitmap(id, options, limits, cancel)?;
-                (None, written, 1, directory.join(format!("pack-{id}")))
+                // Match the encoder's first primary copy of this checksum. Git's loose-object
+                // maintenance uses a `loose-` basename; sidecars belong beside that actual pack.
+                let basename = objects
+                    .primary_packs_with_paths()
+                    .into_iter()
+                    .find(|(_, pack)| pack.checksum() == id)
+                    .map(|(path, _)| path.with_extension(""))
+                    .ok_or(super::WriteError::Pack(id))?;
+                (None, written, 1, basename)
             }
             Target::Multi(midx) => {
                 let written = objects.encode_multi_pack_bitmap(midx, options, limits, cancel)?;

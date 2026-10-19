@@ -459,3 +459,11 @@ admission, caller edit and preparation budgets, symbolic discovery and locked re
 input, cancellation, foreign lock preservation and cleanup without publication. Successful SHA-1 and
 SHA-256 reference/reflog bytes match isolated Git transactions. Legacy wait and publication suites
 remain unchanged apart from initializing the additive options field through defaults.
+
+### Git Loose-Named Packs
+
+`loose_pack_names` runs in Windows interoperability CI. Git creates `loose-<checksum>` packs; girt
+reads their objects, plans retention, prunes only verified loose duplicates, round-trips their MIDX
+and publishes bitmap/reverse-index sidecars beside the installed basename. Git verifies the MIDX,
+bitmap and object graph in both formats. Unix-only tests cover verified expiry, retirement with
+sidecars and explicit GC consolidation without ignoring the loose-named input.
