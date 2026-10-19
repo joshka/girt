@@ -54,7 +54,9 @@ impl FromStr for MaintenanceTask {
 ///
 /// Like Git, pack-refs is foreground work and precedes the remaining tasks. Other tasks retain
 /// their requested order. Execution and automatic threshold checks are separate concerns.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// The default is an empty, unconfigured selection; execution refuses it before any work.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct TaskSelection {
     tasks: Vec<MaintenanceTask>,
 }

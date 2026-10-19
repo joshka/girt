@@ -239,6 +239,8 @@ fn completed_task_report_survives_a_later_failure() {
         .with_auto(true)
         .run(&mut Isolation::default(), &AtomicBool::new(false))
         .unwrap_err();
+    assert_eq!(failure.failed_task, Some(MaintenanceTask::CommitGraph));
+    assert!(failure.cleanup_error.is_none());
     assert_eq!(failure.report.tasks.len(), 2);
     assert!(!matches!(
         failure.report.tasks[0].outcome,
@@ -249,4 +251,139 @@ fn completed_task_report_survives_a_later_failure() {
         TaskOutcome::NotStarted
     ));
     assert!(!repo.object_dir().join("maintenance.lock").exists());
+}
+
+#[test]
+fn empty_default_selection_never_acquires_isolation() {
+    let (_root, repo, _, _) = fixture(ObjectFormat::Sha1);
+    let mut isolation = Isolation::default();
+    assert!(
+        MaintenanceRun::new(&repo, TaskSelection::default())
+            .run(&mut isolation, &AtomicBool::new(false))
+            .is_err()
+    );
+    assert_eq!(isolation.0, 0);
+}
+
+#[test]
+fn graph_inventory_limit_leaves_an_earlier_pack_refs_result() {
+    let (_root, repo, _, _) = fixture(ObjectFormat::Sha1);
+    let mut limits = girt::maintenance::MaintenanceLimits::default();
+    limits.reference_entries = 0;
+    let selected =
+        TaskSelection::explicit(&[MaintenanceTask::PackRefs, MaintenanceTask::CommitGraph])
+            .unwrap();
+    let failure = MaintenanceRun::new(&repo, selected)
+        .with_limits(limits)
+        .run(&mut Isolation::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        failure.report.tasks[0].outcome,
+        TaskOutcome::PackRefs(_)
+    ));
+    assert!(matches!(
+        failure.report.tasks[1].outcome,
+        TaskOutcome::NotStarted
+    ));
+    assert!(!repo.object_dir().join("maintenance.lock").exists());
+}
+
+#[test]
+fn task_pair_matches_git_commit_set_and_keeps_objects_readable() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        let (root, repo, _, detached) = fixture(format);
+        oracle::git(
+            root.path(),
+            &["update-ref", "refs/jj/keep/test", &detached.to_string()],
+            b"",
+        );
+        let selected =
+            TaskSelection::explicit(&[MaintenanceTask::PackRefs, MaintenanceTask::CommitGraph])
+                .unwrap();
+        MaintenanceRun::new(&repo, selected)
+            .run(&mut Isolation::default(), &AtomicBool::new(false))
+            .unwrap();
+        let ids = |repo: &Repository| {
+            let mut ids: Vec<_> = repo
+                .commit_graph()
+                .unwrap()
+                .unwrap()
+                .commits()
+                .iter()
+                .map(|commit| commit.id)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        let ours = ids(&repo);
+        std::fs::remove_dir_all(repo.object_dir().join("info/commit-graphs")).unwrap();
+        oracle::git(
+            root.path(),
+            &[
+                "maintenance",
+                "run",
+                "--task=pack-refs",
+                "--task=commit-graph",
+            ],
+            b"",
+        );
+        assert_eq!(ids(&repo), ours);
+        oracle::git(root.path(), &["commit-graph", "verify"], b"");
+        oracle::git(root.path(), &["fsck", "--strict"], b"");
+    }
+}
+
+#[test]
+fn automatic_graph_counts_only_commits_absent_from_existing_graph() {
+    let (root, repo, first, detached) = fixture(ObjectFormat::Sha1);
+    let selected = || TaskSelection::explicit(&[MaintenanceTask::CommitGraph]).unwrap();
+    MaintenanceRun::new(&repo, selected())
+        .run(&mut Isolation::default(), &AtomicBool::new(false))
+        .unwrap();
+    oracle::git(
+        root.path(),
+        &["config", "maintenance.commit-graph.auto", "2"],
+        b"",
+    );
+    oracle::git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &detached.to_string()],
+        b"",
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    let run = || {
+        MaintenanceRun::new(&repo, selected())
+            .with_auto(true)
+            .run(&mut Isolation::default(), &AtomicBool::new(false))
+            .unwrap()
+    };
+    assert!(matches!(run().tasks[0].outcome, TaskOutcome::Skipped(_)));
+    let tree = oracle::git(
+        root.path(),
+        &["show", "--format=%T", "--no-patch", &first.to_string()],
+        b"",
+    );
+    let third = oracle::git(
+        root.path(),
+        &[
+            "commit-tree",
+            std::str::from_utf8(&tree).unwrap().trim(),
+            "-p",
+            &detached.to_string(),
+        ],
+        b"third\n",
+    );
+    oracle::git(
+        root.path(),
+        &[
+            "update-ref",
+            "refs/heads/main",
+            std::str::from_utf8(&third).unwrap().trim(),
+        ],
+        b"",
+    );
+    assert!(matches!(
+        run().tasks[0].outcome,
+        TaskOutcome::CommitGraph(_)
+    ));
 }

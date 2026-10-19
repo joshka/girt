@@ -9,6 +9,8 @@
 //! [`TaskSelection`] validates explicit tasks separately from execution and configuration. It
 //! refuses an implicit default task set; selecting a task does not run maintenance.
 //! [`MaintenanceConfig`] interprets individual settings lazily over a resolved configuration.
+//! [`MaintenanceRun`] composes explicit pack-refs and commit-graph tasks under caller isolation
+//! and a shared maintenance lock. It refuses other tasks before any effects.
 //! [`PrefetchRefspecs`] prepares bounded cache mappings without selecting a remote or transport.
 //!
 //! ```
@@ -32,6 +34,7 @@ mod gc;
 mod lock;
 mod policy;
 mod prefetch;
+mod run;
 mod tasks;
 
 use std::path::Path;
@@ -45,6 +48,10 @@ pub use policy::PolicyError;
 pub use prefetch::{
     PrefetchLimits, PrefetchRefspecs, PrefetchRefspecsError, PrefetchSkipReason,
     SkippedPrefetchSpec,
+};
+pub use run::{
+    MaintenanceFailure, MaintenanceLimits, MaintenanceReport, MaintenanceRun, MaintenanceRunError,
+    TaskOutcome, TaskReport, TaskSkip,
 };
 pub use tasks::{MaintenanceTask, TaskSelection, TaskSelectionError};
 

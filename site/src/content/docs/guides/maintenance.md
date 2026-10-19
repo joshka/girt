@@ -15,6 +15,28 @@ the rules behind these APIs. The main one is that deleting the last readable cop
 so if maintenance can't observe the repository completely or can't establish exclusion, it refuses
 the operation.
 
+## Run selected maintenance tasks
+
+`MaintenanceRun` executes an explicit `TaskSelection` under one caller-provided
+`MaintenanceIsolation` guard and Git's `objects/maintenance.lock`. The first executor supports
+pack-refs and commit-graph. Selecting gc, prefetch, loose-objects or incremental-repack refuses the
+whole batch before locking or changing files. An empty default selection is also refused.
+
+Use `with_limits` to choose finite per-task budgets and `with_auto(true)` to check each task's
+threshold. Explicit selection overrides task enabled flags; `maintenance.auto` only controls
+command-trigger policy. The executor installs no triggers and starts no background work.
+
+Graph roots come from refs, including `refs/jj/keep/*`, rather than detached HEAD. Graph writing
+skips shallow repositories and `core.commitGraph=false`. Reports distinguish completed, skipped and
+unattempted tasks; errors preserve earlier results and the failing primitive's typed source,
+including `GraphInstallError::index_published`. `failed_task` identifies an attempted task that
+failed; `cleanup_error` preserves a secondary lock-release failure. Primitive cancellation retains
+its typed source and partial report. An automatic pack-refs threshold skip is reported by
+`PackRefsReport::rewritten=false`. Retry from fresh observations under isolation.
+
+This unreleased executor is tracked in
+[automatic maintenance](https://github.com/joshka/girt/issues/531).
+
 ## Choose an operation
 
 | Task                     | API                       | What changes                                             |
