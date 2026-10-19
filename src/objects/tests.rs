@@ -257,6 +257,69 @@ fn capped_loose_input_refuses_padding_before_inflation(#[case] format: ObjectFor
     ));
 }
 
+/// Transfer metadata and selection reads must cap compressed loose input before decoding it.
+#[rstest::rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn capped_source_reads_admit_compressed_bytes_inclusively(#[case] format: ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let id = ObjectId::for_blob(format, b"");
+    let compressed = padded_empty_blob();
+    let hex = id.to_string();
+    let path = root.path().join(&hex[..2]).join(&hex[2..]);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, &compressed).unwrap();
+    let objects = Objects::open(
+        format,
+        root.path(),
+        PackLimits::default(),
+        AlternateLimits::default(),
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let limits = ReadLimits::default().with_max_input_bytes(compressed.len() - 1);
+
+    assert!(matches!(
+        objects.read_unverified_capped(id, limits, &cancel),
+        Err(ObjectReadError::Limit("loose compressed bytes"))
+    ));
+    assert!(matches!(
+        objects.transfer_object_capped(id, limits, &cancel),
+        Err(ObjectReadError::Limit("loose compressed bytes"))
+    ));
+    assert!(matches!(
+        objects.transfer_location_capped(id, limits, &cancel),
+        Err(ObjectReadError::Limit("loose compressed bytes"))
+    ));
+
+    let admitted = limits.with_max_input_bytes(compressed.len());
+    assert_eq!(
+        objects.read_unverified_capped(id, admitted, &cancel).unwrap().unwrap().data(),
+        b""
+    );
+    assert!(matches!(
+        objects.transfer_object_capped(id, admitted, &cancel).unwrap(),
+        Some((ObjectKind::Blob, 0, None))
+    ));
+    assert!(matches!(
+        objects.transfer_location_capped(id, admitted, &cancel).unwrap(),
+        Some(None)
+    ));
+    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(matches!(
+        objects.read_unverified_capped(id, admitted, &cancel),
+        Err(ObjectReadError::Cancelled)
+    ));
+    assert!(matches!(
+        objects.transfer_object_capped(id, admitted, &cancel),
+        Err(ObjectReadError::Cancelled)
+    ));
+    assert!(matches!(
+        objects.transfer_location_capped(id, admitted, &cancel),
+        Err(ObjectReadError::Cancelled)
+    ));
+}
+
 /// A hand-built zlib stream: 10,000 empty stored blocks followed by the canonical empty blob.
 fn padded_empty_blob() -> Vec<u8> {
     let payload = b"blob 0\0";
