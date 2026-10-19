@@ -544,6 +544,17 @@ all loose copies. The existing `References::pack` behavior is unchanged. This pr
 start an automatic task or enable background work; runner integration remains
 [tracked separately](https://github.com/joshka/girt/issues/531).
 
+## Bound pure refspec mapping
+
+`remote::MappingOptions::new(&specs)` applies explicit `MappingLimits` while mapping caller-owned
+sources or an advertisement. Counts and aggregate input bytes are admitted before names are cloned.
+Mapping attempts, output name bytes and comparison work have separate budgets; cancellation is
+checked in batches. Duplicate attempts and missing-source reports consume output budgets even when
+results later collapse. Existing `Refspecs` mapping methods retain their trusted behavior.
+
+This controls pure mapping only. Advertisement acquisition and the full prefetch composition remain
+separate work tracked in [#531](https://github.com/joshka/girt/issues/531).
+
 ## API reference
 
 - [Retention policy, outcomes, reports and errors](https://docs.rs/girt/latest/girt/retention/)
