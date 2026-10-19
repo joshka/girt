@@ -399,7 +399,8 @@ pub fn remote_refs(
 /// [`FetchOutcome::missing_sources`] rather than failing the fetch.
 ///
 /// Afterwards, like `git fetch`, this runs Git's automatic pack-refs task (see
-/// [`Repository::auto_pack_references`]). A failure there does not fail the fetch.
+/// [`Repository::auto_pack_references`]). A failure there does not fail the fetch. Disable this
+/// optional work with [`FetchOptions::with_auto_pack_refs`] when composing bounded maintenance.
 ///
 /// The repository's open [`Objects`](crate::Objects) readers keep their earlier pack list. Open a
 /// new reader, or reopen the repository, to read the fetched objects.
@@ -994,6 +995,7 @@ pub struct FetchOptions {
     /// `None` reuses the remote's configured filter; `Some(None)` fetches unfiltered.
     filter: Option<Option<ObjectFilter>>,
     prune: bool,
+    auto_pack_refs: bool,
     tag_namespaces: Vec<RefName>,
     reflog: Option<(crate::Signature, Vec<u8>)>,
 }
@@ -1040,9 +1042,30 @@ impl FetchOptions {
             depth: None,
             filter: None,
             prune: false,
+            auto_pack_refs: true,
             tag_namespaces: Vec::new(),
             reflog: None,
         }
+    }
+
+    /// Enables automatic reference packing after a successful fetch (default: true).
+    ///
+    /// The default runs [`Repository::auto_pack_references`], honoring its configuration and
+    /// threshold; a packing failure never fails the completed fetch. Set this to false when the
+    /// caller composes its own bounded maintenance. Newly updated references then stay loose,
+    /// while existing packed records remain in place. Transfer and reference updates are unchanged.
+    ///
+    /// ```
+    /// use girt::workflow::FetchOptions;
+    ///
+    /// let options =
+    ///     FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).with_auto_pack_refs(false);
+    /// # let _ = options;
+    /// ```
+    #[must_use]
+    pub fn with_auto_pack_refs(mut self, enabled: bool) -> Self {
+        self.auto_pack_refs = enabled;
+        self
     }
 
     /// Limits history to `depth` commits from each fetched tip, like `git fetch --depth`.
@@ -2502,13 +2525,16 @@ impl Repository {
         let report = ready
             .finish(FetchUpdateLimits::trusted(), &cancel)
             .map_err(|error| TransferError::FetchFinish(Box::new(error)))?;
-        // Like the automatic maintenance `git fetch` runs afterwards, packing never fails the
-        // fetch: its references are already updated, and a held lock means another process is
-        // maintaining them. A fresh snapshot includes the received pack, needed to peel new tags.
-        #[cfg(test)]
-        pack_tests::BEFORE_AUTO_PACK.with(|hook| hook.take().map(|hook| hook()));
-        if let Ok(objects) = self.objects_with(crate::PackLimits::trusted()) {
-            let _ = self.auto_pack_references(&objects);
+        if options.auto_pack_refs {
+            // Like the automatic maintenance `git fetch` runs afterwards, packing never fails the
+            // fetch: its references are already updated, and a held lock means another process is
+            // maintaining them. A fresh snapshot includes the received pack, needed to peel new
+            // tags.
+            #[cfg(test)]
+            pack_tests::BEFORE_AUTO_PACK.with(|hook| hook.take().map(|hook| hook()));
+            if let Ok(objects) = self.objects_with(crate::PackLimits::trusted()) {
+                let _ = self.auto_pack_references(&objects);
+            }
         }
         Ok(FetchOutcome {
             updated: report

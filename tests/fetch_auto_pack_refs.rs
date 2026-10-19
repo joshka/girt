@@ -39,6 +39,7 @@ fn fetch_reference_packing_is_optional(
     let tree = std::str::from_utf8(&tree).unwrap().trim();
     let commit = oracle::git(&origin, &["commit-tree", tree], b"one\n");
     let commit = std::str::from_utf8(&commit).unwrap().trim();
+    // Sixteen is the minimum auto pack-refs threshold with no existing packed-refs file.
     let updates: String = (0..16)
         .map(|index| format!("create refs/heads/topic-{index:02} {commit}\n"))
         .collect();
@@ -48,6 +49,7 @@ fn fetch_reference_packing_is_optional(
         &["remote", "add", "origin", origin.to_str().unwrap()],
         b"",
     );
+    // Repository::open reads local config only; the empty Environment inherits no variables.
     let repo = Repository::open(&local).unwrap();
     let mut options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]);
     if let Some(packing) = packing {
