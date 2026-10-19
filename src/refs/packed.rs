@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex, TryLockError};
 
 use super::store::{check_path, io_error, malformed};
 use super::{RefName, ReferenceError};
@@ -84,6 +85,38 @@ impl PackedCache {
         format: crate::ObjectFormat,
         path: &Path,
     ) -> Result<Arc<Snapshot>, ReferenceError> {
+        self.load_with::<false>(
+            format,
+            path,
+            usize::MAX,
+            usize::MAX,
+            &AtomicBool::new(false),
+        )
+    }
+
+    /// Admits retained cache bytes and records as well as newly read input.
+    pub(super) fn load_controlled(
+        &self,
+        format: crate::ObjectFormat,
+        path: &Path,
+        max_bytes: usize,
+        max_refs: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Arc<Snapshot>, ReferenceError> {
+        self.load_with::<true>(format, path, max_bytes, max_refs, cancel)
+    }
+
+    fn load_with<const CONTROLLED: bool>(
+        &self,
+        format: crate::ObjectFormat,
+        path: &Path,
+        max_bytes: usize,
+        max_refs: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Arc<Snapshot>, ReferenceError> {
+        if CONTROLLED {
+            super::lock_wait::check_cancelled(cancel)?;
+        }
         check_path(path)?;
         let mut file = match File::open(path) {
             Ok(file) => file,
@@ -93,23 +126,69 @@ impl PackedCache {
             Err(source) => return Err(io_error(path, source)),
         };
         let identity = Identity::of(format, &file).map_err(|source| io_error(path, source))?;
-        let mut cached = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let (Some(identity), Some((known, snapshot))) = (identity, cached.as_ref())
+        // A trusted load may hold the cache lock through an unbounded read. Controlled readers
+        // bypass a busy cache rather than waiting for another caller's resource policy.
+        let mut cached = if CONTROLLED {
+            match self.0.try_lock() {
+                Ok(guard) => Some(guard),
+                Err(TryLockError::Poisoned(error)) => Some(error.into_inner()),
+                Err(TryLockError::WouldBlock) => None,
+            }
+        } else {
+            Some(
+                self.0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
+        };
+        if let (Some(identity), Some((known, snapshot))) =
+            (identity, cached.as_deref().and_then(Option::as_ref))
             && identity == *known
         {
+            if CONTROLLED {
+                admit(snapshot, max_bytes, max_refs)?;
+                super::lock_wait::check_cancelled(cancel)?;
+            }
             return Ok(Arc::clone(snapshot));
         }
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|source| io_error(path, source))?;
-        let records = parse(format, &bytes, path)?;
+        if CONTROLLED {
+            if file
+                .metadata()
+                .map_err(|source| io_error(path, source))?
+                .len()
+                > max_bytes as u64
+            {
+                return Err(ReferenceError::Limit("reference bytes"));
+            }
+            file.take(max_bytes.saturating_add(1) as u64)
+                .read_to_end(&mut bytes)
+                .map_err(|source| io_error(path, source))?;
+            if bytes.len() > max_bytes {
+                return Err(ReferenceError::Limit("reference bytes"));
+            }
+            super::lock_wait::check_cancelled(cancel)?;
+        } else {
+            file.read_to_end(&mut bytes)
+                .map_err(|source| io_error(path, source))?;
+        }
+        let records = parse_with::<CONTROLLED>(format, &bytes, path, max_refs, cancel)?;
         let snapshot = Arc::new(Snapshot { bytes, records });
-        *cached = identity.map(|identity| (identity, Arc::clone(&snapshot)));
+        if let Some(cached) = cached.as_deref_mut() {
+            *cached = identity.map(|identity| (identity, Arc::clone(&snapshot)));
+        }
         Ok(snapshot)
     }
+}
+
+fn admit(snapshot: &Snapshot, max_bytes: usize, max_refs: usize) -> Result<(), ReferenceError> {
+    if snapshot.bytes.len() > max_bytes {
+        return Err(ReferenceError::Limit("reference bytes"));
+    }
+    if snapshot.len() > max_refs {
+        return Err(ReferenceError::Limit("reference entries"));
+    }
+    Ok(())
 }
 
 /// Reads and parses `path` without a cache.
@@ -131,6 +210,16 @@ pub(super) fn parse(
     bytes: &[u8],
     path: &Path,
 ) -> Result<Packed, ReferenceError> {
+    parse_with::<false>(format, bytes, path, usize::MAX, &AtomicBool::new(false))
+}
+
+fn parse_with<const CONTROLLED: bool>(
+    format: crate::ObjectFormat,
+    bytes: &[u8],
+    path: &Path,
+    max_refs: usize,
+    cancel: &AtomicBool,
+) -> Result<Packed, ReferenceError> {
     let width = format.digest_len() * 2;
     if !bytes.is_empty() && !bytes.ends_with(b"\n") {
         return Err(malformed(path, "unterminated packed record"));
@@ -148,6 +237,9 @@ pub(super) fn parse(
         .split(|b| *b == b'\n')
         .enumerate()
     {
+        if CONTROLLED && index % 64 == 0 {
+            super::lock_wait::check_cancelled(cancel)?;
+        }
         if let Some(header) = line.strip_prefix(b"# pack-refs with:") {
             if index != 0 {
                 return Err(malformed(path, "misplaced packed header"));
@@ -182,6 +274,9 @@ pub(super) fn parse(
         else {
             return Err(malformed(path, "expected object ID and reference name"));
         };
+        if CONTROLLED && entries.len() >= max_refs {
+            return Err(ReferenceError::Limit("reference entries"));
+        }
         let id = parse_id(format, id, path)?;
         let name =
             RefName::new(name).map_err(|_| malformed(path, "invalid packed reference name"))?;
@@ -205,6 +300,9 @@ pub(super) fn parse(
         }
         previous = Some(name);
         can_peel = true;
+    }
+    if CONTROLLED {
+        super::lock_wait::check_cancelled(cancel)?;
     }
     Ok(entries)
 }
@@ -286,7 +384,8 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let path = root.path().canonicalize().unwrap().join("packed-refs");
             let id = "1".repeat(format.digest_len() * 2);
-            let bytes = format!("# pack-refs with: peeled\n{id} refs/tags/a\n^{id}\n{id} refs/heads/b\n");
+            let bytes =
+                format!("# pack-refs with: peeled\n{id} refs/tags/a\n^{id}\n{id} refs/heads/b\n");
             std::fs::write(&path, &bytes).unwrap();
             let cancel = AtomicBool::new(false);
             let cache = PackedCache::default();
@@ -333,11 +432,38 @@ mod tests {
         ));
         cancel.store(false, Ordering::Relaxed);
         assert_eq!(
-            cache.load_controlled(crate::ObjectFormat::Sha1, &path, 100, 1, &cancel)
+            cache
+                .load_controlled(crate::ObjectFormat::Sha1, &path, 100, 1, &cancel)
                 .unwrap()
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn controlled_load_bypasses_a_cache_held_by_another_reader() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().canonicalize().unwrap().join("packed-refs");
+        std::fs::write(&path, format!("{ID} refs/heads/a\n")).unwrap();
+        let cache = Arc::new(PackedCache::default());
+        let guard = cache.0.lock().unwrap();
+        let reader = Arc::clone(&cache);
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = reader.load_controlled(
+                crate::ObjectFormat::Sha1,
+                &path,
+                100,
+                1,
+                &AtomicBool::new(false),
+            );
+            send.send(result.map(|snapshot| snapshot.len())).unwrap();
+        });
+        let result = receive.recv_timeout(std::time::Duration::from_secs(2));
+        // Release before joining even on regression: the test must fail instead of hanging.
+        drop(guard);
+        worker.join().unwrap();
+        assert_eq!(result.unwrap().unwrap(), 1);
     }
 
     #[cfg(unix)]
