@@ -306,3 +306,62 @@ fn missing_primary_index_refuses_even_with_complete_alternate(#[case] use_altern
         fs::read(fixture.repo.object_dir().join("pack/multi-pack-index")).unwrap()
     );
 }
+
+#[test]
+fn refresh_limits_refuse_before_index_publication_or_pack_removal() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        for open in [
+            girt::OpenLimits::default().with_metadata_bytes(0),
+            girt::OpenLimits::default()
+                .with_configuration(girt::config::ResolveLimits::default().with_bytes(0)),
+        ] {
+            let fixture = Fixture::new(format);
+            let index = fixture.repo.object_dir().join("pack/multi-pack-index");
+            let before = fs::read(&index).unwrap();
+            let failure = fixture
+                .repo
+                .expire_multi_pack_index(
+                    &mut PrivateFixture,
+                    ExpireLimits::default().with_open(open),
+                    &AtomicBool::new(false),
+                )
+                .unwrap_err();
+            assert!(matches!(failure.cause, girt::multi_pack_index::ExpireCause::Open(_)));
+            assert!(!failure.report.index_published);
+            assert!(failure.report.removed.is_empty());
+            assert_eq!(fs::read(index).unwrap(), before);
+            assert!(fixture.old.exists());
+            assert!(fixture.survivor.exists());
+        }
+    }
+}
+
+#[test]
+fn cancellation_at_isolation_is_observed_before_refresh() {
+    struct CancelOnAcquire<'a>(&'a AtomicBool);
+    impl MaintenanceIsolation for CancelOnAcquire<'_> {
+        type Guard = ();
+        fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        }
+    }
+    let fixture = Fixture::new(ObjectFormat::Sha1);
+    let cancel = AtomicBool::new(false);
+    let failure = fixture
+        .repo
+        .expire_multi_pack_index(
+            &mut CancelOnAcquire(&cancel),
+            ExpireLimits::default(),
+            &cancel,
+        )
+        .unwrap_err();
+    let girt::multi_pack_index::ExpireCause::Open(source) = failure.cause else {
+        panic!("expected controlled opener cancellation");
+    };
+    assert!(matches!(*source, girt::repository::OpenError::Cancelled));
+    assert!(!failure.report.index_published);
+    assert!(failure.report.removed.is_empty());
+    assert!(fixture.old.exists());
+    assert!(fixture.survivor.exists());
+}
