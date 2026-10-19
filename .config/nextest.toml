@@ -4,3 +4,10 @@ slow-timeout = { period = "10s" }
 status-level = "pass"
 final-status-level = "slow"
 fail-fast = false
+
+# Unix CI: same reporting, one process per test so tracing fixtures stay isolated.
+[profile.ci]
+slow-timeout = { period = "10s" }
+status-level = "pass"
+final-status-level = "slow"
+fail-fast = false

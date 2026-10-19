@@ -89,8 +89,7 @@ jobs:
         # macOS job approaches the timeout. Each suite keeps its own cache.
         suite: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["main","features"]' || '["main"]') }}
     runs-on: ${{ matrix.os }}
-    # Interim: the serial all-features test step can exceed 30 minutes on hosted macOS.
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -127,9 +126,20 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal --component rustfmt
           cargo +nightly fmt --all -- --check
-      # Tracing fixture dispatchers share tracing-core's global callsite cache.
-      - run: cargo +stable test --locked --all-features -- --test-threads=1
+      - name: Install nextest
         if: ${{ matrix.suite == 'main' }}
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: cargo-nextest@0.9.140
+      # Tracing fixture dispatchers share tracing-core's global callsite cache,
+      # so tests cannot share a process. Nextest runs each test in its own
+      # process, which keeps that isolation while using every core.
+      - run: cargo +stable nextest run --profile ci --locked --all-features
+        if: ${{ matrix.suite == 'main' }}
+      # Doctests only need the library build, so the shorter features suite runs
+      # them when it exists (full CI); otherwise main runs them.
+      - run: cargo +stable test --locked --all-features --doc
+        if: ${{ matrix.suite == 'features' || needs.changes.outputs.full != 'true' }}
       - run: cargo +stable test --locked -p girt-cli
         if: ${{ matrix.suite == 'main' }}
       - name: Developer guide examples
@@ -210,12 +220,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [all-features, core, integrations]
+        suite: [all-features, doctests, core, integrations]
     # Divide the existing checks by feature configuration to avoid duplicate builds.
     # Portable integrations are explicit; native local transfer runs on Windows.
+    # Doctests link one executable each, so they get their own runner.
     runs-on: windows-2022
-    # Interim: the all-features suite can exceed 20 minutes on hosted Windows.
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -237,6 +247,7 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
+        if: ${{ matrix.suite != 'doctests' }}
         uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
           tool: cargo-nextest@0.9.140
@@ -269,7 +280,7 @@ jobs:
         if: ${{ matrix.suite == 'core' }}
         run: cargo +stable nextest run --profile windows-ci --locked --no-default-features --lib
       - run: cargo +stable test --locked --all-features --doc
-        if: ${{ matrix.suite == 'all-features' }}
+        if: ${{ matrix.suite == 'doctests' }}
       - name: Portable Git interoperability in both object formats
         if: ${{ matrix.suite == 'integrations' }}
         run: >-
