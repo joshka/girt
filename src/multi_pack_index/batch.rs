@@ -162,120 +162,140 @@ impl Repository {
         limits: BatchLimits,
         cancel: &AtomicBool,
     ) -> Result<RepackBatch, BatchError> {
-        check(cancel)?;
-        let directory = self.object_dir().join("pack");
-        if present(&directory.join("multi-pack-index.d/multi-pack-index-chain"))? {
-            return Err(BatchError::IncrementalChain);
-        }
-        let bytes =
-            super::verify::read(&directory.join("multi-pack-index"), limits.index.max_bytes)
-                .map_err(BatchError::Index)?
-                .ok_or(BatchError::Index(super::Error::MissingIndex))?;
-        let index = MultiPackIndex::parse_with(&bytes, self.object_format(), limits.index)
-            .map_err(BatchError::Index)?;
-        if index.base_count() != 0 {
-            return Err(BatchError::IncrementalChain);
-        }
-        check(cancel)?;
-        let objects = self
-            .objects_controlled(limits.packs, Default::default(), cancel)
-            .map_err(|error| BatchError::Read(Box::new(error)))?;
-        let primary: BTreeMap<_, _> = objects.primary_packs_with_paths().into_iter().collect();
-        let mut named = Vec::with_capacity(index.pack_names().len());
-        for name in index.pack_names() {
-            check(cancel)?;
-            let path = directory.join(name).with_extension("pack");
-            let pack = primary
-                .get(path.as_path())
-                .ok_or(BatchError::Index(super::Error::MissingPack))?;
-            pack.verify_index()
-                .map_err(|error| BatchError::Read(Box::new(error)))?;
-            named.push((path, *pack));
-        }
-        let mut owned = vec![0usize; named.len()];
-        for (position, bytes) in index
-            .ids
-            .chunks_exact(self.object_format().digest_len())
-            .enumerate()
-        {
-            check(cancel)?;
-            let id = ObjectId::from_bytes(self.object_format(), bytes)
-                .map_err(|_| BatchError::Index(super::Error::Malformed("object identity")))?;
-            let location = index.location(position).map_err(BatchError::Index)?;
-            let pack = named[location.pack as usize].1;
-            let found = pack
-                .find(id)
-                .map_err(|error| BatchError::Read(Box::new(error)))?
-                .ok_or(BatchError::Index(super::Error::Malformed(
-                    "object absent from named pack",
-                )))?;
-            if pack
-                .offset(found)
-                .map_err(|error| BatchError::Read(Box::new(error)))? as u64
-                != location.offset
-            {
-                return Err(BatchError::Index(super::Error::Malformed(
-                    "object offset disagrees with pack index",
-                )));
-            }
-            owned[location.pack as usize] += 1;
-        }
-        let mut report = RepackBatch::default();
-        let mut candidates = Vec::new();
-        for ((path, pack), count) in named.into_iter().zip(owned) {
-            check(cancel)?;
-            let reason = if present(&path.with_extension("keep"))? {
-                Some(BatchSkipReason::Kept)
-            } else if present(&path.with_extension("promisor"))? {
-                Some(BatchSkipReason::Promisor)
-            } else if present(&path.with_extension("mtimes"))? {
-                Some(BatchSkipReason::Cruft)
-            } else if count == 0 {
-                Some(BatchSkipReason::NoOwnedObjects)
-            } else {
-                None
-            };
-            let estimated_bytes = if pack.object_count() == 0 {
-                0
-            } else {
-                (u128::from(pack.artifact_bytes().0) * count as u128 / pack.object_count() as u128)
-                    as u64
-            };
-            let reason = reason.or_else(|| {
-                (batch_bytes != 0 && estimated_bytes >= batch_bytes)
-                    .then_some(BatchSkipReason::TooLarge)
-            });
-            if let Some(reason) = reason {
-                report.skipped.push(BatchSkipped { path, reason });
-                continue;
-            }
-            let metadata = fs::symlink_metadata(&path).map_err(|source| BatchError::Path {
-                path: path.clone(),
-                source,
-            })?;
-            if !metadata.is_file() {
-                return Err(BatchError::Changed);
-            }
-            let modified = metadata.modified().map_err(|source| BatchError::Path {
-                path: path.clone(),
-                source,
-            })?;
-            candidates.push((
-                BatchPack {
-                    path,
-                    objects: count,
-                    estimated_bytes,
-                },
-                modification_seconds(modified),
-            ));
-        }
-        select(candidates, batch_bytes, &mut report)?;
-        objects
-            .check_packs_unchanged(cancel)
-            .map_err(|error| BatchError::Read(Box::new(error)))?;
-        check(cancel)?;
-        Ok(report)
+        prepare(self, batch_bytes, limits, cancel).map(|prepared| prepared.report)
     }
+}
+
+pub(super) struct PreparedBatch {
+    pub objects: crate::Objects,
+    pub index: Vec<u8>,
+    pub report: RepackBatch,
+}
+
+pub(super) fn prepare(
+    repository: &Repository,
+    batch_bytes: u64,
+    limits: BatchLimits,
+    cancel: &AtomicBool,
+) -> Result<PreparedBatch, BatchError> {
+    check(cancel)?;
+    let directory = repository.object_dir().join("pack");
+    if present(&directory.join("multi-pack-index.d/multi-pack-index-chain"))? {
+        return Err(BatchError::IncrementalChain);
+    }
+    let bytes = super::verify::read(&directory.join("multi-pack-index"), limits.index.max_bytes)
+        .map_err(BatchError::Index)?
+        .ok_or(BatchError::Index(super::Error::MissingIndex))?;
+    let index = MultiPackIndex::parse_with(&bytes, repository.object_format(), limits.index)
+        .map_err(BatchError::Index)?;
+    if index.base_count() != 0 {
+        return Err(BatchError::IncrementalChain);
+    }
+    check(cancel)?;
+    let objects = repository
+        .objects_controlled(limits.packs, Default::default(), cancel)
+        .map_err(|error| BatchError::Read(Box::new(error)))?;
+    let primary: BTreeMap<_, _> = objects.primary_packs_with_paths().into_iter().collect();
+    let mut named = Vec::with_capacity(index.pack_names().len());
+    for name in index.pack_names() {
+        check(cancel)?;
+        let path = directory.join(name).with_extension("pack");
+        let pack = primary
+            .get(path.as_path())
+            .ok_or(BatchError::Index(super::Error::MissingPack))?;
+        pack.verify_index()
+            .map_err(|error| BatchError::Read(Box::new(error)))?;
+        named.push((path, *pack));
+    }
+    let mut owned = vec![0usize; named.len()];
+    for (position, bytes) in index
+        .ids
+        .chunks_exact(repository.object_format().digest_len())
+        .enumerate()
+    {
+        check(cancel)?;
+        let id = ObjectId::from_bytes(repository.object_format(), bytes)
+            .map_err(|_| BatchError::Index(super::Error::Malformed("object identity")))?;
+        let location = index.location(position).map_err(BatchError::Index)?;
+        let pack = named[location.pack as usize].1;
+        let found = pack
+            .find(id)
+            .map_err(|error| BatchError::Read(Box::new(error)))?
+            .ok_or(BatchError::Index(super::Error::Malformed(
+                "object absent from named pack",
+            )))?;
+        if pack
+            .offset(found)
+            .map_err(|error| BatchError::Read(Box::new(error)))? as u64
+            != location.offset
+        {
+            return Err(BatchError::Index(super::Error::Malformed(
+                "object offset disagrees with pack index",
+            )));
+        }
+        owned[location.pack as usize] += 1;
+    }
+    let mut report = RepackBatch::default();
+    let mut candidates = Vec::new();
+    for ((path, pack), count) in named.into_iter().zip(owned) {
+        check(cancel)?;
+        let reason = if present(&path.with_extension("keep"))? {
+            Some(BatchSkipReason::Kept)
+        } else if present(&path.with_extension("promisor"))? {
+            Some(BatchSkipReason::Promisor)
+        } else if present(&path.with_extension("mtimes"))? {
+            Some(BatchSkipReason::Cruft)
+        } else if count == 0 {
+            Some(BatchSkipReason::NoOwnedObjects)
+        } else {
+            None
+        };
+        let estimated_bytes = if pack.object_count() == 0 {
+            0
+        } else {
+            (u128::from(pack.artifact_bytes().0) * count as u128 / pack.object_count() as u128)
+                as u64
+        };
+        let reason = reason.or_else(|| {
+            (batch_bytes != 0 && estimated_bytes >= batch_bytes)
+                .then_some(BatchSkipReason::TooLarge)
+        });
+        if let Some(reason) = reason {
+            report.skipped.push(BatchSkipped { path, reason });
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&path).map_err(|source| BatchError::Path {
+            path: path.clone(),
+            source,
+        })?;
+        if !metadata.is_file() {
+            return Err(BatchError::Changed);
+        }
+        let modified = metadata.modified().map_err(|source| BatchError::Path {
+            path: path.clone(),
+            source,
+        })?;
+        candidates.push((
+            BatchPack {
+                path,
+                objects: count,
+                estimated_bytes,
+            },
+            modification_seconds(modified),
+        ));
+    }
+    select(candidates, batch_bytes, &mut report)?;
+    objects
+        .check_packs_unchanged(cancel)
+        .map_err(|error| BatchError::Read(Box::new(error)))?;
+    check(cancel)?;
+    drop(primary);
+    drop(index);
+    Ok(PreparedBatch {
+        objects,
+        index: bytes,
+        report,
+    })
 }
 
 fn select(

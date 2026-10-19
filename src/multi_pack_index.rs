@@ -14,6 +14,8 @@
 //! replacement standalone index before retiring redundant packs, under caller-owned isolation.
 //! [`crate::Repository::plan_incremental_repack`] estimates a bounded batch from MIDX ownership,
 //! with explicit protection and skip reasons. Its advisory report does not authorize retirement.
+//! [`crate::Repository::repack_incremental_batch`] repeats selection under caller isolation and
+//! publishes an ordinary pack plus updated MIDX, without retiring any existing storage.
 //!
 //! ```no_run
 //! use girt::ObjectFormat;
@@ -27,6 +29,11 @@
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+
+mod repack;
+pub use repack::{
+    BatchPublication, BatchRepackCause, BatchRepackFailure, BatchRepackLimits, BatchRepackReport,
+};
 
 mod batch;
 pub use batch::{BatchError, BatchLimits, BatchPack, BatchSkipReason, BatchSkipped, RepackBatch};
