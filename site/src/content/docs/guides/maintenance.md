@@ -160,10 +160,16 @@ repository reopens and object snapshots for dependencies and publication checks.
 refusals leave packs and refs untouched. Later failures preserve installed objects and completed
 shallow/reference effects in the existing report.
 
-Reference transactions still retain their trusted metadata contract. This builder alone does not
-provide bounded prefetch execution; controlled files-reference publication remains a prerequisite.
-The existing ordinary and retained finish methods retain their behavior. Follow
-[automatic maintenance](https://github.com/joshka/girt/issues/531) for that composition.
+`FetchFinishLimits::with_files_transaction` selects bounded packed/loose metadata reads and files
+transaction preparation. Reftable uses the preparation stack limits. Changed edit counts are
+admitted before cloning payloads; files edit limits cover all changed prune and update edits
+together, while metadata/preparation budgets apply separately to pruning and updating. A later
+update refusal preserves completed prune outcomes in the transaction failure. Reference backend
+changes since preparation refuse before installation or later publication.
+
+This builder alone does not provide bounded prefetch execution. The ordinary and retained finish
+methods keep their trusted metadata contract. Follow
+[automatic maintenance](https://github.com/joshka/girt/issues/531) for task composition.
 
 ## Understand roots and plan outcomes
 

@@ -5,15 +5,22 @@ use super::{
     FetchFinishError, FetchFinishFailure, FetchPlanError, FetchPrepareLimits, FetchReady,
     FetchReport, FetchUpdateLimits,
 };
+use crate::refs::{
+    Backend, FilesTransactionLimits, FilesTransactionOptions, RefEdit, RefEditOutcome, References,
+    TransactionError,
+};
 use crate::{OpenLimits, OpenOptions, Repository};
 
-/// Metadata bounds for controlled ordinary fetch completion.
+/// Admission and reference-publication bounds for controlled ordinary fetch completion.
 ///
 /// Defaults use [`OpenLimits::default`] for each repository admission and
 /// [`FetchPrepareLimits::default`] for each reference/HEAD admission: 100,000 reference entries,
 /// 16 MiB of reference input, 4 KiB of HEAD data and 100,000 shallow roots. Admissions have
 /// separate budgets before installation, before shallow publication and before reference
-/// publication. Existing update limits govern primary pack snapshots and history verification;
+/// publication. Files transactions default to 10,000 changed edits, one million packed records,
+/// 128 MiB of metadata input and 512 MiB of preparation data per transaction. Reftable uses the
+/// preparation stack limits; its record cap also bounds changed edits before cloning.
+/// Existing update limits govern primary pack snapshots and history verification;
 /// alternate-store discovery uses [`crate::AlternateLimits::default`] for each object snapshot.
 ///
 /// This type is `Copy`, so future fields must also be `Copy`. It does not own configuration inputs.
@@ -24,9 +31,19 @@ pub struct FetchFinishLimits {
     pub open: OpenLimits,
     /// Bounds each reference inventory, HEAD chain and shallow-root admission.
     pub preparation: FetchPrepareLimits,
+    /// Files transaction input and preparation bounds, independently for pruning and updating.
+    /// The edit count bounds all changed prune and update edits together before payload cloning.
+    pub files_transaction: FilesTransactionLimits,
 }
 
 impl FetchFinishLimits {
+    /// Replaces files reference publication bounds.
+    #[must_use]
+    pub fn with_files_transaction(mut self, limits: FilesTransactionLimits) -> Self {
+        self.files_transaction = limits;
+        self
+    }
+
     /// Replaces repository admission bounds.
     #[must_use]
     pub fn with_open(mut self, open: OpenLimits) -> Self {
@@ -51,15 +68,14 @@ impl FetchFinishLimits {
 /// can also refuse layouts the trusted opener accepts; see [`OpenOptions`].
 ///
 /// The caller must retain the GC and worktree/HEAD exclusion required by
-/// [`super::FetchRequest`] throughout completion. Filesystem calls, bounded parsing and a started
-/// reference transaction finish before cancellation can be observed. This builder starts no
-/// transport or background work. Reference transactions retain their trusted metadata contract;
-/// their files-backed reads and preparation are not bounded by these admission budgets. This
-/// builder alone does not make prefetch execution bounded. Installation uses the prepared
+/// [`super::FetchRequest`] throughout completion. Filesystem calls and bounded parsing complete
+/// before cancellation can be observed. Reference preparation uses the selected files or reftable
+/// bounds; files publication completes once it starts. A backend migration since preparation is
+/// refused before installation or later publication. This builder starts no transport or background
+/// work and alone does not make prefetch execution bounded. Installation uses the prepared
 /// request's repository/configuration handle. Controlled reopens admit metadata and supply
-/// publication verification snapshots. Controlled reference publication is tracked in
-/// [automatic maintenance](https://github.com/joshka/girt/issues/531). Retained completion
-/// also keeps its existing trusted metadata contract.
+/// publication verification snapshots. Ordinary and retained completion keep their existing trusted
+/// metadata contract. See [automatic maintenance](https://github.com/joshka/girt/issues/531).
 ///
 /// ```
 /// use std::sync::atomic::AtomicBool;
@@ -135,6 +151,14 @@ pub(super) fn admit(
             .into(),
         );
     }
+    if current.reference_backend() != repository.reference_backend() {
+        return Err(
+            FetchFinishFailure::BeforePublication(super::FetchError::Unsupported(
+                "fetch reference backend changed",
+            ))
+            .into(),
+        );
+    }
     super::worktree::admit_controlled(&current, cancel).map_err(FetchFinishFailure::Safety)?;
     let refs = current
         .references()
@@ -157,4 +181,23 @@ pub(super) fn admit(
         );
     }
     Ok(current)
+}
+
+// Only the explicitly controlled finish calls this; legacy and retained entry points keep their
+// direct transaction calls. Admission checked that this backend matches the prepared handle.
+pub(super) fn transaction(
+    refs: &References<'_>,
+    backend: Backend,
+    edits: &[RefEdit],
+    limits: FetchFinishLimits,
+    cancel: &AtomicBool,
+) -> Result<Vec<RefEditOutcome>, TransactionError> {
+    match backend {
+        Backend::Files => refs.transaction_files_with_options(
+            edits,
+            FilesTransactionOptions::GIT_DEFAULT.with_limits(limits.files_transaction),
+            cancel,
+        ),
+        Backend::Reftable => refs.transaction_controlled(edits, cancel),
+    }
 }
