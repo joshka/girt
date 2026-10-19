@@ -9,9 +9,10 @@
 //! [`TaskSelection`] validates explicit tasks separately from execution and configuration. It
 //! refuses an implicit default task set; selecting a task does not run maintenance.
 //! [`MaintenanceConfig`] interprets individual settings lazily over a resolved configuration.
-//! [`MaintenanceRun`] composes explicit pack-refs, commit-graph and loose-objects tasks under
-//! caller isolation and a shared maintenance lock. It refuses other tasks before any effects.
-//! [`PrefetchRefspecs`] prepares bounded cache mappings without selecting a remote or transport.
+//! [`MaintenanceRun`] composes explicit pack-refs, commit-graph, loose-objects and Unix
+//! incremental-repack tasks under caller isolation and a shared maintenance lock. It refuses other
+//! tasks before any effects. [`PrefetchRefspecs`] prepares bounded cache mappings without selecting
+//! a remote or transport.
 //!
 //! ```
 //! use std::sync::atomic::AtomicBool;
@@ -50,8 +51,9 @@ pub use prefetch::{
     SkippedPrefetchSpec,
 };
 pub use run::{
-    LooseObjectsReport, MaintenanceFailure, MaintenanceLimits, MaintenanceReport, MaintenanceRun,
-    MaintenanceRunError, TaskOutcome, TaskReport, TaskSkip,
+    IncrementalRepackLimits, IncrementalRepackReport, LooseObjectsReport, MaintenanceFailure,
+    MaintenanceLimits, MaintenanceReport, MaintenanceRun, MaintenanceRunError, TaskOutcome,
+    TaskReport, TaskSkip,
 };
 pub use tasks::{MaintenanceTask, TaskSelection, TaskSelectionError};
 

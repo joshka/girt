@@ -96,7 +96,7 @@ impl Repository {
         )
     }
 
-    pub(super) fn write_multi_pack_index_controlled<I: MaintenanceIsolation>(
+    pub(crate) fn write_multi_pack_index_controlled<I: MaintenanceIsolation>(
         &self,
         isolation: &mut I,
         options: WriteOptions,
