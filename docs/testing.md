@@ -471,3 +471,7 @@ sidecars and explicit GC consolidation without ignoring the loose-named input.
 Incremental batch membership coverage includes subset selection in both formats and a checksum-valid
 wrong offset owned by an unselected pack. The latter must refuse before publication, preserving MIDX
 and source bytes; skipping payload work never skips complete input-claim verification.
+
+`maintenance_incremental_repack` checks explicit phase composition, surviving-pack batch targets,
+future-pack preservation, automatic thresholds, phase reports and limits. Unix executes the task;
+Windows asserts refusal before isolation or effects. Both object formats round-trip through Git.
