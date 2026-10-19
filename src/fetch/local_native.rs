@@ -6,6 +6,15 @@ use std::collections::hash_map::Entry;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
+pub(crate) use advertisement::AdmittedSource;
+#[cfg_attr(
+    not(test),
+    expect(
+        unused_imports,
+        reason = "maintenance source admission follows separately"
+    )
+)]
+pub(crate) use advertisement::admit as admit_source;
 pub use advertisement::{LocalAdvertisementLimits, LocalAdvertisementOptions};
 
 use super::{

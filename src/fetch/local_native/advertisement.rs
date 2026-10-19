@@ -190,15 +190,23 @@ impl LocalAdvertisementOptions {
     }
 }
 
-// Retain these together for later controlled transfer composition, without reopening or
+// Retain these together for controlled transfer composition, without reopening or
 // rediscovery.
-struct AdmittedSource {
+pub(crate) struct AdmittedSource {
     _repository: Repository,
     _objects: crate::Objects,
     advertisement: Advertisement,
 }
 
-fn admit(
+impl AdmittedSource {
+    /// Consumes the matching source, pinned object snapshot and captured advertisement.
+    /// Moving the store lets native transfer drop its caches before independent validation.
+    pub(crate) fn into_parts(self) -> (Repository, crate::Objects, Advertisement) {
+        (self._repository, self._objects, self.advertisement)
+    }
+}
+
+pub(crate) fn admit(
     path: &Path,
     limits: LocalAdvertisementLimits,
     cancel: &AtomicBool,

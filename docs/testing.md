@@ -538,3 +538,14 @@ loose-input limits, cancellation and trusted-path equivalence. Root admission bo
 shallow roots and tag edges before retaining completeness evidence. Annotated roots establish only
 peeled commits, and missing or unreadable roots refuse without returning partial evidence. Existing
 known-history constructors and receive paths keep their trusted-read behavior.
+
+### Admitted Controlled Prefetch Receive
+
+`cargo test --lib prefetch_receive` exercises the internal transfer continuation in both object
+formats. It holds an admitted source, changes its live refs and replaces its configuration with
+invalid input, then proves transfer still selects the captured tip without reopening or rediscovery.
+Known tips supplied as bounded in-memory history produce pack-free artifacts. Store-backed knowledge
+refuses until its fallback reads have controlled bounds. Format mismatch, shallow sources,
+unsupported request policy, planning/want limits and cancellation preserve the empty destination.
+Successful receives finish through the controlled path and pass isolated Git fsck checks. Full
+prefetch task execution remains separate from this primitive.

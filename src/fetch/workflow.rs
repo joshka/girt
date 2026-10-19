@@ -2119,3 +2119,17 @@ mod prefetch_plan_tests;
 )]
 #[path = "prefetch_plan.rs"]
 mod prefetch_plan;
+
+#[cfg(test)]
+#[path = "prefetch_receive_tests.rs"]
+mod prefetch_receive_tests;
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "maintenance prefetch execution follows separately"
+    )
+)]
+#[path = "prefetch_receive.rs"]
+mod prefetch_receive;
