@@ -159,6 +159,12 @@ impl RefName {
         self.0.into_owned()
     }
 
+    /// Wraps bytes that are only used as a lookup key in an ordered collection of names, such as
+    /// a ref's parent directory or a range bound; the result is never stored or published.
+    pub(super) fn lookup_key(bytes: Vec<u8>) -> Self {
+        Self(Cow::Owned(bytes))
+    }
+
     pub(crate) fn per_worktree(&self) -> bool {
         *self.0 == *b"HEAD"
             || [

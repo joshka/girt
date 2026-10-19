@@ -1312,3 +1312,62 @@ mod waits;
 
 #[path = "transaction_stored_tests.rs"]
 mod stored;
+
+#[rstest]
+#[case::child_of_existing("refs/tags/a/b", "refs/tags/a/b/c", true)]
+#[case::grandchild_of_existing("refs/tags/a", "refs/tags/a/b/c", true)]
+#[case::parent_of_existing("refs/tags/a/b/c", "refs/tags/a/b", true)]
+#[case::grandparent_of_existing("refs/tags/a/b/c", "refs/tags/a", true)]
+#[case::byte_prefix_sibling_existing("refs/tags/a/b-c", "refs/tags/a/b", false)]
+#[case::byte_prefix_sibling_new("refs/tags/a/b", "refs/tags/a/b-c", false)]
+#[case::dot_sibling_existing("refs/tags/a.b/c", "refs/tags/a", false)]
+#[case::shared_directory("refs/tags/a/b", "refs/tags/a/c", false)]
+fn packed_namespace_conflicts_follow_path_prefixes(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+    #[values(false, true)] controlled: bool,
+    #[case] existing: &str,
+    #[case] new: &str,
+    #[case] conflict: bool,
+) {
+    let (_temp, repo) = fixture(format);
+    // Neighbours on both sides keep the range probe from reading the end of the map.
+    fs::write(
+        repo.git_dir().join("packed-refs"),
+        format!(
+            "{} refs/heads/z\n{} {existing}\n{} refs/tags/a0\n",
+            id(format, 1),
+            id(format, 2),
+            id(format, 3)
+        ),
+    )
+    .unwrap();
+    let refs = repo.references().unwrap();
+    let edits = [edit(format, new)];
+    let result = if controlled {
+        let options =
+            FilesTransactionOptions::default().with_limits(FilesTransactionLimits::default());
+        refs.transaction_files_with_options(&edits, options, &AtomicBool::new(false))
+    } else {
+        refs.transaction(&edits)
+    };
+    if conflict {
+        assert!(
+            matches!(
+                result,
+                Err(TransactionError::Prepare {
+                    source: ReferenceError::Conflict(_),
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+        assert_eq!(refs.read(&name(new)).unwrap(), None);
+    } else {
+        result.unwrap();
+        assert_eq!(
+            refs.read(&name(new)).unwrap(),
+            Some(Target::Direct(id(format, 1)))
+        );
+    }
+    clean(&repo);
+}
