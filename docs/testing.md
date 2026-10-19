@@ -411,3 +411,8 @@ generated graphs and object readability in SHA-1 and SHA-256 repositories.
 then checks a later explicit prune, both object formats, unreachable objects, bounded selection,
 input budgets, corruption refusal and kept/promisor duplicate exclusion. Git checks object counts
 and fsck after publication.
+
+The portable `incremental_repack_write` suite runs in Windows interoperability CI. Controlled
+repository admission tests cover zero metadata/configuration budgets in both formats with unchanged
+MIDX bytes and pack inventory, plus cancellation acquired with isolation before any publication.
+Existing default-limit tests still verify additive publication and protected/promisor exclusions.
