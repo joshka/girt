@@ -14,6 +14,8 @@
 //!   installation; writing the artifacts does not update a repository or its references.
 //! - [`write_pack_with_compression`] optionally searches for deltas under [`DeltaOptions`].
 //!   [`PackWriteLimits`] bounds the work and output; [`PackWritten`] describes the result.
+//! - [`Repository::pack_loose`](crate::Repository::pack_loose) publishes an isolated, bounded batch
+//!   of primary loose objects without removing their loose copies.
 //! - [`rebuild_index`] regenerates a damaged or missing `.idx` from its `.pack` and replaces it
 //!   atomically.
 //!
@@ -89,9 +91,13 @@ mod file;
 pub(crate) use file::is_damage_io;
 pub(crate) use file::{DamageHistory, ReadFailure};
 pub(crate) mod index;
+mod loose;
 pub(crate) mod publish;
 pub(crate) mod reader;
 mod rebuild;
+pub use loose::{
+    LoosePackError, LoosePackFailure, LoosePackLimits, LoosePackPublication, LoosePackReport,
+};
 mod reuse;
 pub(crate) mod write;
 

@@ -37,6 +37,20 @@ its typed source and partial report. An automatic pack-refs threshold skip is re
 This unreleased executor is tracked in
 [automatic maintenance](https://github.com/joshka/girt/issues/531).
 
+## Pack loose objects without pruning
+
+`Repository::pack_loose` publishes a bounded batch of primary loose objects under caller isolation,
+including unreachable objects. It skips objects already named by installed primary pack indexes,
+verifies the selected loose payloads, and publishes an ordinary indexed pack. Kept and promisor
+packs stay unchanged. Limits bound inventory, selected objects, per-file and aggregate compressed
+input, decoded payloads and output; the report identifies partial publication on failure.
+
+Every loose copy remains after packing. A later isolated `prune_packed` can remove verified packed
+duplicates. This matches the grace period observed in Git's loose-objects task: new packed copies
+are not pruned in the same run. This standalone primitive does not run the maintenance task or
+install triggers. Follow [automatic maintenance](https://github.com/joshka/girt/issues/531) for the
+remaining task composition.
+
 ## Choose an operation
 
 | Task                     | API                       | What changes                                             |

@@ -43,7 +43,7 @@ fn newly_packed_loose_copies_survive_until_a_later_run() {
             .unwrap();
         assert_eq!(isolation.0, 1);
         assert_eq!(report.publication, LoosePackPublication::Pair);
-        let mut packed = report.packed.clone();
+        let mut packed = report.selected.clone();
         packed.sort_unstable();
         let mut expected = ids.clone();
         expected.sort_unstable();
@@ -69,7 +69,7 @@ fn newly_packed_loose_copies_survive_until_a_later_run() {
                 &AtomicBool::new(false),
             )
             .unwrap();
-        assert!(second.packed.is_empty());
+        assert!(second.selected.is_empty());
         assert_eq!(second.publication, LoosePackPublication::None);
         let pruned = repo
             .prune_packed(
@@ -200,10 +200,167 @@ fn selected_object_cap_leaves_remaining_loose_objects_for_another_batch() {
     let report = repo
         .pack_loose(&mut Isolation::default(), limits, &AtomicBool::new(false))
         .unwrap();
-    assert_eq!(report.packed.len(), 1);
+    assert_eq!(report.selected.len(), 1);
     assert!(report.more_loose);
     for id in ids {
         assert!(repo.loose_objects().read_blob(id, 1024).is_ok());
     }
     oracle::git(repo.git_dir(), &["fsck", "--strict"], b"");
+}
+
+#[test]
+fn per_object_compressed_and_decoded_limits_refuse_without_publication() {
+    for read in [
+        girt::ReadLimits::default().with_max_input_bytes(1),
+        girt::ReadLimits::default().with_max_decode_bytes(1),
+    ] {
+        let (_root, repo, _) = fixture(ObjectFormat::Sha1);
+        let limits = LoosePackLimits::default().with_read(read);
+        assert!(
+            repo.pack_loose(&mut Isolation::default(), limits, &AtomicBool::new(false))
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_dir(repo.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn kept_and_promisor_duplicates_stay_out_of_a_new_ordinary_pack() {
+    for marker in ["keep", "promisor"] {
+        let (_root, repo, ids) = fixture(ObjectFormat::Sha1);
+        repo.pack_loose(
+            &mut Isolation::default(),
+            LoosePackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let old = std::fs::read_dir(repo.object_dir().join("pack"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "pack"))
+            .unwrap();
+        let before = std::fs::read(&old).unwrap();
+        std::fs::write(old.with_extension(marker), b"").unwrap();
+        let new = repo.loose_objects().write_blob(b"new ordinary").unwrap();
+        let report = repo
+            .pack_loose(
+                &mut Isolation::default(),
+                LoosePackLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(report.selected, [new]);
+        assert_eq!(report.skipped.len(), ids.len());
+        assert_eq!(std::fs::read(old).unwrap(), before);
+        oracle::git(repo.git_dir(), &["fsck", "--strict"], b"");
+    }
+}
+
+#[test]
+fn alternate_packs_do_not_suppress_packing_primary_loose_objects() {
+    let (_alternate_root, alternate, _) = fixture(ObjectFormat::Sha1);
+    alternate
+        .pack_loose(
+            &mut Isolation::default(),
+            LoosePackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let (_root, repo, ids) = fixture(ObjectFormat::Sha1);
+    std::fs::create_dir_all(repo.object_dir().join("info")).unwrap();
+    std::fs::write(
+        repo.object_dir().join("info/alternates"),
+        format!("{}\n", alternate.object_dir().display()),
+    )
+    .unwrap();
+    let report = repo
+        .pack_loose(
+            &mut Isolation::default(),
+            LoosePackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(report.selected.len(), ids.len());
+    assert!(report.skipped.is_empty());
+    oracle::git(repo.git_dir(), &["fsck", "--strict"], b"");
+}
+
+#[test]
+fn aggregate_compressed_input_is_charged_before_each_decode() {
+    let (_root, repo, ids) = fixture(ObjectFormat::Sha1);
+    let first_file_budget = ids
+        .iter()
+        .map(|id| {
+            let hex = id.to_string();
+            std::fs::metadata(repo.object_dir().join(&hex[..2]).join(&hex[2..]))
+                .unwrap()
+                .len()
+        })
+        .max()
+        .unwrap();
+    let limits = LoosePackLimits::default().with_max_source_bytes(first_file_budget);
+    let report = repo
+        .pack_loose(&mut Isolation::default(), limits, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(report.selected.len(), 1);
+    assert!(report.more_loose);
+    assert_eq!(report.publication, LoosePackPublication::Pair);
+    let second = repo
+        .pack_loose(&mut Isolation::default(), limits, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(second.selected.len(), 1);
+    assert_ne!(second.selected, report.selected);
+    for id in ids {
+        assert!(repo.loose_objects().read_blob(id, 1024).is_ok());
+    }
+}
+
+#[test]
+fn payload_capped_batches_make_progress_without_raising_the_limit() {
+    let (_root, repo, ids) = fixture(ObjectFormat::Sha1);
+    let limits = LoosePackLimits::default()
+        .with_write(girt::PackWriteLimits::default().with_max_input_bytes(15));
+    let first = repo
+        .pack_loose(&mut Isolation::default(), limits, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(first.selected.len(), 1);
+    assert!(first.more_loose);
+    let second = repo
+        .pack_loose(&mut Isolation::default(), limits, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(second.selected.len(), 1);
+    assert_ne!(first.selected, second.selected);
+    let third = repo
+        .pack_loose(&mut Isolation::default(), limits, &AtomicBool::new(false))
+        .unwrap();
+    assert!(third.selected.is_empty());
+    assert_eq!(third.publication, LoosePackPublication::None);
+    for id in ids {
+        assert!(repo.loose_objects().read_blob(id, 1024).is_ok());
+    }
+    oracle::git(repo.git_dir(), &["fsck", "--strict"], b"");
+}
+
+#[test]
+fn zero_selected_budget_still_allows_index_only_skips() {
+    let (_root, repo, ids) = fixture(ObjectFormat::Sha1);
+    repo.pack_loose(
+        &mut Isolation::default(),
+        LoosePackLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let limits =
+        LoosePackLimits::default().with_write(girt::PackWriteLimits::default().with_max_objects(0));
+    let report = repo
+        .pack_loose(&mut Isolation::default(), limits, &AtomicBool::new(false))
+        .unwrap();
+    assert!(report.selected.is_empty());
+    assert_eq!(report.skipped.len(), ids.len());
+    assert_eq!(report.publication, LoosePackPublication::None);
 }

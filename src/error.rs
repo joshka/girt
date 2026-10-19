@@ -116,6 +116,8 @@ from_domain_errors! {
     crate::fetch::ObjectFilterParseError,
     crate::maintenance::MaintenanceFailure,
     crate::maintenance::MaintenanceRunError,
+    crate::pack::LoosePackError,
+    crate::pack::LoosePackFailure,
     crate::maintenance::CheckError,
     crate::maintenance::LockError,
     crate::maintenance::PolicyError,

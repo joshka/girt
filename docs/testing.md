@@ -404,3 +404,10 @@ checkout and temporary-fixture storage.
 selection, isolation and lock ownership, bounded graph inventory, partial results, automatic graph
 thresholds, shallow/configuration skips and jj keep refs with a detached HEAD. Git verifies
 generated graphs and object readability in SHA-1 and SHA-256 repositories.
+
+### Additive Loose Packing
+
+`pack_loose` runs in the Windows interoperability suite. It preserves newly packed loose copies,
+then checks a later explicit prune, both object formats, unreachable objects, bounded selection,
+input budgets, corruption refusal and kept/promisor duplicate exclusion. Git checks object counts
+and fsck after publication.
