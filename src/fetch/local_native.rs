@@ -69,9 +69,9 @@ pub(super) fn receive_depth_observed(
     explicit_wants: bool,
     limits: FetchLimits,
     control: TransportControl<'_>,
-    mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
-    mut observe: impl FnMut(LocalFetchProgress),
-    mut validation: impl FnMut(super::ValidationProgress),
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(LocalFetchProgress),
+    validation: impl FnMut(super::ValidationProgress),
 ) -> Result<ReceivedFetch, FetchError> {
     check(control)?;
     if depth.is_some_and(|depth| depth.get() != 1) {
@@ -87,6 +87,45 @@ pub(super) fn receive_depth_observed(
         .objects_with(limits.source_packs)
         .map_err(FetchError::SourceObjects)?;
     let advertisement = advertise_store(source, &store, limits, control)?;
+    receive_advertised_observed(
+        source,
+        store,
+        advertisement,
+        select,
+        known,
+        depth,
+        explicit_wants,
+        limits,
+        control,
+        progress,
+        observe,
+        validation,
+    )
+}
+
+/// Continues a native receive with the matching source snapshot and advertisement.
+///
+/// The advertisement must be derived from this same source object store. The caller performs
+/// depth/shallow admission and the initial control check. Taking the object
+/// store by value preserves release of source pack caches before independent import validation.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "admitted source artifacts retain explicit selection and observer policies"
+)]
+pub(crate) fn receive_advertised_observed(
+    source: &Repository,
+    store: crate::Objects,
+    advertisement: Advertisement,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    depth: Option<NonZeroU32>,
+    explicit_wants: bool,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    mut observe: impl FnMut(LocalFetchProgress),
+    mut validation: impl FnMut(super::ValidationProgress),
+) -> Result<ReceivedFetch, FetchError> {
     let mut wants = select(&advertisement);
     if wants.len() > limits.max_wants {
         return Err(FetchError::Limit("wants"));

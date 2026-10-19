@@ -445,3 +445,11 @@ configuration budgets preserve the original MIDX and packs in both formats, and 
 while acquiring isolation reaches the opener before publication or deletion. Existing default-limit
 round trips still compare expiry and storage counts with Git. Windows retains the typed platform
 refusal for destructive expiry.
+
+### Native Admitted Transfer Equivalence
+
+The `fetch::local_native::tests` library tests compare legacy receive with its admitted-source
+transfer helper in SHA-1 and SHA-256. Empty, full and known-only selections preserve pack/index
+bytes, wants, dependencies, shallow boundaries, messages and construction/validation progress.
+Existing local fetch and clone integration suites continue to exercise publication and Git
+interoperability.
