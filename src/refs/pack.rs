@@ -3,7 +3,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use super::store::{Lock, io_error, parse_loose, read_optional};
+mod control;
+pub use control::PackRefsLimits;
+use control::{Control, with_report};
+
+use super::store::{Lock, io_error, parse_loose};
 use super::{Backend, LockWait, RefName, ReferenceError, References, Target, packed};
 use crate::{ObjectId, Objects, PeelError, PeelFailure, PeelLimits};
 
@@ -105,7 +109,7 @@ pub struct PackRefsReport {
 }
 
 /// A pack failure; `packed-refs` was not replaced unless [`Self::Unconfirmed`] or [`Self::Prune`]
-/// is returned.
+/// is returned. Controlled cancellation and limit failures carry their own partial report.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PackRefsError {
@@ -143,6 +147,20 @@ pub enum PackRefsError {
         /// Removal failure.
         #[source]
         source: ReferenceError,
+    },
+    /// Cooperative cancellation, possibly after durable publication and some pruning.
+    #[error("reference packing cancelled")]
+    Cancelled {
+        /// Effects completed before stopping; unprocessed loose names are retained.
+        report: Box<PackRefsReport>,
+    },
+    /// A caller work bound was reached, possibly during locked prune rechecks.
+    #[error("reference packing exceeds {resource} limit")]
+    Limit {
+        /// Exhausted resource.
+        resource: &'static str,
+        /// Effects completed before stopping; unprocessed loose names are retained.
+        report: Box<PackRefsReport>,
     },
 }
 
@@ -201,30 +219,111 @@ impl References<'_> {
         objects: &Objects,
         options: PackRefsOptions,
     ) -> Result<PackRefsReport, PackRefsError> {
+        self.pack_with::<false>(
+            objects,
+            options,
+            PackRefsLimits::default(),
+            &AtomicBool::new(false),
+        )
+    }
+
+    /// Packs references with explicit work bounds and cooperative cancellation.
+    ///
+    /// Preserves the locking, verified peeling and durable-publication-before-prune contract of
+    /// [`Self::pack`]. Checks cancellation at phase boundaries and once per batch of at most 64
+    /// entries or records. A bounded file read, object peel, parse, encode or durable publication
+    /// may finish before cancellation is observed. No network access occurs.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::refs::{PackRefsLimits, PackRefsOptions};
+    /// use girt::{InitKind, ObjectFormat, PackLimits, Repository};
+    /// # let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let report = repo.references()?.pack_controlled(
+    ///     &repo.objects_with(PackLimits::default())?,
+    ///     PackRefsOptions::ALL,
+    ///     PackRefsLimits::default(),
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// assert!(report.rewritten);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::pack`], plus [`PackRefsError::Cancelled`] and
+    /// [`PackRefsError::Limit`]. Those variants carry partial effects: publication may have
+    /// completed, and unprocessed loose references remain present and are reported retained.
+    /// A peel bound is reported as [`PackRefsError::Peel`]. The pre-existing
+    /// [`PackRefsError::Unconfirmed`] report does not enumerate retained loose names.
+    pub fn pack_controlled(
+        &self,
+        objects: &Objects,
+        options: PackRefsOptions,
+        limits: PackRefsLimits,
+        cancel: &AtomicBool,
+    ) -> Result<PackRefsReport, PackRefsError> {
+        self.pack_with::<true>(objects, options, limits, cancel)
+    }
+
+    fn pack_with<const CONTROLLED: bool>(
+        &self,
+        objects: &Objects,
+        options: PackRefsOptions,
+        limits: PackRefsLimits,
+        cancel: &AtomicBool,
+    ) -> Result<PackRefsReport, PackRefsError> {
+        let mut control = Control::<CONTROLLED>::new(limits, cancel);
+        control.phase()?;
         if self.reference_backend != Backend::Files {
             return Err(ReferenceError::Unsupported("packing reftable references").into());
         }
-        let cancel = AtomicBool::new(false);
         let lock = Lock::acquire_wait(
             self.common_dir.join("packed-refs"),
             options.lock_wait,
-            &cancel,
-        )?;
+            cancel,
+        )
+        .map_err(|source| {
+            if CONTROLLED && matches!(source, ReferenceError::Cancelled) {
+                PackRefsError::Cancelled {
+                    report: Box::default(),
+                }
+            } else {
+                source.into()
+            }
+        })?;
         let _lock_operation = crate::locks::operation();
         lock.check_owned()?;
-        let bytes = read_optional(&lock.destination)?.unwrap_or_default();
+        let bytes = control.read(&lock.destination)?.unwrap_or_default();
+        if CONTROLLED {
+            for line in bytes.split(|byte| *byte == b'\n') {
+                control.step()?;
+                if !line.is_empty() && !matches!(line[0], b'#' | b'^') {
+                    control.reference()?;
+                }
+            }
+        }
+        control.phase()?;
         let existing = packed::parse(self.object_format, &bytes, &lock.destination)?;
         let mut report = PackRefsReport::default();
         let mut loose = BTreeMap::new();
-        self.collect_candidates(options.scope, &mut loose, &mut report)?;
+        self.collect_candidates(options.scope, &mut loose, &mut report, &mut control)?;
         if options.trigger == PackTrigger::Auto && loose.len() < auto_threshold(bytes.len()) {
             return Ok(report);
         }
 
+        control.phase()?;
         let mut records = BTreeMap::new();
         for (name, record) in &existing {
             // Keep a recorded peel when the objects needed to recompute it are unavailable.
-            let peeled = match peel(objects, name, record.target)? {
+            control.step()?;
+            let peeled = match peel(objects, name, record.target, &control)? {
                 Peel::Known(peeled) => peeled,
                 Peel::Missing | Peel::TagTargetMissing => record.peeled_hint,
             };
@@ -232,7 +331,8 @@ impl References<'_> {
         }
         let mut packed_loose = BTreeMap::new();
         for (name, candidate) in loose {
-            let peeled = match peel(objects, &name, candidate.id)? {
+            control.step()?;
+            let peeled = match peel(objects, &name, candidate.id, &control)? {
                 Peel::Known(peeled) => peeled,
                 Peel::TagTargetMissing => None,
                 Peel::Missing => {
@@ -243,7 +343,25 @@ impl References<'_> {
             records.insert(name.clone(), (candidate.id, peeled));
             packed_loose.insert(name, candidate);
         }
-        lock.publish_synced(&encode(&records))?;
+        control.phase()?;
+        if CONTROLLED {
+            let mut size = HEADER.len();
+            for (name, (id, peeled)) in &records {
+                control.step()?;
+                // The encoded ID is fixed-width ASCII; no temporary strings are needed here.
+                let line = id.as_bytes().len() * 2 + 2 + name.as_bytes().len();
+                size = size.saturating_add(line);
+                if peeled.is_some() {
+                    size = size.saturating_add(id.as_bytes().len() * 2 + 2);
+                }
+                control.output(size)?;
+            }
+            control.output(size)?;
+        }
+        let encoded = encode(&records);
+        control.phase()?;
+        lock.publish_synced(&encoded)?;
+        drop(encoded);
         report.rewritten = true;
         report.packed = packed_loose.len();
         if !cfg!(unix) {
@@ -261,35 +379,52 @@ impl References<'_> {
             });
         }
 
-        for (name, candidate) in packed_loose {
-            match prune(self.object_format, &candidate) {
-                Ok(true) => report.pruned += 1,
+        let mut pending = packed_loose.into_iter();
+        if let Err(error) = control.phase() {
+            report.retained.extend(pending.map(|(name, _)| name));
+            return Err(with_report(error, report));
+        }
+        while let Some((name, candidate)) = pending.next() {
+            let result = control
+                .step()
+                .and_then(|()| prune(self.object_format, &candidate, &mut control));
+            match result {
+                Ok(true) => {
+                    report.pruned += 1;
+                    if CONTROLLED && let Err(source) = checkpoint(Checkpoint::Pruned) {
+                        report.retained.extend(pending.map(|(name, _)| name));
+                        return Err(with_report(source.into(), report));
+                    }
+                }
                 Ok(false) => report.retained.push(name),
-                Err(source) => {
-                    return Err(PackRefsError::Prune {
-                        report: Box::new(report),
-                        source,
-                    });
+                Err(error) => {
+                    if CONTROLLED {
+                        report.retained.push(name);
+                        report.retained.extend(pending.map(|(name, _)| name));
+                    }
+                    return Err(with_report(error, report));
                 }
             }
         }
         Ok(report)
     }
 
-    fn collect_candidates(
+    fn collect_candidates<const CONTROLLED: bool>(
         &self,
         scope: PackScope,
         candidates: &mut BTreeMap<RefName, Candidate>,
         report: &mut PackRefsReport,
-    ) -> Result<(), ReferenceError> {
+        control: &mut Control<'_, CONTROLLED>,
+    ) -> Result<(), PackRefsError> {
         let mut pending = vec![(self.common_dir.join("refs"), b"refs".to_vec())];
         while let Some((directory, prefix)) = pending.pop() {
             let entries = match fs::read_dir(&directory) {
                 Ok(entries) => entries,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(source) => return Err(io_error(&directory, source)),
+                Err(source) => return Err(io_error(&directory, source).into()),
             };
             for entry in entries {
+                control.entry()?;
                 let entry = entry.map_err(|source| io_error(&directory, source))?;
                 let file_type = entry
                     .file_type()
@@ -322,11 +457,12 @@ impl References<'_> {
                     continue;
                 }
                 let path = entry.path();
-                let Some(contents) = read_optional(&path)? else {
+                let Some(contents) = control.read(&path)? else {
                     continue;
                 };
                 match parse_loose(self.object_format, &contents, &path) {
                     Ok(Target::Direct(id)) => {
+                        control.reference()?;
                         candidates.insert(name, Candidate { path, id });
                     }
                     Ok(Target::Symbolic(_)) => (),
@@ -373,8 +509,18 @@ enum Peel {
     TagTargetMissing,
 }
 
-fn peel(objects: &Objects, name: &RefName, id: ObjectId) -> Result<Peel, PackRefsError> {
-    match objects.peel(id, PeelLimits::trusted(), &AtomicBool::new(false)) {
+fn peel<const CONTROLLED: bool>(
+    objects: &Objects,
+    name: &RefName,
+    id: ObjectId,
+    control: &Control<'_, CONTROLLED>,
+) -> Result<Peel, PackRefsError> {
+    let limits = if CONTROLLED {
+        control.limits.peel
+    } else {
+        PeelLimits::trusted()
+    };
+    match objects.peel(id, limits, &AtomicBool::new(false)) {
         Ok(peeled) if peeled.tags.is_empty() => Ok(Peel::Known(None)),
         Ok(peeled) => Ok(Peel::Known(Some(peeled.target))),
         Err(error) if matches!(*error.source, PeelFailure::Missing) && error.depth == 0 => {
@@ -394,6 +540,8 @@ fn peel(objects: &Objects, name: &RefName, id: ObjectId) -> Result<Peel, PackRef
 enum Checkpoint {
     /// `packed-refs` was renamed; its directory is not yet synced and nothing is pruned.
     Published,
+    /// One controlled loose-reference prune completed.
+    Pruned,
 }
 
 #[cfg(not(test))]
@@ -431,13 +579,17 @@ fn encode(records: &BTreeMap<RefName, (ObjectId, Option<ObjectId>)>) -> Vec<u8> 
 }
 
 /// Removes a packed loose file if it still holds the packed value. Returns whether it was removed.
-fn prune(format: crate::ObjectFormat, candidate: &Candidate) -> Result<bool, ReferenceError> {
+fn prune<const CONTROLLED: bool>(
+    format: crate::ObjectFormat,
+    candidate: &Candidate,
+    control: &mut Control<'_, CONTROLLED>,
+) -> Result<bool, PackRefsError> {
     let lock = match Lock::acquire(candidate.path.clone()) {
         Ok(lock) => lock,
         Err(ReferenceError::Locked(_)) => return Ok(false),
-        Err(error) => return Err(error),
+        Err(error) => return Err(error.into()),
     };
-    let Some(bytes) = read_optional(&candidate.path)? else {
+    let Some(bytes) = control.read(&candidate.path)? else {
         return Ok(true);
     };
     if !matches!(parse_loose(format, &bytes, &candidate.path), Ok(Target::Direct(id)) if id == candidate.id)
@@ -448,7 +600,7 @@ fn prune(format: crate::ObjectFormat, candidate: &Candidate) -> Result<bool, Ref
     match fs::remove_file(&candidate.path) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
-        Err(source) => Err(io_error(&candidate.path, source)),
+        Err(source) => Err(io_error(&candidate.path, source).into()),
     }
 }
 
@@ -545,6 +697,71 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::{PackLimits, Repository};
+
+    #[cfg(unix)]
+    #[rstest]
+    #[case::before_prune(false)]
+    #[case::after_one_batch(true)]
+    fn controlled_cancellation_keeps_unprocessed_loose_values(#[case] during_prune: bool) {
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("r"),
+            crate::InitKind::Bare,
+        )
+        .unwrap();
+        let id = repo.loose_objects().write_blob(b"tagged").unwrap();
+        let references = repo.references().unwrap();
+        for index in 0..130 {
+            let name = RefName::new(format!("refs/tags/t{index:03}")).unwrap();
+            references
+                .update_without_reflog(&name, Target::Direct(id), super::super::Expected::Absent)
+                .unwrap();
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        let signal = Arc::clone(&cancel);
+        HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move |at| {
+                if at
+                    == if during_prune {
+                        Checkpoint::Pruned
+                    } else {
+                        Checkpoint::Published
+                    }
+                {
+                    signal.store(true, Ordering::Relaxed);
+                }
+                Ok(())
+            }))
+        });
+        let result = references.pack_controlled(
+            &repo.objects_with(PackLimits::default()).unwrap(),
+            PackRefsOptions::ALL,
+            PackRefsLimits::default(),
+            &cancel,
+        );
+        HOOK.with(|slot| *slot.borrow_mut() = None);
+        let Err(PackRefsError::Cancelled { report }) = result else {
+            panic!("expected cancellation: {result:?}");
+        };
+        assert!(report.rewritten);
+        assert_eq!(report.packed, 130);
+        assert_eq!(report.pruned, if during_prune { 64 } else { 0 });
+        assert_eq!(report.retained.len(), 130 - report.pruned);
+        for index in 0..130 {
+            let name = RefName::new(format!("refs/tags/t{index:03}")).unwrap();
+            assert_eq!(references.read(&name).unwrap(), Some(Target::Direct(id)));
+        }
+        for name in &report.retained {
+            assert!(
+                repo.common_dir()
+                    .join(std::str::from_utf8(name.as_bytes()).unwrap())
+                    .exists()
+            );
+        }
+    }
 
     #[cfg(unix)]
     fn git_output(repo: &Path, args: &[&str]) -> Output {
