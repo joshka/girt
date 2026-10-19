@@ -152,7 +152,8 @@ performed. MIDX output includes zero pathname-hash hints for unknown names; thos
 heuristics only. Both artifact types carry the inventory checksum and their own checksums.
 `WriteLimits` separately bounds input objects/packs, decoded graph bytes/edges, repeated selected
 reachability work, per-object reads and combined output bytes. Its byte cap also bounds retained
-closure words and optional repack graph snapshots independently; a full snapshot falls back to the
+closure words and optional repack graph snapshots independently; each may use the full cap. Mapping
+tables are bounded by inventory size, rather than this byte cap. A full snapshot falls back to the
 verified graph reader. No partial artifacts are returned.
 
 ## Publish bitmaps and configure repacks

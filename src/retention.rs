@@ -980,8 +980,9 @@ impl Repository {
         let roots = plan.roots.clone();
         let strong_roots = plan.strong_roots.clone();
         let mut boundaries = Boundaries::new(policy, &store);
-        let capture_bitmap_graph = bitmap_graph_bytes
-            .filter(|_| !store.partial_clone && matches!(policy.reflog_expiry, ReflogExpiryPolicy::KeepAll));
+        let capture_bitmap_graph = bitmap_graph_bytes.filter(|_| {
+            !store.partial_clone && matches!(policy.reflog_expiry, ReflogExpiryPolicy::KeepAll)
+        });
         let (reachable, reachable_graph) = match walk(
             self,
             &store,
@@ -1599,7 +1600,15 @@ fn walk(
         mut missing,
         bitmap_graph: mut builder,
     } = walk_reads::with_reader(policy.max_threads, &visit, |reader| {
-        walk_with(policy, cancel, roots, object_info, builder, reader, &mut admit)
+        walk_with(
+            policy,
+            cancel,
+            roots,
+            object_info,
+            builder,
+            reader,
+            &mut admit,
+        )
     })?;
     // Only blobs are located, after the graph walk and in pack order: they add no edges, and
     // locating them in graph order would read headers scattered across the pack.
@@ -1626,7 +1635,10 @@ fn walk(
         }
     }
     Ok((
-        nodes.into_keys().filter(|id| !missing.contains(id)).collect(),
+        nodes
+            .into_keys()
+            .filter(|id| !missing.contains(id))
+            .collect(),
         builder.and_then(bitmap_graph::Builder::finish),
     ))
 }

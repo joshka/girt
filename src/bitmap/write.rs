@@ -42,8 +42,9 @@ pub struct WriteLimits {
     /// Maximum node/edge visits and cached word unions across selected traversals (100 million).
     pub max_visits: usize,
     /// Maximum combined returned artifact bytes (64 MiB).
-    /// Separately caps retained selected-closure words and an optional repack graph snapshot; a
-    /// full snapshot falls back to the verified object reader.
+    /// Independently caps retained selected-closure words and an optional repack graph snapshot.
+    /// Each may use this many bytes; this is not a total memory bound for graph or mapping tables.
+    /// A full snapshot falls back to the verified object reader.
     pub max_bytes: usize,
     /// Bounds each verified object read.
     pub read: ReadLimits,
@@ -193,12 +194,12 @@ impl Objects {
             .collect();
         let order: Vec<_> = pack.positions_by_offset()?.collect();
         let graph = match verified {
-            Some(verified) => {
+            Some(verified) if verified.nodes.len() == count => {
                 graph::Graph::from_verified(&ids, &order, verified, limits, cancel, |position| {
                     pack.read(position, limits.read, cancel)
                 })?
             }
-            None => graph::Graph::read(
+            _ => graph::Graph::read(
                 self.object_format(),
                 &ids,
                 &order,

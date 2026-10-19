@@ -630,14 +630,32 @@ fn promised_boundaries_check_cancellation_and_refuse_commits() {
     assert!(boundaries.promised.is_none() && boundaries.found.is_empty());
 }
 
-fn bitmap_snapshot_fixture(format: crate::ObjectFormat) -> (tempfile::TempDir, Repository, crate::ObjectId) {
+fn bitmap_snapshot_fixture(
+    format: crate::ObjectFormat,
+) -> (tempfile::TempDir, Repository, crate::ObjectId) {
     let root = tempfile::tempdir().unwrap();
     let format_arg = format!("--object-format={format}");
-    git(root.path(), &["init", "--bare", "--initial-branch=main", &format_arg, "."], b"");
-    let blob = git(root.path(), &["hash-object", "-w", "--stdin"], b"snapshot blob\n");
-    let tree = git(root.path(), &["mktree"], format!("100644 blob {blob}\tfile\n").as_bytes());
+    git(
+        root.path(),
+        &["init", "--bare", "--initial-branch=main", &format_arg, "."],
+        b"",
+    );
+    let blob = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"snapshot blob\n",
+    );
+    let tree = git(
+        root.path(),
+        &["mktree"],
+        format!("100644 blob {blob}\tfile\n").as_bytes(),
+    );
     let commit = git(root.path(), &["commit-tree", &tree], b"snapshot commit\n");
-    git(root.path(), &["update-ref", "refs/heads/main", &commit], b"");
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &commit],
+        b"",
+    );
     git(root.path(), &["repack", "-ad"], b"");
     let repository = Repository::open(root.path()).unwrap();
     let commit = crate::ObjectId::from_hex(format, &commit).unwrap();
@@ -664,20 +682,37 @@ fn snapshot_repack_matches_verified_reader(
     let mut limits = super::RepackLimits::trusted();
     limits.write_bitmaps = Some(true);
 
-    let (published, _) = repository.publish_required(&plan, &policy, limits, &cancel).unwrap();
+    let (published, _) = repository
+        .publish_required(&plan, &policy, limits, &cancel)
+        .unwrap();
 
     assert!(matches!(published.bitmap, super::BitmapOutcome::Written(_)));
     let objects = repository.objects().unwrap();
-    let expected = objects.encode_pack_bitmap(
-        published.written.checksum,
-        crate::bitmap::WriteOptions::default(),
-        limits.bitmap,
-        &cancel,
-    ).unwrap();
-    let path = repository.object_dir().join("pack").join(format!("pack-{}", published.written.checksum));
-    assert_eq!(std::fs::read(path.with_extension("bitmap")).unwrap(), expected.bitmap);
-    assert_eq!(std::fs::read(path.with_extension("rev")).unwrap(), expected.reverse_index);
-    git(root.path(), &["rev-list", "--test-bitmap", &commit.to_string()], b"");
+    let expected = objects
+        .encode_pack_bitmap(
+            published.written.checksum,
+            crate::bitmap::WriteOptions::default(),
+            limits.bitmap,
+            &cancel,
+        )
+        .unwrap();
+    let path = repository
+        .object_dir()
+        .join("pack")
+        .join(format!("pack-{}", published.written.checksum));
+    assert_eq!(
+        std::fs::read(path.with_extension("bitmap")).unwrap(),
+        expected.bitmap
+    );
+    assert_eq!(
+        std::fs::read(path.with_extension("rev")).unwrap(),
+        expected.reverse_index
+    );
+    git(
+        root.path(),
+        &["rev-list", "--test-bitmap", &commit.to_string()],
+        b"",
+    );
 }
 
 #[rstest::rstest]
@@ -686,14 +721,26 @@ fn snapshot_repack_matches_verified_reader(
 fn snapshot_kind_claim_cannot_replace_checked_payload_kind(#[case] format: crate::ObjectFormat) {
     let (_root, repository, commit) = bitmap_snapshot_fixture(format);
     let cancel = AtomicBool::new(false);
-    let mut plan = repository.plan_retention_folding(&RetentionPolicy::trusted(), false, Some(1024), &cancel);
+    let mut plan =
+        repository.plan_retention_folding(&RetentionPolicy::trusted(), false, Some(1024), &cancel);
     let graph = plan.bitmap_graph.as_mut().unwrap();
-    let node = graph.nodes.iter_mut().find(|node| node.id == commit).unwrap();
+    let node = graph
+        .nodes
+        .iter_mut()
+        .find(|node| node.id == commit)
+        .unwrap();
     node.kind = crate::ObjectKind::Tree;
     let objects = repository.objects().unwrap();
     let pack = objects.packs().next().unwrap().checksum();
 
-    let result = objects.encode_pack_bitmap_from_verified_graph(pack, graph, super::RepackLimits::trusted().bitmap, &cancel);
+    let result = objects.encode_pack_bitmap_from_verified_graph(
+        pack,
+        graph,
+        super::RepackLimits::trusted().bitmap,
+        &cancel,
+    );
 
-    assert!(matches!(result, Err(crate::bitmap::WriteError::Graph(crate::bitmap::Error::Kind(id))) if id == commit));
+    assert!(
+        matches!(result, Err(crate::bitmap::WriteError::Graph(crate::bitmap::Error::Kind(id))) if id == commit)
+    );
 }

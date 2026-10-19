@@ -20,7 +20,10 @@ impl<'a> Graph<'a> {
         cancel: &AtomicBool,
         mut read: impl FnMut(usize) -> Result<Object, ObjectReadError>,
     ) -> Result<Self, WriteError> {
-        if ids.len() > limits.max_objects || order.len() != ids.len() {
+        if ids.len() > limits.max_objects
+            || verified.nodes.len() > limits.max_objects
+            || order.len() != ids.len()
+        {
             return Err(WriteError::Limit("objects"));
         }
         let verified_positions: crate::PeerIdMap<_> = verified

@@ -35,8 +35,10 @@ impl Builder {
     pub(super) fn add_node(&mut self, id: ObjectId) -> Option<u32> {
         let position = u32::try_from(self.nodes.len()).ok()?;
         if self.nodes.len() == self.nodes.capacity() {
-            self.nodes.try_reserve_exact(1).ok()?;
-            if !self.within_budget(self.nodes.capacity(), self.targets.capacity()) {
+            let available = self
+                .max_bytes
+                .saturating_sub(self.targets.capacity().saturating_mul(size_of::<u32>()));
+            if !grow(&mut self.nodes, available) {
                 return None;
             }
         }
@@ -60,11 +62,13 @@ impl Builder {
     }
 
     pub(super) fn push_edge(&mut self, target: u32) -> bool {
-        if self.targets.len() == self.targets.capacity()
-            && (self.targets.try_reserve_exact(1).is_err()
-                || !self.within_budget(self.nodes.capacity(), self.targets.capacity()))
-        {
-            return false;
+        if self.targets.len() == self.targets.capacity() {
+            let available = self
+                .max_bytes
+                .saturating_sub(self.nodes.capacity().saturating_mul(size_of::<Node>()));
+            if !grow(&mut self.targets, available) {
+                return false;
+            }
         }
         self.targets.push(target);
         true
@@ -81,14 +85,21 @@ impl Builder {
             targets: self.targets,
         })
     }
+}
 
-    fn within_budget(&self, nodes: usize, targets: usize) -> bool {
-        let node_bytes = nodes.checked_mul(std::mem::size_of::<Node>());
-        let edge_bytes = targets.checked_mul(std::mem::size_of::<u32>());
-        node_bytes
-            .and_then(|nodes| edge_bytes.and_then(|edges| nodes.checked_add(edges)))
-            .is_some_and(|bytes| bytes <= self.max_bytes)
+// Grow geometrically without reserving past the other vector's remaining byte allowance.
+// Exact one-slot growth reallocated once per edge on large histories.
+fn grow<T>(values: &mut Vec<T>, max_bytes: usize) -> bool {
+    let capacity = values
+        .capacity()
+        .max(1)
+        .saturating_mul(2)
+        .min(max_bytes / size_of::<T>());
+    if capacity <= values.len() {
+        return false;
     }
+    values.try_reserve_exact(capacity - values.len()).is_ok()
+        && values.capacity() <= max_bytes / size_of::<T>()
 }
 
 #[cfg(test)]
