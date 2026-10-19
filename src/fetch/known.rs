@@ -1366,3 +1366,7 @@ mod tests {
         assert_eq!(dependencies, [commit]);
     }
 }
+
+#[cfg(test)]
+#[path = "known/read_tests.rs"]
+mod read_tests;
