@@ -721,7 +721,7 @@ impl<'a> References<'a> {
         validate_target(self.object_format, &target)?;
         let _packed_lock = Lock::acquire(self.common_dir.join("packed-refs"))?;
         let packed = self.packed()?;
-        self.check_packed_namespace(name, &packed)?;
+        self.check_packed_namespace(name, &packed, || Ok(()))?;
         let mut lock = Lock::acquire(self.path(name)?)?;
         check_expected(self.read_locked(name, &packed)?, expected)?;
         lock.publish(&target)
@@ -872,7 +872,7 @@ impl<'a> References<'a> {
         let packed_lock = Lock::acquire(self.common_dir.join("packed-refs"))?;
         let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
         let packed = packed::parse(self.object_format, &bytes, &packed_lock.destination)?;
-        self.check_packed_namespace(name, &packed)?;
+        self.check_packed_namespace(name, &packed, || Ok(()))?;
         let lock = Lock::acquire(self.path(name)?)?;
         check_expected(self.read_locked(name, &packed)?, expected)?;
         delete_locked(
@@ -946,7 +946,7 @@ impl<'a> References<'a> {
                 return Err(ReferenceError::Cycle(current));
             }
             seen.push(current.clone());
-            self.check_packed_namespace(&current, packed)?;
+            self.check_packed_namespace(&current, packed, || Ok(()))?;
             locks.push(Lock::acquire(self.path(&current)?)?);
             match self.read_locked(&current, packed)? {
                 Some(Target::Symbolic(next)) => {
@@ -1032,12 +1032,9 @@ impl<'a> References<'a> {
         &self,
         name: &RefName,
         packed: &packed::Packed,
+        step: impl FnMut() -> Result<(), ReferenceError>,
     ) -> Result<(), ReferenceError> {
-        if !name.per_worktree()
-            && packed
-                .keys()
-                .any(|other| conflicts(name.as_bytes(), other.as_bytes()))
-        {
+        if !name.per_worktree() && packed_conflict(name, packed, step)? {
             return Err(ReferenceError::Conflict(self.path(name)?));
         }
         Ok(())
@@ -1072,6 +1069,39 @@ pub(super) fn remove_loose(path: &Path, packed_changed: bool) -> Result<(), Refe
         }),
         Err(source) => Err(io_error(path, source)),
     }
+}
+
+/// Reports whether `packed` holds a directory/file conflict for `name`, using ordered lookups
+/// instead of a scan (lever: ordered-structure queries).
+///
+/// Each `/`-separated ancestor of `name` is looked up as an existing ref used as a directory.
+/// Names under `name/` sort contiguously from that bound, so the first key at or after it decides
+/// whether `name` is already a directory. That is `depth + 1` lookups, each O(log n), with `step`
+/// called before each one.
+fn packed_conflict(
+    name: &RefName,
+    packed: &packed::Packed,
+    mut step: impl FnMut() -> Result<(), ReferenceError>,
+) -> Result<bool, ReferenceError> {
+    let bytes = name.as_bytes();
+    let ancestors = bytes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, byte)| (*byte == b'/').then(|| bytes.get(..index)).flatten());
+    for ancestor in ancestors {
+        step()?;
+        if packed.contains_key(&RefName::lookup_key(ancestor.to_vec())) {
+            return Ok(true);
+        }
+    }
+    step()?;
+    let mut dir = bytes.to_vec();
+    dir.push(b'/');
+    let dir = RefName::lookup_key(dir);
+    Ok(packed
+        .range(&dir..)
+        .next()
+        .is_some_and(|(key, _)| key.as_bytes().starts_with(dir.as_bytes())))
 }
 
 pub(super) fn conflicts(a: &[u8], b: &[u8]) -> bool {

@@ -211,17 +211,10 @@ impl<'a, const CONTROLLED: bool> Control<'a, CONTROLLED> {
         packed: &packed::Packed,
     ) -> Result<(), ReferenceError> {
         if !CONTROLLED {
-            return refs.check_packed_namespace(name, packed);
+            return refs.check_packed_namespace(name, packed, || Ok(()));
         }
-        if !name.per_worktree() {
-            for other in packed.keys() {
-                self.step()?;
-                if conflicts(name.as_bytes(), other.as_bytes()) {
-                    return Err(ReferenceError::Conflict(refs.path(name)?));
-                }
-            }
-        }
-        Ok(())
+        // One step per ordered lookup: an ancestor probe per `/` plus the child range probe.
+        refs.check_packed_namespace(name, packed, || self.step())
     }
 
     pub fn overlap(

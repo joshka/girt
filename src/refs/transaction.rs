@@ -878,7 +878,7 @@ impl References<'_> {
                         .namespace(self, &name, &packed)
                         .map_err(batch_error)?;
                 } else {
-                    self.check_packed_namespace(&name, &packed)
+                    self.check_packed_namespace(&name, &packed, || Ok(()))
                         .map_err(batch_error)?;
                 }
                 control.name(&name).map_err(batch_error)?;
