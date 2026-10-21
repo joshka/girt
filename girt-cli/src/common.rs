@@ -20,8 +20,8 @@ pub struct Context {
     pub git: bool,
     /// Color human output on stdout.
     pub color: bool,
-    /// Allow progress when stderr is a terminal.
-    pub progress: bool,
+    /// Whether progress may be drawn; it is drawn only when stderr is also a terminal.
+    pub progress: crate::progress::Visibility,
     /// The process environment, captured once; every configuration lookup reads this.
     pub environment: Environment,
     /// Substitute replace references, unless `--no-replace-objects` was given.
@@ -36,7 +36,11 @@ impl Context {
             directory: PathBuf::from("."),
             git,
             color: false,
-            progress: !git,
+            progress: if git {
+                crate::progress::Visibility::Hidden
+            } else {
+                crate::progress::Visibility::Terminal
+            },
             environment: Environment::from_process(),
             replace_objects: true,
         }

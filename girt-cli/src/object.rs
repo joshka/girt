@@ -265,7 +265,7 @@ fn read_or_fetch(
             // Report a missing object, or the replacement error, as an ordinary read does.
             return read_replaced(objects, id);
         }
-        let mut callbacks = crate::progress::Progress::new(false);
+        let mut callbacks = crate::progress::Progress::new(crate::progress::Visibility::Hidden);
         if let Err(error) = girt::workflow::fetch_promised(
             repository,
             &[missing],

@@ -216,7 +216,11 @@ impl MaintenanceIsolation for UserAsserted {
 }
 
 /// Plans, then runs the selected destructive phases in Git's order when `--yes` is given.
-fn run_phases(repository: &Repository, args: &RunArgs, progress_enabled: bool) -> Result<ExitCode> {
+fn run_phases(
+    repository: &Repository,
+    args: &RunArgs,
+    visibility: crate::progress::Visibility,
+) -> Result<ExitCode> {
     if !(args.prune_loose || args.expire_reflogs || args.retire_packs) {
         bail!("select at least one of --prune-loose, --expire-reflogs, --retire-packs");
     }
@@ -269,7 +273,7 @@ fn run_phases(repository: &Repository, args: &RunArgs, progress_enabled: bool) -
     let cancel = &AtomicBool::new(false);
     let mut isolation = UserAsserted;
     if args.expire_reflogs {
-        let progress = crate::progress::Activity::new(progress_enabled, "Expiring reflogs");
+        let progress = crate::progress::Activity::new(visibility, "Expiring reflogs");
         let report = repository
             .expire_reflogs(&mut isolation, &policy, cancel)
             .wrap_err("expiring reflogs")?;
@@ -277,7 +281,7 @@ fn run_phases(repository: &Repository, args: &RunArgs, progress_enabled: bool) -
         writeln!(out, "expired-reflogs {}", report.changed.len())?;
     }
     if args.retire_packs {
-        let progress = crate::progress::Activity::new(progress_enabled, "Retiring packs");
+        let progress = crate::progress::Activity::new(visibility, "Retiring packs");
         let report = repository
             .retire_old_packs(&mut isolation, &policy, RepackLimits::trusted(), cancel)
             .wrap_err("retiring old packs")?;
@@ -290,7 +294,7 @@ fn run_phases(repository: &Repository, args: &RunArgs, progress_enabled: bool) -
         }
     }
     if args.prune_loose {
-        let progress = crate::progress::Activity::new(progress_enabled, "Pruning loose objects");
+        let progress = crate::progress::Activity::new(visibility, "Pruning loose objects");
         let report = repository
             .prune_unreachable_loose(&mut isolation, &policy, cancel)
             .wrap_err("pruning loose objects")?;
