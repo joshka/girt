@@ -265,7 +265,11 @@ fn main() -> ExitCode {
     }
     let mut context = Context::new(cli.git);
     context.color = cli.color.stdout() && !cli.git;
-    context.progress = !cli.quiet && !cli.git;
+    context.progress = if cli.quiet || cli.git {
+        progress::Visibility::Hidden
+    } else {
+        progress::Visibility::Terminal
+    };
     context.replace_objects = !cli.no_replace_objects;
     match run(cli.command, &context) {
         Ok(code) => code,

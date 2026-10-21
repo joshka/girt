@@ -40,7 +40,7 @@ where
         if wanted.is_empty() || disabled(context)? {
             return Err(error);
         }
-        let mut callbacks = crate::progress::Progress::new(false);
+        let mut callbacks = crate::progress::Progress::new(crate::progress::Visibility::Hidden);
         girt::workflow::fetch_promised(repository, &wanted, &context.environment, &mut callbacks)
             .wrap_err_with(|| {
             format!(
