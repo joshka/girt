@@ -107,6 +107,30 @@ impl ReceivePack {
             .map_err(|error| ServeError::Open(Box::new(error)))
     }
 
+    /// Serves one push over async streams, as [`Self::serve`] does, running the work on
+    /// `executor`.
+    ///
+    /// Dropping the future, or failing to write `output`, cancels the session; see
+    /// [`run_blocking`](super::run_blocking).
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure that ended the session, and [`ServeError::Executor`] when the
+    /// executor dropped the work.
+    #[cfg(feature = "serve-async")]
+    pub async fn serve_async(
+        &self,
+        executor: impl super::BlockingExecutor,
+        input: impl tokio::io::AsyncRead + Unpin,
+        output: impl tokio::io::AsyncWrite + Unpin,
+    ) -> Result<PushReport, ServeError> {
+        let receive = self.clone();
+        super::run_blocking(executor, input, output, move |input, output, cancel| {
+            receive.serve(input, output, cancel)
+        })
+        .await
+    }
+
     /// Serves one push on a full-duplex stream such as stdin and stdout under SSH: advertises
     /// references, reads commands and the pack, applies them and reports each reference's result.
     ///

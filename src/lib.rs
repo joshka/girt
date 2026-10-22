@@ -115,6 +115,7 @@
 //! | Feature | Adds | Execution requirements |
 //! | --- | --- | --- |
 //! | `http` | Smart HTTP(S) transport with Rustls | Caller-owned Tokio runtime for transport APIs |
+//! | `serve-async` | [`serve`] sessions over Tokio's `AsyncRead`/`AsyncWrite` | Tokio runtime; a blocking executor for the session |
 //! | `ssh` | System OpenSSH transport on macOS/Linux | OpenSSH and a caller-owned Tokio runtime |
 //! | `tracing` | Operation spans and bounded-work counts | Caller installs and configures a subscriber |
 //!
