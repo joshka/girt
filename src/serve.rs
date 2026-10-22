@@ -9,6 +9,21 @@
 //! [`ReceivePack`] receives pushes the same way, as the `--receive-pack` command of `git push`. It
 //! shares its receive policy, validation, quarantine and hooks with a native local push.
 //!
+//! # Async servers
+//!
+//! Async servers are the primary target. With the `serve-async` feature, a session runs over
+//! Tokio's `AsyncRead` and `AsyncWrite`: `ReceivePack::serve_async`,
+//! `http::Service::advertise_async` and `http::Service::respond_async` answer directly, and
+//! `run_blocking` runs any other session, such as a configured [`UploadPack`]. Pack work runs on
+//! a caller-chosen `BlockingExecutor`, off the runtime's I/O threads, and bounded channels carry
+//! its bytes, so a slow client stalls pack generation instead of growing a buffer. Dropping the
+//! future cancels the session. `examples/serve_http_axum.rs` serves smart HTTP from axum.
+//!
+//! Counting objects, compressing and delta-encoding the pack, hashing and parsing pkt-lines are
+//! CPU work, so they stay plain synchronous code; async covers the client streams around them.
+//! The synchronous methods that take `impl Read`, `impl Write` and an `&AtomicBool` are the
+//! secondary interface, for blocking servers, CGI and SSH command programs.
+//!
 //! # Examples
 //!
 //! Advertise capabilities and list references for a client that sent `ls-refs`:
@@ -67,6 +82,8 @@
     reason = "parses untrusted network input (#103)"
 )]
 
+#[cfg(feature = "serve-async")]
+mod bridge;
 pub mod http;
 mod receive;
 mod shallow;
@@ -75,6 +92,8 @@ mod upload;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "serve-async")]
+pub use bridge::{BlockingExecutor, ChannelReader, ChannelWriter, SpawnBlocking, run_blocking};
 pub use receive::ReceivePack;
 pub use upload::{FilterPolicy, UploadLimits, UploadPack, WantPolicy};
 
@@ -165,6 +184,9 @@ pub enum ServeError {
     /// Opening the served repository failed.
     #[error("opening the repository")]
     Open(#[source] Box<crate::OpenError>),
+    /// The blocking executor dropped an async session's job without running it to completion.
+    #[error("the blocking executor dropped the serving session")]
+    Executor,
     /// The client's partial-clone filter spec doesn't parse.
     #[error("invalid filter")]
     Filter(#[source] Box<crate::fetch::ObjectFilterParseError>),

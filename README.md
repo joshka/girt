@@ -66,8 +66,9 @@ effects, limits, and recovery for the corresponding operation.
 For HTTP, enable `http` and start with `cargo run --features http --example http_local`; see
 [HTTP setup and contracts](docs/http.md). For SSH on macOS/Linux, enable `ssh` and start with
 `cargo run --features ssh --example ssh_local`; its loopback fixture needs sshd and temporary keys.
-See [SSH setup and contracts](docs/ssh.md). The `tracing` feature and its
-[operation guide](docs/tracing.md) are optional.
+See [SSH setup and contracts](docs/ssh.md). To host repositories from an async server, enable
+`serve-async` and see `cargo run --features serve-async --example serve_http_axum`. The `tracing`
+feature and its [operation guide](docs/tracing.md) are optional.
 
 ## Contributing
 
