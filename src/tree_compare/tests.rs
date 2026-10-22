@@ -451,10 +451,12 @@ fn cancellation_between_reads_stops_before_missing_object() {
         cancel: &cancel,
         local: &std::collections::HashMap::new(),
     };
-    assert!(budget.read(&f.objects(), None, b"").is_ok());
+    let objects = f.objects();
+    let store = InlineObjects(&objects);
+    assert!(block_on(budget.read(&store, None, b"")).is_ok());
     cancel.store(true, Ordering::Relaxed);
     assert!(matches!(
-        budget.read(&f.objects(), Some(identity(1)), b"next"),
+        block_on(budget.read(&store, Some(identity(1)), b"next")),
         Err(TreeCompareError::Cancelled)
     ));
 }
@@ -495,4 +497,150 @@ fn equal_sha256_roots_do_not_bypass_format_validation() {
         &AtomicBool::new(false),
     );
     assert!(matches!(result, Err(TreeCompareError::ObjectFormat(_))));
+}
+
+/// Writes each object to both a loose directory and a memory store.
+struct BothStores {
+    fixture: Fixture,
+    memory: crate::storage::MemoryObjects,
+}
+
+impl BothStores {
+    fn new() -> Self {
+        Self {
+            fixture: Fixture::new(),
+            memory: crate::storage::MemoryObjects::new(crate::ObjectFormat::Sha1),
+        }
+    }
+
+    fn store(&self, kind: ObjectKind, data: &[u8]) -> ObjectId {
+        use crate::storage::ObjectWrite;
+
+        let id = self.fixture.store(kind.as_str(), data);
+        assert_eq!(block_on(self.memory.write(kind, data)).unwrap(), id);
+        id
+    }
+
+    fn tree(&self, entries: Vec<TreeEntry>) -> ObjectId {
+        let tree = Tree::new(crate::ObjectFormat::Sha1, entries).unwrap();
+        self.store(ObjectKind::Tree, &tree.encode())
+    }
+
+    /// Compares in the loose directory, the memory store and the memory store behind `dyn`.
+    fn compare(
+        &self,
+        old: Option<ObjectId>,
+        new: Option<ObjectId>,
+        paths: &Pathspec,
+    ) -> Result<Vec<TreeChange>, TreeCompareError> {
+        let limits = TreeCompareLimits::default();
+        let cancel = AtomicBool::new(false);
+        let objects = self.fixture.objects();
+        let erased: &dyn crate::storage::DynObjectRead = &self.memory;
+
+        let memory = block_on(compare_trees_in(&self.memory, old, new, paths, limits));
+        let dynamic = block_on(compare_trees_in(erased, old, new, paths, limits));
+        let files = objects.compare_trees_matching(old, new, paths, limits, &cancel);
+
+        match (&memory, &files) {
+            (Ok(memory), Ok(files)) => {
+                assert_eq!(memory, files);
+                assert_eq!(dynamic.as_ref().unwrap(), files);
+            }
+            (Err(memory), Err(files)) => assert_eq!(memory.to_string(), files.to_string()),
+            _ => panic!("stores disagree: memory {memory:?}, files {files:?}"),
+        }
+        memory
+    }
+}
+
+#[test]
+fn memory_and_filesystem_stores_compare_identically() {
+    let stores = BothStores::new();
+    let one = stores.store(ObjectKind::Blob, b"one\n");
+    let two = stores.store(ObjectKind::Blob, b"two\n");
+    let inner = stores.tree(vec![named(b"leaf", EntryMode::Blob, one)]);
+    let changed = stores.tree(vec![named(b"leaf", EntryMode::Blob, two)]);
+    let old = stores.tree(vec![
+        named(b"a", EntryMode::Blob, one),
+        named(b"dir", EntryMode::Tree, inner),
+        named(b"same", EntryMode::Tree, inner),
+    ]);
+    let new = stores.tree(vec![
+        named(b"a", EntryMode::Tree, changed),
+        named(b"dir", EntryMode::Tree, changed),
+        named(b"same", EntryMode::Tree, inner),
+    ]);
+
+    let all = stores
+        .compare(Some(old), Some(new), &Pathspec::all())
+        .unwrap();
+    let paths: Vec<_> = all.iter().map(|change| change.path.as_slice()).collect();
+    assert_eq!(paths, [&b"a"[..], b"a/leaf", b"dir/leaf"]);
+
+    let context = crate::pathspec::Context::new();
+    let narrow = Pathspec::parse(["dir"], &context).unwrap();
+    let selected = stores.compare(Some(old), Some(new), &narrow).unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].path, b"dir/leaf");
+
+    assert!(
+        stores
+            .compare(None, None, &Pathspec::all())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn memory_store_reports_missing_and_wrong_kind_trees() {
+    let stores = BothStores::new();
+    let blob = stores.store(ObjectKind::Blob, b"not a tree\n");
+    let absent = identity(0x42);
+
+    let error = stores
+        .compare(None, Some(absent), &Pathspec::all())
+        .unwrap_err();
+    assert!(matches!(error, TreeCompareError::Missing { id, .. } if id == absent));
+
+    let error = stores
+        .compare(None, Some(blob), &Pathspec::all())
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        TreeCompareError::NotTree {
+            actual: ObjectKind::Blob,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn store_failures_keep_their_classification() {
+    let stores = BothStores::new();
+    let blob = stores.store(ObjectKind::Blob, b"leaf\n");
+    let root = stores.tree(vec![named(b"leaf", EntryMode::Blob, blob)]);
+    let limits = TreeCompareLimits::default().with_max_tree_bytes(1);
+
+    let error = block_on(compare_trees_in(
+        &stores.memory,
+        None,
+        Some(root),
+        &Pathspec::all(),
+        limits,
+    ))
+    .unwrap_err();
+    let TreeCompareError::Store { id, source, .. } = error else {
+        panic!("expected a store error, got {error:?}");
+    };
+    assert_eq!(id, root);
+    assert_eq!(source.kind(), crate::storage::StoreErrorKind::Limit);
+
+    // A repository keeps reporting its own read error type.
+    let error = stores
+        .fixture
+        .objects()
+        .compare_trees_with(None, Some(root), limits, &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(error, TreeCompareError::Read { .. }), "{error:?}");
 }

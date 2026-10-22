@@ -17,6 +17,7 @@ members = [".", "girt-cli"]
 
 [features]
 tracing = ["dep:tracing"]
+tokio = ["dep:tokio"]
 ssh = ["dep:tokio", "tokio/net", "dep:libc", "rustix/termios"]
 http = ["dep:reqwest", "dep:tokio", "dep:futures-util", "dep:rustls", "dep:rustls-platform-verifier"]
 
@@ -30,6 +31,8 @@ base64 = "0.22"
 # Display columns in patch-mail shortlogs; MIT OR Apache-2.0.
 unicode-width = { version = "0.2", default-features = false }
 tracing = { version = "0.1.40", optional = true, default-features = false, features = ["std"] }
+# The `Stream` trait at the object storage boundary; MIT OR Apache-2.0.
+futures-core = { version = "0.3", default-features = false, features = ["std"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", optional = true, default-features = false, features = ["rustls", "stream"] }
 # The versions reqwest uses, for the certificate-check hook's own TLS configuration.
@@ -58,7 +61,7 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 sha2 = "0.10"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry"] }
 serde_json = "1"
-tokio = { version = "1.4", features = ["sync"] }
+tokio = { version = "1.4", features = ["sync", "rt-multi-thread", "macros"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 rstest = { version = "0.27.0", default-features = false }
 clap = { version = "4.6.7", features = ["derive"] }

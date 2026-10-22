@@ -11,11 +11,22 @@ use crate::{ObjectId, ObjectKind, ObjectReadError, ReadLimits};
 /// representation, not identity-verified data: use [`Objects::read`] for that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ObjectHeader {
-    kind: ObjectKind,
-    size: u64,
+    pub(crate) kind: ObjectKind,
+    pub(crate) size: u64,
 }
 
 impl ObjectHeader {
+    /// A header recording `kind` and a payload of `size` bytes, as a store reports it.
+    ///
+    /// ```
+    /// use girt::{ObjectHeader, ObjectKind};
+    /// let header = ObjectHeader::new(ObjectKind::Blob, 6);
+    /// assert_eq!((header.kind(), header.size()), (ObjectKind::Blob, 6));
+    /// ```
+    pub fn new(kind: ObjectKind, size: u64) -> Self {
+        Self { kind, size }
+    }
+
     /// Object kind; for a delta, the kind of its resolved base.
     pub fn kind(&self) -> ObjectKind {
         self.kind

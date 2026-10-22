@@ -116,6 +116,7 @@
 //! | --- | --- | --- |
 //! | `http` | Smart HTTP(S) transport with Rustls | Caller-owned Tokio runtime for transport APIs |
 //! | `ssh` | System OpenSSH transport on macOS/Linux | OpenSSH and a caller-owned Tokio runtime |
+//! | `tokio` | Large [`storage`] reads on `spawn_blocking` | Runs only inside a caller-owned Tokio runtime |
 //! | `tracing` | Operation spans and bounded-work counts | Caller installs and configures a subscriber |
 //!
 //! Enable features with, for example, `cargo add girt --features http`. [`workflow`] owns
@@ -247,6 +248,7 @@ pub mod signing;
 mod source_files;
 pub mod stash;
 pub mod status;
+pub mod storage;
 pub mod submodule;
 pub mod tag;
 pub mod transport;
@@ -294,7 +296,9 @@ pub use repository::{
 };
 pub use tag::{Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};
-pub use tree_compare::{ChangeStatus, TreeChange, TreeCompareError, TreeCompareLimits, TreeValue};
+pub use tree_compare::{
+    ChangeStatus, TreeChange, TreeCompareError, TreeCompareLimits, TreeValue, compare_trees_in,
+};
 
 #[cfg(feature = "tracing")]
 mod trace;

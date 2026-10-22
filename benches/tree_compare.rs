@@ -5,8 +5,11 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use girt::pathspec::Pathspec;
+use girt::storage::{MemoryObjects, ObjectWrite, block_on};
 use girt::{
-    EntryMode, InitKind, ObjectId, PackLimits, Repository, Tree, TreeCompareLimits, TreeEntry,
+    EntryMode, InitKind, ObjectId, ObjectKind, PackLimits, Repository, Tree, TreeCompareLimits,
+    TreeEntry, compare_trees_in,
 };
 
 fn entry(name: String, mode: EntryMode, id: ObjectId) -> TreeEntry {
@@ -26,12 +29,15 @@ fn compare(c: &mut Criterion) {
     )
     .unwrap();
     let store = repo.loose_objects();
+    let memory = MemoryObjects::new(girt::ObjectFormat::Sha1);
     let a = store.write_blob(b"first").unwrap();
     let b = store.write_blob(b"second").unwrap();
+    block_on(memory.write(ObjectKind::Blob, b"first")).unwrap();
+    block_on(memory.write(ObjectKind::Blob, b"second")).unwrap();
     let write = |entries| {
-        store
-            .write_tree(&Tree::new(girt::ObjectFormat::Sha1, entries).unwrap())
-            .unwrap()
+        let tree = Tree::new(girt::ObjectFormat::Sha1, entries).unwrap();
+        block_on(memory.write(ObjectKind::Tree, &tree.encode())).unwrap();
+        store.write_tree(&tree).unwrap()
     };
     let leaves = |id| {
         (0..100)
@@ -91,6 +97,18 @@ fn compare(c: &mut Criterion) {
                         &cancel,
                     )
                     .unwrap()
+            });
+        });
+        c.bench_function(&format!("tree-compare/memory/{name}"), |bench| {
+            bench.iter(|| {
+                block_on(compare_trees_in(
+                    &memory,
+                    black_box(Some(old)),
+                    black_box(Some(new)),
+                    &Pathspec::all(),
+                    TreeCompareLimits::default(),
+                ))
+                .unwrap()
             });
         });
     }
