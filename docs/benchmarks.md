@@ -974,6 +974,13 @@ same executable comparison logic had medians of 0.198, 10.192 and 33.052 ms resp
 variation is not evidence of an implementation speedup. No controlled performance comparison was
 attempted.
 
+The `tree-compare/memory/*` rows run the same workloads through `block_on(compare_trees_in(..))` on
+`storage::MemoryObjects`. When tree comparison became an async algorithm over `storage::ObjectRead`
+(issue 515), with the `Objects` methods calling it through `storage::block_on`, six interleaved runs
+of the before and after executables on 2026-10-22 had equal fastest medians within noise: sparse
+0.1212 and 0.1224 ms, broad 6.473 and 6.516 ms, deep 16.60 and 15.42 ms. Other benchmarks shared the
+host (load average 14–20), so slower runs on both sides reflect load, not either build.
+
 ## Content Diff Baseline
 
 `cargo bench --bench content_diff` measures complete pure `content_diff::diff` calls with auto

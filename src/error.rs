@@ -313,6 +313,8 @@ from_domain_errors! {
     crate::revision::RevisionError,
     crate::rewrites::Error,
     crate::status::Error,
+    crate::storage::IdentityMismatch,
+    crate::storage::StoreError,
     crate::TagError,
     crate::transport::ConnectError,
     #[cfg(feature = "http")]
