@@ -18,6 +18,7 @@ members = [".", "girt-cli"]
 [features]
 tracing = ["dep:tracing"]
 ssh = ["dep:tokio", "tokio/net", "dep:libc", "rustix/termios"]
+serve-async = ["dep:tokio", "tokio/sync"]
 http = ["dep:reqwest", "dep:tokio", "dep:futures-util", "dep:rustls", "dep:rustls-platform-verifier"]
 
 [package.metadata.docs.rs]
@@ -58,7 +59,12 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 sha2 = "0.10"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry"] }
 serde_json = "1"
-tokio = { version = "1.4", features = ["sync"] }
+tokio = { version = "1.4", features = ["sync", "rt-multi-thread", "net"] }
+# Smart HTTP example and tests over `serve-async`; MIT.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+# Body stream and `AsyncRead` adapters for the axum example; MIT.
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 rstest = { version = "0.27.0", default-features = false }
 clap = { version = "4.6.7", features = ["derive"] }
@@ -66,6 +72,14 @@ clap = { version = "4.6.7", features = ["derive"] }
 [target.'cfg(windows)'.dev-dependencies]
 # Fixture processes join kill-on-close jobs; tests only.
 windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[[example]]
+name = "serve_http_axum"
+required-features = ["serve-async"]
+
+[[test]]
+name = "serve_async"
+required-features = ["serve-async"]
 
 [[bench]]
 name = "blobs"
