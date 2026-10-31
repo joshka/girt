@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.12](https://github.com/joshka/girt/compare/girt-cli-v0.2.11...girt-cli-v0.2.12) - 2026-10-31
+
+### Other
+
+- Show SSH diagnostics and document CLI progress output ([#960](https://github.com/joshka/girt/pull/960))
+
 ## [0.2.11](https://github.com/joshka/girt/compare/girt-cli-v0.2.10...girt-cli-v0.2.11) - 2026-10-19
 
 ### Other

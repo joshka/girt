@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.1](https://github.com/joshka/girt/compare/girt-v0.18.0...girt-v0.18.1) - 2026-10-31
+
+### Other
+
+- Fix main CI: tokio and root-cert advisories, two Linux-only test fixtures ([#965](https://github.com/joshka/girt/pull/965))
+- Update rustls-webpki to 0.103.16 for RUSTSEC-2026-0382 ([#961](https://github.com/joshka/girt/pull/961))
+- Spot-check medium jj diff, annotate, rebase and edit on girt 0.18.0 (no partial-clone regression) ([#958](https://github.com/joshka/girt/pull/958))
+- Cap native source worker and writer reads ([#952](https://github.com/joshka/girt/pull/952))
+- Run macOS tests in parallel with nextest and split Windows doctests ([#949](https://github.com/joshka/girt/pull/949))
+
 ## [0.18.0](https://github.com/joshka/girt/compare/girt-v0.17.0...girt-v0.18.0) - 2026-10-19
 
 ### Breaking
