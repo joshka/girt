@@ -930,7 +930,8 @@ fn replaced_incomplete_leaf_is_not_deleted_by_cleanup() {
             match event {
                 "before write" => return Err(io(path, std::io::Error::other("write failure"))),
                 "before cleanup" => {
-                    fs::remove_file(f.root().join("file")).unwrap();
+                    // Rename rather than remove so the filesystem cannot reuse the inode.
+                    fs::rename(f.root().join("file"), f.root().join("file.old")).unwrap();
                     fs::write(f.root().join("file"), b"foreign").unwrap();
                 }
                 _ => (),
