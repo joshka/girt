@@ -246,7 +246,7 @@ fn copied_delta_keeps_its_content_when_a_source_base_identity_is_mislabelled() {
         .unwrap();
     let pack = new_pack(&root, &["pack-a", "pack-b"]);
     let live_read = read_from(&Repository::open(&root).unwrap(), y);
-    let (_dir, published) = isolated_copy(&pack);
+    let (published_dir, published) = isolated_copy(&pack);
     let published_read = read_from(&published, y);
     assert_eq!(
         (
@@ -257,7 +257,11 @@ fn copied_delta_keeps_its_content_when_a_source_base_identity_is_mislabelled() {
         "Y must keep its content (published pack alone, live repository): {published_read:?} / {live_read:?}"
     );
     assert_eq!(read_from(&published, x), Ok(Some(x_content)));
-    verify_pack(&root, &pack.with_extension("idx")).expect("git verify-pack on the published pack");
+    // Verify in the isolated copy: the source repository still holds the mislabelled pack, and Git
+    // may resolve X from it and report a collision.
+    let published_idx = published_dir.path().join("objects/pack/pack-copy.idx");
+    verify_pack(published_dir.path(), &published_idx)
+        .expect("git verify-pack on the published pack");
 }
 
 /// Integrity regression test: A primary loose copy takes precedence over a mislabelled alternate

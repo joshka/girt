@@ -371,10 +371,13 @@ impl Session {
     }
 }
 
+// Takes the pipe by value so its descriptor stays owned, open and unchanged while registered.
 fn register<T: AsFd + AsRawFd>(pipe: T) -> Result<AsyncFd<T>, SshError> {
     let flags = fcntl_getfl(&pipe).map_err(std::io::Error::from)?;
     fcntl_setfl(&pipe, flags | OFlags::NONBLOCK).map_err(std::io::Error::from)?;
-    Ok(AsyncFd::new(pipe)?)
+    // SAFETY: the `AsyncFd` owns `pipe`, an owned child pipe handle, and nothing else closes or
+    // replaces its descriptor while it is registered.
+    unsafe { AsyncFd::register(pipe) }.map_err(|error| std::io::Error::from(error).into())
 }
 async fn read<T: Read + AsRawFd>(
     pipe: &mut AsyncFd<T>,
