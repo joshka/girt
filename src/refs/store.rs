@@ -1292,16 +1292,28 @@ impl Lock {
         self.check_owned()?;
         #[expect(clippy::unwrap_used, reason = "lock destinations lie below a root")]
         let parent = self.destination.parent().unwrap();
-        let mut temporary = tempfile::Builder::new()
-            .prefix(".girt-packed-")
-            .tempfile_in(parent)
-            .map_err(|source| io_error(parent, source))?;
         // Match ordinary lock creation permissions, including the process umask.
         let permissions = self.identity.permissions();
-        temporary
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(".girt-packed-");
+        // Only Unix honours a creation mode; elsewhere the read-back below corrects it.
+        #[cfg(unix)]
+        builder.permissions(permissions.clone());
+        let mut temporary = builder
+            .tempfile_in(parent)
+            .map_err(|source| io_error(parent, source))?;
+        // Creation applies the umask; change the mode only when it differs from the lock's.
+        let created = temporary
             .as_file()
-            .set_permissions(permissions)
-            .map_err(|source| io_error(temporary.path(), source))?;
+            .metadata()
+            .map_err(|source| io_error(temporary.path(), source))?
+            .permissions();
+        if created != permissions {
+            temporary
+                .as_file()
+                .set_permissions(permissions)
+                .map_err(|source| io_error(temporary.path(), source))?;
+        }
         temporary
             .write_all(bytes)
             .map_err(|source| io_error(temporary.path(), source))?;
@@ -1513,6 +1525,29 @@ mod tests {
         drop(lock);
         assert_eq!(fs::read(path).unwrap(), b"ref: refs/heads/main\n");
         assert!(!repo.git_dir().join("HEAD.lock").exists());
+    }
+
+    #[cfg(unix)]
+    #[rstest]
+    #[case::private(0o600)]
+    #[case::ordinary(0o644)]
+    #[case::maskable(0o666)]
+    #[case::no_access(0o000)]
+    fn publication_keeps_exact_lock_mode(#[case] mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        let (_temp, repo) = fixture();
+        let path = repo.git_dir().join("refs/new");
+        let mut lock = Lock::acquire(path.clone()).unwrap();
+        // Change the owned lock's mode instead of the process-wide umask.
+        fs::set_permissions(&lock.path, fs::Permissions::from_mode(mode)).unwrap();
+        lock.identity = fs::metadata(&lock.path).unwrap();
+        lock.publish_retaining_lock(b"bytes\n").unwrap();
+        lock.check_owned().unwrap();
+        let published = fs::metadata(&path).unwrap();
+        assert_eq!(published.permissions().mode() & 0o7777, mode);
+        drop(lock);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"bytes\n");
     }
 
     #[test]
