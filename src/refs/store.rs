@@ -1292,16 +1292,28 @@ impl Lock {
         self.check_owned()?;
         #[expect(clippy::unwrap_used, reason = "lock destinations lie below a root")]
         let parent = self.destination.parent().unwrap();
-        let mut temporary = tempfile::Builder::new()
-            .prefix(".girt-packed-")
-            .tempfile_in(parent)
-            .map_err(|source| io_error(parent, source))?;
         // Match ordinary lock creation permissions, including the process umask.
         let permissions = self.identity.permissions();
-        temporary
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(".girt-packed-");
+        // Only Unix honours a creation mode; elsewhere the read-back below corrects it.
+        #[cfg(unix)]
+        builder.permissions(permissions.clone());
+        let mut temporary = builder
+            .tempfile_in(parent)
+            .map_err(|source| io_error(parent, source))?;
+        // Creation applies the umask; change the mode only when it differs from the lock's.
+        let created = temporary
             .as_file()
-            .set_permissions(permissions)
-            .map_err(|source| io_error(temporary.path(), source))?;
+            .metadata()
+            .map_err(|source| io_error(temporary.path(), source))?
+            .permissions();
+        if created != permissions {
+            temporary
+                .as_file()
+                .set_permissions(permissions)
+                .map_err(|source| io_error(temporary.path(), source))?;
+        }
         temporary
             .write_all(bytes)
             .map_err(|source| io_error(temporary.path(), source))?;
