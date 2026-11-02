@@ -278,6 +278,48 @@ fn bounds_selected_objects_and_bytes(
     limits.pack.max_object_bytes = object;
     assert_eq!(f.prepare(vec![tag_command(f.blob())], limits).is_ok(), ok);
 }
+/// An exhausted aggregate budget names that budget, not the per-object bound it would otherwise
+/// shrink below.
+#[test]
+fn exhausted_payload_budget_names_selected_bytes() {
+    let f = Fixture::new();
+    let mut limits = PushLimits::default();
+    limits.pack.max_input_bytes = 6;
+    assert!(matches!(
+        f.prepare(vec![tag_command(f.blob())], limits),
+        Err(PushFailure::Limit("selected bytes"))
+    ));
+}
+
+/// Held commit, tree and tag payloads have their own allowance; blobs do not count against it.
+#[test]
+fn bounds_retained_structural_payloads() {
+    let f = Fixture::new();
+    let tree = f.tree(f.blob(), EntryMode::Blob);
+    let commit = f.commit(tree, vec![]);
+    let push = || vec![command("refs/heads/main", None, commit)];
+    let objects = f.repo.objects().unwrap();
+    let size = |id| {
+        objects
+            .header(id, crate::ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .size()
+    };
+    // Each payload fits on its own; only their sum exceeds the allowance.
+    let both = size(commit) + size(tree);
+    let limits = PushLimits::default().with_max_retained_bytes(both - 1);
+    assert!(matches!(
+        f.prepare(push(), limits),
+        Err(PushFailure::Limit("retained bytes"))
+    ));
+    assert!(
+        f.prepare(push(), limits.with_max_retained_bytes(both))
+            .is_ok()
+    );
+    let limits = PushLimits::default().with_max_retained_bytes(0);
+    assert!(f.prepare(vec![tag_command(f.blob())], limits).is_ok());
+}
 #[test]
 fn bounds_edges_and_ancestry_proof() {
     let f = Fixture::new();
