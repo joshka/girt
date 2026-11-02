@@ -7,6 +7,9 @@
 //! - `POST <repo>/git-upload-pack` (or `/git-receive-pack`): one request, answered by
 //!   [`Service::respond`].
 //!
+//! With the `serve-async` feature, `Service::advertise_async` and `Service::respond_async` are
+//! the entry points for async web servers; the synchronous methods suit blocking servers and CGI.
+//!
 //! Both responses carry [`Service::advertisement_content_type`] or
 //! [`Service::result_content_type`] and the [`NO_CACHE_HEADERS`]. The client's `Git-Protocol`
 //! header selects the protocol through [`Protocol::from_parameters`], and a request body sent
@@ -206,6 +209,110 @@ impl Service {
                 )?))
             }
         }
+    }
+}
+
+#[cfg(feature = "serve-async")]
+impl Service {
+    /// Writes the body of an `info/refs` response to an async stream, as [`Self::advertise`]
+    /// does, running the work on `executor`.
+    ///
+    /// Dropping the future cancels the work; see [`run_blocking`](super::run_blocking).
+    ///
+    /// # Errors
+    ///
+    /// Returns failures to open the repository, read its references or write, and
+    /// [`ServeError::Executor`] when the executor dropped the work.
+    pub async fn advertise_async(
+        self,
+        executor: impl super::BlockingExecutor,
+        path: std::path::PathBuf,
+        config_inputs: ConfigInputs,
+        protocol: Protocol,
+        output: impl tokio::io::AsyncWrite + Unpin,
+    ) -> Result<(), ServeError> {
+        super::run_blocking(
+            executor,
+            tokio::io::empty(),
+            output,
+            move |_, output, cancel| {
+                self.advertise(&path, &config_inputs, protocol, output, cancel)
+            },
+        )
+        .await
+    }
+
+    /// Answers one POST request from an async body to an async stream, as [`Self::respond`]
+    /// does, running the work on `executor`.
+    ///
+    /// `content_encoding` is the request's `Content-Encoding` header, decoded as
+    /// [`request_body`] does. The response streams to `output` while the pack is written, and a
+    /// slow client stalls pack generation rather than growing a buffer. Dropping the future, or
+    /// failing to write `output`, cancels the work.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure that stopped the answer, [`ServeError::Unsupported`] for an unknown
+    /// content encoding and [`ServeError::Executor`] when the executor dropped the work.
+    ///
+    /// # Examples
+    ///
+    /// Answer a POST request in an axum handler, streaming the response body: see
+    /// `examples/serve_http_axum.rs` for the full server.
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    ///
+    /// use girt::config::ConfigInputs;
+    /// use girt::serve::http::Service;
+    /// use girt::serve::{Protocol, SpawnBlocking};
+    /// use tokio::io::{AsyncRead, AsyncWrite};
+    ///
+    /// async fn post(
+    ///     path: PathBuf,
+    ///     protocol: Protocol,
+    ///     body: impl AsyncRead + Unpin,
+    ///     response: impl AsyncWrite + Unpin,
+    /// ) -> Result<(), girt::serve::ServeError> {
+    ///     Service::UploadPack
+    ///         .respond_async(
+    ///             SpawnBlocking,
+    ///             path,
+    ///             ConfigInputs::default(),
+    ///             protocol,
+    ///             None,
+    ///             body,
+    ///             response,
+    ///         )
+    ///         .await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors `respond` plus the executor and encoding"
+    )]
+    pub async fn respond_async(
+        self,
+        executor: impl super::BlockingExecutor,
+        path: std::path::PathBuf,
+        config_inputs: ConfigInputs,
+        protocol: Protocol,
+        content_encoding: Option<&[u8]>,
+        body: impl tokio::io::AsyncRead + Unpin,
+        output: impl tokio::io::AsyncWrite + Unpin,
+    ) -> Result<Outcome, ServeError> {
+        let gzip = match content_encoding {
+            None | Some(b"identity") => false,
+            Some(b"gzip" | b"x-gzip") => true,
+            Some(_) => return Err(ServeError::Unsupported("request content encoding")),
+        };
+        super::run_blocking(executor, body, output, move |body, output, cancel| {
+            let encoding = gzip.then_some(&b"gzip"[..]);
+            let mut body = request_body(encoding, body)?;
+            self.respond(&path, &config_inputs, protocol, &mut body, output, cancel)
+        })
+        .await
     }
 }
 
