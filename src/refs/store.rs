@@ -1515,6 +1515,29 @@ mod tests {
         assert!(!repo.git_dir().join("HEAD.lock").exists());
     }
 
+    #[cfg(unix)]
+    #[rstest]
+    #[case::private(0o600)]
+    #[case::ordinary(0o644)]
+    #[case::maskable(0o666)]
+    #[case::no_access(0o000)]
+    fn publication_keeps_exact_lock_mode(#[case] mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        let (_temp, repo) = fixture();
+        let path = repo.git_dir().join("refs/new");
+        let mut lock = Lock::acquire(path.clone()).unwrap();
+        // Change the owned lock's mode instead of the process-wide umask.
+        fs::set_permissions(&lock.path, fs::Permissions::from_mode(mode)).unwrap();
+        lock.identity = fs::metadata(&lock.path).unwrap();
+        lock.publish_retaining_lock(b"bytes\n").unwrap();
+        lock.check_owned().unwrap();
+        let published = fs::metadata(&path).unwrap();
+        assert_eq!(published.permissions().mode() & 0o7777, mode);
+        drop(lock);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"bytes\n");
+    }
+
     #[test]
     fn failed_rename_preserves_unrelated_data() {
         let (_temp, repo) = fixture();
