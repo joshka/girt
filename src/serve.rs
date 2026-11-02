@@ -210,6 +210,12 @@ impl From<crate::push::PushFailure> for ServeError {
     fn from(error: crate::push::PushFailure) -> Self {
         match error {
             crate::push::PushFailure::Cancelled => Self::Cancelled,
+            // A bound the selection hit is reported to the client by name.
+            crate::push::PushFailure::Limit(reason)
+            | crate::push::PushFailure::Read {
+                source: crate::ObjectReadError::Limit(reason),
+                ..
+            } => Self::Limit(reason),
             error => Self::Pack(Box::new(error)),
         }
     }

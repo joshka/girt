@@ -38,8 +38,12 @@ pub struct UploadLimits {
     pub max_edges: usize,
     /// Per-object storage decoding bounds.
     pub read: ReadLimits,
-    /// Bounds on the generated pack. The pack is streamed, so the byte bounds limit output rather
-    /// than memory.
+    /// Commit, tree and tag payload bytes held while selecting objects to send (default 4 GiB).
+    /// Blobs are not held; they stream into the pack.
+    pub max_retained_bytes: u64,
+    /// Bounds on the generated pack (defaults: 40 million objects, 512 GiB of object payload,
+    /// 16 GiB of pack output, 2 GiB of discarded index). The pack is streamed, so the byte bounds
+    /// limit output rather than memory.
     pub pack: PackWriteLimits,
     /// Compression for objects that have no reusable stored form.
     pub compression: PackCompression,
@@ -57,7 +61,15 @@ impl Default for UploadLimits {
             max_haves: 100_000,
             max_edges: 4_000_000,
             read: ReadLimits::default(),
-            pack: PackWriteLimits::default(),
+            max_retained_bytes: 4 << 30,
+            // Sized like the fetch defaults, about four times a full Linux kernel clone. The
+            // pack streams, so these bound output rather than memory.
+            pack: PackWriteLimits::default()
+                .with_max_objects(40_000_000)
+                .with_max_input_bytes(512 << 30)
+                .with_max_pack_bytes(16 << 30)
+                // The index goes to a sink, but its bound still applies; this admits the objects.
+                .with_max_index_bytes(2 << 30),
             compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
             packs: PackLimits::default(),
             history: crate::HistoryLimits::default(),
@@ -75,6 +87,7 @@ impl UploadLimits {
             max_haves: UNBOUNDED,
             max_edges: UNBOUNDED,
             read: ReadLimits::trusted(),
+            max_retained_bytes: UNBOUNDED as u64,
             pack: PackWriteLimits::trusted(),
             compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
             packs: PackLimits::trusted(),
@@ -117,6 +130,13 @@ impl UploadLimits {
         self
     }
 
+    /// Sets [`Self::max_retained_bytes`].
+    #[must_use]
+    pub fn with_max_retained_bytes(mut self, max_retained_bytes: u64) -> Self {
+        self.max_retained_bytes = max_retained_bytes;
+        self
+    }
+
     /// Sets [`Self::pack`].
     #[must_use]
     pub fn with_pack(mut self, pack: PackWriteLimits) -> Self {
@@ -150,6 +170,7 @@ impl UploadLimits {
             max_refs: self.max_haves,
             max_edges: self.max_edges,
             read: self.read,
+            max_retained_bytes: self.max_retained_bytes,
             pack: self.pack,
             compression: self.compression,
             ..Default::default()

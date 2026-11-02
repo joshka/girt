@@ -196,9 +196,12 @@ pub struct PushLimits {
     /// Cumulative commit visits and parent edge occurrences across fast-forward proofs
     /// (default 4 million), including duplicates. Both the new and old tips' ancestry count.
     pub max_ancestry_steps: usize,
-    /// Per-object storage decoding bounds. Payload reads are additionally capped by remaining
-    /// aggregate pack input bytes so preparation cannot retain more than that payload budget.
+    /// Per-object storage decoding bounds.
     pub read: ReadLimits,
+    /// Commit, tree and tag payload bytes held while selecting objects to send (default 512
+    /// MiB). Blobs are not held. One read may exceed the remaining allowance by up to
+    /// `read.max_object_bytes` before it is refused.
+    pub max_retained_bytes: u64,
     /// Selected count/payload and generated artifact bounds. The index is generated into a sink;
     /// its bound still applies. Count/payload bounds cover every object read as a candidate for
     /// sending, including commits later found in receiver history.
@@ -281,6 +284,13 @@ impl PushLimits {
         self
     }
 
+    /// Sets [`Self::max_retained_bytes`].
+    #[must_use]
+    pub fn with_max_retained_bytes(mut self, max_retained_bytes: u64) -> Self {
+        self.max_retained_bytes = max_retained_bytes;
+        self
+    }
+
     /// Sets [`Self::pack`].
     #[must_use]
     pub fn with_pack(mut self, pack: PackWriteLimits) -> Self {
@@ -314,6 +324,7 @@ impl Default for PushLimits {
             max_edges: 4_000_000,
             max_ancestry_steps: 4_000_000,
             read: ReadLimits::default(),
+            max_retained_bytes: 512 * 1024 * 1024,
             pack: PackWriteLimits::default(),
             compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
             destination_packs: crate::PackLimits::default(),
@@ -339,6 +350,7 @@ impl PushLimits {
             max_edges: UNBOUNDED,
             max_ancestry_steps: UNBOUNDED,
             read: ReadLimits::trusted(),
+            max_retained_bytes: UNBOUNDED as u64,
             pack: PackWriteLimits::trusted(),
             compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
             destination_packs: crate::PackLimits::trusted(),

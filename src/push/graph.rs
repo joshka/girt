@@ -248,6 +248,8 @@ struct Walk<'a, F> {
     processed: Vec<ObjectId>,
     oldest_processed: Option<i64>,
     bytes: u64,
+    /// Remaining allowance for commit, tree and tag payloads held in `selected`.
+    retained: u64,
     edges: usize,
     exclusion_edges: usize,
     ancestry_steps: usize,
@@ -282,6 +284,7 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             processed: Vec::new(),
             oldest_processed: None,
             bytes: limits.pack.max_input_bytes,
+            retained: limits.max_retained_bytes,
             edges: limits.max_edges,
             exclusion_edges: limits.max_edges,
             ancestry_steps: limits.max_ancestry_steps,
@@ -489,11 +492,12 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
         if let Some(object) = self.selected.get(&id) {
             return Ok(Some(object.kind()));
         }
+        // Aggregate budgets are charged after the read, so exhausting one names it rather than a
+        // per-object limit; the read itself stays within the per-object bound.
         let mut read = self.limits.read;
-        read.max_object_bytes = read.max_object_bytes.min(
-            usize::try_from(self.bytes.min(self.limits.pack.max_object_bytes))
-                .unwrap_or(usize::MAX),
-        );
+        read.max_object_bytes = read
+            .max_object_bytes
+            .min(usize::try_from(self.limits.pack.max_object_bytes).unwrap_or(usize::MAX));
         let Some((kind, length, _)) = self
             .store
             .transfer_object(id, read, self.cancel)
@@ -513,6 +517,10 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             self.reads += 1;
             (self.observe)(self.reads);
         } else {
+            self.retained = self
+                .retained
+                .checked_sub(length as u64)
+                .ok_or(Error::Limit("retained bytes"))?;
             let object = self.read(id, read)?.ok_or(Error::Missing(id))?;
             self.selected.insert(id, object);
         }
