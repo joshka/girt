@@ -210,8 +210,11 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
+          # nightly-2026-10-31 rejects PushError with an async-drop query cycle (E0391).
+          # Move the pin forward once a newer nightly builds girt again.
+          rustup toolchain install nightly-2026-10-29 --profile minimal
           cargo +stable install cargo-docs-rs --locked --version 1.0.4
-          cargo +nightly docs-rs
+          cargo +nightly-2026-10-29 docs-rs
 
   windows:
     name: Test (windows-2022, ${{ matrix.suite }})
