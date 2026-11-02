@@ -968,11 +968,21 @@ sparse and broad cases exercise different amounts of traversal, not a controlled
 another implementation. Deep results show the cost of many small verified reads, without claiming
 cold-storage, packed-storage or cross-platform performance.
 
-The retained run followed the final Rustdoc edits so its source manifest matches the checkout.
-Criterion extended deep sampling to about 5.2 seconds to collect 20 samples. An earlier run of the
-same executable comparison logic had medians of 0.198, 10.192 and 33.052 ms respectively; the
-variation is not evidence of an implementation speedup. No controlled performance comparison was
-attempted.
+The retained run followed the final Rustdoc edits, so its source manifest matched the checkout of
+2026-09-24. Later changes to these sources make the check fail; it records that run's inputs, not
+the current tree. Criterion extended deep sampling to about 5.2 seconds to collect 20 samples. An
+earlier run of the same executable comparison logic had medians of 0.198, 10.192 and 33.052 ms
+respectively; the variation is not evidence of an implementation speedup. No controlled performance
+comparison was attempted.
+
+The `tree-compare/memory/*` rows run the same workloads through `block_on(compare_trees_in(..))` on
+`storage::MemoryObjects`. When tree comparison became an async algorithm over `storage::ObjectRead`
+(issue 515), with the `Objects` methods calling it through `storage::block_on`, six interleaved runs
+of `cargo bench --bench tree_compare` (release build, macOS on an M2 Max), alternating the
+executables built from `main` and from the issue 515 branch on 2026-10-22, had equal fastest medians
+within noise: sparse 0.1212 and 0.1224 ms, broad 6.473 and 6.516 ms, deep 16.60 and 15.42 ms. Other
+benchmarks shared the host (load average 14–20), so slower runs on both sides reflect load, not
+either build.
 
 ## Content Diff Baseline
 

@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::pathspec::{Pathspec, Prune};
+use crate::storage::{InlineObjects, ObjectRead, StoreError, StoreErrorKind, block_on};
 use crate::{
     EntryMode, ObjectId, ObjectKind, ObjectReadError, Objects, ReadLimits, Tree, TreeError,
 };
@@ -540,85 +541,15 @@ impl Objects {
         limits: TreeCompareLimits,
         cancel: &AtomicBool,
     ) -> Result<Vec<TreeChange>, TreeCompareError> {
-        if paths.uses_attributes() {
-            return Err(TreeCompareError::Unsupported("attr: pathspec magic"));
-        }
-        for id in old.into_iter().chain(new) {
-            id.require_format(self.object_format())?;
-        }
-        let mut budget = Budget {
-            remaining: limits,
-            cancel,
-            local,
-        };
-        budget.check()?;
-        let mut pending = vec![Directory {
-            path: vec![],
+        block_on(compare(
+            &InlineObjects(self),
             old,
             new,
-            depth: 0,
-            selected: paths.is_all(),
-        }];
-        let mut changes = Vec::new();
-        while let Some(directory) = pending.pop() {
-            budget.check()?;
-            if directory.old == directory.new {
-                continue;
-            }
-            let old = budget.read(self, directory.old, &directory.path)?;
-            let new = budget.read(self, directory.new, &directory.path)?;
-            // Pair by literal name, not Git's mode-dependent ordering. This handles a file/tree
-            // replacement even when siblings sort between its old and new positions.
-            let pairs = pair_entries(&old, &new, cancel)?;
-            for (name, (old, new)) in pairs {
-                budget.check()?;
-                let length = directory
-                    .path
-                    .len()
-                    .checked_add(name.len())
-                    .and_then(|n| n.checked_add(usize::from(!directory.path.is_empty())))
-                    .ok_or(TreeCompareError::Limit("path bytes"))?;
-                charge(&mut budget.remaining.max_path_bytes, length, "path bytes")?;
-                let mut path = Vec::with_capacity(length);
-                path.extend_from_slice(&directory.path);
-                if !path.is_empty() {
-                    path.push(b'/');
-                }
-                path.extend_from_slice(name);
-
-                let old_tree = tree_id(old);
-                let new_tree = tree_id(new);
-                if old_tree != new_tree {
-                    let prune = if directory.selected {
-                        Prune::All
-                    } else {
-                        paths.directory(&path)
-                    };
-                    if prune != Prune::Skip {
-                        if directory.depth == limits.max_depth {
-                            return Err(TreeCompareError::Limit("depth"));
-                        }
-                        pending.push(Directory {
-                            path: path.clone(),
-                            old: old_tree,
-                            new: new_tree,
-                            depth: directory.depth + 1,
-                            selected: prune == Prune::All,
-                        });
-                    }
-                }
-                let old = old.filter(|value| value.mode != EntryMode::Tree);
-                let new = new.filter(|value| value.mode != EntryMode::Tree);
-                if old != new && (directory.selected || paths.matches_unchecked(&path)) {
-                    charge(&mut budget.remaining.max_changes, 1, "changes")?;
-                    changes.push(TreeChange { path, old, new });
-                }
-            }
-        }
-        budget.check()?;
-        changes.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-        budget.check()?;
-        Ok(changes)
+            local,
+            paths,
+            limits,
+            cancel,
+        ))
     }
 
     /// Compares two trees with [`TreeCompareLimits::default`] and no cancellation.
@@ -642,6 +573,147 @@ impl Objects {
             &AtomicBool::new(false),
         )
     }
+}
+
+/// Compares two tree IDs recursively in any object store, using `None` for an empty side.
+///
+/// This is [`Objects::compare_trees_matching`] for a store other than a repository's object
+/// directory, such as [`crate::storage::MemoryObjects`]. Ordering, verification and limits are as
+/// documented on [`Objects::compare_trees_with`]. Drop the future to cancel; the comparison stops
+/// at its next tree read. Parsing and pairing a tree run inline between reads.
+///
+/// ```
+/// use girt::pathspec::Pathspec;
+/// use girt::storage::{MemoryObjects, ObjectWrite, block_on};
+/// use girt::{EntryMode, ObjectFormat, ObjectKind, Tree, TreeEntry};
+///
+/// let store = MemoryObjects::new(ObjectFormat::Sha1);
+/// let tree = |content: &[u8]| -> Result<_, Box<dyn std::error::Error>> {
+///     let entry = TreeEntry {
+///         mode: EntryMode::Blob,
+///         name: b"notes.txt".to_vec(),
+///         id: block_on(store.write(ObjectKind::Blob, content))?,
+///     };
+///     let tree = Tree::new(ObjectFormat::Sha1, vec![entry])?;
+///     Ok(block_on(store.write(ObjectKind::Tree, &tree.encode()))?)
+/// };
+/// let (old, new) = (tree(b"draft\n")?, tree(b"final\n")?);
+///
+/// let changes = block_on(girt::compare_trees_in(
+///     &store,
+///     Some(old),
+///     Some(new),
+///     &Pathspec::all(),
+///     Default::default(),
+/// ))?;
+/// assert_eq!(changes.len(), 1);
+/// assert_eq!(changes[0].path, b"notes.txt");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// Returns the errors of [`Objects::compare_trees_matching`]. A store failure that is not a
+/// repository read error is [`TreeCompareError::Store`].
+pub async fn compare_trees_in<S: ObjectRead + ?Sized>(
+    store: &S,
+    old: Option<ObjectId>,
+    new: Option<ObjectId>,
+    paths: &Pathspec,
+    limits: TreeCompareLimits,
+) -> Result<Vec<TreeChange>, TreeCompareError> {
+    let never = AtomicBool::new(false);
+    compare(store, old, new, &HashMap::new(), paths, limits, &never).await
+}
+
+async fn compare<S: ObjectRead + ?Sized>(
+    store: &S,
+    old: Option<ObjectId>,
+    new: Option<ObjectId>,
+    local: &HashMap<ObjectId, Tree>,
+    paths: &Pathspec,
+    limits: TreeCompareLimits,
+    cancel: &AtomicBool,
+) -> Result<Vec<TreeChange>, TreeCompareError> {
+    if paths.uses_attributes() {
+        return Err(TreeCompareError::Unsupported("attr: pathspec magic"));
+    }
+    for id in old.into_iter().chain(new) {
+        id.require_format(store.object_format())?;
+    }
+    let mut budget = Budget {
+        remaining: limits,
+        cancel,
+        local,
+    };
+    budget.check()?;
+    let mut pending = vec![Directory {
+        path: vec![],
+        old,
+        new,
+        depth: 0,
+        selected: paths.is_all(),
+    }];
+    let mut changes = Vec::new();
+    while let Some(directory) = pending.pop() {
+        budget.check()?;
+        if directory.old == directory.new {
+            continue;
+        }
+        let old = budget.read(store, directory.old, &directory.path).await?;
+        let new = budget.read(store, directory.new, &directory.path).await?;
+        // Pair by literal name, not Git's mode-dependent ordering. This handles a file/tree
+        // replacement even when siblings sort between its old and new positions.
+        let pairs = pair_entries(&old, &new, cancel)?;
+        for (name, (old, new)) in pairs {
+            budget.check()?;
+            let length = directory
+                .path
+                .len()
+                .checked_add(name.len())
+                .and_then(|n| n.checked_add(usize::from(!directory.path.is_empty())))
+                .ok_or(TreeCompareError::Limit("path bytes"))?;
+            charge(&mut budget.remaining.max_path_bytes, length, "path bytes")?;
+            let mut path = Vec::with_capacity(length);
+            path.extend_from_slice(&directory.path);
+            if !path.is_empty() {
+                path.push(b'/');
+            }
+            path.extend_from_slice(name);
+
+            let old_tree = tree_id(old);
+            let new_tree = tree_id(new);
+            if old_tree != new_tree {
+                let prune = if directory.selected {
+                    Prune::All
+                } else {
+                    paths.directory(&path)
+                };
+                if prune != Prune::Skip {
+                    if directory.depth == limits.max_depth {
+                        return Err(TreeCompareError::Limit("depth"));
+                    }
+                    pending.push(Directory {
+                        path: path.clone(),
+                        old: old_tree,
+                        new: new_tree,
+                        depth: directory.depth + 1,
+                        selected: prune == Prune::All,
+                    });
+                }
+            }
+            let old = old.filter(|value| value.mode != EntryMode::Tree);
+            let new = new.filter(|value| value.mode != EntryMode::Tree);
+            if old != new && (directory.selected || paths.matches_unchecked(&path)) {
+                charge(&mut budget.remaining.max_changes, 1, "changes")?;
+                changes.push(TreeChange { path, old, new });
+            }
+        }
+    }
+    budget.check()?;
+    changes.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    budget.check()?;
+    Ok(changes)
 }
 
 fn tree_id(value: Option<TreeValue>) -> Option<ObjectId> {
@@ -696,15 +768,15 @@ impl Budget<'_> {
         check_cancel(self.cancel)
     }
 
-    fn read(
+    async fn read<S: ObjectRead + ?Sized>(
         &mut self,
-        objects: &Objects,
+        store: &S,
         id: Option<ObjectId>,
         path: &[u8],
     ) -> Result<Tree, TreeCompareError> {
         self.check()?;
         let Some(id) = id else {
-            return Ok(Tree::new(objects.object_format(), vec![]).expect("empty tree"));
+            return Ok(Tree::new(store.object_format(), vec![]).expect("empty tree"));
         };
         if let Some(tree) = self.local.get(&id) {
             return Ok(tree.clone());
@@ -712,13 +784,11 @@ impl Budget<'_> {
         charge(&mut self.remaining.max_trees, 1, "trees")?;
         let mut read = self.remaining.read;
         read.max_object_bytes = read.max_object_bytes.min(self.remaining.max_tree_bytes);
-        let object = objects
-            .read_with(id, read)
-            .map_err(|source| TreeCompareError::Read {
-                id,
-                path: path.to_vec(),
-                source: Box::new(source),
-            })?
+        // Cancellation is checked between reads; dropping the future also ends the comparison.
+        let object = store
+            .read(id, read)
+            .await
+            .map_err(|source| read_error(id, path, source))?
             .ok_or_else(|| TreeCompareError::Missing {
                 id,
                 path: path.to_vec(),
@@ -750,6 +820,20 @@ impl Budget<'_> {
         tree.validate().map_err(invalid)?;
         self.check()?;
         Ok(tree)
+    }
+}
+
+/// Keeps a repository's own read errors in [`TreeCompareError::Read`], as before stores existed.
+fn read_error(id: ObjectId, path: &[u8], error: StoreError) -> TreeCompareError {
+    let path = path.to_vec();
+    match error.downcast::<ObjectReadError>() {
+        Ok(source) => TreeCompareError::Read { id, path, source },
+        Err(error) if error.kind() == StoreErrorKind::Cancelled => TreeCompareError::Cancelled,
+        Err(source) => TreeCompareError::Store {
+            id,
+            path,
+            source: Box::new(source),
+        },
     }
 }
 
@@ -829,6 +913,17 @@ pub enum TreeCompareError {
         /// Underlying storage failure. Boxed to keep contextual errors compact.
         #[source]
         source: Box<ObjectReadError>,
+    },
+    /// A store other than a repository's object directory failed to read a tree.
+    #[error("reading tree {id} at {path:?} from store")]
+    Store {
+        /// Tree being read.
+        id: ObjectId,
+        /// Relative directory path bytes; empty for a root.
+        path: Vec<u8>,
+        /// Store failure; see [`StoreError::kind`].
+        #[source]
+        source: Box<StoreError>,
     },
     /// A visited tree has unsupported syntax, invalid names, duplicates or invalid Git ordering.
     #[error("invalid tree {id} at {path:?}")]
