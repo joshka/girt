@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.1](https://github.com/joshka/girt/compare/girt-v0.18.0...girt-v0.18.1) - 2026-11-02
+
+### Other
+
+- Skip redundant mode changes when publishing loose refs ([#970](https://github.com/joshka/girt/pull/970))
+- Serve full clones of medium repositories with default upload limits ([#968](https://github.com/joshka/girt/pull/968))
+- Serve fetches and pushes from async servers ([#963](https://github.com/joshka/girt/pull/963))
+- Add async pluggable object storage and run tree comparison on any store ([#964](https://github.com/joshka/girt/pull/964))
+- Pin the docs.rs CI build to nightly-2026-10-29 ([#966](https://github.com/joshka/girt/pull/966))
+- Fix main CI: tokio and root-cert advisories, two Linux-only test fixtures ([#965](https://github.com/joshka/girt/pull/965))
+- Update rustls-webpki to 0.103.16 for RUSTSEC-2026-0382 ([#961](https://github.com/joshka/girt/pull/961))
+- Spot-check medium jj diff, annotate, rebase and edit on girt 0.18.0 (no partial-clone regression) ([#958](https://github.com/joshka/girt/pull/958))
+- Cap native source worker and writer reads ([#952](https://github.com/joshka/girt/pull/952))
+- Run macOS tests in parallel with nextest and split Windows doctests ([#949](https://github.com/joshka/girt/pull/949))
+
 ## [0.18.0](https://github.com/joshka/girt/compare/girt-v0.17.0...girt-v0.18.0) - 2026-10-19
 
 ### Breaking
