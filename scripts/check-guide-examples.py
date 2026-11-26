@@ -31,11 +31,17 @@ def main():
         cwd=ROOT, check=True, text=True, stdout=subprocess.PIPE,
     )
     libraries = {}
+    # Cargo's build-dir layout gives each crate its own output directory, so every library's
+    # directory must be on the dependency search path, not only girt's and tempfile's.
+    dependency_dirs = set()
     for line in result.stdout.splitlines():
         message = json.loads(line)
         if message.get("reason") != "compiler-artifact":
             continue
         name = message["target"]["name"]
+        for filename in message["filenames"]:
+            if filename.endswith((".rlib", ".rmeta", ".so", ".dylib", ".dll")):
+                dependency_dirs.add(Path(filename).parent)
         if name in ("girt", "tempfile"):
             for filename in message["filenames"]:
                 if filename.endswith(".rlib"):
@@ -47,7 +53,7 @@ def main():
     for name in ("girt", "tempfile"):
         externs.extend(["--extern", f"{name}={libraries[name]}"])
     search_paths = []
-    for directory in sorted({library.parent for library in libraries.values()}):
+    for directory in sorted(dependency_dirs):
         search_paths.extend(["-L", f"dependency={directory}"])
     for page in pages:
         subprocess.run(

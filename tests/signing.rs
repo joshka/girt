@@ -83,6 +83,22 @@ fn has_program(program: &str, version_arg: &str) -> bool {
         .is_ok()
 }
 
+/// Whether the installed Git is at least `major.minor`.
+#[cfg(unix)]
+fn git_at_least(root: &Path, major: u32, minor: u32) -> bool {
+    let version = git_line(root, &["version"], b"");
+    let mut parts = version
+        .trim_start_matches("git version ")
+        .split('.')
+        .map(|part| part.parse::<u32>().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) >= (major, minor)
+}
+
+/// Tag cases with several signature headers in one run, where Git before 2.56 kept all but the
+/// last of the run in the payload. girt follows 2.56 and later, which removes them all.
+#[cfg(unix)]
+const TAG_RUN_CASES: [usize; 3] = [6, 8, 9];
+
 /// What Git passed to its signature program for one verification, if it ran it.
 #[cfg(unix)]
 struct Capture {
@@ -215,6 +231,10 @@ fn tag_payload_matches_git_verify_input(
     #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)] case: usize,
 ) {
     let root = tempfile::tempdir().unwrap();
+    if TAG_RUN_CASES.contains(&case) && !git_at_least(root.path(), 2, 56) {
+        eprintln!("skipping: Git before 2.56 keeps all but the last signature header of a run");
+        return;
+    }
     let repo = init(root.path(), format);
     let tree = git_line(&repo, &["mktree"], b"");
     let bytes = format!(

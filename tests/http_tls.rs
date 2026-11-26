@@ -176,12 +176,14 @@ fn tls_files_match_git(
         environment = environment.with(*name, PathBuf::from(expand(value)));
     }
     let output = command.output().unwrap();
-    assert_eq!(
-        output.status.success(),
-        succeeds,
-        "git: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Apple's curl uses LibreSSL 3.3, which aborts client-certificate handshakes with a decode
+    // alert, so that Git cannot serve as the reference for these cases.
+    if succeeds && !output.status.success() && stderr.contains("LibreSSL/3.") {
+        eprintln!("skipping the Git comparison: its LibreSSL curl cannot complete this handshake");
+    } else {
+        assert_eq!(output.status.success(), succeeds, "git: {stderr}");
+    }
 
     let repository = Repository::open(local.path()).unwrap();
     let result = girt::workflow::remote_head(&repository, "origin", &environment, &mut NoCallbacks);

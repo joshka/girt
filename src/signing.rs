@@ -290,8 +290,8 @@ impl Tag {
     /// The signature starts at the last line that begins with a known armor line (see
     /// [`SignatureFormat::detect`]) and runs to the end of the tag. The payload is everything
     /// before it, minus `gpgsig` and `gpgsig-sha256` headers, which carry a signature for the
-    /// other hash format. Matching Git, only the last header of each run of adjacent signature
-    /// headers is removed; the others stay in the payload. Returns `None` when no line starts with
+    /// other hash format. Matching Git 2.56 and later, every such header is removed (older Git
+    /// removed only the last header of each adjacent run). Returns `None` when no line starts with
     /// a known armor line.
     ///
     /// The search covers the whole tag, as Git's does, so armor placed among the headers still
@@ -323,18 +323,14 @@ impl Tag {
             .last()?;
         let (signed, signature) = bytes.split_at_checked(start)?;
         let view = CommitPayload::from_bytes(signed);
-        let is_signature: Vec<bool> = view
+        let removed: Vec<usize> = view
             .headers()
-            .map(|header| {
+            .enumerate()
+            .filter(|(_, header)| {
                 header.has_value_separator
                     && (header.name == SHA1_HEADER || header.name == SHA256_HEADER)
             })
-            .collect();
-        // Git removes only the last header of each run of adjacent signature headers.
-        let removed: Vec<usize> = (0..is_signature.len())
-            .filter(|&index| {
-                is_signature.get(index) == Some(&true) && is_signature.get(index + 1) != Some(&true)
-            })
+            .map(|(index, _)| index)
             .collect();
         let signed_at = self
             .tagger()
@@ -915,14 +911,14 @@ mod tests {
     }
 
     #[test]
-    fn tag_payload_drops_last_signature_header_of_each_run() {
+    fn tag_payload_drops_every_signature_header() {
         for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
             let tag = tag(
                 format,
                 "gpgsig A\n a\ngpgsig-sha256 B\nx-mid m\ngpgsig C\n\nmsg\ngpgsig body\n-----BEGIN PGP SIGNATURE-----\n",
             );
             let payload = tag.signed_payload().unwrap().into_parts().0;
-            assert!(payload.ends_with(b"tag t\ngpgsig A\n a\nx-mid m\n\nmsg\ngpgsig body\n"));
+            assert!(payload.ends_with(b"tag t\nx-mid m\n\nmsg\ngpgsig body\n"));
         }
     }
 

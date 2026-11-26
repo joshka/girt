@@ -355,7 +355,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, macos-14, windows-2022]
+        os: [ubuntu-26.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -391,7 +391,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, macos-14, windows-2022]
+        os: [ubuntu-26.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -439,7 +439,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ inputs.ignore_windows_only && fromJSON('["windows-2022"]') || fromJSON('["ubuntu-26.04", "macos-14", "windows-2022"]') }}
+        os: ${{ inputs.ignore_windows_only && fromJSON('["windows-2022"]') || fromJSON('["ubuntu-26.04", "macos-15", "windows-2022"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -491,7 +491,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, macos-14, windows-2022]
+        os: [ubuntu-26.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -547,7 +547,7 @@ jobs:
         run: |
           echo "full=$FULL" >> "$GITHUB_OUTPUT"
           if [ "$FULL" = true ]; then
-            echo 'unix=["ubuntu-26.04","macos-14"]' >> "$GITHUB_OUTPUT"
+            echo 'unix=["ubuntu-26.04","macos-15"]' >> "$GITHUB_OUTPUT"
           else
             echo 'unix=["ubuntu-26.04"]' >> "$GITHUB_OUTPUT"
           fi
