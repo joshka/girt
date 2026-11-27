@@ -21,3 +21,13 @@ updates:
       compatible-actions:
         patterns: ["*"]
         update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      compatible-npm:
+        patterns: ["*"]
+        update-types: [minor, patch]
