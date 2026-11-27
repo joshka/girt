@@ -48,11 +48,11 @@ async function run({conclusion = 'failure', latestId = 10, latestAttempt = 1,
 (async () => {
   const issue = {number: 7, title: 'CI regression on main', state: 'closed',
     user: {login: 'github-actions[bot]'}};
-  const jobs = [{name: 'Test (macos-14)', conclusion: 'failure',
+  const jobs = [{name: 'Test (macos-15)', conclusion: 'failure',
     html_url: 'https://example.test/job/1'}];
   const created = await run({jobs});
   assert.equal(created[0][0], 'create');
-  assert.match(created[0][1].body, /\[Test \(macos-14\)\]\(https:\/\/example.test\/job\/1\): failure/);
+  assert.match(created[0][1].body, /\[Test \(macos-15\)\]\(https:\/\/example.test\/job\/1\): failure/);
   const reopened = await run({issue, jobs});
   assert.equal(reopened[0][0], 'update');
   assert.equal(reopened[0][1].state, 'open');
@@ -74,7 +74,7 @@ async function run({conclusion = 'failure', latestId = 10, latestAttempt = 1,
   assert.deepEqual(await run({issue, conclusion: 'success'}), []);
   const changed = await run({issue: {...issue, state: 'open', body: 'Previous failure'}, jobs});
   assert.equal(changed[0][0], 'comment');
-  assert.match(changed[0][1].body, /Test \(macos-14\)/);
+  assert.match(changed[0][1].body, /Test \(macos-15\)/);
   assert.equal(changed[1][0], 'update');
   assert.equal(changed[1][1].state, undefined);
   assert.deepEqual(await run({issue: {...issue, state: 'open', body: changed[1][1].body}, jobs}), []);
